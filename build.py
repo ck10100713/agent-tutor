@@ -75,7 +75,7 @@ def entries(key):
         reg = yaml.safe_load(open(os.path.join(SRC, 'registry.yaml')))
         for e in reg:
             e.setdefault('tags', e.get('categories'))  # claude 的 registry 叫 categories
-        return [e for e in reg if not e.get('archived')]  # 封存篇不收（原 repo 標過時的）
+        return reg
     if key == 'quickstarts':
         paths = ['README.md'] + sorted(os.path.relpath(p, SRC) for p in glob.glob(os.path.join(SRC, '*', 'README.md')))
         return [{'path': p, 'title': first_h1(open(os.path.join(SRC, p)).read(), p), 'tags': ['quickstarts']}
@@ -365,6 +365,18 @@ def md_path(key, e):
     return f"{key}/{slug(os.path.splitext(e['path'])[0])}.md"
 
 
+ARCHIVED = '原文已封存'
+
+
+def mark_archived(page):
+    """原 repo 標 archived 的篇：側邊欄顯示 deprecated 圖示、頁首顯示標籤。"""
+    text = open(page).read()
+    if '\nstatus: deprecated\n' in text:
+        return
+    # 插在 translated 那行後面，is_translated() 靠開頭判斷，不能動到
+    open(page, 'w').write(re.sub(r'^(---\ntranslated: \w+\n)', rf'\1status: deprecated\ntags:\n- {ARCHIVED}\n', text, count=1))
+
+
 def add_notice(page, notice):
     """在原文連結那行下面插入聲明；已經有就不重複插。"""
     text = open(page).read()
@@ -416,7 +428,9 @@ def write_site(built):
     groups.get(VECTOR_DB, []).sort(key=lambda e: (e['path'] != 'examples/vector_databases/README.md', e['path'].lower()))
     groups[GPU_LABEL] = [(notebook_title(os.path.join(ROOT, 'notebooks', 'openai', slug(os.path.splitext(e['path'])[0]) + '.ipynb'), e['title']),
                           colab + 'openai/' + slug(os.path.splitext(e['path'])[0]) + '.ipynb')
-                         for e in entries_ if e['path'] in gpu_paths]
+                         for e in ordered(entries_) if e['path'] in gpu_paths]
+    groups[GPU_LABEL] = [(t + (f'（{ARCHIVED}）' if e.get('archived') else ''), u)
+                         for (t, u), e in zip(groups[GPU_LABEL], [e for e in ordered(entries_) if e['path'] in gpu_paths])]
     section('openai', groups, STAGES)
 
     # Claude Cookbook
@@ -457,7 +471,8 @@ def write_site(built):
         'markdown_extensions': ['admonition', 'pymdownx.details', 'pymdownx.superfences', 'attr_list',
                                 'md_in_html', 'tables', {'pymdownx.highlight': {'anchor_linenums': True}},
                                 {'toc': {'permalink': True}}],
-        'plugins': [{'search': {'lang': ['zh', 'en']}}],
+        'plugins': [{'search': {'lang': ['zh', 'en']}}, 'tags'],
+        'extra': {'status': {'deprecated': ARCHIVED}},  # 側邊欄圖示的提示文字
         'extra_javascript': ['assets/progress.js'],  # 閱讀紀錄（localStorage）
         'extra_css': ['assets/progress.css'],
         'nav': nav,
@@ -477,6 +492,10 @@ if __name__ == '__main__':
             if gpu:
                 gpu_paths.add(e['path'])
         built[key] = (es, gpu_paths)
+        for e in es:
+            page = os.path.join(MD_OUT, slug(os.path.splitext(e['path'])[0]) + '.md')
+            if e.get('archived') and os.path.exists(page):
+                mark_archived(page)
         if SOURCES[key].get('notice'):
             for e in es:
                 add_notice(os.path.join(MD_OUT, slug(os.path.splitext(e['path'])[0]) + '.md'), SOURCES[key]['notice'])
