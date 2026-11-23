@@ -73,7 +73,7 @@ Message 也可以有選填的 `name` 欄位，用來給發話者取名，例如 
 - `user`: Unique identifier for end-user monitoring and abuse detection.
 
 
-2024 年 1 月起，你也可以選擇性地傳入 `functions` 清單，告訴 GPT 能不能產生 JSON 餵給函式。細節看[文件](https://platform.openai.com/docs/guides/function-calling)、[API reference](https://platform.openai.com/docs/api-reference/chat)，或 Cookbook 的指南 [How to call functions with chat models](How_to_call_functions_with_chat_models.md)。
+2024 年 1 月起，你也可以選擇性地傳入 `functions` 清單，告訴 GPT 能不能產生 JSON 餵給函式。細節看[文件](https://platform.openai.com/docs/guides/function-calling)、[API reference](https://platform.openai.com/docs/api-reference/chat)，或 Cookbook 的指南 [How to call functions with chat models](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb)。
 
 一般來說，對話會從一則 system message 開始，告訴 assistant 該怎麼表現，後面接著交替的 user 和 assistant 訊息，但你不一定要照這個格式。
 

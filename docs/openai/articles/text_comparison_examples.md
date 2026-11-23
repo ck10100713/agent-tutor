@@ -51,7 +51,7 @@ Embedding 可以單獨拿來搜尋，也可以當成大型系統裡的一個 fea
 
 ## 問答 (Question answering)
 
-想從 GPT-3 得到可靠、誠實的答案，最好的做法是給它來源文件，讓它能在裡面找到正確答案。用上面的語意搜尋流程，你可以低成本地在大量文件中找出相關資訊，再透過 prompt 交給 GPT-3 回答問題。範例在 [Question_answering_using_embeddings.ipynb](../examples/Question_answering_using_embeddings.md)。
+想從 GPT-3 得到可靠、誠實的答案，最好的做法是給它來源文件，讓它能在裡面找到正確答案。用上面的語意搜尋流程，你可以低成本地在大量文件中找出相關資訊，再透過 prompt 交給 GPT-3 回答問題。範例在 [Question_answering_using_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb)。
 
 ## 推薦 (Recommendations)
 

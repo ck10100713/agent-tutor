@@ -31,7 +31,7 @@ source: examples/vector_databases/redis/getting-started-with-redis-and-openai.ip
 
 ### 什麼是 RediSearch？
 
-RediSearch 是一個 [Redis module](https://redis.io/modules)，替 Redis 提供查詢、secondary index、全文檢索和向量搜尋。使用時先對 Redis 資料宣告 index，再用 RediSearch client 查詢。RediSearch 的完整功能請看 [README](README.md) 或 [RediSearch 文件](https://redis.io/docs/stack/search/)。
+RediSearch 是一個 [Redis module](https://redis.io/modules)，替 Redis 提供查詢、secondary index、全文檢索和向量搜尋。使用時先對 Redis 資料宣告 index，再用 RediSearch client 查詢。RediSearch 的完整功能請看 [README](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis/README.md) 或 [RediSearch 文件](https://redis.io/docs/stack/search/)。
 
 ### 部署方式
 

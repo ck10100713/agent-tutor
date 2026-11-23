@@ -60,7 +60,8 @@ def use_source(key):
 
 
 def slug(stem):
-    return stem.replace(' ', '_')  # 檔名有空白的（prompt 教學）網址不好看
+    stem = stem.replace(' ', '_')  # 檔名有空白的（prompt 教學）網址不好看
+    return re.sub(r'(^|/)\.', r'\1', stem)  # 點開頭的檔名 MkDocs 會當隱藏檔排除
 
 
 def first_h1(text, fallback):
@@ -74,7 +75,7 @@ def entries(key):
         reg = yaml.safe_load(open(os.path.join(SRC, 'registry.yaml')))
         for e in reg:
             e.setdefault('tags', e.get('categories'))  # claude 的 registry 叫 categories
-        return reg
+        return [e for e in reg if not e.get('archived')]  # 封存篇不收（原 repo 標過時的）
     if key == 'quickstarts':
         paths = ['README.md'] + sorted(os.path.relpath(p, SRC) for p in glob.glob(os.path.join(SRC, '*', 'README.md')))
         return [{'path': p, 'title': first_h1(open(os.path.join(SRC, p)).read(), p), 'tags': ['quickstarts']}
@@ -286,8 +287,10 @@ def build(entry):
     return out, gpu
 
 
-# 側邊欄分類：registry 第一個 tag -> 中文名稱，同一件事的 tag 併成一類
+# 側邊欄分類：registry tag -> 中文名稱，同一件事的 tag 併成一類
 TAG_ZH = {
+    'structured-outputs': 'Function calling', 'speech': '語音與音訊', 'transcription': '語音與音訊',
+    'security': '安全防護與內容審查',
     'embeddings': 'Embedding 與向量搜尋', 'completions': '文字生成（Completions）',
     'gpt-actions-library': 'GPT Actions 串接範例', 'agents-sdk': 'Agents SDK',
     'agents': 'Agent 開發', 'agents-api': 'Agent 開發', 'agentkit': 'Agent 開發',
@@ -306,6 +309,19 @@ TAG_ZH = {
     'batch': '批次處理', 'latency': '延遲優化', 'SDLC': '軟體開發流程', 'usage-api': '用量 API',
     'reasoning': '推理模型', 'other': '其他',
 }
+# OpenAI 的 tag 順序很隨意，這幾個幾乎每篇都掛，排在前面會把篇搶走，有更具體的 tag 就跳過
+GENERIC_TAGS = {'completions', 'chat', 'tiktoken', 'embeddings'}
+VECTOR_DB = '向量資料庫整合'
+
+
+def openai_category(e):
+    if e['path'].startswith('examples/vector_databases/'):
+        return VECTOR_DB  # 各家向量資料庫的串接範例，跟 embedding 原理分開放
+    tags = e.get('tags') or ['other']
+    for t in tags:
+        if t not in GENERIC_TAGS and t in TAG_ZH:
+            return TAG_ZH[t]
+    return TAG_ZH.get(tags[0], tags[0])
 
 
 GPU_LABEL = '要 GPU 的篇（Colab）'
@@ -313,7 +329,7 @@ GPU_LABEL = '要 GPU 的篇（Colab）'
 STAGES = [
     ('打基礎', ['Token 計算', '對話格式', '文字生成（Completions）', 'Responses API', 'Prompt 技巧']),
     ('讓模型用工具、會推理', ['Function calling', '推理模型', 'GPT-5 系列']),
-    ('接上自己的資料', ['Embedding 與向量搜尋', '知識圖譜']),
+    ('接上自己的資料', ['Embedding 與向量搜尋', VECTOR_DB, '知識圖譜']),
     ('做 Agent', ['Agent 開發', 'Agents SDK', 'MCP', 'Assistants API', 'Deep Research API']),
     ('上線前', ['評估（Evals）', '安全防護與內容審查', '微調（Fine-tuning）', '批次處理', '延遲優化', '用量 API']),
     ('多模態', ['語音與音訊', '即時語音（Realtime）', '影像理解（Vision）', '圖片生成', 'Sora 影片生成']),
@@ -390,13 +406,14 @@ def write_site(built):
             home.append('')
         nav.append({SOURCES[key]['name']: side})
 
-    # OpenAI：依第一個 tag 分類
+    # OpenAI：依最具體的 tag 分類
     entries_, gpu_paths = built['openai']
     groups = {}
     for e in ordered(entries_):
         if e['path'] not in gpu_paths:
-            tag = (e.get('tags') or ['other'])[0]
-            groups.setdefault(TAG_ZH.get(tag, tag), []).append(e)
+            groups.setdefault(openai_category(e), []).append(e)
+    # 向量資料庫照廠商資料夾排，同一家放一起，總覽 README 第一
+    groups.get(VECTOR_DB, []).sort(key=lambda e: (e['path'] != 'examples/vector_databases/README.md', e['path'].lower()))
     groups[GPU_LABEL] = [(notebook_title(os.path.join(ROOT, 'notebooks', 'openai', slug(os.path.splitext(e['path'])[0]) + '.ipynb'), e['title']),
                           colab + 'openai/' + slug(os.path.splitext(e['path'])[0]) + '.ipynb')
                          for e in entries_ if e['path'] in gpu_paths]
