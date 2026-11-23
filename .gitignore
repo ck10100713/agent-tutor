@@ -1,0 +1,4 @@
+archive/
+site/
+.playwright-mcp/
+__pycache__/
