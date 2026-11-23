@@ -256,17 +256,66 @@ TAG_ZH = {
 }
 
 
+GPU_LABEL = '要 GPU 的篇（Colab）'
+# 建議閱讀順序：首頁跟側邊欄共用這份
+STAGES = [
+    ('打基礎', ['Token 計算', '對話格式', '文字生成（Completions）', 'Responses API', 'Prompt 技巧']),
+    ('讓模型用工具、會推理', ['Function calling', '推理模型', 'GPT-5 系列']),
+    ('接上自己的資料', ['Embedding 與向量搜尋', '知識圖譜']),
+    ('做 Agent', ['Agent 開發', 'Agents SDK', 'MCP', 'Assistants API', 'Deep Research API']),
+    ('上線前', ['評估（Evals）', '安全防護與內容審查', '微調（Fine-tuning）', '批次處理', '延遲優化', '用量 API']),
+    ('多模態', ['語音與音訊', '即時語音（Realtime）', '影像理解（Vision）', '圖片生成', 'Sora 影片生成']),
+    ('用 AI 寫程式', ['Codex', '軟體開發流程']),
+    ('自己跑模型', ['開源模型（gpt-oss）', GPU_LABEL]),
+    ('平台整合範例', ['ChatGPT 應用', 'GPT Actions 串接範例', '合作夥伴範例', '其他']),
+]
+
+
+def notebook_title(stem, fallback):
+    first = ''.join(json.load(open(os.path.join(NB_OUT, stem + '.ipynb')))['cells'][0]['source'])
+    line = first.splitlines()[0] if first else ''
+    return line[2:] if line.startswith('# ') else fallback
+
+
 def write_site(registry, gpu_paths):
     by_tag = {}
     for e in registry:
         if e['path'] not in gpu_paths:
             tag = (e.get('tags') or ['other'])[0]
             by_tag.setdefault(TAG_ZH.get(tag, tag), []).append(e)  # 沒對照到的就用原 tag
+    colab = f'https://colab.research.google.com/github/{SITE_REPO}/blob/main/notebooks/'
+    gpu = [{notebook_title(os.path.splitext(e['path'])[0], e['title']):
+            colab + os.path.splitext(e['path'])[0] + '.ipynb'} for e in registry if e['path'] in gpu_paths]
+    order = [c for _, cats in STAGES for c in cats]
+    extra = sorted(set(by_tag) - set(order))  # cookbook 新增、還沒排進 STAGES 的分類放最後
+    if extra:
+        print('還沒排進 STAGES 的分類：', extra)
+
+    def pages(label):
+        # 分類內也照建議順序：未封存的由舊到新（基礎的通常比較早寫），封存的放最後
+        items = sorted(by_tag.get(label, []), key=lambda e: (bool(e.get('archived')), str(e.get('date'))))
+        # 不寫標題，讓 MkDocs 用頁面的 H1，側邊欄就是中文
+        return [os.path.splitext(e['path'])[0] + '.md' for e in items]
+
     nav: list = [{'首頁': 'index.md'}]
-    for tag in sorted(by_tag, key=lambda t: -len(by_tag[t])):
-        items = sorted(by_tag[tag], key=lambda e: str(e.get('date')), reverse=True)
-        # 不寫標題，讓 MkDocs 用頁面的 H1，翻譯後側邊欄就會是中文
-        nav.append({tag: [os.path.splitext(e['path'])[0] + '.md' for e in items]})
+    for label in order + extra:
+        items = gpu if label == GPU_LABEL else pages(label)
+        if items:
+            nav.append({label: items})
+
+    lines = ['# OpenAI Cookbook 繁中教材', '', '## 建議閱讀順序', '']
+    stages = STAGES + ([('其他新分類', extra)] if extra else [])
+    for n, (stage, cats) in enumerate(stages, 1):
+        lines += [f'### {n}. {stage}', '']
+        for label in cats:
+            if label == GPU_LABEL:
+                lines.append(f'- {GPU_LABEL}・{len(gpu)} 篇')
+                lines += [f'    - [{t}]({u})' for item in gpu for t, u in item.items()]
+            elif by_tag.get(label):
+                lines.append(f'- [{label}]({pages(label)[0]})・{len(by_tag[label])} 篇')
+        lines.append('')
+    open(os.path.join(MD_OUT, 'index.md'), 'w').write('\n'.join(lines))
+
     conf = {
         'site_name': 'OpenAI Cookbook 繁中教材',
         'site_url': f"https://{SITE_REPO.split('/')[0]}.github.io/{SITE_REPO.split('/')[1]}/",
@@ -286,18 +335,6 @@ def write_site(registry, gpu_paths):
         'nav': nav,
     }
     yaml.safe_dump(conf, open(os.path.join(ROOT, 'mkdocs.yml'), 'w'), allow_unicode=True, sort_keys=False)
-
-    gpu = [e for e in registry if e['path'] in gpu_paths]
-    lines = ['# OpenAI Cookbook 繁中教材', '',
-             f'左邊依主題分類，共 {sum(len(v) for v in by_tag.values())} 篇。', '',
-             '## 要 GPU 的篇（用 Colab 跑）', '']
-    colab = f'https://colab.research.google.com/github/{SITE_REPO}/blob/main/notebooks/'
-    for e in gpu:  # 標題用翻好的 notebook 第一行
-        stem = os.path.splitext(e['path'])[0]
-        first = json.load(open(os.path.join(NB_OUT, stem + '.ipynb')))['cells'][0]['source']
-        title = ''.join(first).splitlines()[0].lstrip('# ') or e['title']
-        lines.append(f'- [{title}]({colab}{stem}.ipynb)')
-    open(os.path.join(MD_OUT, 'index.md'), 'w').write('\n'.join(lines) + '\n')
 
 
 if __name__ == '__main__':

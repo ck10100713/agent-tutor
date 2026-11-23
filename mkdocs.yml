@@ -39,78 +39,93 @@ plugins:
     - en
 nav:
 - 首頁: index.md
+- Token 計算:
+  - examples/How_to_count_tokens_with_tiktoken.md
+  - examples/third_party/GPT_finetuning_with_wandb.md
+  - examples/third_party/Openai_monitoring_with_wandb_weave.md
+- 對話格式:
+  - examples/Summarizing_long_documents.md
+  - examples/multimodal/Using_GPT4_Vision_With_Function_Calling.md
+- 文字生成（Completions）:
+  - examples/Fine-tuned_classification.md
+  - examples/book_translation/translate_latex_book.md
+  - examples/fine-tuned_qa/olympics-3-train-qa.md
+  - examples/How_to_stream_completions.md
+  - articles/techniques_to_improve_reliability.md
+  - examples/Unit_test_writing_using_a_multi-step_prompt.md
+  - articles/how_to_work_with_large_language_models.md
+  - articles/related_resources.md
+  - examples/Entity_extraction_for_long_documents.md
+  - examples/How_to_format_inputs_to_ChatGPT_models.md
+  - examples/How_to_build_a_tool-using_agent_with_Langchain.md
+  - examples/vector_databases/redis/redisqna/redisqna.md
+  - examples/Unit_test_writing_using_a_multi-step_prompt_with_older_completions_API.md
+  - examples/vector_databases/SingleStoreDB/OpenAI_wikipedia_semantic_search.md
+  - examples/azure/chat.md
+  - examples/How_to_call_functions_with_chat_models.md
+  - examples/How_to_call_functions_for_knowledge_retrieval.md
+  - examples/azure/functions.md
+  - examples/Function_calling_finding_nearby_places.md
+  - examples/Chat_finetuning_data_prep.md
+  - examples/fine-tuned_qa/ft_retrieval_augmented_generation_qdrant.md
+  - examples/azure/chat_with_your_own_data.md
+  - examples/third_party/How_to_automate_S3_storage_with_functions.md
+  - examples/How_to_build_an_agent_with_the_node_sdk.md
+  - examples/Function_calling_with_an_OpenAPI_spec.md
+  - examples/Named_Entity_Recognition_to_enrich_text.md
+  - examples/Reproducible_outputs_with_the_seed_parameter.md
+  - examples/Fine_tuning_for_function_calling.md
+  - examples/Using_logprobs.md
+  - examples/evaluation/Getting_Started_with_OpenAI_Evals.md
+  - examples/SDG1.md
+  - examples/Using_tool_required_for_customer_service.md
+  - examples/Data_extraction_transformation.md
+  - examples/gpt4o/introduction_to_gpt4o.md
+  - examples/How_to_finetune_chat_models.md
+  - examples/Structured_outputs_multi_agent.md
+  - examples/Structured_Outputs_Intro.md
+  - examples/o1/Using_reasoning_for_data_validation.md
+  - examples/o1/Using_reasoning_for_routine_generation.md
+  - examples/o1/Using_chained_calls_for_o1_structured_outputs.md
+  - examples/third_party/Web_search_with_google_api_bring_your_own_browser_tool.md
+  - examples/Orchestrating_agents.md
+  - examples/Leveraging_model_distillation_to_fine-tune_a_model.md
+  - examples/voice_solutions/voice_translation_into_different_languages_using_GPT-4o.md
+  - examples/Enhance_your_prompts_with_meta_prompting.md
+  - examples/voice_solutions/steering_tts.md
+  - examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.md
+  - examples/How_to_handle_rate_limits.md
+  - examples/object_oriented_agentic_approach/Secure_code_interpreter_tool_for_LLM_agents.md
+- Responses API:
+  - examples/skills_in_api.md
+  - articles/per_run_spending_controller_responses_api.md
+  - examples/responses_api/responses_example.md
+  - examples/File_Search_Responses.md
+  - examples/agents_sdk/dispute_agent.md
+  - examples/responses_api/responses_api_tool_orchestration.md
+  - examples/gpt4-1_prompting_guide.md
+  - examples/GPT_with_vision_for_video_understanding.md
+  - examples/partners/model_selection_guide/model_selection_guide.md
+  - examples/responses_api/reasoning_items.md
+  - examples/multimodal/image_understanding_with_rag.md
+- Prompt 技巧:
+  - examples/Prompt_migration_guide.md
+  - examples/Optimize_Prompts.md
+  - examples/Prompt_Caching_201.md
+- Function calling:
+  - examples/o-series/o3o4-mini_prompting_guide.md
+- 推理模型:
+  - examples/reasoning_function_calls.md
+- GPT-5 系列:
+  - examples/gpt-5/prompt-optimization-cookbook.md
+  - examples/gpt-5/prompt_personalities.md
+  - examples/gpt-5/gpt-5_prompting_guide.md
+  - examples/gpt-5/gpt-5_frontend.md
+  - examples/gpt-5/gpt-5_new_params_and_tools.md
+  - examples/gpt-5/gpt-5_troubleshooting_guide.md
+  - examples/gpt-5/gpt-5-1_prompting_guide.md
+  - examples/gpt-5/gpt-5-2_prompting_guide.md
 - Embedding 與向量搜尋:
-  - examples/vector_databases/chroma/hyde-with-chroma-and-openai.md
-  - examples/Embedding_Wikipedia_articles_for_search.md
-  - examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.md
-  - examples/chatgpt/rag-quickstart/azure/Azure_AI_Search_with_Azure_Functions_and_GPT_Actions_in_ChatGPT.md
-  - examples/RAG_with_graph_db.md
-  - examples/vector_databases/supabase/README.md
-  - examples/vector_databases/supabase/semantic-search.md
-  - examples/vector_databases/mongodb_atlas/README.md
-  - examples/vector_databases/mongodb_atlas/semantic_search_using_mongodb_atlas_vector_search.md
-  - examples/evaluation/Evaluate_RAG_with_LlamaIndex.md
-  - examples/vector_databases/deeplake/deeplake_langchain_qa.md
-  - examples/vector_databases/neon/README.md
-  - examples/vector_databases/neon/neon-postgres-vector-search-pgvector.md
-  - examples/vector_databases/azuresearch/Getting_started_with_azure_ai_search_and_openai.md
-  - examples/vector_databases/tair/Getting_started_with_Tair_and_OpenAI.md
-  - examples/vector_databases/tair/QA_with_Langchain_Tair_and_OpenAI.md
-  - examples/vector_databases/cassandra_astradb/Philosophical_Quotes_CQL.md
-  - examples/vector_databases/cassandra_astradb/Philosophical_Quotes_cassIO.md
-  - examples/vector_databases/cassandra_astradb/README.md
-  - examples/vector_databases/elasticsearch/README.md
-  - examples/vector_databases/elasticsearch/elasticsearch-retrieval-augmented-generation.md
-  - examples/vector_databases/elasticsearch/elasticsearch-semantic-search.md
-  - examples/evaluation/How_to_eval_abstractive_summarization.md
-  - examples/third_party/Visualizing_embeddings_in_Kangas.md
-  - examples/vector_databases/PolarDB/Getting_started_with_PolarDB_and_OpenAI.md
-  - examples/Search_reranking_with_cross-encoders.md
-  - examples/vector_databases/README.md
-  - examples/vector_databases/chroma/Using_Chroma_for_embeddings_search.md
-  - examples/vector_databases/myscale/Using_MyScale_for_embeddings_search.md
-  - examples/vector_databases/pinecone/Using_Pinecone_for_embeddings_search.md
-  - examples/vector_databases/qdrant/Using_Qdrant_for_embeddings_search.md
-  - examples/vector_databases/redis/Using_Redis_for_embeddings_search.md
-  - examples/vector_databases/typesense/Using_Typesense_for_embeddings_search.md
-  - examples/vector_databases/weaviate/Using_Weaviate_for_embeddings_search.md
-  - examples/third_party/financial_document_analysis_with_llamaindex.md
-  - examples/Question_answering_using_a_search_API.md
-  - examples/vector_databases/SingleStoreDB/README.md
-  - examples/vector_databases/weaviate/generative-search-with-weaviate-and-openai.md
-  - examples/vector_databases/hologres/Getting_started_with_Hologres_and_OpenAI.md
-  - examples/vector_databases/redis/redis-hybrid-query-examples.md
-  - examples/vector_databases/kusto/Getting_started_with_kusto_and_openai_embeddings.md
-  - examples/vector_databases/kusto/README.md
-  - examples/vector_databases/redis/redisjson/redisjson.md
-  - examples/vector_databases/analyticdb/QA_with_Langchain_AnalyticDB_and_OpenAI.md
-  - examples/vector_databases/myscale/Getting_started_with_MyScale_and_OpenAI.md
-  - examples/vector_databases/typesense/README.md
-  - examples/vector_databases/analyticdb/Getting_started_with_AnalyticDB_and_OpenAI.md
-  - examples/third_party/Visualizing_embeddings_with_Atlas.md
-  - examples/vector_databases/milvus/Filtered_search_with_Milvus_and_OpenAI.md
-  - examples/vector_databases/milvus/Getting_started_with_Milvus_and_OpenAI.md
-  - examples/vector_databases/zilliz/Filtered_search_with_Zilliz_and_OpenAI.md
-  - examples/vector_databases/zilliz/Getting_started_with_Zilliz_and_OpenAI.md
-  - examples/vector_databases/pinecone/GPT4_Retrieval_Augmentation.md
-  - examples/vector_databases/pinecone/README.md
-  - examples/vector_databases/pinecone/Semantic_Search.md
-  - examples/vector_databases/qdrant/Getting_started_with_Qdrant_and_OpenAI.md
-  - examples/vector_databases/qdrant/QA_with_Langchain_Qdrant_and_OpenAI.md
-  - examples/vector_databases/redis/README.md
-  - examples/vector_databases/redis/getting-started-with-redis-and-openai.md
-  - examples/vector_databases/weaviate/README.md
-  - examples/vector_databases/weaviate/getting-started-with-weaviate-and-openai.md
-  - examples/vector_databases/weaviate/hybrid-search-with-weaviate-and-openai.md
-  - examples/vector_databases/weaviate/question-answering-with-weaviate-and-openai.md
-  - examples/vector_databases/pinecone/Gen_QA.md
-  - examples/third_party/Visualizing_embeddings_in_wandb.md
-  - articles/text_comparison_examples.md
-  - examples/Embedding_long_inputs.md
-  - examples/Clustering_for_transaction_classification.md
-  - examples/azure/embeddings.md
-  - examples/Classification_using_embeddings.md
-  - examples/Question_answering_using_embeddings.md
   - examples/Clustering.md
   - examples/Code_search_using_embeddings.md
   - examples/Using_embeddings.md
@@ -123,267 +138,263 @@ nav:
   - examples/Visualizing_embeddings_in_3D.md
   - examples/Zero-shot_classification_with_embeddings.md
   - examples/fine-tuned_qa/olympics-2-create-qa.md
-- 文字生成（Completions）:
-  - examples/object_oriented_agentic_approach/Secure_code_interpreter_tool_for_LLM_agents.md
-  - examples/How_to_handle_rate_limits.md
-  - examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.md
-  - examples/voice_solutions/steering_tts.md
-  - examples/Enhance_your_prompts_with_meta_prompting.md
-  - examples/voice_solutions/voice_translation_into_different_languages_using_GPT-4o.md
-  - examples/Leveraging_model_distillation_to_fine-tune_a_model.md
-  - examples/Orchestrating_agents.md
-  - examples/o1/Using_chained_calls_for_o1_structured_outputs.md
-  - examples/third_party/Web_search_with_google_api_bring_your_own_browser_tool.md
-  - examples/o1/Using_reasoning_for_data_validation.md
-  - examples/o1/Using_reasoning_for_routine_generation.md
-  - examples/Structured_outputs_multi_agent.md
-  - examples/Structured_Outputs_Intro.md
-  - examples/How_to_finetune_chat_models.md
-  - examples/gpt4o/introduction_to_gpt4o.md
-  - examples/Data_extraction_transformation.md
-  - examples/Using_tool_required_for_customer_service.md
-  - examples/SDG1.md
-  - examples/evaluation/Getting_Started_with_OpenAI_Evals.md
-  - examples/Using_logprobs.md
-  - examples/Fine_tuning_for_function_calling.md
-  - examples/Reproducible_outputs_with_the_seed_parameter.md
-  - examples/Named_Entity_Recognition_to_enrich_text.md
-  - examples/Function_calling_with_an_OpenAPI_spec.md
-  - examples/How_to_build_an_agent_with_the_node_sdk.md
-  - examples/third_party/How_to_automate_S3_storage_with_functions.md
-  - examples/azure/chat_with_your_own_data.md
-  - examples/fine-tuned_qa/ft_retrieval_augmented_generation_qdrant.md
-  - examples/Chat_finetuning_data_prep.md
-  - examples/Function_calling_finding_nearby_places.md
-  - examples/azure/functions.md
-  - examples/How_to_call_functions_for_knowledge_retrieval.md
-  - examples/How_to_call_functions_with_chat_models.md
-  - examples/vector_databases/SingleStoreDB/OpenAI_wikipedia_semantic_search.md
-  - examples/Unit_test_writing_using_a_multi-step_prompt_with_older_completions_API.md
-  - examples/vector_databases/redis/redisqna/redisqna.md
-  - examples/How_to_build_a_tool-using_agent_with_Langchain.md
-  - examples/azure/chat.md
-  - examples/How_to_format_inputs_to_ChatGPT_models.md
-  - examples/Entity_extraction_for_long_documents.md
-  - articles/how_to_work_with_large_language_models.md
-  - articles/related_resources.md
-  - examples/Unit_test_writing_using_a_multi-step_prompt.md
-  - articles/techniques_to_improve_reliability.md
-  - examples/How_to_stream_completions.md
-  - examples/Fine-tuned_classification.md
-  - examples/book_translation/translate_latex_book.md
-  - examples/fine-tuned_qa/olympics-3-train-qa.md
-- GPT Actions 串接範例:
-  - examples/chatgpt/gpt_actions_library/gpt_action_trayai_apim.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_workday.md
-  - examples/chatgpt/rag-quickstart/pinecone-retool/gpt-action-pinecone-retool-rag.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_github.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_googleads_adzviser.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_canvas.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_retool_workflow.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_snowflake_middleware.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_snowflake_direct.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_google_drive.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_redshift.md
-  - examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_zapier.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_box.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_confluence.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_notion.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_gmail.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_jira.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_salesforce.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_outlook.md
-  - examples/chatgpt/gpt_actions_library/.gpt_action_getting_started.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_bigquery.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.md
-  - examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.md
+  - examples/Classification_using_embeddings.md
+  - examples/Clustering_for_transaction_classification.md
+  - examples/Embedding_long_inputs.md
+  - articles/text_comparison_examples.md
+  - examples/third_party/Visualizing_embeddings_in_wandb.md
+  - examples/vector_databases/pinecone/Gen_QA.md
+  - examples/vector_databases/redis/getting-started-with-redis-and-openai.md
+  - examples/vector_databases/weaviate/README.md
+  - examples/vector_databases/weaviate/getting-started-with-weaviate-and-openai.md
+  - examples/vector_databases/weaviate/hybrid-search-with-weaviate-and-openai.md
+  - examples/vector_databases/weaviate/question-answering-with-weaviate-and-openai.md
+  - examples/vector_databases/qdrant/Getting_started_with_Qdrant_and_OpenAI.md
+  - examples/vector_databases/qdrant/QA_with_Langchain_Qdrant_and_OpenAI.md
+  - examples/vector_databases/pinecone/GPT4_Retrieval_Augmentation.md
+  - examples/vector_databases/pinecone/README.md
+  - examples/vector_databases/pinecone/Semantic_Search.md
+  - examples/third_party/Visualizing_embeddings_with_Atlas.md
+  - examples/vector_databases/milvus/Filtered_search_with_Milvus_and_OpenAI.md
+  - examples/vector_databases/milvus/Getting_started_with_Milvus_and_OpenAI.md
+  - examples/vector_databases/zilliz/Filtered_search_with_Zilliz_and_OpenAI.md
+  - examples/vector_databases/zilliz/Getting_started_with_Zilliz_and_OpenAI.md
+  - examples/vector_databases/analyticdb/Getting_started_with_AnalyticDB_and_OpenAI.md
+  - examples/vector_databases/myscale/Getting_started_with_MyScale_and_OpenAI.md
+  - examples/vector_databases/analyticdb/QA_with_Langchain_AnalyticDB_and_OpenAI.md
+  - examples/vector_databases/kusto/Getting_started_with_kusto_and_openai_embeddings.md
+  - examples/vector_databases/kusto/README.md
+  - examples/vector_databases/redis/redisjson/redisjson.md
+  - examples/vector_databases/redis/redis-hybrid-query-examples.md
+  - examples/vector_databases/hologres/Getting_started_with_Hologres_and_OpenAI.md
+  - examples/vector_databases/SingleStoreDB/README.md
+  - examples/vector_databases/weaviate/generative-search-with-weaviate-and-openai.md
+  - examples/Question_answering_using_embeddings.md
+  - examples/azure/embeddings.md
+  - examples/vector_databases/redis/README.md
+  - examples/vector_databases/typesense/README.md
+  - examples/Question_answering_using_a_search_API.md
+  - examples/third_party/financial_document_analysis_with_llamaindex.md
+  - examples/Search_reranking_with_cross-encoders.md
+  - examples/vector_databases/README.md
+  - examples/vector_databases/chroma/Using_Chroma_for_embeddings_search.md
+  - examples/vector_databases/myscale/Using_MyScale_for_embeddings_search.md
+  - examples/vector_databases/pinecone/Using_Pinecone_for_embeddings_search.md
+  - examples/vector_databases/qdrant/Using_Qdrant_for_embeddings_search.md
+  - examples/vector_databases/redis/Using_Redis_for_embeddings_search.md
+  - examples/vector_databases/typesense/Using_Typesense_for_embeddings_search.md
+  - examples/vector_databases/weaviate/Using_Weaviate_for_embeddings_search.md
+  - examples/third_party/Visualizing_embeddings_in_Kangas.md
+  - examples/vector_databases/PolarDB/Getting_started_with_PolarDB_and_OpenAI.md
+  - examples/evaluation/How_to_eval_abstractive_summarization.md
+  - examples/vector_databases/cassandra_astradb/Philosophical_Quotes_CQL.md
+  - examples/vector_databases/cassandra_astradb/Philosophical_Quotes_cassIO.md
+  - examples/vector_databases/cassandra_astradb/README.md
+  - examples/vector_databases/elasticsearch/README.md
+  - examples/vector_databases/elasticsearch/elasticsearch-retrieval-augmented-generation.md
+  - examples/vector_databases/elasticsearch/elasticsearch-semantic-search.md
+  - examples/vector_databases/azuresearch/Getting_started_with_azure_ai_search_and_openai.md
+  - examples/vector_databases/tair/Getting_started_with_Tair_and_OpenAI.md
+  - examples/vector_databases/tair/QA_with_Langchain_Tair_and_OpenAI.md
+  - examples/vector_databases/neon/README.md
+  - examples/vector_databases/neon/neon-postgres-vector-search-pgvector.md
+  - examples/vector_databases/deeplake/deeplake_langchain_qa.md
+  - examples/evaluation/Evaluate_RAG_with_LlamaIndex.md
+  - examples/vector_databases/mongodb_atlas/README.md
+  - examples/vector_databases/mongodb_atlas/semantic_search_using_mongodb_atlas_vector_search.md
+  - examples/vector_databases/supabase/README.md
+  - examples/vector_databases/supabase/semantic-search.md
+  - examples/RAG_with_graph_db.md
+  - examples/chatgpt/rag-quickstart/azure/Azure_AI_Search_with_Azure_Functions_and_GPT_Actions_in_ChatGPT.md
+  - examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.md
+  - examples/Embedding_Wikipedia_articles_for_search.md
+  - examples/vector_databases/chroma/hyde-with-chroma-and-openai.md
+- 知識圖譜:
+  - examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.md
+- Agent 開發:
+  - examples/agents_api/apps/sev_bot/README.md
+  - examples/agents_api/apps/slack_bot/README.md
+  - examples/agents_api/apps/data_analyst/README.md
+  - examples/agents_api/sandboxes/aws/README.md
+  - examples/agents_api/sandboxes/databricks/README.md
+  - examples/agents_sdk/parallel_agents.md
+  - examples/agentkit/agentkit_walkthrough.md
+  - examples/partners/agentic_governance_guide/agentic_governance_cookbook.md
+- Agents SDK:
+  - examples/agents_sdk/session_memory.md
+  - examples/agents_sdk/context_personalization.md
+  - examples/agents_sdk/sandboxed-code-migration/sandboxed_code_migration_agent.md
+  - examples/agents_sdk/computer_use_with_daytona/computer_use_with_daytona.md
+  - examples/agents_sdk/building_reliable_agents_memory_compaction.md
+  - examples/agents_sdk/deployment_manager/README.md
+  - examples/agents_sdk/migrate-from-claude-agent-sdk/README.md
+  - examples/agents_sdk/agent_improvement_loop.md
+  - examples/vector_databases/oracle_db/deep_research_openai_agents.md
+  - examples/agents_sdk/security_scanners_with_agents_sdk.md
+  - examples/agents_sdk/multi-agent-portfolio-collaboration/multi_agent_portfolio_collaboration.md
+  - examples/mcp/databricks_mcp_cookbook.md
+  - examples/codex/codex_mcp_agents_sdk/building_consistent_workflows_codex_cli_agents_sdk.md
+  - examples/Build_a_coding_agent_with_GPT-5.1.md
+- MCP:
+  - examples/mcp/mcp_tool_guide.md
+  - examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.md
+  - examples/deep_research_api/how_to_build_a_deep_research_mcp_server/README.md
+- Assistants API:
+  - examples/Assistants_API_overview_python.md
+  - examples/Creating_slides_with_Assistants_API_and_DALL-E3.md
+- Deep Research API:
+  - examples/deep_research_api/introduction_to_deep_research_api.md
+  - examples/deep_research_api/introduction_to_deep_research_api_agents.md
 - 評估（Evals）:
-  - examples/agent_optimization/optimizing_agents_for_cost_and_quality.md
-  - examples/evaluation/moving-from-openai-evals-to-promptfoo.md
   - examples/multimodal/image_evals.md
-  - examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md
-  - examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.md
-  - examples/evaluation/use-cases/EvalsAPI_Image_Inputs.md
+  - examples/evaluation/moving-from-openai-evals-to-promptfoo.md
+  - examples/agent_optimization/optimizing_agents_for_cost_and_quality.md
+  - examples/Custom-LLM-as-a-Judge.md
+  - examples/agents_sdk/evaluate_agents.md
+  - examples/evaluation/use-cases/regression.md
+  - examples/evaluation/use-cases/bulk-experimentation.md
+  - examples/evaluation/use-cases/completion-monitoring.md
+  - examples/evaluation/use-cases/responses-evaluation.md
+  - examples/partners/eval_driven_system_design/receipt_inspection.md
+  - examples/stripe_model_eval/selecting_a_model_based_on_stripe_conversion.md
   - examples/evaluation/use-cases/mcp_eval_notebook.md
   - examples/evaluation/use-cases/structured-outputs-evaluation.md
   - examples/evaluation/use-cases/tools-evaluation.md
   - examples/evaluation/use-cases/web-search-evaluation.md
-  - examples/partners/eval_driven_system_design/receipt_inspection.md
-  - examples/stripe_model_eval/selecting_a_model_based_on_stripe_conversion.md
-  - examples/evaluation/use-cases/responses-evaluation.md
-  - examples/evaluation/use-cases/regression.md
-  - examples/evaluation/use-cases/bulk-experimentation.md
-  - examples/evaluation/use-cases/completion-monitoring.md
-  - examples/agents_sdk/evaluate_agents.md
-  - examples/Custom-LLM-as-a-Judge.md
-- Agents SDK:
-  - examples/agents_sdk/security_scanners_with_agents_sdk.md
-  - examples/vector_databases/oracle_db/deep_research_openai_agents.md
-  - examples/agents_sdk/agent_improvement_loop.md
-  - examples/agents_sdk/migrate-from-claude-agent-sdk/README.md
-  - examples/agents_sdk/deployment_manager/README.md
-  - examples/agents_sdk/building_reliable_agents_memory_compaction.md
-  - examples/agents_sdk/computer_use_with_daytona/computer_use_with_daytona.md
-  - examples/agents_sdk/sandboxed-code-migration/sandboxed_code_migration_agent.md
-  - examples/agents_sdk/context_personalization.md
-  - examples/Build_a_coding_agent_with_GPT-5.1.md
-  - examples/codex/codex_mcp_agents_sdk/building_consistent_workflows_codex_cli_agents_sdk.md
-  - examples/agents_sdk/session_memory.md
-  - examples/mcp/databricks_mcp_cookbook.md
-  - examples/agents_sdk/multi-agent-portfolio-collaboration/multi_agent_portfolio_collaboration.md
-- 語音與音訊:
-  - articles/sop_to_voice_agent_builder.md
-  - examples/audio/voice_agent_evaluation.md
-  - examples/migrating_from_whisper_to_gpt_transcribe.md
-  - examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.md
-  - examples/Data-intensive-Realtime-apps.md
-  - examples/Context_summarization_with_realtime_api.md
-  - examples/Speech_transcription_methods.md
-  - examples/agents_sdk/app_assistant_voice_agents.md
-  - examples/voice_solutions/one_way_translation_using_realtime_api.md
-  - examples/Whisper_correct_misspelling.md
-  - examples/Whisper_processing_guide.md
-  - examples/Whisper_prompting_guide.md
-- Responses API:
-  - articles/per_run_spending_controller_responses_api.md
-  - examples/skills_in_api.md
-  - examples/multimodal/image_understanding_with_rag.md
-  - examples/responses_api/reasoning_items.md
-  - examples/partners/model_selection_guide/model_selection_guide.md
-  - examples/GPT_with_vision_for_video_understanding.md
-  - examples/gpt4-1_prompting_guide.md
-  - examples/responses_api/responses_api_tool_orchestration.md
-  - examples/agents_sdk/dispute_agent.md
-  - examples/responses_api/responses_example.md
-  - examples/File_Search_Responses.md
-- Codex:
-  - examples/codex/iterating-development-workflows-with-codex.md
-  - examples/codex/Build_iterative_repair_loops_with_Codex.md
-  - examples/codex/using_goals_in_codex.md
-  - examples/gpt-5/codex_prompting_guide.md
-  - examples/codex/code_modernization.md
-  - examples/codex/build_code_review_with_codex_sdk.md
-  - articles/codex_exec_plans.md
-  - examples/codex/Autofix-github-actions.md
-  - examples/codex/secure_quality_gitlab.md
-  - examples/codex/jira-github.md
-- 合作夥伴範例:
-  - examples/partners/harness_aware_plugin_evals/harness_aware_plugin_evals.md
-  - examples/partners/AWS/chatgpt_agents_sdk_aws_agentcore_cookbook/notebooks/chatgpt_agents_sdk_aws_agentcore_cookbook.md
-  - examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.md
-  - examples/partners/AWS/policy_to_review_prior_authorization_agents_sdk_agentcore.md
-  - examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.md
-  - examples/partners/schemaflow_design_guide/schemaflow_cookbook.md
-  - examples/partners/AWS/openai_models_with_amazon_bedrock.md
-  - examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.md
-  - examples/partners/self_evolving_agents/autonomous_agent_retraining.md
-- ChatGPT 應用:
-  - examples/chatgpt/daily_usage_limits/README.md
-  - examples/chatgpt/sharepoint_site_access/sharepoint_site_access.md
-  - examples/chatgpt/workspace_agents/workspace-agents-api-trigger.md
-  - examples/chatgpt/chatgpt_prompt_guide/chatgpt_prompt_guide.md
-  - articles/chatgpt-agents-sales-meeting-prep.md
-  - examples/chatgpt/compliance_api/logs_platform.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md
-  - examples/chatgpt/gpt_actions_library/gpt_middleware_google_cloud_function.md
-  - examples/chatgpt/gpt_actions_library/gpt_action_sql_database.md
-- 圖片生成:
-  - examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.md
-  - examples/multimodal/grounded_spatial_reasoning_layouts.md
-  - examples/multimodal/image-gen-models-prompting-guide.md
-  - examples/multimodal/document_and_multimodal_understanding_tips.md
-  - examples/multimodal/image-gen-1.5-prompting_guide.md
-  - examples/Generate_Images_With_High_Input_Fidelity.md
-  - examples/Generate_Images_With_GPT_Image.md
-  - articles/what_is_new_with_dalle_3.md
-  - examples/dalle/Image_generations_edits_and_variations_with_DALL-E.md
-- Agent 開發:
-  - examples/agents_api/sandboxes/databricks/README.md
-  - examples/agents_api/sandboxes/aws/README.md
-  - examples/agents_api/apps/sev_bot/README.md
-  - examples/agents_api/apps/slack_bot/README.md
-  - examples/agents_api/apps/data_analyst/README.md
-  - examples/partners/agentic_governance_guide/agentic_governance_cookbook.md
-  - examples/agentkit/agentkit_walkthrough.md
-  - examples/agents_sdk/parallel_agents.md
-- 開源模型（gpt-oss）:
-  - articles/gpt-oss/build-your-own-fact-checker-cerebras.md
-  - articles/gpt-oss-safeguard-guide.md
-  - articles/gpt-oss/verifying-implementations.md
-  - articles/gpt-oss/run-locally-lmstudio.md
-  - articles/gpt-oss/run-nvidia.md
-  - articles/gpt-oss/handle-raw-cot.md
-  - articles/gpt-oss/run-locally-ollama.md
-  - articles/openai-harmony.md
-- GPT-5 系列:
-  - examples/gpt-5/prompt_personalities.md
-  - examples/gpt-5/gpt-5-2_prompting_guide.md
-  - examples/gpt-5/gpt-5-1_prompting_guide.md
-  - examples/gpt-5/gpt-5_troubleshooting_guide.md
-  - examples/gpt-5/prompt-optimization-cookbook.md
-  - examples/gpt-5/gpt-5_prompting_guide.md
-  - examples/gpt-5/gpt-5_frontend.md
-  - examples/gpt-5/gpt-5_new_params_and_tools.md
-- 即時語音（Realtime）:
-  - examples/voice_solutions/realtime_translation_guide.md
-  - examples/Realtime_prompting_guide.md
-  - examples/Realtime_eval_guide.md
-  - examples/Realtime_out_of_band_transcription.md
-  - examples/building_w_rt_mini/building_w_rt_mini.md
-  - examples/voice_solutions/running_realtime_api_speech_on_esp32_arduino_edge_runtime_elatoai.md
+  - examples/evaluation/use-cases/EvalsAPI_Image_Inputs.md
+  - examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.md
+  - examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md
 - 安全防護與內容審查:
-  - examples/Developing_hallucination_guardrails.md
-  - examples/How_to_use_moderation.md
-  - examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.md
   - examples/How_to_use_guardrails.md
-- 影像理解（Vision）:
-  - examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.md
-  - examples/Parse_PDF_docs_for_RAG.md
-  - examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.md
-  - examples/Tag_caption_images_with_GPT4V.md
-- Prompt 技巧:
-  - examples/Prompt_Caching_201.md
-  - examples/Optimize_Prompts.md
-  - examples/Prompt_migration_guide.md
+  - examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.md
+  - examples/How_to_use_moderation.md
+  - examples/Developing_hallucination_guardrails.md
 - 微調（Fine-tuning）:
-  - examples/Fine_tuning_direct_preference_optimization_guide.md
-  - examples/Reinforcement_Fine_Tuning.md
   - examples/fine-tuned_qa/reinforcement_finetuning_healthbench.md
-- MCP:
-  - examples/deep_research_api/how_to_build_a_deep_research_mcp_server/README.md
-  - examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.md
-  - examples/mcp/mcp_tool_guide.md
-- Token 計算:
-  - examples/third_party/GPT_finetuning_with_wandb.md
-  - examples/third_party/Openai_monitoring_with_wandb_weave.md
-  - examples/How_to_count_tokens_with_tiktoken.md
-- Assistants API:
-  - examples/Creating_slides_with_Assistants_API_and_DALL-E3.md
-  - examples/Assistants_API_overview_python.md
-- 對話格式:
-  - examples/multimodal/Using_GPT4_Vision_With_Function_Calling.md
-  - examples/Summarizing_long_documents.md
-- Deep Research API:
-  - examples/deep_research_api/introduction_to_deep_research_api.md
-  - examples/deep_research_api/introduction_to_deep_research_api_agents.md
-- Sora 影片生成:
-  - examples/sora/sora2_prompting_guide.md
-- 知識圖譜:
-  - examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.md
-- Function calling:
-  - examples/o-series/o3o4-mini_prompting_guide.md
-- 其他:
-  - articles/what_makes_documentation_good.md
+  - examples/Reinforcement_Fine_Tuning.md
+  - examples/Fine_tuning_direct_preference_optimization_guide.md
 - 批次處理:
   - examples/batch_processing.md
 - 延遲優化:
   - examples/Prompt_Caching101.md
-- 軟體開發流程:
-  - examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md
 - 用量 API:
   - examples/completions_usage_api.md
-- 推理模型:
-  - examples/reasoning_function_calls.md
+- 語音與音訊:
+  - examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.md
+  - examples/migrating_from_whisper_to_gpt_transcribe.md
+  - examples/audio/voice_agent_evaluation.md
+  - articles/sop_to_voice_agent_builder.md
+  - examples/Whisper_prompting_guide.md
+  - examples/Whisper_correct_misspelling.md
+  - examples/Whisper_processing_guide.md
+  - examples/voice_solutions/one_way_translation_using_realtime_api.md
+  - examples/agents_sdk/app_assistant_voice_agents.md
+  - examples/Speech_transcription_methods.md
+  - examples/Context_summarization_with_realtime_api.md
+  - examples/Data-intensive-Realtime-apps.md
+- 即時語音（Realtime）:
+  - examples/Realtime_eval_guide.md
+  - examples/voice_solutions/realtime_translation_guide.md
+  - examples/voice_solutions/running_realtime_api_speech_on_esp32_arduino_edge_runtime_elatoai.md
+  - examples/building_w_rt_mini/building_w_rt_mini.md
+  - examples/Realtime_out_of_band_transcription.md
+  - examples/Realtime_prompting_guide.md
+- 影像理解（Vision）:
+  - examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.md
+  - examples/Tag_caption_images_with_GPT4V.md
+  - examples/Parse_PDF_docs_for_RAG.md
+  - examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.md
+- 圖片生成:
+  - examples/multimodal/document_and_multimodal_understanding_tips.md
+  - examples/multimodal/grounded_spatial_reasoning_layouts.md
+  - examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.md
+  - examples/dalle/Image_generations_edits_and_variations_with_DALL-E.md
+  - articles/what_is_new_with_dalle_3.md
+  - examples/Generate_Images_With_GPT_Image.md
+  - examples/Generate_Images_With_High_Input_Fidelity.md
+  - examples/multimodal/image-gen-1.5-prompting_guide.md
+  - examples/multimodal/image-gen-models-prompting-guide.md
+- Sora 影片生成:
+  - examples/sora/sora2_prompting_guide.md
+- Codex:
+  - examples/codex/secure_quality_gitlab.md
+  - examples/codex/code_modernization.md
+  - examples/gpt-5/codex_prompting_guide.md
+  - examples/codex/using_goals_in_codex.md
+  - examples/codex/Build_iterative_repair_loops_with_Codex.md
+  - examples/codex/iterating-development-workflows-with-codex.md
+  - examples/codex/jira-github.md
+  - examples/codex/Autofix-github-actions.md
+  - articles/codex_exec_plans.md
+  - examples/codex/build_code_review_with_codex_sdk.md
+- 軟體開發流程:
+  - examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md
+- 開源模型（gpt-oss）:
+  - articles/gpt-oss/handle-raw-cot.md
+  - articles/gpt-oss/run-locally-ollama.md
+  - articles/openai-harmony.md
+  - articles/gpt-oss/verifying-implementations.md
+  - articles/gpt-oss-safeguard-guide.md
+  - articles/gpt-oss/build-your-own-fact-checker-cerebras.md
+  - articles/gpt-oss/run-nvidia.md
+  - articles/gpt-oss/run-locally-lmstudio.md
+- 要 GPU 的篇（Colab）:
+  - 用 fine-tuning 讓 gpt-oss 的韓文表現更好: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/articles/gpt-oss/fine-tune-korean.ipynb
+  - 在 Google Colab 上跑 gpt-oss-20b: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/articles/gpt-oss/run-colab.ipynb
+  - 用 gpt-oss 和 Hugging Face Transformers 做 fine-tuning: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/articles/gpt-oss/fine-tune-transfomers.ipynb
+  - 用 Transformers 跑 gpt-oss: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/articles/gpt-oss/run-transformers.ipynb
+  - 用 vLLM 跑 gpt-oss: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/articles/gpt-oss/run-vllm.ipynb
+  - 客製化 embedding: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/examples/Customizing_embeddings.ipynb
+  - 交易資料的多類別分類: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/examples/Multiclass_classification_for_transactions.ipynb
+  - 用 DALL·E 和 Segment Anything 建立動態 mask: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/examples/dalle/How_to_create_dynamic_masks_with_DALL-E_and_Segment_Anything.ipynb
+  - Fine-tuned Q&A：收集資料: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/examples/fine-tuned_qa/olympics-1-collect-data.ipynb
+  - 用 CLIP embedding 搭配 GPT-4 Vision 強化多模態 RAG: https://colab.research.google.com/github/ck10100713/agent-tutor/blob/main/notebooks/examples/custom_image_embedding_search.ipynb
+- ChatGPT 應用:
+  - articles/chatgpt-agents-sales-meeting-prep.md
+  - examples/chatgpt/chatgpt_prompt_guide/chatgpt_prompt_guide.md
+  - examples/chatgpt/workspace_agents/workspace-agents-api-trigger.md
+  - examples/chatgpt/sharepoint_site_access/sharepoint_site_access.md
+  - examples/chatgpt/daily_usage_limits/README.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_sql_database.md
+  - examples/chatgpt/gpt_actions_library/gpt_middleware_google_cloud_function.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md
+  - examples/chatgpt/compliance_api/logs_platform.md
+- GPT Actions 串接範例:
+  - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.md
+  - examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.md
+  - examples/chatgpt/gpt_actions_library/.gpt_action_getting_started.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_bigquery.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_outlook.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_salesforce.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_gmail.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_jira.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_notion.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_confluence.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_box.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_zapier.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_redshift.md
+  - examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_google_drive.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_snowflake_direct.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_snowflake_middleware.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_retool_workflow.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_canvas.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_googleads_adzviser.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_github.md
+  - examples/chatgpt/rag-quickstart/pinecone-retool/gpt-action-pinecone-retool-rag.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_workday.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md
+  - examples/chatgpt/gpt_actions_library/gpt_action_trayai_apim.md
+- 合作夥伴範例:
+  - examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.md
+  - examples/partners/AWS/openai_models_with_amazon_bedrock.md
+  - examples/partners/schemaflow_design_guide/schemaflow_cookbook.md
+  - examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.md
+  - examples/partners/AWS/policy_to_review_prior_authorization_agents_sdk_agentcore.md
+  - examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.md
+  - examples/partners/AWS/chatgpt_agents_sdk_aws_agentcore_cookbook/notebooks/chatgpt_agents_sdk_aws_agentcore_cookbook.md
+  - examples/partners/harness_aware_plugin_evals/harness_aware_plugin_evals.md
+  - examples/partners/self_evolving_agents/autonomous_agent_retraining.md
+- 其他:
+  - articles/what_makes_documentation_good.md
