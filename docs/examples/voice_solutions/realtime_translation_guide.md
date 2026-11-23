@@ -1,107 +1,120 @@
 ---
-translated: false
+translated: true
 source: examples/voice_solutions/realtime_translation_guide.mdx
 ---
-
-# Build Live Translation Apps with gpt-realtime-translate
+# 用 gpt-realtime-translate 做即時翻譯應用
 
 > 原文：[examples/voice_solutions/realtime_translation_guide.mdx](https://github.com/openai/openai-cookbook/blob/main/examples/voice_solutions/realtime_translation_guide.mdx)
 
-Cookbook for building browser, phone, and video-call translation experiences with Realtime Translation.
+這份 cookbook 教你用 Realtime Translation 做瀏覽器、電話和視訊通話的翻譯體驗。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 `gpt-realtime-translate` 這個即時語音對語音翻譯模型，在三種既有的音訊路徑上加入翻譯：瀏覽器分頁、Twilio 電話、LiveKit 視訊會議。最後還會講 production 的注意事項、模型限制和 eval 做法。
 
-`gpt-realtime-translate` is a live speech-to-speech translation model for building multilingual audio experiences across broadcasts, streams, calls, and video conversations. It accepts spoken input, automatically detects the source language, and returns translated speech plus text transcripts. Developers only need to specify the target output language.
+## 學完你會
 
-This model has two new features that make it uniquely capable:
+- 用 WebRTC 加短效 client secret，做出把瀏覽器分頁音訊即時翻譯並顯示字幕的 app
+- 用 Twilio Media Streams 加 WebSocket，把電話音訊橋接到翻譯 session，再把譯文語音送回對方
+- 依「來源講者、目標語言」規劃 session 數量，在 LiveKit 視訊會議裡替每位遠端講者加翻譯 sidecar
 
-1. Unlike general-purpose voice models, `gpt-realtime-translate` is **optimized for interpretation**. It was trained on thousands of hours of professional interpreter audio, which helps it remain translation-only and wait for enough context before producing speech. This is especially important across languages with different sentence structures.
-2. It can **process input audio while simultaneously streaming translated audio back**. This allows for truly low latency over continuous speech.
+## 開跑前
 
-We built `gpt-realtime-translate` because live interpretation has different requirements than existing AI voice interactions. General-purpose models can be prompted to translate, but they may still answer questions or follow instructions rather than translate them. They also rely on turn-based interaction, requiring speakers to pause while the model generates the translated audio, which does not work well for fluent interpretation.
+- OpenAI API key（要放在 server 端，瀏覽器只用短效 client secret）
+- Node.js，跑瀏覽器和 Twilio demo 用
+- Twilio 電話號碼，跑電話 demo 才需要
+- LiveKit project 或自架的 LiveKit server，跑視訊 demo 才需要
 
-These have been the main blockers to the high accuracy and low latency required for natural live interpretation, and what we're solving for with `gpt-realtime-translate`.
+`gpt-realtime-translate` 是即時語音對語音翻譯模型，適合做廣播、直播、通話和視訊對話的多語言音訊體驗。它接收語音輸入、自動偵測來源語言，回傳翻譯後的語音加文字逐字稿。開發者只要指定目標輸出語言。
 
-## How to build with Realtime Translation
+這個模型有兩個新特色：
 
-This model is unique in that it is primarily about **empowering humans to be multilingual as opposed to building AI voice agents**. If you're building voice agents, use the new `gpt-realtime-2` model.
+1. 跟通用的語音模型不同，`gpt-realtime-translate` 是**針對口譯優化**的。它用數千小時的專業口譯音訊訓練，所以只做翻譯，而且會等到有足夠的上下文才開口。對句子結構不同的語言來說，這點特別重要。
+2. 它可以**一邊處理輸入音訊，一邊同時串流翻譯後的音訊回來**，所以連續說話時能做到真正的低延遲。
 
-We see two main patterns for `gpt-realtime-translate`. The first is **broadcast-style translation**: livestreams, webinars, lectures, earnings calls, conference keynotes, and other cases where many listeners need translated audio from one primary source to another. The second is **conversational translation**, where two or more participants speak with each other across languages: call centers, video chat, or other phone-based workflows.
+我們做 `gpt-realtime-translate`，是因為即時口譯的需求跟現有的 AI 語音互動不一樣。通用模型可以用 prompt 叫它翻譯，但它還是可能去回答問題或執行指令，而不是把那些話翻出來。它們也依賴輪流對話的方式，講者得停下來等模型生成翻譯語音，這對流暢的口譯行不通。
 
-This cookbook focuses on these patterns: We'll start by covering the basics, then build a web app for **one-way live translation** from any browser tab audio, use Twilio to build translation into **phone calls**, and create a **multilingual group video chat** room with LiveKit. Lastly, we'll cover production best practices, model limitations, and evals.
+這些一直是自然即時口譯要做到高準確度、低延遲的主要障礙，也是 `gpt-realtime-translate` 要解決的事。
 
-## What you will build
+## 怎麼用 Realtime Translation 來建
 
-You will build three ways to add live translation to existing audio paths:
+這個模型的特別之處，在於它主要是**讓人類能說多種語言，而不是做 AI 語音 agent**。如果你要做語音 agent，請用新的 `gpt-realtime-2` 模型。
 
-1. **Browser tab translation:** Capture tab audio with `getDisplayMedia()`, send it to Realtime Translation over WebRTC, and play translated speech plus captions in the browser.
-2. **Phone-call translation:** Use Twilio Media Streams to receive phone audio over WebSockets, bridge it into Realtime Translation, and send translated audio back to the other caller.
-3. **Video-call translation:** Subscribe to remote LiveKit microphone tracks, translate each remote speaker for the listener, and render translated audio and captions locally.
+`gpt-realtime-translate` 主要有兩種用法。第一種是**廣播式翻譯**：直播、webinar、演講、財報電話會議、研討會 keynote，還有其他需要把單一主要來源翻成另一種語言給很多聽眾聽的情況。第二種是**對話式翻譯**，兩位以上的參與者跨語言互相交談：客服中心、視訊聊天，或其他電話類的 workflow。
 
-The complete demo apps live in the accompanying folders:
+這份 cookbook 就聚焦在這些模式：先講基礎，接著做一個能翻譯任何瀏覽器分頁音訊的**單向即時翻譯** web app，用 Twilio 把翻譯加進**電話通話**，再用 LiveKit 做一個**多語言群組視訊聊天**室。最後講 production 的最佳實務、模型限制和 evals。
+
+## 你會做出什麼
+
+你會做出三種在既有音訊路徑上加入即時翻譯的方式：
+
+1. **瀏覽器分頁翻譯：**用 `getDisplayMedia()` 擷取分頁音訊，透過 WebRTC 送到 Realtime Translation，在瀏覽器播放譯文語音和字幕。
+2. **電話通話翻譯：**用 Twilio Media Streams 透過 WebSocket 接收電話音訊，橋接到 Realtime Translation，再把譯文音訊送回給另一位通話者。
+3. **視訊通話翻譯：**訂閱 LiveKit 遠端的麥克風 track，替聽者翻譯每位遠端講者，並在本機呈現譯文音訊和字幕。
+
+完整的 demo app 放在對應的資料夾：
 
 - [Browser tab translation](https://github.com/openai/openai-cookbook/tree/main/examples/voice_solutions/realtime_translation_guide/browser-translation-demo)
 - [Twilio phone translation](https://github.com/openai/openai-cookbook/tree/main/examples/voice_solutions/realtime_translation_guide/twilio-translation-demo)
 - [LiveKit video translation](https://github.com/openai/openai-cookbook/tree/main/examples/voice_solutions/realtime_translation_guide/livekit-translation-demo)
 
-## Prerequisites
+## 前置需求
 
-You need:
+你需要：
 
-- An OpenAI API key.
-- Node.js for the browser and Twilio demos.
-- A Twilio phone number if you want to run the phone-call demo.
-- A LiveKit project or self-hosted LiveKit server if you want to run the video-room demo.
+- 一組 OpenAI API key。
+- Node.js，跑瀏覽器和 Twilio demo 用。
+- 想跑電話 demo 的話，需要一個 Twilio 電話號碼。
+- 想跑視訊會議 demo 的話，需要一個 LiveKit project 或自架的 LiveKit server。
 
-Keep your OpenAI API key on a server. Browser examples should use short-lived client secrets rather than exposing the API key to client code.
+OpenAI API key 要放在 server 上。瀏覽器的範例應該用短效的 client secret，不要把 API key 暴露給 client 端程式碼。
 
-## API & Session Basics
+## API 與 Session 基礎
 
-See our [Live Translation docs](https://developers.openai.com/api/docs/guides/realtime-translation) for full details on setting up WebRTC and WebSocket sessions, client and server events, and configuration options.
+WebRTC 和 WebSocket session 的設定、client 與 server 事件、設定選項的完整說明，見 [Live Translation docs](https://developers.openai.com/api/docs/guides/realtime-translation)。
 
-### Key differences
+### 主要差異
 
-Realtime Translation sessions are configured around the target output language. Set the target language with `session.audio.output.language`. The model currently supports over 70 input languages and 13 output languages. This model does not currently support custom prompting or voice selection parameters.
+Realtime Translation 的 session 是圍繞目標輸出語言來設定的。用 `session.audio.output.language` 設定目標語言。目前模型支援 70 種以上的輸入語言和 13 種輸出語言。這個模型目前不支援自訂 prompt 或選擇聲音的參數。
 
-If you want source-language transcripts alongside translated audio, configure input transcription with `gpt-realtime-whisper`.
+如果你想在譯文語音之外同時拿到來源語言的逐字稿，用 `gpt-realtime-whisper` 設定 input transcription。
 
-Realtime Translation uses **dynamic voice adaptation**. Instead of selecting a fixed output voice, translated speech follows the source speaker's general tone, pitch, and speaking style. In a multi-speaker session, the translated voice will change as new speaker audio comes in.
+Realtime Translation 用的是**動態聲音適應**。它不讓你挑固定的輸出聲音，譯文語音會跟著來源講者大致的語氣、音高和說話風格走。在多位講者的 session 裡，有新的講者音訊進來時，譯文的聲音也會跟著變。
 
-### Session lifecycle
+### Session 生命週期
 
-The session lifecycle is also different from a standard Realtime voice session:
+Session 的生命週期也跟一般的 Realtime 語音 session 不同：
 
-- **Dedicated endpoint:** Connect to `/v1/realtime/translations`.
-- **Continuous audio in**: Stream 24 kHz PCM16 audio with `session.input_audio_buffer.append`, including silence between phrases.
-- **Continuous translation out**: The model emits translated audio in 200 ms PCM16 chunks, plus target-language transcript deltas.
-- **No turn lifecycle**: Translation starts from the incoming audio stream itself. There is no `response.create`, assistant turn, tool call, or conversation state to manage.
+- **專用 endpoint：**連到 `/v1/realtime/translations`。
+- **持續的音訊輸入**：用 `session.input_audio_buffer.append` 串流 24 kHz PCM16 音訊，詞組之間的靜音也要送。
+- **持續的翻譯輸出**：模型以 200 ms 的 PCM16 chunk 送出譯文音訊，外加目標語言的逐字稿 delta。
+- **沒有 turn 生命週期**：翻譯是從進來的音訊串流本身開始。沒有 `response.create`、assistant turn、tool call，也沒有對話狀態要管。
 
-### Protocols
+### 通訊協定
 
-For browser-based apps, use WebRTC. The browser sends microphone, tab, or remote participant audio as a media track and receives translated speech as a remote audio track. Use the `oai-events` data channel for session updates, transcript deltas, and errors. See the Browser Tab Translation or LiveKit sections for implementation examples.
+瀏覽器 app 用 WebRTC。瀏覽器把麥克風、分頁或遠端參與者的音訊當成 media track 送出去，並把譯文語音當成遠端 audio track 收回來。用 `oai-events` data channel 處理 session 更新、逐字稿 delta 和錯誤。實作範例見 Browser Tab Translation 和 LiveKit 兩節。
 
-For backend media pipelines, use WebSockets. This is the right fit when your server already receives raw audio, such as Twilio Media Streams, SIP, broadcast ingest, or a media worker. Send base64 24 kHz PCM16 audio with `session.input_audio_buffer.append`, including silence between spoken phrases. See the Phone Calls with Twilio section for an example.
+後端的媒體 pipeline 用 WebSocket。如果你的 server 已經拿到原始音訊，例如 Twilio Media Streams、SIP、廣播 ingest 或 media worker，這就是適合的選擇。用 `session.input_audio_buffer.append` 送 base64 的 24 kHz PCM16 音訊，講話之間的靜音也要送。範例見 Phone Calls with Twilio 一節。
 
-## Browser tab translation
+## 瀏覽器分頁翻譯
 
-Let's start with a small browser app for one-way live translation. The app captures audio from a browser tab, starts a Realtime Translation session over WebRTC, and plays translated speech with subtitles as the model emits them.
+先從一個小的瀏覽器 app 開始，做單向即時翻譯。這個 app 擷取瀏覽器分頁的音訊，透過 WebRTC 開一個 Realtime Translation session，並在模型輸出時播放譯文語音加字幕。
 
-This pattern is useful when the original experience is already happening in the browser: a public meeting, livestream, conference talk, online class, or video without built-in live dubbing. Instead of rebuilding the player or publishing separate language feeds, the app sits alongside the page and gives listeners translated audio and subtitles in real time.
+這個模式適合原本的體驗就在瀏覽器裡發生的情況：公開會議、直播、研討會演講、線上課程，或沒有內建即時配音的影片。你不用重做播放器，也不用另外發布各語言的串流，app 只要放在頁面旁邊，就能即時給聽眾譯文語音和字幕。
 
 ![Browser tab translation architecture](https://github.com/openai/openai-cookbook/blob/main/images/realtime_translation_guide/browser-tab-translation.png?raw=true)
 
-### How it works
+### 運作方式
 
-1. Your server creates a short-lived translation client secret.
-2. The browser captures tab audio with `getDisplayMedia()`.
-3. The browser creates an `RTCPeerConnection`, adds the captured audio track, and opens an `oai-events` data channel.
-4. The browser posts its SDP offer to the Realtime Translation call endpoint with the client secret.
-5. The model returns translated audio on the remote WebRTC audio track and sends transcript deltas on the data channel.
+1. 你的 server 建立一個短效的 translation client secret。
+2. 瀏覽器用 `getDisplayMedia()` 擷取分頁音訊。
+3. 瀏覽器建立 `RTCPeerConnection`，加入擷取到的 audio track，並開一個 `oai-events` data channel。
+4. 瀏覽器帶著 client secret，把 SDP offer 送到 Realtime Translation 的 call endpoint。
+5. 模型把譯文音訊從遠端 WebRTC audio track 送回來，並在 data channel 上送逐字稿 delta。
 
-### Create the translation client secret
+### 建立 translation client secret
 
-Create the client secret on your server so your standard OpenAI API key never reaches the browser. The model and output language live in the client-secret request.
+在你的 server 上建立 client secret，這樣標準的 OpenAI API key 就不會到瀏覽器那邊。模型和輸出語言都寫在 client-secret 的請求裡。
 
 ```ts
 const TRANSLATION_CLIENT_SECRET_URL =
@@ -134,11 +147,11 @@ app.post("/session", async (req, res) => {
 });
 ```
 
-The complete browser demo validates target language codes before making the OpenAI request and returns only the short-lived client secret to the browser.
+完整的瀏覽器 demo 會在送 OpenAI 請求之前先驗證目標語言代碼，並且只把短效的 client secret 回傳給瀏覽器。
 
-### Capture tab audio
+### 擷取分頁音訊
 
-Use `getDisplayMedia()` so the user explicitly picks the source tab. When supported, request `suppressLocalAudioPlayback` so the listener does not hear the original and translated audio at the same time.
+用 `getDisplayMedia()` 讓使用者明確選擇來源分頁。瀏覽器支援時，要加上 `suppressLocalAudioPlayback`，這樣聽者就不會同時聽到原音和譯音。
 
 ```ts
 async function captureTabAudio() {
@@ -166,9 +179,9 @@ async function captureTabAudio() {
 }
 ```
 
-### Open the WebRTC translation session
+### 開啟 WebRTC 翻譯 session
 
-Use the short-lived client secret to post the browser's SDP offer to the Realtime Translation call endpoint. Audio output arrives as a remote track. Translation and input transcript deltas arrive on the data channel.
+用短效 client secret，把瀏覽器的 SDP offer 送到 Realtime Translation 的 call endpoint。音訊輸出會以遠端 track 的形式到達。翻譯和輸入逐字稿的 delta 則在 data channel 上到達。
 
 ```ts
 const sessionResponse = await fetch("/session", {
@@ -223,7 +236,7 @@ await pc.setRemoteDescription({
 });
 ```
 
-Run the complete demo:
+跑完整的 demo：
 
 ```bash
 cd examples/voice_solutions/realtime_translation_guide/browser-translation-demo
@@ -231,34 +244,34 @@ npm install
 npm run dev
 ```
 
-Then open the local URL, choose a tab with audio, pick the target language, and start translation.
+接著打開本機的 URL，選一個有聲音的分頁，挑目標語言，開始翻譯。
 
-## Phone calls with Twilio
+## 用 Twilio 打電話
 
-Next, let's put `gpt-realtime-translate` into a Twilio call path. Conversational translation works best when each participant has a distinct audio stream. Twilio Media Streams gives your backend a server-side WebSocket for phone audio, and your server handles the format boundary: receiving caller audio, converting it for Realtime Translation, then converting translated audio back into Twilio media messages.
+接下來把 `gpt-realtime-translate` 放進 Twilio 的通話路徑。對話式翻譯在每位參與者都有獨立音訊串流時效果最好。Twilio Media Streams 給你的後端一條伺服器端的 WebSocket 來收電話音訊，格式轉換的邊界由你的 server 處理：接收通話者音訊、轉成 Realtime Translation 要的格式，再把譯文音訊轉回 Twilio 的 media 訊息。
 
 ![Twilio phone translation architecture](https://github.com/openai/openai-cookbook/blob/main/images/realtime_translation_guide/twilio-phone-translation.png?raw=true)
 
-### How it works
+### 運作方式
 
-1. A caller joins and says their preferred output language.
-2. Twilio streams that caller's audio to your backend.
-3. Your backend converts Twilio audio into the audio format expected by Realtime Translation.
-4. For each translation direction, your backend opens a Realtime Translation session with the listener's target language.
-5. As translated audio comes back from OpenAI, your backend converts it back into Twilio media messages.
-6. Twilio plays the translated audio to the other participant.
+1. 通話者加入，並說出他偏好的輸出語言。
+2. Twilio 把該通話者的音訊串流到你的後端。
+3. 你的後端把 Twilio 音訊轉成 Realtime Translation 預期的音訊格式。
+4. 每個翻譯方向，你的後端都用聽者的目標語言開一個 Realtime Translation session。
+5. 譯文音訊從 OpenAI 回來時，你的後端把它轉回 Twilio 的 media 訊息。
+6. Twilio 把譯文音訊播放給另一位參與者。
 
-For a two-person call, this usually means two translation sessions: A-to-B and B-to-A. For larger calls, create translation sessions based on who needs to hear which source speaker in which language rather than mixing all participants into one shared stream.
+兩個人的通話通常需要兩個翻譯 session：A 到 B 和 B 到 A。人數更多的通話，則依「誰要用哪種語言聽哪位來源講者」來建立翻譯 session，而不是把所有參與者混成一條共用的串流。
 
-> **Production note:** `gpt-realtime-translate` may not translate audio that is already in the listener's selected output language. Because this demo does not pass original Twilio audio through to the other participant, same-language speech may lead to silence. Production phone bridges should add original-audio passthrough or mixing. This demo pairs callers one-to-one; additional callers wait for another caller and form a separate pair.
+> **Production 提醒：**`gpt-realtime-translate` 對已經是聽者所選輸出語言的音訊，可能不會翻譯。這個 demo 沒有把 Twilio 的原始音訊直接轉給另一位參與者，所以同語言的發言可能變成一片靜音。Production 的電話橋接應該加上原音直通或混音。這個 demo 是一對一配對通話者，多出來的通話者要等另一位來電，再組成另一對。
 
-### Configure the Twilio webhook
+### 設定 Twilio webhook
 
-Create a public endpoint for your server, then set the Twilio phone number's [Voice webhook](https://www.twilio.com/docs/usage/webhooks/voice-webhooks) to route inbound calls to your application. For local development, expose the server with a tunnel or deploy it somewhere Twilio can reach over port 443. The same host must serve the HTTP webhook routes and the WebSocket Media Stream route.
+為你的 server 建一個公開的 endpoint，然後把 Twilio 電話號碼的 [Voice webhook](https://www.twilio.com/docs/usage/webhooks/voice-webhooks) 設成把來電導到你的應用程式。本機開發時，用 tunnel 把 server 暴露出去，或部署到 Twilio 能透過 443 port 連到的地方。同一個 host 必須同時提供 HTTP webhook 路由和 WebSocket Media Stream 路由。
 
-### Ask the caller for a target language
+### 詢問通話者的目標語言
 
-When a caller dials in, return [TwiML](https://www.twilio.com/docs/voice/twiml) that asks which language they want for the translation.
+通話者撥入時，回傳 [TwiML](https://www.twilio.com/docs/voice/twiml)，問他想要翻譯成哪種語言。
 
 ```xml
 <Response>
@@ -269,9 +282,9 @@ When a caller dials in, return [TwiML](https://www.twilio.com/docs/voice/twiml) 
 </Response>
 ```
 
-### Start the Twilio Media Stream
+### 啟動 Twilio Media Stream
 
-After the caller chooses a supported language, return a bidirectional Media Stream. Pass the selected language as a custom parameter so the WebSocket handler can register the caller with their preferred output language.
+通話者選好支援的語言之後，回傳一個雙向的 Media Stream。把選到的語言當成自訂參數傳進去，讓 WebSocket handler 能用通話者偏好的輸出語言註冊他。
 
 ```xml
 <Response>
@@ -286,10 +299,9 @@ After the caller chooses a supported language, return a bidirectional Media Stre
 </Response>
 ```
 
-### Open a server-side translation session
+### 開啟伺服器端的翻譯 session
 
-Because this integration runs on your backend, you do not need browser client secrets. Open the Translation WebSocket directly from the server with your OpenAI API key and select the model in the URL.
-
+因為這個整合跑在你的後端，所以不需要瀏覽器的 client secret。直接從 server 用你的 OpenAI API key 開 Translation WebSocket，並在 URL 裡指定模型。
 ```ts
 import WebSocket from "ws";
 
@@ -322,9 +334,9 @@ function openTranslationSession({ targetLanguage }) {
 }
 ```
 
-### Bridge Twilio audio into Realtime Translation
+### 把 Twilio 音訊橋接到 Realtime Translation
 
-Twilio sends base64 `audio/x-mulaw` at 8 kHz. Realtime Translation expects base64 little-endian PCM16 at 24 kHz, so the bridge decodes u-law, resamples to 24 kHz, and appends the audio buffer. Keep sending audio continuously, including silence, since translation sessions are not turn-based and do not wait for `response.create`.
+Twilio 送來的是 8 kHz 的 base64 `audio/x-mulaw`。Realtime Translation 預期的是 24 kHz、little-endian 的 base64 PCM16，所以橋接程式要解碼 u-law、重新取樣到 24 kHz，再 append 到音訊 buffer。要持續送音訊，包括靜音，因為翻譯 session 不是輪流制，也不會等 `response.create`。
 
 ```ts
 function sendTwilioAudioToTranslation(realtimeWs, twilioMessage) {
@@ -341,9 +353,9 @@ function sendTwilioAudioToTranslation(realtimeWs, twilioMessage) {
 }
 ```
 
-### Bridge translated audio back to Twilio
+### 把譯文音訊橋接回 Twilio
 
-Realtime Translation emits translated audio as base64 24 kHz PCM16 in `session.output_audio.delta`. Before sending it to Twilio, convert it back to 8 kHz u-law and wrap it in a Twilio media message.
+Realtime Translation 用 `session.output_audio.delta` 送出 base64 的 24 kHz PCM16 譯文音訊。送給 Twilio 之前，要先轉回 8 kHz u-law，再包成 Twilio 的 media 訊息。
 
 ```ts
 function sendTranslationToTwilio(twilioWs, streamSid, realtimeEvent) {
@@ -361,9 +373,9 @@ function sendTranslationToTwilio(twilioWs, streamSid, realtimeEvent) {
 }
 ```
 
-### Pair callers and create one session per direction
+### 配對通話者，每個方向一個 session
 
-Once two callers are waiting, pair them and open two Realtime Translation sessions. Each session's output language is the language selected by the listener, not the speaker.
+兩位通話者都在等待時，就把他們配對並開兩個 Realtime Translation session。每個 session 的輸出語言是聽者選的語言，不是講者的。
 
 ```ts
 function pairCallers(a, b) {
@@ -383,7 +395,7 @@ function pairCallers(a, b) {
 }
 ```
 
-Run the complete demo:
+跑完整的 demo：
 
 ```bash
 cd examples/voice_solutions/realtime_translation_guide/twilio-translation-demo
@@ -391,28 +403,28 @@ npm install
 npm run dev
 ```
 
-Configure your Twilio phone number's Voice webhook to call `POST https://YOUR_PUBLIC_HOST/incoming-call`.
+把你的 Twilio 電話號碼的 Voice webhook 設成呼叫 `POST https://YOUR_PUBLIC_HOST/incoming-call`。
 
-## Video chat with LiveKit
+## 用 LiveKit 做視訊聊天
 
-Finally, let's integrate `gpt-realtime-translate` into a group video conference. Use this pattern when you already have a video room and want to add live interpretation to the conversation. [LiveKit](https://docs.livekit.io/) handles rooms, participants, microphone tracks, camera tracks, device selection, and reconnect behavior. Realtime Translation acts as an interpreter layer attached to the audio tracks that each listener receives.
+最後，把 `gpt-realtime-translate` 整合進群組視訊會議。如果你已經有視訊房間，想在對話裡加上即時口譯，就用這個模式。[LiveKit](https://docs.livekit.io/) 負責房間、參與者、麥克風 track、鏡頭 track、裝置選擇和斷線重連。Realtime Translation 則扮演口譯層，掛在每位聽者收到的音訊 track 上。
 
 ![LiveKit video translation architecture](https://github.com/openai/openai-cookbook/blob/main/images/realtime_translation_guide/livekit-video-translation.png?raw=true)
 
-### How it works
+### 運作方式
 
-1. A participant publishes microphone and camera tracks into the LiveKit room.
-2. A listener subscribes to the remote participant's microphone track through LiveKit.
-3. The listener's browser passes that remote `MediaStreamTrack` into a Realtime Translation sidecar.
-4. The sidecar opens a WebRTC Realtime Translation session for the listener's selected output language.
-5. Realtime Translation returns translated audio as a remote audio track and transcript deltas over the `oai-events` data channel.
-6. The listener's browser plays the translated audio, renders captions, and ducks or mixes the original LiveKit audio locally.
+1. 參與者把麥克風和鏡頭 track 發布到 LiveKit 房間。
+2. 聽者透過 LiveKit 訂閱遠端參與者的麥克風 track。
+3. 聽者的瀏覽器把那條遠端的 `MediaStreamTrack` 交給 Realtime Translation sidecar。
+4. Sidecar 用聽者選的輸出語言，開一個 WebRTC 的 Realtime Translation session。
+5. Realtime Translation 把譯文音訊當成遠端 audio track 回傳，並透過 `oai-events` data channel 送逐字稿 delta。
+6. 聽者的瀏覽器播放譯文音訊、顯示字幕，並在本機把 LiveKit 的原音壓低或混音。
 
-In this demo, translated audio stays local to the listener's browser; it is not published back into the LiveKit room.
+這個 demo 裡，譯文音訊只留在聽者的瀏覽器，不會再發布回 LiveKit 房間。
 
-### Attach translation to a remote participant track
+### 把翻譯掛到遠端參與者的 track
 
-Once the listener joins a LiveKit room, find each remote participant's microphone track and pass the underlying `MediaStreamTrack` into a translation helper.
+聽者加入 LiveKit 房間後，找出每位遠端參與者的麥克風 track，把底層的 `MediaStreamTrack` 交給翻譯 helper。
 
 ```ts
 function getParticipantAudioMediaStreamTrack(participant: Participant) {
@@ -421,9 +433,9 @@ function getParticipantAudioMediaStreamTrack(participant: Participant) {
 }
 ```
 
-### Create one translation sidecar per remote speaker
+### 每位遠端講者一個翻譯 sidecar
 
-A translated participant tile can keep the original LiveKit media path intact while adding translation output beside it. The tile still renders the participant's video and original audio, but it also starts a Realtime Translation sidecar for the participant's microphone track when translation is enabled.
+被翻譯的參與者 tile 可以保留原本的 LiveKit 媒體路徑，同時在旁邊加上翻譯輸出。Tile 還是會呈現參與者的影像和原音，但啟用翻譯時，也會替該參與者的麥克風 track 開一個 Realtime Translation sidecar。
 
 ```tsx
 function TranslatedParticipantTile({
@@ -454,9 +466,9 @@ function TranslatedParticipantTile({
 }
 ```
 
-### Open the translation sidecar
+### 開啟翻譯 sidecar
 
-The helper creates a short-lived Realtime Translation client secret on your server, opens a WebRTC sidecar from the browser, attaches the remote LiveKit microphone `MediaStreamTrack` to an `RTCPeerConnection`, and plays translated audio from the returned remote track.
+這個 helper 會在你的 server 上建立短效的 Realtime Translation client secret，從瀏覽器開一個 WebRTC sidecar，把遠端 LiveKit 麥克風的 `MediaStreamTrack` 接到 `RTCPeerConnection` 上，並從回傳的遠端 track 播放譯文音訊。
 
 ```ts
 async function startTranslationSidecar({ sourceTrack, clientSecret }) {
@@ -501,13 +513,13 @@ async function startTranslationSidecar({ sourceTrack, clientSecret }) {
 }
 ```
 
-### Plan session fanout by listener language
+### 依聽者語言規劃 session 的 fanout
 
-For a two-person room, each participant translates the other participant's microphone track into their own preferred language. For a group room, the number of active translation sessions depends on the number of active remote speakers and the number of distinct target languages listeners need.
+兩個人的房間，每位參與者把對方的麥克風 track 翻成自己偏好的語言。群組房間裡，進行中的翻譯 session 數量取決於正在講話的遠端講者人數，以及聽者需要的不同目標語言數量。
 
-Browser-side translation is the simplest architecture: each listener creates translation sidecars for the remote speakers they want translated. For larger rooms in production, move the work into a LiveKit worker or server-side participant that subscribes to room audio, translates each source speaker once per target language, and republishes translated tracks back into the room.
+瀏覽器端翻譯是最簡單的架構：每位聽者替自己想翻譯的遠端講者各建一個翻譯 sidecar。Production 裡房間比較大時，要把這些工作搬到 LiveKit worker 或伺服器端的參與者，由它訂閱房間音訊，每位來源講者每個目標語言只翻一次，再把譯文 track 發布回房間。
 
-Run the complete demo:
+跑完整的 demo：
 
 ```bash
 cd examples/voice_solutions/realtime_translation_guide/livekit-translation-demo
@@ -515,62 +527,75 @@ pnpm install
 pnpm dev
 ```
 
-Use the same meeting code in two browser windows to join the same LiveKit room. Enable translation in one window, choose the language that listener wants to hear, and speak from the other window.
+在兩個瀏覽器視窗用同一個會議代碼，就會加入同一個 LiveKit 房間。在其中一個視窗開啟翻譯，選那位聽者想聽的語言，然後在另一個視窗說話。
 
-## Production readiness
+## Production 準備度
 
-Before launching Realtime Translation, test the full experience with the same audio, languages, network conditions, and user flows you expect in production. Translation quality is only one part of the experience: latency, speaker routing, captions, reconnect behavior, and audio controls all impact production readiness.
+上線 Realtime Translation 之前，要用你預期在 production 會遇到的音訊、語言、網路條件和使用者流程，完整測過整個體驗。翻譯品質只是體驗的一部分，延遲、講者路由、字幕、重連行為和音訊控制，都會影響 production 準備度。
 
-### Choose the architecture based on the media path
+### 依媒體路徑選擇架構
 
-Use browser WebRTC for client-side media like microphones, tab audio, or LiveKit participant tracks. Use server-side WebSockets for telephony, broadcast ingest, or backend media pipelines.
+麥克風、分頁音訊或 LiveKit 參與者 track 這類 client 端的媒體，用瀏覽器 WebRTC。電話、廣播 ingest 或後端媒體 pipeline，則用伺服器端的 WebSocket。
 
-For multi-party calls, route translation by source speaker and target language. Keep speaker tracks separate when possible, then fan out the translated output to listeners who share the same target language. Mixing all speakers into one stream makes captions, speaker identity, and overlapping speech harder to handle.
+多人通話要依來源講者和目標語言來路由翻譯。盡量讓講者的 track 保持分開，再把譯文輸出 fan out 給目標語言相同的聽者。把所有講者混進一條串流，字幕、講者身份和重疊的發言都會更難處理。
 
-### Test terminology and names directly
+### 直接測試術語和人名
 
-The model does not currently support custom prompts, glossaries, or pronunciation guides. If your use case depends on specific vocabulary, names, legal or medical terms, or other domain language, test those terms directly. The model can sometimes substitute incorrect names or entities while translating, so include these cases in your launch evaluation set.
+模型目前不支援自訂 prompt、詞彙表或發音指南。如果你的使用情境依賴特定詞彙、人名、法律或醫療術語等領域語言，要直接拿這些詞去測。模型翻譯時有時會把名字或實體換成錯的，所以這些案例要放進你的上線評估集。
 
-### Account for mixed-language speech
+### 考慮混語言的發言
 
-Realtime Translation tries not to translate speech that is already in the selected output language. For example, if the output language is Spanish and the speaker switches into Spanish, the model may not produce translated audio for that segment.
+Realtime Translation 會盡量不去翻譯已經是所選輸出語言的發言。例如輸出語言是西班牙文，講者切換成西班牙文時，模型可能就不會替那一段產生譯文音訊。
 
-This matters for mixed-language speech. Spanglish to German should work as expected because both the English and Spanish parts need to be translated into German. Spanglish to English can feel choppier because the model may translate the Spanish parts but stay quiet during the English parts.
+這對混語言的發言很重要。Spanglish（西英混用）翻成德文應該會正常，因為英文和西班牙文的部分都需要翻成德文。Spanglish 翻成英文就可能比較斷斷續續，因為模型可能翻西班牙文的部分，英文的部分則保持沉默。
 
-This behavior is usually helpful, but it can be confusing if your app fully mutes the original audio. If you expect speakers to mix languages, keep the original audio available. A good pattern is to duck the original audio while translated audio is playing rather than fully muting it. You can also offer source-language captions or an original/translated audio mix control.
+這個行為通常有幫助，但如果你的 app 把原音完全靜音，就可能讓人困惑。預期講者會混用語言的話，要保留原音。好的做法是在播放譯文音訊時把原音壓低，而不是完全靜音。你也可以提供來源語言字幕，或是原音/譯音的混音控制。
 
-### Supported languages
+### 支援的語言
 
-Realtime Translation currently supports 13 target output languages: Spanish, Portuguese, French, Japanese, Russian, Chinese, German, Korean, Hindi, Indonesian, Vietnamese, Italian, and English.
+Realtime Translation 目前支援 13 種目標輸出語言：Spanish、Portuguese、French、Japanese、Russian、Chinese、German、Korean、Hindi、Indonesian、Vietnamese、Italian 和 English。
 
-The model currently supports over 70 input languages. It can dynamically detect and translate from Arabic, Afrikaans, Azerbaijani, Belarusian, Bengali, Bosnian, Bulgarian, Catalan, Chinese, Croatian, Czech, Danish, Dutch, Dzongkha, English, Esperanto, Estonian, Basque, Persian / Farsi, Finnish, Filipino, French, Galician, German, Greek, Gujarati, Haitian Creole, Hawaiian, Hebrew, Hindi, Hungarian, Armenian, Indonesian, Italian, Japanese, Javanese, Georgian, Kazakh, Korean, Kurdish, Latin, Latvian, Lithuanian, Macedonian, Malay, Malayalam, Maori, Mongolian, Burmese / Myanmar, Nepali, Norwegian, Nynorsk, Polish, Portuguese, Punjabi, Romanian, Russian, Serbian, Shona, Slovak, Slovenian, Albanian, Spanish, Swahili, Swedish, Tagalog, Telugu, Thai, Turkish, Ukrainian, Uzbek, Vietnamese, Welsh, and Yoruba.
+模型目前支援 70 種以上的輸入語言。它可以動態偵測並翻譯這些語言：Arabic, Afrikaans, Azerbaijani, Belarusian, Bengali, Bosnian, Bulgarian, Catalan, Chinese, Croatian, Czech, Danish, Dutch, Dzongkha, English, Esperanto, Estonian, Basque, Persian / Farsi, Finnish, Filipino, French, Galician, German, Greek, Gujarati, Haitian Creole, Hawaiian, Hebrew, Hindi, Hungarian, Armenian, Indonesian, Italian, Japanese, Javanese, Georgian, Kazakh, Korean, Kurdish, Latin, Latvian, Lithuanian, Macedonian, Malay, Malayalam, Maori, Mongolian, Burmese / Myanmar, Nepali, Norwegian, Nynorsk, Polish, Portuguese, Punjabi, Romanian, Russian, Serbian, Shona, Slovak, Slovenian, Albanian, Spanish, Swahili, Swedish, Tagalog, Telugu, Thai, Turkish, Ukrainian, Uzbek, Vietnamese, Welsh 和 Yoruba。
 
-### Evaluate meaning and latency separately
+### 分開評估語意和延遲
 
-For evaluations, keep the source audio, generated translated audio, generated transcript, and reference text together for each run. You want to be able to answer three questions later:
+做評估時，每次執行都要把來源音訊、生成的譯文音訊、生成的逐字稿和參考文本放在一起。你之後要能回答三個問題：
 
-- What did the model hear?
-- What did it say?
-- What should it have said?
+- 模型聽到了什麼？
+- 它說了什麼？
+- 它應該說什麼？
 
-Use the best human reference you can get, such as human-edited subtitles, a professional interpreter transcript, a call transcript reviewed by a bilingual speaker, or a human dub of the source material. Automatic captions and transcripts are useful for quick smoke tests, but they are weaker as the source of truth.
+用你能拿到的最好的人工參考，例如人工編輯的字幕、專業口譯員的逐字稿、雙語人士審過的通話逐字稿，或來源素材的人工配音。自動字幕和逐字稿適合做快速的 smoke test，但拿來當 source of truth 就比較弱。
 
-If your reference has timestamps, use them. Time-aligned subtitles or transcripts let you evaluate not just translation quality, but also when the translated audio and captions arrived.
+參考文本有時間戳的話就用上。有時間對齊的字幕或逐字稿，不只能評翻譯品質，還能評譯文音訊和字幕什麼時候到。
 
-Score translations by meaning, not exact wording. A good translation may use different words, so evaluate whether the important facts, nuance, entities, numbers, and tone are preserved. Track the full distribution of misses, not just the average score, because a few bad errors can matter a lot in live translation.
+翻譯要依語意打分，不是看字面。好的翻譯可能用不同的字，所以要評估重要的事實、細微語氣、實體、數字和語調有沒有保留。要追蹤失誤的完整分布，而不是只看平均分數，因為在即時翻譯裡，少數嚴重的錯誤影響可能很大。
 
-Traditional text metrics like BLEU can help with quick comparisons, but they are a weak proxy for speech-to-speech quality because they miss semantic similarity.
+BLEU 這類傳統文字指標可以幫忙做快速比較，但拿來代表語音對語音的品質並不好，因為它抓不到語意相似度。
 
-Measure latency separately from quality. Track source speech to translated audio and source speech to displayed captions. Only use segments where the translation is meaningfully aligned when calculating delay; otherwise, bad matches can make timing data misleading.
+延遲要跟品質分開量。追蹤「來源語音到譯文音訊」和「來源語音到字幕顯示」兩段時間。計算延遲時只用翻譯有明確對齊的片段，否則配錯的片段會讓時間資料誤導人。
 
-Finally, review low-scoring examples manually. Listen to the original source, the generated translation, and the reference segment side by side. This is where you catch the issues aggregate scores miss, especially names, numbers, partial translations, tone, and cases where the model skipped or delayed content.
+最後，手動檢視低分的例子。把原始來源、生成的譯文和參考片段並排聽。這是抓出聚合分數看不出來的問題的地方，特別是人名、數字、只翻一半、語調，以及模型跳過或延遲內容的情況。
 
-For a deeper treatment of Realtime evaluation, see the [Realtime eval guide](https://developers.openai.com/cookbook/examples/realtime_eval_guide).
+Realtime 評估的更深入說明，見 [Realtime eval guide](https://developers.openai.com/cookbook/examples/realtime_eval_guide)。
 
-## Conclusion
+## 結論
 
-Realtime Translation changes what it means to build applications for multilingual users. It turns live interpretation into a native part of the product experience, so multilingual conversations can feel less like using a translation tool and more like simply understanding each other in real time. With a dedicated translation session, audio can move through browsers, phone calls, and video rooms as part of the experience itself.
+Realtime Translation 改變了為多語言使用者建 app 的意義。它讓即時口譯成為產品體驗的原生一部分，多語言的對話就比較不像在用翻譯工具，而更像是在即時地互相理解。有了專用的翻譯 session，音訊就能在瀏覽器、電話和視訊房間之間流動，成為體驗本身的一部分。
 
-By making language a smaller barrier, these applications can help more people participate, collaborate, and connect.
+當語言的隔閡變小，這些應用就能幫更多人參與、協作和連結。
 
-<!-- tutor:summary -->
+
+## 重點整理
+
+- `gpt-realtime-translate` 是專門做口譯的模型，只翻譯、不回答，而且邊收音邊輸出，沒有 turn 的概念。想做語音 agent 要用 `gpt-realtime-2`。
+- 協定看媒體路徑選：client 端媒體用 WebRTC 加短效 client secret，後端 pipeline（Twilio、SIP、廣播）用 WebSocket。API key 永遠留在 server。
+- 輸出語言由聽者決定，所以 session 要依「來源講者、目標語言」來規劃，兩人通話就是兩個 session。
+- 模型不會翻已經是目標語言的語音，也不支援自訂 prompt 或詞彙表，所以要保留原音（壓低而不是靜音），並直接測人名和術語。
+- 評估要分開看語意和延遲，用人工參考，並手動檢視低分例子。
+
+## 練習
+
+1. 在瀏覽器 demo 的 client-secret 請求裡，把目標語言從原本的設定改成 `ja`，確認字幕和譯文語音都變成日文。
+2. 在 Twilio 配對的程式裡，想想兩位通話者選同一種語言時會發生什麼事，並試著加一個判斷，同語言時略過翻譯 session，改成直接把原音轉給對方。
+3. 把 LiveKit 範例中原音的處理從完全靜音改成「播放譯音時壓低音量」，並加一個滑桿控制原音/譯音的比例。

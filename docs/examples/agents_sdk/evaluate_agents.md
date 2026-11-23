@@ -1,25 +1,34 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/evaluate_agents.ipynb
 ---
-
-# Evaluating Agents with Langfuse
+# 用 Langfuse 評估 Agent
 
 > 原文：[examples/agents_sdk/evaluate_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/evaluate_agents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Langfuse 追蹤 OpenAI Agents SDK 跑 agent 時的每個內部步驟（trace），再用線上和離線兩種方式評估 agent 表現。線上看成本、延遲、使用者回饋、LLM-as-a-Judge，離線用資料集批次跑 agent 並比較不同設定。
+
+## 學完你會
+- 用 Pydantic Logfire 的 instrumentation，把 OpenAI Agents SDK 的 trace 送到 Langfuse 的 OpenTelemetry backend。
+- 替 trace 加上 `user_id`、`session_id`、tags，收集使用者 thumbs up/down，並設定 LLM-as-a-Judge 自動打分。
+- 把 Hugging Face 的資料集匯入 Langfuse，批次跑 agent，並比較不同 `WebSearchTool` context 大小的正確率。
+
+## 開跑前
+- 需要 Langfuse 帳號和 API keys（cloud 版有免費額度）。
+- 需要 `OPENAI_API_KEY`，範例會呼叫 `gpt-4o` 和 `gpt-4o-mini`。
 
 
-In this cookbook, we will learn how to **monitor the internal steps (traces) of the [OpenAI agent SDK](https://github.com/openai/openai-agents-python)** and **evaluate its performance** using [Langfuse](https://langfuse.com/docs).
+在這份 cookbook 裡，我們要學會如何用 [Langfuse](https://langfuse.com/docs) **監控 [OpenAI agent SDK](https://github.com/openai/openai-agents-python) 的內部步驟（traces）**，並**評估它的表現**。
 
-This guide covers **online** and **offline evaluation** metrics used by teams to bring agents to production fast and reliably. To learn more about evaluation strategies, check out this [blog post](https://langfuse.com/blog/2025-03-04-llm-evaluation-101-best-practices-and-challenges).
+這份指南涵蓋**線上**和**離線評估**指標，是團隊用來快速又穩當地把 agent 推上 production 的做法。想進一步了解評估策略，可以看這篇 [blog post](https://langfuse.com/blog/2025-03-04-llm-evaluation-101-best-practices-and-challenges)。
 
-**Why AI agent Evaluation is important:**
-- Debugging issues when tasks fail or produce suboptimal results
-- Monitoring costs and performance in real-time
-- Improving reliability and safety through continuous feedback
+**為什麼 AI agent 評估很重要：**
+- 任務失敗或結果不理想時，方便 debug
+- 即時監控成本和效能
+- 透過持續的回饋，提高可靠度和安全性
 
 <br>
 
@@ -33,19 +42,19 @@ This guide covers **online** and **offline evaluation** metrics used by teams to
   ></iframe>
 </div>
 
-## Step 0: Install the Required Libraries
+## Step 0：安裝需要的函式庫
 
-Below we install the `openai-agents` library (the [OpenAI Agents SDK](https://github.com/openai/openai-agents-python)), the `pydantic-ai[logfire]` OpenTelemetry instrumentation, `langfuse` and the Hugging Face `datasets` library
+下面安裝 `openai-agents` 函式庫（[OpenAI Agents SDK](https://github.com/openai/openai-agents-python)）、`pydantic-ai[logfire]` 的 OpenTelemetry instrumentation、`langfuse`，以及 Hugging Face 的 `datasets` 函式庫
 
 ```python
 %pip install openai-agents nest_asyncio "pydantic-ai[logfire]" langfuse datasets
 ```
 
-## Step 1: Instrument Your Agent
+## Step 1：替你的 Agent 加上 Instrumentation
 
-In this notebook, we will use [Langfuse](https://langfuse.com/) to trace, debug and evaluate our agent.
+這個 notebook 用 [Langfuse](https://langfuse.com/) 來 trace、debug 和評估我們的 agent。
 
-**Note:** If you are using LlamaIndex or LangGraph, you can find documentation on instrumenting them [here](https://langfuse.com/docs/integrations/llama-index/workflows) and [here](https://langfuse.com/docs/integrations/langchain/example-python-langgraph).
+**注意：** 如果你用的是 LlamaIndex 或 LangGraph，可以在[這裡](https://langfuse.com/docs/integrations/llama-index/workflows)和[這裡](https://langfuse.com/docs/integrations/langchain/example-python-langgraph)找到對應的 instrumentation 文件。
 
 ```python
 import os
@@ -70,7 +79,7 @@ os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = f"Authorization=Basic {LANGFUSE_AUTH}
 os.environ["OPENAI_API_KEY"] = "sk-proj-..."
 ```
 
-With the environment variables set, we can now initialize the Langfuse client. `get_client()` initializes the Langfuse client using the credentials provided in the environment variables.
+環境變數設好後，就可以初始化 Langfuse client。`get_client()` 會用環境變數裡提供的憑證初始化 Langfuse client。
 
 ```python
 from langfuse import get_client
@@ -84,7 +93,7 @@ else:
     print("Authentication failed. Please check your credentials and host.")
 ```
 
-Pydantic Logfire offers an instrumentation for the OpenAI Agents SDK. We use this to send traces to the [Langfuse OpenTelemetry Backend](https://langfuse.com/docs/opentelemetry/get-started).
+Pydantic Logfire 提供了 OpenAI Agents SDK 的 instrumentation。我們用它把 trace 送到 [Langfuse OpenTelemetry Backend](https://langfuse.com/docs/opentelemetry/get-started)。
 
 ```python
 import nest_asyncio
@@ -104,9 +113,9 @@ logfire.configure(
 logfire.instrument_openai_agents()
 ```
 
-## Step 2: Test Your Instrumentation
+## Step 2：測試你的 Instrumentation
 
-Here is a simple Q&A agent. We run it to confirm that the instrumentation is working correctly. If everything is set up correctly, you will see logs/spans in your observability dashboard.
+這是一個簡單的 Q&A agent。我們跑它來確認 instrumentation 有正常運作。如果一切設定正確，你會在 observability dashboard 看到 logs / spans。
 
 ```python
 import asyncio
@@ -154,17 +163,17 @@ langfuse.flush()
     In summary, evaluation is essential to ensure AI agents are effective, ethical, and aligned with user needs and societal norms.
     ```
 
-Check your [Langfuse Traces Dashboard](https://cloud.langfuse.com/traces) to confirm that the spans and logs have been recorded.
+到你的 [Langfuse Traces Dashboard](https://cloud.langfuse.com/traces) 確認 spans 和 logs 都有被記錄下來。
 
-Example trace in Langfuse:
+Langfuse 裡的 trace 範例：
 
 ![Example trace in Langfuse](https://langfuse.com/images/cookbook/integration_openai-agents/first-example-trace.png)
 
 _[Link to the trace](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/0195948781a9f0d78fd5e067154aa508?timestamp=2025-03-14T12%3A01%3A03.401Z&observation=64bcac3cb82d04e9)_
 
-## Step 3: Observe and Evaluate a More Complex Agent
+## Step 3：觀察並評估比較複雜的 Agent
 
-Now that you have confirmed your instrumentation works, let's try a more complex query so we can see how advanced metrics (token usage, latency, costs, etc.) are tracked.
+確認 instrumentation 可以用之後，我們試一個比較複雜的查詢，看看進階指標（token 用量、延遲、成本等）是怎麼被追蹤的。
 
 ```python
 import asyncio
@@ -200,54 +209,54 @@ await loop.create_task(main())
     The weather in Berlin is currently sunny.
     ```
 
-### Trace Structure
+### Trace 結構
 
-Langfuse records a **trace** that contains **spans**, which represent each step of your agent’s logic. Here, the trace contains the overall agent run and sub-spans for:
-- The tool call (get_weather)
-- The LLM calls (Responses API with 'gpt-4o')
+Langfuse 會記錄一個 **trace**，裡面包含 **spans**，每個 span 代表 agent 邏輯的一個步驟。這裡的 trace 包含整個 agent 執行，以及下面幾個子 span：
+- tool call（get_weather）
+- LLM 呼叫（用 'gpt-4o' 的 Responses API）
 
-You can inspect these to see precisely where time is spent, how many tokens are used, and so on:
+你可以檢視這些 span，精確看到時間花在哪、用了多少 token 等等：
 
 ![Trace tree in Langfuse](https://langfuse.com/images/cookbook/integration_openai-agents/trace-tree.png)
 
 _[Link to the trace](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/019594b5b9a27c5d497b13be71e7f255?timestamp=2025-03-14T12%3A51%3A32.386Z&display=preview&observation=6374a3c96baf831d)_
 
-## Online Evaluation
+## 線上評估
 
-Online Evaluation refers to evaluating the agent in a live, real-world environment, i.e. during actual usage in production. This involves monitoring the agent’s performance on real user interactions and analyzing outcomes continuously.
+線上評估指的是在真實的線上環境評估 agent，也就是 production 的實際使用過程。這包括監控 agent 在真實使用者互動上的表現，並持續分析結果。
 
-We have written down a guide on different evaluation techniques [here](https://langfuse.com/blog/2025-03-04-llm-evaluation-101-best-practices-and-challenges).
+我們寫了一份不同評估技術的指南，在[這裡](https://langfuse.com/blog/2025-03-04-llm-evaluation-101-best-practices-and-challenges)。
 
-### Common Metrics to Track in Production
+### Production 常追蹤的指標
 
-1. **Costs** — The instrumentation captures token usage, which you can transform into approximate costs by assigning a price per token.
-2. **Latency** — Observe the time it takes to complete each step, or the entire run.
-3. **User Feedback** — Users can provide direct feedback (thumbs up/down) to help refine or correct the agent.
-4. **LLM-as-a-Judge** — Use a separate LLM to evaluate your agent’s output in near real-time (e.g., checking for toxicity or correctness).
+1. **成本**：instrumentation 會記錄 token 用量，你再給每個 token 設定價格，就能換算成大約的成本。
+2. **延遲**：觀察每個步驟或整次執行完成需要多久。
+3. **使用者回饋**：使用者可以直接給回饋（thumbs up/down），幫助改進或修正 agent。
+4. **LLM-as-a-Judge**：用另一個 LLM 近乎即時地評估 agent 的輸出（例如檢查是否有毒性或正確性）。
 
-Below, we show examples of these metrics.
+下面示範這些指標的例子。
 
-#### 1. Costs
+#### 1. 成本
 
-Below is a screenshot showing usage for `gpt-4o` calls. This is useful to see costly steps and optimize your agent.
+下面的截圖顯示 `gpt-4o` 呼叫的用量。這有助於找出花費高的步驟，優化你的 agent。
 
 ![Costs](https://langfuse.com/images/cookbook/integration_openai-agents/gpt-4o-costs.png)
 
 _[Link to the trace](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/019594b5b9a27c5d497b13be71e7f255?timestamp=2025-03-14T12%3A51%3A32.386Z&display=preview&observation=6374a3c96baf831d)_
 
-#### 2. Latency
+#### 2. 延遲
 
-We can also see how long it took to complete each step. In the example below, the entire run took 7 seconds, which you can break down by step. This helps you identify bottlenecks and optimize your agent.
+我們也能看到每個步驟花了多久。下面的例子裡，整次執行花了 7 秒，可以再依步驟拆解。這有助於找出瓶頸，優化你的 agent。
 
 ![Latency](https://langfuse.com/images/cookbook/integration_openai-agents/openai-agent-latency.png)
 
 _[Link to the trace](https://cloud.langfuse.com/project/cloramnkj0002jz088vzn1ja4/traces/019594b5b9a27c5d497b13be71e7f255?timestamp=2025-03-14T12%3A51%3A32.386Z&display=timeline&observation=b12967a01b3f8bcb)_
 
-#### 3. Additional Attributes
+#### 3. 額外屬性
 
-Langfuse allows you to pass additional attributes to your spans. These can include `user_id`, `tags`, `session_id`, and custom `metadata`. Enriching traces with these details is important for analysis, debugging, and monitoring of your application's behavior across different users or sessions.
+Langfuse 讓你可以替 span 傳入額外屬性，包括 `user_id`、`tags`、`session_id` 和自訂的 `metadata`。用這些資訊豐富 trace，對分析、debug，以及監控應用在不同使用者或 session 的行為很重要。
 
-In this example, we pass a [user_id](https://langfuse.com/docs/tracing-features/users), [session_id](https://langfuse.com/docs/tracing-features/sessions) and [trace_tags](https://langfuse.com/docs/tracing-features/tags) to Langfuse. 
+這個例子裡，我們傳了 [user_id](https://langfuse.com/docs/tracing-features/users)、[session_id](https://langfuse.com/docs/tracing-features/sessions) 和 [trace_tags](https://langfuse.com/docs/tracing-features/tags) 給 Langfuse。 
 
 ```python
 input_query = "Why is AI agent evaluation important?"
@@ -311,11 +320,11 @@ langfuse.flush()
 
 ![Example trace in Langfuse](https://langfuse.com/images/cookbook/integration_openai-agents/openai-agent-sdk-custom-attributes.png)
 
-#### 4. User Feedback
+#### 4. 使用者回饋
 
-If your agent is embedded into a user interface, you can record direct user feedback (like a thumbs-up/down in a chat UI). Below is an example using `IPython.display` for simple feedback mechanism.
+如果你的 agent 嵌在使用者介面裡，可以記錄使用者的直接回饋（例如聊天介面的 thumbs up/down）。下面用 `IPython.display` 做一個簡單的回饋機制。
 
-In the code snippet below, when a user sends a chat message, we capture the OpenTelemetry trace ID. If the user likes/dislikes the last answer, we attach a score to the trace.
+下面的程式碼裡，使用者送出聊天訊息時，我們會抓取 OpenTelemetry trace ID。如果使用者對上一則回答按讚或倒讚，我們就把一個分數附加到那個 trace 上。
 
 ```python
 from agents import Agent, Runner, WebSearchTool
@@ -419,21 +428,21 @@ langfuse.flush()
     Scored the trace in Langfuse
     ```
 
-User feedback is then captured in Langfuse:
+使用者回饋就會被記錄在 Langfuse：
 
 ![User feedback is being captured in Langfuse](https://langfuse.com/images/cookbook/integration_openai-agents/open-ai-agent-user-feedback.png)
 
 #### 5. LLM-as-a-Judge
 
-LLM-as-a-Judge is another way to automatically evaluate your agent's output. You can set up a separate LLM call to gauge the output’s correctness, toxicity, style, or any other criteria you care about.
+LLM-as-a-Judge 是另一種自動評估 agent 輸出的方式。你可以另外設一個 LLM 呼叫，來判斷輸出的正確性、毒性、風格，或任何你在意的標準。
 
-**Workflow**:
-1. You define an **Evaluation Template**, e.g., "Check if the text is toxic."
-2. You set a model that is used as judge-model; in this case `gpt-4o-mini`.
-2. Each time your agent generates output, you pass that output to your "judge" LLM with the template.
-3. The judge LLM responds with a rating or label that you log to your observability tool.
+**流程**：
+1. 你定義一個 **Evaluation Template**，例如「檢查這段文字是否有毒」。
+2. 你指定一個模型當 judge model，這裡用 `gpt-4o-mini`。
+3. 每次 agent 產生輸出，就把輸出連同 template 交給你的「judge」LLM。
+4. judge LLM 回覆一個評分或標籤，你再把它記錄到 observability 工具。
 
-Example from Langfuse:
+Langfuse 的範例：
 
 ![LLM-as-a-Judge Evaluation Template](https://langfuse.com/images/cookbook/integration_openai-agents/evaluator-template.png)
 ![LLM-as-a-Judge Evaluator](https://langfuse.com/images/cookbook/integration_openai-agents/evaluator.png)
@@ -471,28 +480,28 @@ with langfuse.start_as_current_span(name="OpenAI-Agent-Trace") as span:
     14:05:34.738     Responses API with 'gpt-4o'
     ```
 
-You can see that the answer of this example is judged as "not toxic".
+可以看到這個例子的回答被判定為 "not toxic"。
 
 ![LLM-as-a-Judge Evaluation Score](https://langfuse.com/images/cookbook/integration_openai-agents/llm-as-a-judge-score.png)
 
-#### 6. Observability Metrics Overview
+#### 6. Observability 指標總覽
 
-All of these metrics can be visualized together in dashboards. This enables you to quickly see how your agent performs across many sessions and helps you to track quality metrics over time.
+所有這些指標都可以一起放在 dashboard 上視覺化。這樣你能很快看到 agent 在大量 session 中的表現，也能追蹤品質指標隨時間的變化。
 
 ![Observability metrics overview](https://langfuse.com/images/cookbook/integration_openai-agents/dashboard-dark.png)
 
-## Offline Evaluation
+## 離線評估
 
-Online evaluation is essential for live feedback, but you also need **offline evaluation**—systematic checks before or during development. This helps maintain quality and reliability before rolling changes into production.
+線上評估對即時回饋很重要，但你也需要**離線評估**，也就是在開發前或開發中做系統性的檢查。這有助於在改動上線前維持品質和可靠度。
 
-### Dataset Evaluation
+### 資料集評估
 
-In offline evaluation, you typically:
-1. Have a benchmark dataset (with prompt and expected output pairs)
-2. Run your agent on that dataset
-3. Compare outputs to the expected results or use an additional scoring mechanism
+離線評估通常會做這幾件事：
+1. 準備一個 benchmark 資料集（有 prompt 和預期輸出的配對）
+2. 在這個資料集上跑你的 agent
+3. 把輸出跟預期結果比對，或用額外的評分機制
 
-Below, we demonstrate this approach with the [search-dataset](https://huggingface.co/datasets/junzhang1207/search-dataset), which contains questions that can be answered via the web search tool and expected answers.
+下面用 [search-dataset](https://huggingface.co/datasets/junzhang1207/search-dataset) 示範這個做法，它包含可以透過 web search tool 回答的問題，和預期答案。
 
 ```python
 import pandas as pd
@@ -547,7 +556,7 @@ print(df.head())
     4  Jennifer Lopez's appearance in a green Versace...     Technology       News
     ```
 
-Next, we create a dataset entity in Langfuse to track the runs. Then, we add each item from the dataset to the system.
+接著在 Langfuse 建立一個 dataset 實體來追蹤執行，再把資料集裡的每一筆加進系統。
 
 ```python
 from langfuse import get_client
@@ -585,14 +594,14 @@ for idx, row in df.iterrows():
 
 ![Dataset items in Langfuse](https://langfuse.com/images/cookbook/integration_openai-agents/example-dataset.png)
 
-#### Running the Agent on the Dataset
+#### 在資料集上執行 Agent
 
-We define a helper function `run_openai_agent()` that:
-1. Starts a Langfuse span
-2. Runs our agent on the prompt
-3. Records the trace ID in Langfuse
+我們定義一個 helper 函式 `run_openai_agent()`，它會：
+1. 開始一個 Langfuse span
+2. 用 prompt 執行我們的 agent
+3. 把 trace ID 記錄到 Langfuse
 
-Then, we loop over each dataset item, run the agent, and link the trace to the dataset item. We can also attach a quick evaluation score if desired.
+然後我們對資料集每一筆跑一次 agent，並把 trace 連結到該筆資料。需要的話，也可以附加一個快速的評估分數。
 
 ```python
 from agents import Agent, Runner, WebSearchTool
@@ -640,15 +649,25 @@ for item in dataset.items:
         print(item.input)
 ```
 
-You can repeat this process with different:
-- Search tools (e.g. different context sized for OpenAI's `WebSearchTool`)
-- Models (gpt-4o-mini, o1, etc.)
-- Tools (search vs. no search)
+你可以用不同的設定重複這個流程：
+- 搜尋 tool（例如 OpenAI `WebSearchTool` 的不同 context 大小）
+- 模型（gpt-4o-mini、o1 等）
+- Tools（有搜尋 vs. 沒搜尋）
 
-Then compare them side-by-side in Langfuse. In this example, I did run the agent 3 times on the 50 dataset questions. For each run, I used a different setting for the context size of OpenAI's `WebSearchTool`. You can see that an increased context size also slightly increased the answer correctness from `0.89` to `0.92`. The `correct_answer` score is created by an [LLM-as-a-Judge Evaluator](https://langfuse.com/docs/scores/model-based-evals) that is set up to judge the correctness of the question based on the sample answer given in the dataset.
+然後在 Langfuse 並排比較。這個例子裡，我對 50 個資料集問題跑了 3 次 agent。每次執行用不同的 `WebSearchTool` context 大小設定。可以看到 context 加大後，答案正確率也小幅從 `0.89` 提升到 `0.92`。`correct_answer` 分數是由一個 [LLM-as-a-Judge Evaluator](https://langfuse.com/docs/scores/model-based-evals) 產生的，它依資料集裡的範例答案來判斷問題回答得對不對。
 
 ![Dataset run overview](https://langfuse.com/images/cookbook/integration_openai-agents/dataset_runs.png)
 ![Dataset run comparison](https://langfuse.com/images/cookbook/integration_openai-agents/dataset-run-comparison.png)
 
 
-<!-- tutor:summary -->
+## 重點整理
+- trace 是由 span 組成的樹，每個 span 對應 agent 的一個步驟（tool call、LLM 呼叫），用它能看出時間和 token 花在哪。
+- 線上評估看真實使用：成本、延遲、使用者回饋、LLM-as-a-Judge，加上 `user_id`、`session_id`、tags 方便切分分析。
+- 離線評估用有預期答案的資料集，在改動上線前批次跑 agent 並打分。
+- 同一份資料集可以用不同模型、tool、設定重跑並並排比較，才知道改動有沒有真的變好。
+- LLM-as-a-Judge 的分數來自另一個模型，判斷標準要靠 template 定義清楚。
+
+## 練習
+1. 把簡單 Q&A agent 的問題換成別的，到 Langfuse dashboard 找到對應的 trace，確認 span 結構和 token 用量。
+2. 在「額外屬性」的範例裡，改 `user_id`、加一個自訂 tag，再到 Langfuse 用它們篩選 trace。
+3. 在資料集評估中，把 agent 的模型從 `gpt-4o` 換成 `gpt-4o-mini`（或調整 `WebSearchTool` 的 context 大小），重跑 50 題，比較 `correct_answer` 分數的差異。

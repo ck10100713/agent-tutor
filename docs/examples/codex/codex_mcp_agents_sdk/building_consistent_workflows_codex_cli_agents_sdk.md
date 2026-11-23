@@ -1,55 +1,68 @@
 ---
-translated: false
+translated: true
 source: examples/codex/codex_mcp_agents_sdk/building_consistent_workflows_codex_cli_agents_sdk.ipynb
 ---
-
 # Building Consistent Workflows with Codex CLI & Agents SDK
 
 > 原文：[examples/codex/codex_mcp_agents_sdk/building_consistent_workflows_codex_cli_agents_sdk.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/codex/codex_mcp_agents_sdk/building_consistent_workflows_codex_cli_agents_sdk.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+把 Codex CLI 當成 MCP Server，接進 Agents SDK，先做一個 Designer 加 Developer 的單 agent 範例產生小遊戲，再擴充成有 Project Manager 把關的多 agent 團隊。最後用 Traces 看 agent 之間怎麼交接。
+
+## 學完你會
+
+- 用 `codex mcp` 把 Codex CLI 跑成 MCP Server，並知道它提供的 `codex()` 和 `codex-reply()` 兩個 tool 各做什麼。
+- 在 Agents SDK 裡建立 Designer、Developer 這類 agent，讓它們透過 Codex MCP 真的寫出檔案。
+- 做出由 Project Manager 檢查產出檔案才放行的 handoff 流程，並在 Traces dashboard 驗證執行過程。
+
+## 開跑前
+
+- 需要 OpenAI API key，放在目錄下 `.env` 裡的 `OPENAI_API_KEY`。
+- 需要能跑 Python 與 JavaScript 的開發環境（例如 VS Code 或 Cursor）。
+- 多 agent 範例實測大約要跑 11 分鐘，會花 API 費用。
 
 
-> **Archived example — the Codex MCP server is deprecated.** This notebook uses `codex mcp-server`, which the [current documentation](https://learn.chatgpt.com/docs/mcp-server) retains for existing integrations. For new automation and CI jobs, start with the [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk). For a deeper integration that manages authentication, conversation history, approvals, and streamed events, use the [Codex app server](https://learn.chatgpt.com/docs/app-server). These are different interfaces; the code below is not a migration example.
+> **已封存的範例：Codex MCP server 已經棄用。** 這份 notebook 用的是 `codex mcp-server`，[目前的文件](https://learn.chatgpt.com/docs/mcp-server)只為既有整合保留它。新的自動化和 CI job，請從 [Codex SDK](https://learn.chatgpt.com/docs/codex-sdk) 開始。如果需要更深的整合，包含管理認證、對話歷史、approval 和串流事件，請用 [Codex app server](https://learn.chatgpt.com/docs/app-server)。這些是不同的介面，下面的程式碼不是遷移範例。
 
-### Ensuring Repeatable, Traceable, and Scalable Agentic Development
+### 讓 agent 開發可重複、可追蹤、可擴展
 
-## Introduction
-Developers strive for consistency in everything they do. With Codex CLI and the Agents SDK, that consistency can now scale like never before. Whether you’re refactoring a large codebase, rolling out new features, or introducing a new testing framework, Codex integrates seamlessly into CLI, IDE, and cloud workflows to automate and enforce repeatable development patterns.  
+## 簡介
+開發者做什麼事都追求一致性。有了 Codex CLI 和 Agents SDK，這種一致性可以擴展到前所未有的規模。不管你是在重構大型 codebase、推出新功能，還是導入新的測試框架，Codex 都能無縫整合到 CLI、IDE 和雲端工作流程，自動化並落實可重複的開發模式。
 
-In this track, we’ll build both single and multi-agent systems using the Agents SDK, with Codex CLI exposed as an MCP Server. This enables:  
-- **Consistency and Repeatability** by providing each agent a scoped context.  
-- **Scalable Orchestration** to coordinate single and multi-agent systems.  
-- **Observability & Auditability** by reviewing the full agentic stack trace.  
+這個單元會用 Agents SDK 建立單 agent 和多 agent 系統，並把 Codex CLI 當成 MCP Server 提供出來。這樣可以得到：
+- **一致性和可重複性**：給每個 agent 限定範圍的上下文。
+- **可擴展的編排**：協調單 agent 和多 agent 系統。
+- **可觀測性與可稽核性**：檢視完整的 agent stack trace。
 
-## What We’ll Cover
-- Initializing Codex CLI as an MCP Server: How to run Codex as a long-running MCP process.  
-- Building Single-Agent Systems: Using Codex MCP for scoped tasks.  
-- Orchestrating Multi-Agent Workflows: Coordinating multiple specialized agents.  
-- Tracing Agentic Behavior: Leveraging agent traces for visibility and evaluation.  
+## 內容大綱
+- 把 Codex CLI 初始化成 MCP Server：怎麼把 Codex 跑成長時間運作的 MCP process。
+- 建立單 agent 系統：用 Codex MCP 處理限定範圍的任務。
+- 編排多 agent 工作流程：協調多個專職 agent。
+- 追蹤 agent 行為：用 agent trace 取得可見度並做評估。
 
-## Prerequisites & Setup
-Before starting this track, ensure you have the following:  
-- Basic coding familiarity: You should be comfortable with Python and JavaScript.  
-- Developer environment: You’ll need an IDE, like VS Code or Cursor.  
-- OpenAI API key: Create or find your API key in the OpenAI Dashboard.
+## 前置需求與設定
+開始之前，請確認你有：
+- 基本的寫程式經驗：要能自在使用 Python 和 JavaScript。
+- 開發環境：需要一個 IDE，像 VS Code 或 Cursor。
+- OpenAI API key：在 OpenAI Dashboard 建立或找到你的 API key。
 
 
-## Environment Setup
-1. create a `.env` folder in your directory and add your `OPENAI_API_KEY` Key
-2. Install dependencies
+## 環境設定
+1. 在你的目錄建立一個 `.env` 資料夾，並加入你的 `OPENAI_API_KEY`
+2. 安裝依賴套件
 
 
 ```python
 %pip install openai-agents openai ## install dependencies
 ```
 
-## Initializing Codex CLI as an MCP Server
-Here run Codex CLI as an MCP Server inside the Agents SDK. We provide the initialization parameters of `codex mcp`. This command starts Codex CLI as an MCP server and exposes two Codex tools available on the MCP server — `codex()` and `codex-reply()`. These are the underlying tools that the Agents SDK will call when it needs to invoke Codex.  
-- `codex()` is used for creating a conversation.  
-- `codex-reply()` is for continuing a conversation.  
+## 把 Codex CLI 初始化成 MCP Server
+這裡在 Agents SDK 裡把 Codex CLI 跑成 MCP Server。我們提供 `codex mcp` 的初始化參數。這個指令會把 Codex CLI 啟動成 MCP server，並在 MCP server 上提供兩個 Codex tool：`codex()` 和 `codex-reply()`。這是 Agents SDK 需要呼叫 Codex 時，底層會用的 tool。
+- `codex()` 用來建立對話。
+- `codex-reply()` 用來延續對話。
 
 ```python
 import asyncio
@@ -70,14 +83,14 @@ async def main() -> None:
         return
 ```
 
-Also note that we are extending the MCP Server timeout to allow Codex CLI enough time to execute and complete the given task.  
+另外注意，我們把 MCP Server 的 timeout 拉長了，讓 Codex CLI 有足夠時間執行並完成任務。
 
 ---
 
-## Building Single Agent Systems
-Let’s start with a simple example to use our Codex MCP Server. We define two agents:  
-1. **Designer Agent** – brainstorms and creates a small brief for a game.  
-2. **Developer Agent** – implements a simple game according to the Designer’s spec.
+## 建立單 agent 系統
+先從一個簡單的例子開始用我們的 Codex MCP Server。我們定義兩個 agent：
+1. **Designer Agent**：發想並為遊戲寫一份簡短的 brief。
+2. **Developer Agent**：依照 Designer 的規格實作一個簡單的遊戲。
 
 ```python
 developer_agent = Agent(
@@ -103,17 +116,17 @@ designer_agent = Agent(
 result = await Runner.run(designer_agent, "Implement a fun new game!")
 ```
 
-Notice that we are providing the Developer agent with the ability to write files to the project directory without asking the user for permissions.  
+注意，我們讓 Developer agent 可以直接把檔案寫到專案目錄，不用問使用者要權限。
 
-Now run the code and you’ll see an `index.html` file generated. Go ahead and open the file and start playing the game! 
+現在執行程式，你會看到產生一個 `index.html`。打開檔案，開始玩遊戲吧！
 
-Here’s a few screenshots of the game my agentic system created. Yours will be different!
+下面是我的 agent 系統做出來的遊戲截圖。你的會不一樣！
 
-| Example gameplay | Game Over Score |
+| 遊戲進行畫面 | Game Over 分數 |
 | :---: | :---: |
 | <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/game_example_1.png" alt="Example gameplay" width="320" /> | <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/game_example_2.png" alt="Game Over Score" width="320" /> |
 
-Here's the full executable code. Note that it might take a few minutes to run. It will have run successfully if you see an index.html file produced. You might also see some MCP events warnings about format. You can ignore these events.
+這是完整可執行的程式。注意可能要跑幾分鐘。看到產生 index.html 就代表成功。你也可能看到一些關於格式的 MCP event 警告，可以忽略這些 event。
 
 ```python
 import os
@@ -171,27 +184,27 @@ if __name__ == "__main__":
 
 ---
 
-## Orchestrating Multi-Agent Workflows
-For larger workflows, we introduce a team of agents:  
-- **Project Manager**: Breaks down task list, creates requirements, and coordinates work.  
-- **Designer**: Produces UI/UX specifications.  
-- **Frontend Developer**: Implements UI/UX.  
-- **Backend Developer**: Implements APIs and logic.  
-- **Tester**: Validates outputs against acceptance criteria.  
+## 編排多 agent 工作流程
+比較大的流程，我們引入一個 agent 團隊：
+- **Project Manager**：拆解任務清單、建立需求，並協調工作。
+- **Designer**：產出 UI/UX 規格。
+- **Frontend Developer**：實作 UI/UX。
+- **Backend Developer**：實作 API 和邏輯。
+- **Tester**：依驗收條件驗證輸出。
 
-In this example, we intentionally have the Project Manager agent enforce gating logic between each of the specialized downstream agents. This ensures that artifacts exist before handoffs are made. This mirrors real-world enterprise workflows such as JIRA task orchestration, long-chained rollouts, and QA sign-offs.  
+這個範例裡，我們刻意讓 Project Manager agent 在每個下游專職 agent 之間做 gating 邏輯。這樣能確保 handoff 之前，產出物已經存在。這對應真實世界的企業流程，像 JIRA 任務編排、長鏈的 rollout 和 QA 簽核。
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/multi_agent_codex_workflow.png" alt="Multi-Agent Codex Workflow with Codex MCP" style="max-width: 100%; width: 960px;" />
   <br />
-  <em>Multi-agent orchestration with Codex MCP and gated handoffs producing artifacts.</em>
+  <em>使用 Codex MCP 的多 agent 編排，透過 gated handoff 產出 artifact。</em>
 </div>
 
 
-In this structure, each of our agents serves a specialized purpose. The Project Manager is overall responsible for coordinating across all other agents and ensuring the overall task is complete.
+在這個結構裡，每個 agent 都有專門的職責。Project Manager 整體負責協調其他所有 agent，並確保整個任務完成。
 
-## Define the Codex CLI MCP Server
-We set up our MCP Server to initialize Codex CLI just as we did in the single agent example.
+## 定義 Codex CLI MCP Server
+我們設定 MCP Server 來初始化 Codex CLI，做法跟單 agent 範例一樣。
 
 ```python
 async def main() -> None:
@@ -210,8 +223,8 @@ async def main() -> None:
 
 
 
-## Define each specialized agent
-Below we define each of our specialized agents and provide access to our Codex MCP server. Notice that we are also passing the `RECOMMENDED_PROMPT_PREFIX` to each agent that helps the system optimize for handoffs between agents.  
+## 定義各個專職 agent
+下面定義每個專職 agent，並讓它們可以存取我們的 Codex MCP server。注意我們也把 `RECOMMENDED_PROMPT_PREFIX` 傳給每個 agent，它能幫系統優化 agent 之間的 handoff。
 
 ```python
 # Downstream agents are defined first for clarity, then PM references them in handoffs.
@@ -295,10 +308,10 @@ tester_agent = Agent(
 
 
 
-After each role completes its assignment, it will call `transfer_to_project_manager_agent`, and let the Project Manager confirm that the required files exist (or request fixes) before unblocking the next team.  
+每個角色完成工作後，會呼叫 `transfer_to_project_manager_agent`，讓 Project Manager 確認需要的檔案存在（或要求修正），才解鎖下一個團隊。
 
-## Define Project Manager Agent
-The Project Manager is the only agent that receives the initial prompt, creates the planning documents in the project directory, and enforces the gatekeeping logic before every transfer.  
+## 定義 Project Manager Agent
+Project Manager 是唯一收到初始 prompt 的 agent，它會在專案目錄建立規劃文件，並在每次轉交之前執行把關邏輯。
 
 ```python        
 project_manager_agent = Agent(
@@ -348,8 +361,7 @@ mcp_servers=[codex_mcp_server],
 )
 ```
 
-After constructing the Project Manager, the script sets every specialist's handoffs back to the Project
-Manager. This ensures deliverables return for validation before moving on.
+建好 Project Manager 之後，腳本會把每個專職 agent 的 handoff 都設回 Project Manager。這樣能確保交付物先回來驗證，才進行下一步。
 
 ```python
 designer_agent.handoffs = [project_manager_agent]
@@ -357,8 +369,8 @@ frontend_developer_agent.handoffs = [project_manager_agent]
 backend_developer_agent.handoffs = [project_manager_agent]
 tester_agent.handoffs = [project_manager_agent]
 ```
-## Add in your task list
-This is the task that the Project Manager will refine into specific requirements and tasks for the entire system.
+## 加入你的任務清單
+這是 Project Manager 要細化成整個系統具體需求和任務的任務。
 
 ```python
 task_list = """
@@ -383,7 +395,7 @@ Constraints:
 """
 ```
 
-Next, run your system, sit back, and you’ll see the agents go to work and create a game in a few minutes!  We've included the fully executable code below. Once it's finished, you'll notice the creation of the following files directory. Note that this multi-agent orchestration usually took about 11 minutes to fully complete.
+接著執行你的系統，坐著等，就會看到這些 agent 動起來，幾分鐘內做出一個遊戲！下面附了完整可執行的程式。完成後，你會看到產生下面的檔案目錄。注意這個多 agent 編排通常要大約 11 分鐘才會完全跑完。
 
 ```markdown
 root_directory/
@@ -402,7 +414,7 @@ root_directory/
 └── TEST.md
 ```
 
-Start your backend server with `node server.js` and open your `index.html` file to play your game.
+用 `node server.js` 啟動你的 backend server，然後打開 `index.html` 玩你的遊戲。
 
 
 ```python
@@ -592,21 +604,21 @@ if __name__ == "__main__":
 
 ---
 
-## Tracing the agentic behavior using Traces
-As the complexity of your agentic systems grow, it’s important to see how these agents are interacting. We can do this with the Traces dashboard that records:  
-- Prompts, tool calls, and handoffs between agents.  
-- MCP Server calls, Codex CLI calls, execution times, and file writes.  
-- Errors and warnings.  
+## 用 Traces 追蹤 agent 行為
+隨著 agent 系統越來越複雜，看清楚這些 agent 怎麼互動很重要。我們可以用 Traces dashboard，它會記錄：
+- prompt、tool call，以及 agent 之間的 handoff。
+- MCP Server 呼叫、Codex CLI 呼叫、執行時間和檔案寫入。
+- 錯誤和警告。
 
-Let’s take a look at the agent trace for the team of agents above.
+來看上面那個 agent 團隊的 trace。
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/multi_agent_trace.png" alt="Multi-Agent Codex Workflow with Codex MCP" style="max-width: 100%; width: 960px;" />
 </div>
 
-In this Trace, we can confirm that every agent handoff is quarterbacked by our Project Manager Agent who is confirming that specific artifacts exist before handoff to the next agent. Additionally, we can see specific innovations of the Codex MCP Server and generate each output by calling the Responses API. The timeline bars highlight execution durations, making it easy to spot long-running steps and understand how control passes between agents.
+從這份 Trace 可以確認，每次 agent handoff 都由 Project Manager Agent 主導，它會先確認特定產出物存在，才交給下一個 agent。另外，我們也能看到 Codex MCP Server 的具體呼叫，以及每個輸出是呼叫 Responses API 產生的。timeline 的長條標示執行時間，容易找出跑很久的步驟，也看得出控制權怎麼在 agent 之間傳遞。
 
-You can even click into each trace to see the specific details of the prompt, tool calls, and other metadata. Over time you can view this information to further tune, optimize, and track your agentic system performance.
+你甚至可以點進每個 trace，看 prompt、tool call 和其他 metadata 的細節。長期下來，可以用這些資訊進一步調整、優化並追蹤你的 agent 系統表現。
 
 <div align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/multi_agent_trace_details.png" alt="Multi-Agent Trace Details" style="max-width: 100%; width: 960px;" />
@@ -615,30 +627,42 @@ You can even click into each trace to see the specific details of the prompt, to
 
 ---
 
-## Recap of What We Did in This Guide
-In this guide, we walked through the process of building consistent, scalable workflows using Codex CLI and the Agents SDK. Specifically, we covered:  
+## 這份指南做了什麼的回顧
+這份指南走過了用 Codex CLI 和 Agents SDK 建立一致、可擴展工作流程的過程。具體涵蓋了：
 
-- **Codex MCP Server Setup** – How to initialize Codex CLI as an MCP server and make it available as tools for agent interactions.  
-- **Single-Agent Example** – A simple workflow with a Designer Agent and a Developer Agent, where Codex executed scoped tasks deterministically to produce a playable game.  
-- **Multi-Agent Orchestration** – Expanding to a larger workflow with a Project Manager, Designer, Frontend Developer, Backend Developer, and Tester, mirroring complex task orchestration and sign-off processes.  
-- **Traces & Observability** – Using built-in Traces to capture prompts, tool calls, handoffs, execution times, and artifacts, giving full visibility into agentic behavior for debugging, evaluation, and future optimization.  
+- **Codex MCP Server 設定**：怎麼把 Codex CLI 初始化成 MCP server，並讓它成為 agent 互動用的 tool。
+- **單 agent 範例**：一個有 Designer Agent 和 Developer Agent 的簡單流程，Codex 以確定性的方式執行限定範圍的任務，產出可玩的遊戲。
+- **多 agent 編排**：擴充成有 Project Manager、Designer、Frontend Developer、Backend Developer 和 Tester 的大型流程，對應複雜的任務編排和簽核流程。
+- **Traces 與可觀測性**：用內建的 Traces 擷取 prompt、tool call、handoff、執行時間和產出物，讓 agent 行為完全可見，方便 debug、評估和之後的優化。
 
 ---
 
-## Moving Forward: Applying These Lessons
-Now that you’ve seen Codex MCP and the Agents SDK in action, here’s how you can apply the concepts in real projects and extract value:  
+## 往前走：應用這些心得
+看過 Codex MCP 和 Agents SDK 的實際運作，下面是你可以在真實專案裡應用這些概念、取得價值的方式：
 
-### 1. Scale to Real-World Rollouts
-- Apply the same multi-agent orchestration to large code refactors (e.g., 500+ files, framework migrations).  
-- Use Codex MCP’s deterministic execution for long-running, auditable rollouts with traceable progress.  
+### 1. 擴展到真實世界的 rollout
+- 把同樣的多 agent 編排用在大型程式碼重構（例如 500 個以上的檔案、框架遷移）。
+- 用 Codex MCP 的確定性執行，做長時間、可稽核、進度可追蹤的 rollout。
 
-### 2. Accelerate Delivery Without Losing Control
-- Organize teams of specialized agents to parallelize development, while maintaining gating logic for artifact validation.  
-- Reduce turnaround time for new features, testing, or codebase modernization.  
+### 2. 加快交付又不失控
+- 組織專職 agent 團隊來並行開發，同時保留 gating 邏輯來驗證產出物。
+- 縮短新功能、測試或 codebase 現代化的週轉時間。
 
-### 3. Extend and Connect to Your Development Workflows
-- Connect MCP-powered agents with Jira, GitHub, or CI/CD pipelines via webhooks for automated, repeatable development cycles.  
-- Leverage Codex MCP in multi-agent service orchestration: not just codegen, but also documentation, QA, and deployment.  
+### 3. 延伸並接上你的開發工作流程
+- 透過 webhook，把 MCP 驅動的 agent 接上 Jira、GitHub 或 CI/CD pipeline，做自動、可重複的開發循環。
+- 在多 agent 服務編排裡運用 Codex MCP：不只產生程式碼，也包含文件、QA 和部署。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Codex CLI 用 `codex mcp` 跑成 MCP Server 後，對 agent 來說就是兩個 tool：`codex()` 開新對話、`codex-reply()` 延續對話。
+- 給每個 agent 限定的職責和上下文，是結果可重複的關鍵。
+- 多 agent 流程讓專職 agent 做完都 handoff 回 Project Manager，由它檢查產出檔案是否存在才放行，這就是 gating。
+- Traces 能看到 prompt、tool call、handoff 和執行時間，agent 系統變複雜後是 debug 和優化的依據。
+- 這個 MCP server 方式已封存，新專案應改看 Codex SDK 或 Codex app server。
+
+## 練習
+
+1. 在單 agent 範例改 Designer 的 instructions，換成不同類型的遊戲，重跑看 `index.html` 有什麼變化。
+2. 調整 Developer agent 的 instructions，限制它只能修改特定檔案，觀察它的行為，也檢查 MCP Server 的 timeout 設定夠不夠用。
+3. 在多 agent 範例的 Project Manager instructions 加一條新的 gating 規則（例如 Tester 前必須存在某份測試文件），跑完後到 Traces dashboard 確認 handoff 順序有照規則走。

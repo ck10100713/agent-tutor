@@ -1,42 +1,49 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/myscale/Using_MyScale_for_embeddings_search.ipynb
 ---
 
-# Using MyScale for embeddings search
+# 用 MyScale 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/myscale/Using_MyScale_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/myscale/Using_MyScale_for_embeddings_search.ipynb)
 
+## 這篇在做什麼
+走一遍完整流程：載入已經 embed 好的資料，建到 MyScale（建在 ClickHouse 上、結合向量搜尋與 SQL 分析的資料庫），再用 SQL 做向量搜尋。
+
+## 學完你會
+- 連上 MyScale cluster，建立有向量 index（cosine distance）的 SQL 表
+- 把 embedding 資料寫進表，並檢查向量 index 的建置狀態
+- 用 OpenAI 把 query 轉成 embedding，再用 MyScale 做向量搜尋
+
+## 開跑前
+- 一個 MyScale cluster，從 [MyScale Console](https://console.myscale.com) 取得 host、username、password
+- OpenAI API key
+
+這個 notebook 帶你走一個簡單流程：下載資料、做 embedding，再用向量資料庫建索引並搜尋。很多客戶想在安全的環境裡儲存、搜尋自己資料的 embedding，來支援聊天機器人、主題建模等正式環境的用途，這就是常見的需求。
+
+### 什麼是向量資料庫
+
+向量資料庫是專門用來儲存、管理和搜尋 embedding 向量的資料庫。近年 AI 在自然語言、影像辨識等非結構化資料的應用越來越有效，把文字、音訊、影片等非結構化資料編碼成向量給機器學習模型使用的做法也快速成長，向量資料庫就成了企業落地這些應用並擴大規模的有效方案。
+
+### 為什麼要用向量資料庫
+
+向量資料庫讓企業能把這個 repo 裡分享過的許多 embedding 用例（例如問答、聊天機器人、推薦服務），放到安全、可擴展的環境中運行。很多客戶在小規模時 embedding 能解決問題，但效能和安全性擋住了上線，我們認為向量資料庫是解決這件事的關鍵元件。這份指南會走過基本流程：embed 文字資料、存進向量資料庫，並用來做語意搜尋。
 
 
-<!-- tutor:goals -->
-
-
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
-
-### What is a Vector Database
-
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
-
-### Why use a Vector Database
-
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
-
-
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
+### Demo 流程
+流程如下：
+- **設定**：import 套件、設定需要的變數
+- **載入資料**：載入資料集，並用 OpenAI embedding 處理
 - **MyScale**
-    - *Setup*: Set up the MyScale Python client. For more details go [here](https://docs.myscale.com/en/python-client/)
-    - *Index Data*: We'll create a table and index it for __content__.
-    - *Search Data*: Run a few example queries with various goals in mind.
+    - *設定*：設定 MyScale 的 Python client，詳情看[這裡](https://docs.myscale.com/en/python-client/)
+    - *建索引*：建一個表，並為 __content__ 建索引。
+    - *搜尋*：針對不同目標跑幾個範例 query。
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這個 notebook，你應該對向量資料庫怎麼設定和使用有基本概念，之後可以進一步做更複雜、運用 embedding 的用例。
 
-## Setup
+## 設定
 
-Import the required libraries and set the embedding model that we'd like to use.
+import 需要的函式庫，並設定想用的 embedding 模型。
 
 ```python
 # We'll need to install the MyScale client
@@ -69,9 +76,9 @@ warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWa
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared previous to this session.
+這一節載入我們事先準備好、已經 embed 完的資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -159,24 +166,24 @@ article_df.info(show_counts=True)
     ```
 
 ## MyScale
-The next vector database we'll consider is [MyScale](https://myscale.com).
+下一個要看的向量資料庫是 [MyScale](https://myscale.com)。
 
-[MyScale](https://myscale.com) is a database built on Clickhouse that combines vector search and SQL analytics to offer a high-performance, streamlined, and fully managed experience. It's designed to facilitate joint queries and analyses on both structured and vector data, with comprehensive SQL support for all data processing.
+[MyScale](https://myscale.com) 是建在 Clickhouse 上的資料庫，結合向量搜尋和 SQL 分析，提供高效能、簡化且完全託管的體驗。它設計用來對結構化資料和向量資料做聯合查詢與分析，所有資料處理都有完整的 SQL 支援。
 
-Deploy and execute vector search with SQL on your cluster within two minutes by using [MyScale Console](https://console.myscale.com).
+用 [MyScale Console](https://console.myscale.com)，兩分鐘內就能在你的 cluster 部署並用 SQL 執行向量搜尋。
 
-### Connect to MyScale
+### 連線到 MyScale
 
-Follow the [connections details](https://docs.myscale.com/en/cluster-management/) section to retrieve the cluster host, username, and password information from the MyScale console, and use it to create a connection to your cluster as shown below:
+照著[連線資訊](https://docs.myscale.com/en/cluster-management/)那一節，從 MyScale console 取得 cluster 的 host、username 和 password，並如下面所示用它們建立 cluster 的連線：
 
 ```python
 # initialize client
 client = clickhouse_connect.get_client(host='YOUR_CLUSTER_HOST', port=8443, username='YOUR_USERNAME', password='YOUR_CLUSTER_PASSWORD')
 ```
 
-### Index data
+### 資料建索引
 
-We will create an SQL table called `articles` in MyScale to store the embeddings data. The table will include a vector index with a cosine distance metric and a constraint for the length of the embeddings. Use the following code to create and insert data into the articles table:
+我們會在 MyScale 建一個叫 `articles` 的 SQL 表來存 embedding 資料。表裡會有一個 cosine distance 度量的向量 index，以及 embedding 長度的限制。用下面的程式碼建立 articles 表並寫入資料：
 
 ```python
 # create articles table with vector index
@@ -220,7 +227,7 @@ for i in tqdm(range(0, total_records, batch_size)):
       0%|          | 0/250 [00:00<?, ?it/s]
     ```
 
-We need to check the build status of the vector index before proceeding with the search, as it is automatically built in the background.
+向量 index 會在背景自動建置，所以搜尋前要先檢查它的建置狀態。
 
 ```python
 # check count of inserted data
@@ -238,9 +245,9 @@ print(f"index build status: {client.command(get_index_status)}")
     index build status: InProgress
     ```
 
-### Search data
+### 搜尋資料
 
-Once indexed in MyScale, we can perform vector search to find similar content. First, we will use the OpenAI API to generate embeddings for our query. Then, we will perform the vector search using MyScale.
+資料在 MyScale 建好索引後，就能做向量搜尋找出相似內容。我們先用 OpenAI API 為 query 產生 embedding，再用 MyScale 執行向量搜尋。
 
 ```python
 query = "Famous battles in Scottish history"
@@ -280,4 +287,13 @@ for i, r in enumerate(results.named_results()):
     10 William Wallace
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- MyScale 把向量搜尋和 SQL 放在一起，可以對結構化資料和向量資料做聯合查詢。
+- 向量 index 在背景建置，搜尋前要先確認建置完成。
+- 建表時就指定距離度量（這裡是 cosine）和 embedding 長度限制。
+- 搜尋流程仍是 query 轉 embedding，再用 SQL 找最近鄰。
+
+## 練習
+1. 換一句自己的 query 做搜尋，看回來的內容是否相關。
+2. 改搜尋 SQL 的 LIMIT，看回傳筆數變化。
+3. 在搜尋 SQL 加一個 WHERE 條件過濾其他欄位，結合結構化與向量查詢。

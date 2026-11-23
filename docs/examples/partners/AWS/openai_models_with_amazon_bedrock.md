@@ -1,34 +1,31 @@
 ---
-translated: false
+translated: true
 source: examples/partners/AWS/openai_models_with_amazon_bedrock.ipynb
 ---
-
-# Getting Started with OpenAI Models on Amazon Bedrock
+# 在 Amazon Bedrock 上開始使用 OpenAI 模型
 
 > 原文：[examples/partners/AWS/openai_models_with_amazon_bedrock.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/openai_models_with_amazon_bedrock.ipynb)
 
-Learn how to invoke an OpenAI-compatible Amazon Bedrock endpoint using the OpenAI Python SDK, along with equivalent cURL examples, and leverage Responses API capabilities available through Amazon Bedrock.
+學會用 OpenAI Python SDK 呼叫相容 OpenAI 的 Amazon Bedrock endpoint，也有對應的 cURL 範例，並用上 Bedrock 提供的 Responses API 功能。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+OpenAI 模型在 Amazon Bedrock 上提供相容的 Responses API，可以拿來做文字生成、結構化輸出、應用程式 tool、直接送檔案、回應狀態管理、prompt caching 和背景任務。這篇用一個虛構零售商 BrightCart 的客服助理情境，處理延遲和損毀訂單的換貨需求，把每個功能都跑一遍。
 
-OpenAI models on Amazon Bedrock expose an OpenAI-compatible Responses API surface for production workflows that need text generation, structured outputs, application tools, direct file inputs, response state, prompt caching, and background work. This cookbook keeps the examples concrete by building a support-assistant workflow for **BrightCart**, a fictional retailer handling delayed and damaged-order replacement requests.
+一般呼叫用 OpenAI Python SDK，想看實際 request body 時用一個簡單的原始 HTTPS helper。流程從設定和最小的預檢開始，接著是回應生命週期、模型參數、結構化 JSON、tool、檔案輸入、狀態管理、caching、背景處理、context 壓縮、營運檢查，最後清理。
 
-You will use the OpenAI Python SDK for normal application calls and a small raw HTTPS helper when it is useful to inspect the exact request body. The flow starts with setup and a minimal preflight, then layers on response lifecycle, model controls, structured JSON, application tools, file input, state management, caching, background processing, context compaction, operations checks, and cleanup.
+## 學完你會
 
-You will learn how to:
+1. 用 Bedrock 專屬的環境變數設定 Bedrock 上的 OpenAI 模型，並驗證 Responses endpoint、檢查 response schema、usage 和統一格式的錯誤。
+2. 用原始 HTTPS 和 OpenAI SDK 送文字請求，產生符合 schema 的 JSON，也會用比較寬鬆的 JSON mode。
+3. 寫出 function tool、平行 tool call 和 custom text tool 的呼叫迴圈，送 PDF 當輸入，並用 `previous_response_id` 或自己重組歷史來延續對話，再搭配 prompt caching 和背景模式。
 
-1. Configure a Bedrock-hosted OpenAI model with Bedrock-specific environment variables.
-2. Verify the Responses endpoint and inspect response schema, usage metadata, and normalized errors.
-3. Send text requests with both raw HTTPS and the OpenAI SDK.
-4. Generate schema-constrained JSON and lighter JSON-mode handoffs.
-5. Call application-managed function tools, parallel tools, and custom text tools.
-6. Send a direct PDF input, continue stateful and stateless conversations, and carry encrypted reasoning context.
-7. Use prompt caching, background mode, compaction, operational smoke checks, and stored-response cleanup.
+## 開跑前
 
-Prerequisites: a bearer token for OpenAI models on Amazon Bedrock, Python 3.9 or newer, and network access to your Bedrock OpenAI-compatible endpoint.
+- 需要 Bedrock 上 OpenAI 模型的 bearer token（環境變數 `AWS_BEARER_TOKEN_BEDROCK`）、Python 3.9 以上，以及能連到 Bedrock OpenAI 相容 endpoint 的網路。
+- 這些呼叫會用到 Bedrock 的付費資源。
 
-This guide runs `openai.gpt-5.4` in `us-west-2` by default. To use another supported pairing, change `AWS_REGION`, `BEDROCK_MODEL`, and `BEDROCK_BASE_URL` together before running the setup cells.
+預設跑 `us-west-2` 的 `openai.gpt-5.4`。要換別的組合，執行設定 cell 之前，把 `AWS_REGION`、`BEDROCK_MODEL`、`BEDROCK_BASE_URL` 一起改掉。
 
 | AWS Region | Supported model IDs |
 | --- | --- |
@@ -36,11 +33,11 @@ This guide runs `openai.gpt-5.4` in `us-west-2` by default. To use another suppo
 | `us-east-2` | `openai.gpt-5.5`, `openai.gpt-5.4` |
 
 
-## 1. Configure Amazon Bedrock
+## 1. 設定 Amazon Bedrock
 
-This section prepares the notebook runtime. It installs the small Python stack, reads Bedrock-specific environment variables, creates both a raw HTTPS session and an OpenAI SDK client, discovers model metadata when the endpoint provides it, and defines shared helpers used by later examples.
+這一節準備執行環境：安裝需要的 Python 套件、讀取 Bedrock 專用的環境變數、建立原始 HTTPS session 和 OpenAI SDK client、endpoint 有提供時就查詢模型資訊，並定義後面都會用到的 helper。
 
-Set these environment variables before running the notebook. The default pairing is `us-west-2` with `openai.gpt-5.4`.
+先設好這些環境變數，預設組合是 `us-west-2` 配 `openai.gpt-5.4`。
 
 ```bash
 export AWS_BEARER_TOKEN_BEDROCK="YOUR_BEDROCK_BEARER_TOKEN"
@@ -49,12 +46,12 @@ export BEDROCK_MODEL="openai.gpt-5.4"
 export BEDROCK_BASE_URL="https://bedrock-mantle.${AWS_REGION}.api.aws/openai/v1"
 ```
 
-The bearer token is read from `AWS_BEARER_TOKEN_BEDROCK`. If it is missing, the setup cell asks for it with a password-style prompt and does not print it.
+bearer token 從 `AWS_BEARER_TOKEN_BEDROCK` 讀取。沒設的話，設定 cell 會用密碼輸入的方式問你，而且不會把它印出來。
 
 
-### 1.1 Install Dependencies
+### 1.1 安裝依賴套件
 
-Install the packages used by the notebook. The OpenAI SDK is used for the application examples, `requests` is used for raw HTTPS calls to the Responses endpoint, and `pandas` plus IPython display helpers keep request and response summaries readable in the Cookbook renderer. Inspect the cell output only to confirm the packages installed or were already present.
+安裝會用到的套件。OpenAI SDK 用在應用範例，`requests` 用來對 Responses endpoint 發原始 HTTPS 請求，`pandas` 和 IPython 的顯示 helper 讓 request 和 response 的摘要比較好讀。看輸出只要確認套件裝好了或已經存在就行。
 
 
 ```python
@@ -72,9 +69,9 @@ print("Dependencies installed or already available: openai, requests, pandas, ip
     Dependencies installed or already available: openai, requests, pandas, ipython
     ```
 
-### 1.2 Import Libraries and Defaults
+### 1.2 匯入函式庫和預設值
 
-Import the standard libraries, SDK, HTTP client, and display utilities used throughout the notebook. This cell also sets the default Bedrock region and model used when environment variables are not already set. Inspect the printed defaults to confirm the notebook will start from `us-west-2` and `openai.gpt-5.4` unless you override them.
+匯入全篇會用到的標準函式庫、SDK、HTTP client 和顯示工具。這個 cell 也設定了環境變數沒設時的預設 Bedrock region 和模型。看印出來的預設值，確認沒有覆蓋的話會從 `us-west-2` 和 `openai.gpt-5.4` 開始。
 
 
 ```python
@@ -174,9 +171,9 @@ print("Default model:", DEFAULT_MODEL)
     Default model: openai.gpt-5.4
     ```
 
-### 1.3 Configure Bedrock Credentials and Clients
+### 1.3 設定 Bedrock 憑證和 client
 
-Read Bedrock configuration from the environment and construct clients. `BEDROCK_BASE_URL` is normalized once, the raw `requests.Session` gets the bearer token in its headers, and the OpenAI SDK client is created explicitly with the same token and base URL. Inspect the rendered table to confirm the selected region, model, endpoint, SDK client configuration, and stored-response cleanup behavior before making live calls.
+從環境變數讀取 Bedrock 設定並建立 client。`BEDROCK_BASE_URL` 會先正規化一次，原始的 `requests.Session` 把 bearer token 放進 headers，OpenAI SDK client 則明確帶入同一組 token 和 base URL。正式呼叫之前，看一下表格，確認選到的 region、模型、endpoint、SDK client 設定，以及儲存回應的清理行為。
 
 
 ```python
@@ -261,9 +258,9 @@ display_wrapped_table(pd.DataFrame(config_rows), max_col_width_px=680)
     <IPython.core.display.HTML object>
     ```
 
-### 1.4 Discover Available Models
+### 1.4 查詢可用模型
 
-Discover available models when the selected endpoint exposes model-list metadata, then choose the model for the rest of the notebook. If `BEDROCK_MODEL` is set, the notebook uses that value; otherwise it prefers `openai.gpt-5.4`. The model-list call is optional because some compatible endpoints may allow inference even when model metadata is unavailable. Inspect the selected model and any returned catalog rows.
+endpoint 有提供模型列表時就去查，然後選定後面要用的模型。有設 `BEDROCK_MODEL` 就用它，沒有的話優先選 `openai.gpt-5.4`。查模型列表是選用的，因為有些相容 endpoint 就算查不到模型資訊也能做推論。看一下選到的模型和回傳的目錄資料。
 
 
 ```python
@@ -341,9 +338,9 @@ else:
     Continuing with: openai.gpt-5.4
     ```
 
-### 1.5 Helper Functions Setup
+### 1.5 設定 helper 函式
 
-Define shared helpers for the workflow. These helpers render request shapes, normalize API errors, send raw HTTPS requests, wrap SDK calls with optional retries, extract `output_text`, summarize token usage, track stored response IDs, and display compact tables. The examples below stay focused on each API concept while the helpers handle repeated mechanics. Inspect this cell if you want to understand how response text, usage, errors, and cleanup are processed.
+定義整個流程共用的 helper：顯示 request 的樣子、統一 API 錯誤格式、發原始 HTTPS 請求、包裝 SDK 呼叫（可選擇重試）、取出 `output_text`、整理 token 用量、記錄儲存下來的 response ID，以及顯示精簡表格。後面的範例就能專心講各個 API 概念，重複的雜事交給 helper。想知道回應文字、用量、錯誤和清理怎麼處理，就看這個 cell。
 
 
 ```python
@@ -741,9 +738,9 @@ print("Helpers ready.")
     Helpers ready.
     ```
 
-### 1.6 Verify the Endpoint
+### 1.6 驗證 endpoint
 
-The first live call is intentionally tiny. It sends a minimal Responses request with `store=false` and a short text instruction so you can catch setup issues before running richer examples. Inspect the request shape, returned text, status, model, output item types, and token usage.
+第一次實際呼叫刻意做得很小。它送出一個最小的 Responses 請求，帶 `store=false` 和一句簡短的文字指示，讓你在跑複雜範例前先抓出設定問題。看 request 的樣子、回傳文字、status、model、output item 類型和 token 用量。
 
 
 
@@ -799,9 +796,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 1.7 Normalize API Errors
+### 1.7 統一 API 錯誤格式
 
-Production integrations need consistent error logging for status codes, retry decisions, request IDs, and response bodies. This cell documents the normalized error shape used by the notebook without intentionally making a failing request. Later cells use the same shape when a live call fails or returns a non-2xx status.
+正式環境的整合需要一致的錯誤紀錄，包含 status code、要不要重試、request ID 和 response body。這個 cell 說明這篇使用的統一錯誤格式，不會故意發出失敗的請求。後面的 cell 在呼叫失敗或回傳非 2xx 時，都用同一種格式。
 
 
 ```python
@@ -821,14 +818,14 @@ print_json(error_taxonomy_example)
     <IPython.core.display.HTML object>
     ```
 
-## 2. Make Your First Responses Requests
+## 2. 送出第一批 Responses 請求
 
-This section shows the Responses request surface from two angles. First, you inspect and run a raw HTTPS request so the endpoint, headers, and JSON body are visible. Then you use the OpenAI SDK for the same kind of application workflow, which is the path most production code should prefer once configuration is correct.
+這一節從兩個角度看 Responses 的請求。先檢視並執行一個原始 HTTPS 請求，讓 endpoint、headers 和 JSON body 都看得到。再用 OpenAI SDK 做同類型的應用流程，設定正確之後，正式程式碼多半該走這條路。
 
 
-### 2.1 Inspect the Raw HTTPS Request Shape
+### 2.1 檢視原始 HTTPS 請求的格式
 
-Build a minimal Responses payload for a BrightCart support-assistant reply and render a copy-pasteable `curl` command. The command references `$AWS_BEARER_TOKEN_BEDROCK` instead of embedding a token, and the notebook does not execute shell commands that put bearer tokens in process arguments. Inspect the `model`, `input`, `max_output_tokens`, and `store` fields.
+為 BrightCart 客服助理的回覆組一個最小的 Responses payload，並產生可以直接複製貼上的 `curl` 指令。指令裡用 `$AWS_BEARER_TOKEN_BEDROCK`，不會把 token 寫死，notebook 也不會執行把 bearer token 放在 process 參數裡的 shell 指令。看一下 `model`、`input`、`max_output_tokens` 和 `store` 這幾個欄位。
 
 
 ```python
@@ -863,9 +860,9 @@ print_key_takeaway('The curl command shows the raw HTTPS shape behind the SDK ca
     <IPython.core.display.HTML object>
     ```
 
-### 2.2 Send the Raw HTTPS Request
+### 2.2 送出原始 HTTPS 請求
 
-Send the same request through the raw HTTPS helper. This cell demonstrates the wire-level `POST /responses` path and extracts text from the response body by walking output items. Inspect the returned response ID, model, status, and text output to understand the schema your application receives.
+用原始 HTTPS helper 送出同一個請求。這個 cell 示範底層的 `POST /responses` 路徑，並且走訪 output item 從 response body 取出文字。看回傳的 response ID、model、status 和文字輸出，了解你的應用會收到什麼 schema。
 
 
 ```python
@@ -915,11 +912,11 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 2.3 Use the OpenAI SDK
+### 2.3 使用 OpenAI SDK
 
-The OpenAI SDK can call OpenAI-compatible APIs when you pass the Bedrock bearer token and base URL explicitly. This cell sends a text-generation request through `client.responses.create`, sets `reasoning.effort` to `low`, and prints a compact response summary. Inspect the output text, token counts, output item types, and any reasoning-token metadata returned by the endpoint.
+只要明確傳入 Bedrock 的 bearer token 和 base URL，OpenAI SDK 就能呼叫相容 OpenAI 的 API。這個 cell 透過 `client.responses.create` 送文字生成請求，把 `reasoning.effort` 設成 `low`，並印出精簡的回應摘要。看輸出文字、token 數、output item 類型，還有 endpoint 回傳的 reasoning token 資訊。
 
-Official docs: [Reasoning models](https://developers.openai.com/api/docs/guides/reasoning) describes using reasoning effort with the Responses API.
+官方文件：[Reasoning models](https://developers.openai.com/api/docs/guides/reasoning) 說明了在 Responses API 裡怎麼用 reasoning effort。
 
 
 ```python
@@ -973,9 +970,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 2.4 Create and Retrieve a Response
+### 2.4 建立並取回 response
 
-The Responses API can store a response and retrieve it later by ID. This pattern is useful for audit trails, debugging, and follow-up turns that reference prior context. This cell creates a stored response, tracks the ID for cleanup, retrieves it, and compares the retrieved text and usage metadata.
+Responses API 可以把回應存起來，之後用 ID 取回。這個做法適合稽核紀錄、除錯，以及引用之前 context 的後續回合。這個 cell 建立一個會儲存的 response，記下 ID 以便之後清理，再把它取回來，比對取回的文字和 usage 資訊。
 
 
 
@@ -1045,11 +1042,11 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 2.5 Add Reasoning Effort, Service Tier, and Prompt Cache Parameters
+### 2.5 加上 reasoning effort、service tier 和 prompt cache 參數
 
-Model controls travel alongside the normal input. This request combines `reasoning.effort`, `service_tier`, `prompt_cache_key`, and `prompt_cache_retention` so you can see how operational controls and prompt-cache metadata appear in the same response schema as ordinary text output. Inspect `service_tier`, `cached_input_tokens`, reasoning token metadata, and total token usage.
+模型控制參數跟一般 input 一起送出。這個請求同時帶了 `reasoning.effort`、`service_tier`、`prompt_cache_key` 和 `prompt_cache_retention`，你可以看到這些營運控制和 prompt cache 資訊，跟一般文字輸出出現在同一個 response schema 裡。看一下 `service_tier`、`cached_input_tokens`、reasoning token 資訊和總 token 用量。
 
-Note: This notebook uses `PROMPT_CACHE_RETENTION` instead of hard-coding `prompt_cache_retention`. The value is `in_memory` for `openai.gpt-5.4`, and `24h` for `openai.gpt-5.5` and later models because those models require extended prompt caching.
+注意：這份 notebook 用 `PROMPT_CACHE_RETENTION`，不直接寫死 `prompt_cache_retention`。`openai.gpt-5.4` 的值是 `in_memory`，`openai.gpt-5.5` 之後的模型是 `24h`，因為那些模型要求使用延長版的 prompt caching。
 
 
 ```python
@@ -1112,16 +1109,16 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 3. Generate Structured JSON
+## 3. 產生結構化 JSON
 
-Structured JSON turns model output into data that application code can parse, validate, and route. This section compares strict schema-constrained output with lighter JSON mode. Use Structured Outputs when your application needs a contract; use JSON mode when valid JSON is enough but the exact schema can remain flexible.
-
-
+結構化 JSON 讓模型輸出變成應用程式能解析、驗證和分流的資料。這一節比較嚴格受 schema 約束的輸出和比較寬鬆的 JSON mode。應用需要明確的格式約定時用 Structured Outputs，只要是合法 JSON、schema 可以彈性一點時用 JSON mode。
 
 
-### 3.1 Define the Structured Output Schema
 
-Define the support-ticket schema used by the next live request. The schema lists the exact fields the application expects, including category, priority, sentiment, summary, required actions, and escalation status. Inspect the request shape to see how `text.format.type="json_schema"`, `strict=true`, and the JSON Schema are attached to a normal Responses request.
+
+### 3.1 定義結構化輸出的 schema
+
+定義下一個實際請求會用的客服工單 schema。schema 列出應用預期的欄位，包含類別、優先級、情緒、摘要、需要的動作和是否升級處理。看 request 的樣子，了解 `text.format.type="json_schema"`、`strict=true` 和 JSON Schema 怎麼附加到一般的 Responses 請求上。
 
 
 ```python
@@ -1171,9 +1168,9 @@ print_key_takeaway('The schema is part of the request and defines the fields the
     <IPython.core.display.HTML object>
     ```
 
-### 3.2 Validate Schema-Constrained Output
+### 3.2 驗證受 schema 約束的輸出
 
-Call the model with the schema from the previous cell, parse the returned text as JSON, and validate important fields in Python. The API request asks for schema adherence, while application-side validation still checks that the returned object is suitable for downstream routing. Inspect the parsed object and the response summary.
+用上一個 cell 的 schema 呼叫模型，把回傳文字解析成 JSON，並在 Python 裡驗證重要欄位。API 請求要求模型遵守 schema，但應用端還是要檢查回傳的物件適不適合往下游分流。看解析後的物件和 response 摘要。
 
 
 ```python
@@ -1235,9 +1232,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 3.3 Use JSON Mode
+### 3.3 使用 JSON mode
 
-JSON mode asks the model to return a valid JSON object without enforcing a strict schema. This is useful for lightweight handoffs where you still want parsable output but can tolerate a looser contract. This cell requests a support handoff object, parses it, and checks for the expected keys.
+JSON mode 只要求模型回傳合法的 JSON 物件，不強制嚴格的 schema。適合輕量的交接，你還是要可解析的輸出，但格式約定可以鬆一點。這個 cell 請求一個客服交接物件、解析它，並檢查預期的 key 在不在。
 
 
 ```python
@@ -1294,9 +1291,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 3.4 Control Verbosity from Reasoning Effort
+### 3.4 用 verbosity 控制輸出的詳細程度
 
-Verbosity controls help tune the shape of generated prose, while reasoning effort controls how much reasoning work the model spends before answering. The notebook demonstrates `reasoning.effort` in the SDK and model-control cells above; this cell focuses on `text.verbosity` by sending compact and detailed versions of the same policy topic. Inspect the side-by-side text and token summaries to compare style and usage.
+verbosity 控制產生文字的長短和風格，reasoning effort 則控制模型回答前花多少推理功夫。前面的 SDK 和模型控制 cell 已經示範過 `reasoning.effort`，這個 cell 專門看 `text.verbosity`，對同一個政策主題分別送出精簡版和詳細版。並排看文字和 token 摘要，比較風格和用量。
 
 
 ```python
@@ -1372,16 +1369,16 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 4. Add Application-Managed Tools
+## 4. 加入由應用程式管理的 tool
 
-Function calling lets the model ask your application for data or actions, but your code remains responsible for executing tools and returning results. This section defines local BrightCart tools, then walks through a single function call, multiple independent calls, and a custom text tool. The examples keep tool outputs deterministic so the request loop is easy to inspect.
-
-
+Function calling 讓模型向你的應用要資料或要求執行動作，但實際執行 tool 和回傳結果的是你的程式。這一節先定義本地的 BrightCart tool，再依序走過單一 function call、多個獨立的呼叫，以及 custom text tool。範例的 tool 輸出是固定的，這樣請求迴圈比較好看清楚。
 
 
-### 4.1 Define Local Tool Schemas and Functions
 
-Define local sample tools for order status and customer profile lookups. The tool schemas describe the names, descriptions, argument shapes, required fields, and strictness that the model can use when deciding what to call. The Python functions stand in for application systems such as order management, CRM, or policy services.
+
+### 4.1 定義本地 tool 的 schema 和函式
+
+定義查訂單狀態和客戶資料的本地範例 tool。tool schema 描述名稱、說明、參數格式、必填欄位和是否 strict，模型就靠這些決定要呼叫什麼。Python 函式則代表訂單管理、CRM 或政策服務這類應用系統。
 
 
 ```python
@@ -1488,9 +1485,8 @@ print_json(get_order_status("ORDER-8831"))
     <IPython.core.display.HTML object>
     ```
 
-### 4.2 Call a Function Tool
-
-This cell runs the basic function-calling loop. The first request gives the model an order-status tool and asks it to choose arguments. The application parses the returned `function_call`, runs the local Python function, sends a `function_call_output` item back, and asks for the final grounded answer. Inspect the tool arguments, local tool output, final model text, and response metadata.
+### 4.2 呼叫 function tool
+這個 cell 跑基本的 function calling 迴圈。第一個請求給模型一個查訂單狀態的 tool，讓它自己挑參數。應用解析回傳的 `function_call`，執行本地 Python 函式，送回一個 `function_call_output` item，再要求模型給出有根據的最終回答。看 tool 參數、本地 tool 輸出、最終模型文字和 response 資訊。
 
 
 ```python
@@ -1603,9 +1599,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 4.3 Handle Multiple Tool Calls
+### 4.3 處理多個 tool call
 
-Parallel tool calls let the model request more than one independent lookup from a single turn. This cell allows two order-status lookups, executes each local function call, and sends both outputs back before asking the model to compare the active shipping issues. Inspect the returned order IDs and final answer to confirm that application data, not model memory, grounds the response.
+平行 tool call 讓模型在同一個回合要求多個彼此獨立的查詢。這個 cell 允許兩筆訂單狀態查詢，執行每個本地 function call，把兩份輸出都送回去，再請模型比較目前的出貨問題。看回傳的訂單 ID 和最終回答，確認回答是根據應用資料，不是靠模型記憶。
 
 
 ```python
@@ -1703,9 +1699,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 4.4 Use a Custom Text Tool
+### 4.4 使用 custom text tool
 
-Custom tools pass freeform text to application-owned logic instead of requiring a structured JSON argument object. This cell defines a support-note normalizer, requests a custom tool call, and includes a local fallback if the endpoint returns ordinary text instead of a custom call. Inspect the output item types and the normalized note.
+Custom tool 把自由格式的文字交給應用自己的邏輯，不需要結構化的 JSON 參數物件。這個 cell 定義一個客服備註正規化 tool，請求一次 custom tool call，並且在 endpoint 只回一般文字、沒有 custom call 時，有本地的 fallback。看 output item 的類型和正規化後的備註。
 
 
 ```python
@@ -1820,13 +1816,13 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 5. Send Direct File Input
+## 5. 直接送檔案當輸入
 
-Direct file input is separate from application-managed tools. A file can be included in the current Responses request as an `input_file` item alongside text instructions, which is useful when the model should read the file for this turn without setting up a retrieval index.
+直接送檔案跟應用管理的 tool 是兩回事。檔案可以用 `input_file` item 跟文字指示一起放進這次的 Responses 請求，適合模型只需要在這一回合讀檔、不想另外建檢索索引的情況。
 
-### 5.1 Attach a PDF as `input_file`
+### 5.1 把 PDF 當 `input_file` 附上
 
-This cell generates a tiny PDF transcript in memory, attaches it as base64 file data, and asks for exact JSON fields from the document. Inspect the PDF preview, expected fields, parsed response, and usage summary.
+這個 cell 在記憶體裡產生一個小 PDF 逐字稿，用 base64 檔案資料附上，並要求從文件裡取出精確的 JSON 欄位。看 PDF 預覽、預期欄位、解析後的回應和用量摘要。
 
 
 
@@ -1988,15 +1984,15 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 6. Manage Conversation State
+## 6. 管理對話狀態
 
-Conversation state determines how follow-up turns receive prior context. The Responses API supports stored continuation with `previous_response_id`, and applications can also manage state themselves by resending relevant input history. This section compares both patterns, then shows encrypted reasoning context where supported.
+對話狀態決定後續回合怎麼拿到之前的 context。Responses API 支援用 `previous_response_id` 延續已儲存的回應，應用也可以自己管理狀態，每次重送相關的輸入歷史。這一節比較這兩種做法，再示範在支援的情況下帶著加密的 reasoning context。
 
 
 
-### 6.1 Continue with `previous_response_id`
+### 6.1 用 `previous_response_id` 延續對話
 
-Use `previous_response_id` to continue from a stored response without resending the full prior prompt. The first request stores the BrightCart case details; the second request passes only the new follow-up instruction plus the previous response ID. Inspect whether the follow-up preserves the order, customer, issue, and next action.
+用 `previous_response_id` 從已儲存的回應繼續，不用重送之前整段 prompt。第一個請求儲存 BrightCart 的案件細節，第二個請求只帶新的追問指示加上前一個 response ID。看追問有沒有保留訂單、客戶、問題和下一步動作。
 
 
 ```python
@@ -2061,9 +2057,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 6.2 Rebuild Stateless Context
+### 6.2 重建無狀態的 context
 
-Stateless continuation means the application sends the relevant history on every request. This is a good fit when your product already owns conversation storage, retention policy, or audit requirements. This cell sends a short chat history plus a new handoff instruction and inspects the summary and token usage.
+無狀態延續的意思是應用每次請求都送出相關歷史。如果你的產品本來就負責對話儲存、保存政策或稽核需求，這個做法很合適。這個 cell 送一小段聊天歷史加上新的交接指示，並檢查摘要和 token 用量。
 
 
 ```python
@@ -2120,11 +2116,11 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-### 6.3 Carry Encrypted Reasoning Context
+### 6.3 帶著加密的 reasoning context
 
-Reasoning-capable models may return reasoning items and encrypted reasoning content when requested. This cell asks for encrypted reasoning metadata, carries prior response items into a follow-up request, and inspects whether encrypted content was returned. The hidden reasoning text is not exposed; the application only carries opaque context forward where supported.
+支援 reasoning 的模型在要求時，可以回傳 reasoning item 和加密的 reasoning 內容。這個 cell 要求加密的 reasoning 資料，把之前的 response item 帶進後續請求，並檢查有沒有回傳加密內容。隱藏的 reasoning 文字不會被看到，應用只是在支援的情況下把這份不透明的 context 往後帶。
 
-Official docs: [Reasoning models](https://developers.openai.com/api/docs/guides/reasoning) describes reasoning models and reasoning effort in Responses workflows.
+官方文件：[Reasoning models](https://developers.openai.com/api/docs/guides/reasoning) 說明了 Responses 流程裡的 reasoning 模型和 reasoning effort。
 
 
 ```python
@@ -2198,15 +2194,15 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 7. Use Prompt Caching
+## 7. 使用 prompt caching
 
-Prompt caching improves latency and cost when requests share an exact static prefix.
+請求共用完全相同的靜態前綴時，prompt caching 可以降低延遲和成本。
 
-### 7.1 Compare Two Cache-Keyed Requests
+### 7.1 比較兩個帶 cache key 的請求
 
-This cell places stable BrightCart policy text at the beginning of the input, sends the same request twice with a `prompt_cache_key`, and compares token metadata. Inspect `cached_input_tokens` on the second response when the endpoint returns cache details.
+這個 cell 把固定不變的 BrightCart 政策文字放在 input 最前面，用同一個 `prompt_cache_key` 把同一個請求送兩次，並比較 token 資訊。endpoint 有回傳 cache 細節的話，看第二個 response 的 `cached_input_tokens`。
 
-Note: `PROMPT_CACHE_RETENTION` is selected from the active `MODEL_ID`. It uses `24h` for `openai.gpt-5.5` and later models, and `in_memory` for `openai.gpt-5.4`.
+注意：`PROMPT_CACHE_RETENTION` 是依目前的 `MODEL_ID` 選的。`openai.gpt-5.5` 之後的模型用 `24h`，`openai.gpt-5.4` 用 `in_memory`。
 
 
 ```python
@@ -2322,13 +2318,13 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 8. Run Background Work
+## 8. 執行背景任務
 
-Background mode starts a response asynchronously and lets the application poll for terminal status.
+背景模式會非同步啟動一個 response，讓應用輪詢直到它進入終止狀態。
 
-### 8.1 Submit and Poll a Background Response
+### 8.1 送出並輪詢背景 response
 
-This cell sends `background=true`, stores the response ID, polls while status is queued or in progress, and then prints the final manager summary. Inspect the status history, final status, response ID, and token summary.
+這個 cell 送出 `background=true` 的請求，儲存 response ID，在 status 是 queued 或 in progress 時持續輪詢，最後印出主管摘要。看 status 的變化歷程、最終 status、response ID 和 token 摘要。
 
 
 
@@ -2404,9 +2400,9 @@ except Exception as exc:
     <IPython.core.display.HTML object>
     ```
 
-## 9. Compact Long-Running Context
+## 9. 壓縮長時間運行的 context
 
-Compaction reduces long conversation state into durable facts, open questions, constraints, and next actions. This cell documents the application-side compaction pattern as a small JSON object so the concept is clear without adding another live feature path. Inspect which facts are kept and which details are omitted before the next turn.
+壓縮（compaction）把很長的對話狀態濃縮成長期有用的事實、未解問題、限制條件和下一步動作。這個 cell 用一個小 JSON 物件說明應用端的壓縮做法，不另外增加實際的功能路徑，把概念講清楚就好。看下一回合之前，哪些事實被留下、哪些細節被省略。
 
 
 
@@ -2433,9 +2429,9 @@ print_json(compaction_note)
     <IPython.core.display.HTML object>
     ```
 
-## 10. Run Operational Smoke Checks
+## 10. 執行營運冒煙檢查
 
-Operational smoke checks are lightweight setup checks, not a load test or service-level measurement. This cell sends three short requests, measures local elapsed time, summarizes success rate and token usage, and infers the region from the configured Bedrock base URL. Inspect latency, completion status, sample outputs, and token totals.
+營運冒煙檢查只是輕量的設定檢查，不是壓力測試，也不是服務水準量測。這個 cell 送三個簡短請求，量測本地經過的時間，彙整成功率和 token 用量，並從設定的 Bedrock base URL 推斷 region。看延遲、完成狀態、範例輸出和 token 總量。
 
 
 ```python
@@ -2540,9 +2536,9 @@ else:
     <IPython.core.display.HTML object>
     ```
 
-## 11. Clean Up and Review Results
+## 11. 清理並檢視結果
 
-Stored responses created by lifecycle, stateful continuation, and background examples are tracked in `STORED_RESPONSE_IDS`. This final cell attempts to delete stored responses when cleanup is enabled, then prints the run summary and example-response gallery. Inspect warnings first; they usually identify endpoint configuration, model availability, or feature-support differences.
+生命週期、有狀態延續和背景範例所建立的已儲存 response，都記錄在 `STORED_RESPONSE_IDS`。最後這個 cell 在啟用清理時嘗試刪除這些儲存的 response，然後印出執行摘要和範例 response 的圖庫。先看警告，通常能指出是 endpoint 設定、模型可用性，還是功能支援上的差異。
 
 
 ```python
@@ -2648,4 +2644,16 @@ print_response_gallery()
     ... (省略 5 行)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 同一組 Responses 請求可以走原始 HTTPS，也可以走 OpenAI SDK，Bedrock 只是換了 base URL 和 bearer token。
+- 需要固定格式用 `json_schema` 加 `strict=true`，只要合法 JSON 就用 JSON mode，兩者都該在應用端再驗證一次。
+- Function calling 的迴圈是模型提出 call、你的程式執行、再用 `function_call_output` 送回，答案才會有根據。
+- 對話狀態有兩種管法，用 `previous_response_id` 讓服務端記，或自己每次重送歷史，選哪個看你的儲存和稽核需求。
+- prompt caching 要靠穩定的前綴和 `prompt_cache_key`，長任務可用背景模式輪詢，歷史太長時可以做應用端壓縮。
+
+## 練習
+
+1. 把 3.4 的 `text.verbosity` 改成別的值，或把 2.3 的 `reasoning.effort` 從 `low` 改成 `high`，比較輸出長短和 token 用量的差異。
+2. 在 3.1 的 schema 裡多加一個欄位（例如 `order_id`），並在 3.2 的驗證邏輯裡檢查它，看模型有沒有照 schema 回。
+3. 在 4.1 新增第三個本地 tool（例如查退貨政策），用 4.3 的寫法讓模型一次平行呼叫三個 tool，確認三份輸出都有送回去。

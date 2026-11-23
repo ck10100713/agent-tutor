@@ -1,58 +1,68 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_bigquery.ipynb
 ---
 
-# GPT Actions library - BigQuery
+# GPT Actions library：BigQuery
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_bigquery.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_bigquery.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你做一個連到 Google BigQuery 的 GPT Action。使用者問問題後，GPT 會先掃相關資料表取得 schema，再寫出能回答問題的 SQL。
+
+## 學完你會
+- 設定 Custom GPT 的 Instructions 和 OpenAPI schema，讓 GPT 能呼叫 BigQuery API
+- 在 Google Cloud Console 建 OAuth 憑證，並在 ChatGPT 填入 OAuth 設定
+- 處理 callback URL 錯誤、GPT 查錯 project 或 dataset 這類常見問題
+
+## 開跑前
+- 一個 GCP project，裡面有 BigQuery dataset
+- 用 ChatGPT 登入 BigQuery 的使用者要有該 dataset 的存取權
+- Google OAuth Client ID 和 Client Secret
 
 
+## 簡介
 
-## Introduction
-
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這一頁是給開發者的說明，教你替特定應用程式建 GPT Action。開始之前，請先熟悉以下內容： 
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to **Google BigQuery**, Google Cloud's Analytical Data Warehouse. This Action takes a user’s question, scans the relevant tables to gather the data schema, then writes a SQL query to answer the user’s question. 
+這個 GPT Action 說明怎麼連到 **Google BigQuery**，也就是 Google Cloud 的分析型資料倉儲。這個 Action 接收使用者的問題，掃描相關資料表來取得資料 schema，再寫 SQL 查詢來回答問題。 
 
-Note: these instructions return back a functioning SQL statement, rather than the result itself. Currently middleware is required to return back a CSV file – we’ll be posting instructions on an example of that soon
+注意：這份說明回傳的是可執行的 SQL 語句，不是查詢結果本身。目前要回傳 CSV 檔需要 middleware，我們之後會發佈相關範例說明。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to BigQuery's DWH. 
+**價值**：使用者現在可以用 ChatGPT 的自然語言能力，直接連到 BigQuery 的資料倉儲。 
 
-**Example Use Cases**: 
-- Data scientists can connect to tables and run data analyses using ChatGPT's Data Analysis
-- Citizen data users can ask basic questions of their transactional data
-- Users gain more visibility into their data & potential anomalies
+**使用情境範例**： 
+- 資料科學家可以連到資料表，用 ChatGPT 的 Data Analysis 做資料分析
+- 一般資料使用者可以對交易資料問基本問題
+- 使用者能更清楚看到自己的資料和潛在異常
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- Application Website: https://cloud.google.com/bigquery 
-- Application API Documentation: https://cloud.google.com/bigquery/docs/reference/rest 
+開始之前，先看看這些應用程式的連結：
+- 應用程式網站：https://cloud.google.com/bigquery 
+- 應用程式 API 文件：https://cloud.google.com/bigquery/docs/reference/rest 
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Set up a GCP project 
-- Set up a BQ dataset in that GCP project
-- Ensure that the user authenticating into BigQuery via ChatGPT has access to that BQ dataset 
+開始之前，請先在你的應用程式環境完成以下步驟：
+- 建立 GCP project 
+- 在該 GCP project 建一個 BQ dataset
+- 確保透過 ChatGPT 登入 BigQuery 的使用者有該 BQ dataset 的存取權 
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有這一步的詳細說明。
 
 ```python
 **Context**: You are an expert at writing BigQuery SQL queries. A user is going to ask you a question. 
@@ -69,7 +79,7 @@ Once you've created a Custom GPT, copy the text below in the Instructions panel.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有這一步的詳細說明。
 
 ```python
 openapi: 3.1.0
@@ -159,46 +169,56 @@ paths:
           description: Internal server error. An error occurred while processing the request.
 ```
 
-## Authentication Instructions
+## 認證設定說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+以下是設定這個第三方應用程式認證的步驟。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有這一步的詳細說明。
 
-### Pre-Action Steps
+### Action 前的步驟
 
-Before you set up authentication in ChatGPT, please take the following steps in the application.
+在 ChatGPT 設定認證之前，請先在應用程式裡完成以下步驟。
 
-- Go to the Google Cloud Console
-- Navigate to API & Services > Credentials
-- Create new OAuth credentials (or use an existing one)
-- Locate your OAuth Client ID & Client Secret and store both values securely (see screenshot below)
+- 前往 Google Cloud Console
+- 到 API & Services > Credentials
+- 建立新的 OAuth 憑證（或使用現有的）
+- 找到 OAuth Client ID 和 Client Secret，並安全地保存這兩個值（見下方截圖）
 
 ![gptactions_BigQuery_auth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_BigQuery_auth.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點「Authentication」，選 **"OAuth"**，填入下列資訊。 
 
-- **Client ID**: use Client ID from steps above 
-- **Client Secret**: use Client Secret from steps above
-- **Authorization URL**: https://accounts.google.com/o/oauth2/auth
-- **Token URL**: https://oauth2.googleapis.com/token 
-- **Scope**: https://www.googleapis.com/auth/bigquery 
-- **Token**: Default (POST)
+- **Client ID**：用上面步驟取得的 Client ID 
+- **Client Secret**：用上面步驟取得的 Client Secret
+- **Authorization URL**：https://accounts.google.com/o/oauth2/auth
+- **Token URL**：https://oauth2.googleapis.com/token 
+- **Scope**：https://www.googleapis.com/auth/bigquery 
+- **Token**：Default (POST)
 
-### Post-Action Steps
+### Action 後的步驟
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+在 ChatGPT 設定好認證後，回到應用程式完成以下步驟來收尾。 
 
-- Copy the callback URL from the GPT Action
-- In the “Authorized redirect URIs” (see screenshot above), add your callback URL 
-
-
-### FAQ & Troubleshooting
-
-- *Callback URL Error:* If you get a callback URL error in ChatGPT, pay close attention to the screenshot above. You need to add the callback URL directly into GCP for the action to authenticate correctly
-- *Schema calls the wrong project or dataset:* If ChatGPT calls the wrong project or dataset, consider updating your instructions to make it more explicit either (a) which project / dataset should be called or (b) to require the user provide those exact details before it runs the query
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- 從 GPT Action 複製 callback URL
+- 把你的 callback URL 加到「Authorized redirect URIs」（見上方截圖）
 
 
-<!-- tutor:summary -->
+### FAQ 與疑難排解
+
+- *Callback URL 錯誤：* 如果 ChatGPT 出現 callback URL 錯誤，仔細看上面的截圖。你必須把 callback URL 直接加到 GCP，Action 才能正確認證
+- *Schema 呼叫了錯的 project 或 dataset：* 如果 ChatGPT 呼叫了錯的 project 或 dataset，可以修改 instructions，寫得更明確：(a) 該呼叫哪個 project / dataset，或 (b) 要求使用者在執行查詢前提供確切的資訊
+
+*有想要我們優先支援的整合嗎？我們的整合有錯誤嗎？歡迎在 GitHub 提 PR 或 issue，我們會處理。*
+
+
+## 重點整理
+- GPT Action 由三塊組成：Instructions（角色與行為）、OpenAPI schema（可呼叫的 API）、Authentication。
+- 這個 Action 只回傳可執行的 SQL，要拿到結果檔需要另外的 middleware。
+- BigQuery 用 OAuth 認證，callback URL 要手動加回 GCP 的 Authorized redirect URIs。
+- 使用者的 Google 帳號權限決定能查到什麼，所以要確保帳號有 dataset 存取權。
+- GPT 查錯 project 或 dataset 時，改 instructions 把目標寫明確最有效。
+
+## 練習
+1. 在 Instructions 裡寫死你的 project 和 dataset 名稱，測試 GPT 是不是不再查錯地方。
+2. 在 Instructions 加一條規則，要求 GPT 在寫 SQL 前先列出它掃到的資料表和欄位。
+3. 改 OpenAPI schema 裡的 operation 描述，觀察 GPT 選擇呼叫哪個 API 的行為有什麼變化。

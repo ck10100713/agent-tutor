@@ -1,16 +1,24 @@
 ---
-translated: false
+translated: true
 source: examples/Realtime_prompting_guide.ipynb
 ---
-
-# Realtime Prompting Guide
+# Realtime Prompting 指南
 
 > 原文：[examples/Realtime_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Realtime_prompting_guide.ipynb)
 
+## 這篇在做什麼
 
+這篇教你怎麼幫 `gpt-realtime`（speech-to-speech 模型）寫 system prompt。它先給一個建議的 prompt 骨架，再一段一段講：角色、語氣、語言、發音、tool 使用、對話流程、升級真人。每段都有可以直接拿去改的小範例和新舊模型的對比。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用有標題、條列式的結構寫出 Realtime 的 system prompt，並知道每一段什麼時候該加。
+- 用指令處理常見問題：語速太慢、亂切換語言、一直重複「Got it」、數字唸不清楚、雜音誤觸發回應。
+- 寫出 tool 相關的指示（preamble、不用確認、每個 tool 的使用規則），以及用 state machine 或 `session.update` 管理對話流程。
+
+## 開跑前
+
+這篇的範例多半是 prompt 文字，要實際聽音訊對比需要 OpenAI API key 和 Realtime API 的存取權。
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/realtime_prompting_guide.png"
@@ -18,38 +26,38 @@ source: examples/Realtime_prompting_guide.ipynb
 />
 
 
-Today, we’re releasing gpt-realtime — our most capable speech-to-speech model yet in the API and announcing the general availability of the Realtime API. 
+今天我們發布 gpt-realtime，這是我們目前能力最強的 speech-to-speech 模型，同時宣布 Realtime API 正式上線（GA）。
 
-Speech-to-speech systems are essential for enabling voice as a core AI interface. The new release enhances robustness and usability, giving enterprises the confidence to deploy mission-critical voice agents at scale.
+Speech-to-speech 系統是讓語音成為 AI 核心介面的關鍵。這次發布強化了穩定度和易用性，讓企業有信心大規模部署關鍵任務的語音 agent。
 
 
-The new gpt-realtime model delivers stronger instruction following, more reliable tool calling, noticeably better voice quality, and an overall smoother feel. These gains make it practical to move from chained approaches to true realtime experiences, cutting latency and producing responses that sound more natural and expressive.
+新的 gpt-realtime 模型在指令遵循更強、tool calling 更可靠、語音品質明顯更好，整體感覺也更順。這些進步讓你可以從 chained 做法轉到真正的 realtime 體驗，降低延遲，回應聽起來也更自然、更有表情。
 
-Realtime model benefits from different prompting techniques that wouldn't directly apply to text based models. This prompting guide starts with a suggested prompt skeleton, then walks through each part with practical tips, small patterns you can copy, and examples you can adapt to your use case.
+Realtime 模型適用的 prompting 技巧，和純文字模型不太一樣。這份指南先給一個建議的 prompt 骨架，再逐段帶你看實用技巧、可以直接複製的小模式，以及能依你的情境調整的範例。
 
 ```python
 # !pip install ipython jupyterlab
 from IPython.display import Audio, display
 ```
 
-# General Tips
-- **Iterate relentlessly**: Small wording changes can make or break behavior.
-  - Example: For unclear audio instruction, we swapped  “inaudible” → “unintelligible”  which improved noisy input handling.
-- **Prefer bullets over paragraphs**: Clear, short bullets outperform long paragraphs.
-- **Guide with examples**: The model strongly closely follows sample phrases.
-- **Be precise**: Ambiguity or conflicting instructions = degraded performance similar to GPT-5.
-- **Control language**: Pin output to a target language if you see unwanted language switching.
-- **Reduce repetition**: Add a Variety rule to reduce robotic phrasing.
-- **Use capitalized text for emphasis**: Capitalizing key rules makes them stand out and easier for the model to follow.
-- **Convert non-text rules to text**: instead of writing "IF x > 3 THEN ESCALATE", write, "IF MORE THAN THREE FAILURES THEN ESCALATE".
+# 通用技巧
+- **不斷迭代**：小小的措辭改動就可能讓行為變好或變壞。
+  - 例如：針對聽不清楚的音訊指令，我們把「inaudible」換成「unintelligible」，雜音輸入的處理就變好了。
+- **用條列取代段落**：清楚簡短的條列，表現比長段落好。
+- **用範例引導**：模型會非常緊密地跟著範例句子走。
+- **要精確**：模糊或互相衝突的指令會讓表現下降，這點跟 GPT-5 類似。
+- **控制語言**：如果看到不想要的語言切換，就把輸出固定在目標語言。
+- **減少重複**：加一條 Variety 規則，減少機器人般的說法。
+- **用大寫強調**：把關鍵規則大寫，更醒目，模型也更容易遵守。
+- **把非文字的規則轉成文字**：不要寫 "IF x > 3 THEN ESCALATE"，要寫 "IF MORE THAN THREE FAILURES THEN ESCALATE"。
 
-# Prompt Structure
+# Prompt 結構
 
-Organizing your prompt makes it easier for the model to understand context and stay consistent across turns. Also makes it easier for you to iterate and modify problematic sections.
-- **What it does**: Use clear, labeled sections in your system prompt so the model can find and follow them. Keep each section focused on one thing.
-- **How to adapt**: Add domain-specific sections (e.g., Compliance, Brand Policy). Remove sections you don’t need (e.g., Reference Pronunciations if not struggling with pronunciation).
+把 prompt 整理好，模型比較容易理解 context，也能在多輪對話中維持一致。你自己要迭代、修改有問題的區段也比較方便。
+- **用途**：在 system prompt 裡用清楚、有標籤的區段，讓模型找得到也跟得上。每個區段只專注一件事。
+- **怎麼調整**：加上特定領域的區段（例如 Compliance、Brand Policy）。不需要的區段就移除（例如發音沒問題就不用 Reference Pronunciations）。
 
-Example
+範例
 ```
 # Role & Objective        — who you are and what “success” means  
 # Personality & Tone      — the voice and style to maintain  
@@ -61,59 +69,59 @@ Example
 # Safety & Escalation     — fallback and handoff logic
 ```
 
-# Role and Objective
-This section defines who the agent is and what “done” means. The examples show two different identities to demonstrate how tightly the model will adhere to role and objective when they’re explicit.
+# 角色與目標
+這一段定義 agent 是誰，以及「做完」是什麼意思。範例展示了兩種不同身份，說明當角色和目標寫得明確時，模型會多緊密地照著做。
 
-- **When to use**: The model is not taking on the persona, role, or task scope you need.
-- **What it does**: Pins identity of the voice agent so that its responses are conditioned to that role description
-- **How to adapt**: Modify the role based on your use case
+- **什麼時候用**：模型沒有扮演你要的人設、角色或任務範圍。
+- **做什麼**：固定語音 agent 的身份，讓它的回應以這個角色描述為前提。
+- **怎麼調整**：依你的使用情境修改角色。
 
-### Example (model takes on a specific accent)
+### 範例（模型使用特定口音）
 ```
 # Role & Objective
 You are french quebecois speaking customer service bot. Your task is to answer the user's question.
 ```
 
-This is the audio from our old `gpt-4o-realtime-preview-2025-06-03`
+這是舊的 `gpt-4o-realtime-preview-2025-06-03` 的音訊
 
 ```python
 Audio("./data/audio/obj_06.mp3")
 ```
 
-This is the audio from our new GA model `gpt-realtime`
+這是新的 GA 模型 `gpt-realtime` 的音訊
 
 ```python
 Audio("./data/audio/obj_07.mp3")
 ```
 
-### Example (model takes on a character)
+### 範例（模型扮演一個角色）
 ```
 # Role & Objective
 You are a high-energy game-show host guiding the caller to guess a secret number from 1 to 100 to win 1,000,000$.
 ```
 
-This is the audio from our old `gpt-4o-realtime-preview-2025-06-03`
+這是舊的 `gpt-4o-realtime-preview-2025-06-03` 的音訊
 
 ```python
 Audio("./data/audio/obj_2_06.mp3")
 ```
 
-This is the audio from our new GA model `gpt-realtime`
+這是新的 GA 模型 `gpt-realtime` 的音訊
 
 ```python
 Audio("./data/audio/obj_2_07.mp3")
 ```
 
-The new realtime model is able to better enact the role.
+新的 realtime 模型更能演好這個角色。
 
-# Personality and Tone
-The newer model snapshot is really great at following instructions to imitate a particular personality or tone. You can tailor the voice experience and delivery depending on what your use case expects.
+# 個性與語氣
+新的模型版本很擅長照指示模仿特定的個性或語氣。你可以依使用情境調整語音體驗和說話方式。
 
-- **When to use**: Responses feel flat, overly verbose, or inconsistent across turns.
-- **What it does**: Sets voice, brevity, and pacing so replies sound natural and consistent.
-- **How to adapt**: Tune warmth/formality and default length. For regulated domains, favor neutral precision. Add other subsections that are relevant to your use case.
+- **什麼時候用**：回應聽起來平淡、太囉唆，或各輪之間不一致。
+- **做什麼**：設定聲音、簡短程度和節奏，讓回覆自然又一致。
+- **怎麼調整**：調整溫暖度、正式度和預設長度。受監管的領域建議用中性、精準的風格。也可以加上其他跟你情境相關的小節。
 
-### Example
+### 範例
 ```
 # Personality & Tone
 ## Personality
@@ -126,7 +134,7 @@ The newer model snapshot is really great at following instructions to imitate a 
 2–3 sentences per turn.
 ```
 
-### Example (multi-emotion)
+### 範例（多種情緒）
 ```
 # Personality & Tone
 - Start your response very happy
@@ -134,22 +142,22 @@ The newer model snapshot is really great at following instructions to imitate a 
 - At the end change your mood to very angry
 ```
 
-This is the audio from our new GA model `gpt-realtime`
+這是新的 GA 模型 `gpt-realtime` 的音訊
 
 ```python
 Audio("./data/audio/multi-emotion.mp3")
 ```
 
-The model is able to adhere to the complex instructions and switch from 3 emotions throughout the audio response.
+模型能遵守這個複雜的指令，並在一段音訊回應中切換三種情緒。
 
-## Speed Instructions
-In the Realtime API, the `speed` parameter changes playback rate, not how the model composes speech. To actually sound faster, add instructions that can guide the pacing.
+## 語速指令
+在 Realtime API 裡，`speed` 參數改的是播放速率，不是模型組織語音的方式。要讓聲音真的聽起來比較快，要加上能引導節奏的指令。
 
-- **When to use**: Users want faster speaking voice; playback speed (with speed parameter) alone doesn’t fix speaking style.
-- **What it does**: Tunes speaking style (brevity, cadence) independent of client playback speed.
-- **How to adapt**: Modify speed instruction to meet use case requirements.
+- **什麼時候用**：使用者想要更快的說話速度；只靠 `speed` 參數調播放速度，改不了說話風格。
+- **做什麼**：調整說話風格（簡短程度、節奏），跟用戶端的播放速度無關。
+- **怎麼調整**：依需求修改速度指令。
 
-### Example
+### 範例
 ```
 # Personality & Tone
 ## Personality
@@ -166,28 +174,28 @@ In the Realtime API, the `speed` parameter changes playback rate, not how the mo
 - Do not modify the content of your response, only increase speaking speed for the same response.
 ```
 
-This is the audio from our old `gpt-4o-realtime-preview-2025-06-03` with speed instructions
+這是舊的 `gpt-4o-realtime-preview-2025-06-03` 加上語速指令的音訊
 
 ```python
 Audio("./data/audio/pace_06.mp3")
 ```
 
-This is the audio from our new GA model `gpt-realtime` with speed instructions
+這是新的 GA 模型 `gpt-realtime` 加上語速指令的音訊
 
 ```python
 Audio("./data/audio/pace_07.mp3")
 ```
 
-The audio for the new realtime model is noticeably faster in pace (without sounding too hurried!).
+新 realtime 模型的音訊節奏明顯更快（又不會聽起來太趕！）。
 
-## Language Constraint
-Language constraints ensure the model consistently responds in the intended language, even in challenging conditions like background noise or multilingual inputs.
+## 語言限制
+語言限制能確保模型一直用指定的語言回應，即使在背景有雜音或輸入混雜多種語言的情況下也一樣。
 
-- **When to use**: To prevent accidental language switching in multilingual or noisy environments.
-- **What it does**: Locks output to the chosen language to prevent accidental language changes.
-- **How to adapt**: Switch “English” to your target language; or add more complex instructions based on your use case.
+- **什麼時候用**：在多語言或吵雜環境中，防止不小心切換語言。
+- **做什麼**：把輸出鎖在選定的語言，避免意外換語言。
+- **怎麼調整**：把 “English” 換成你的目標語言；或依你的情境加更複雜的指令。
 
-### Example (pinning to one language)
+### 範例（固定在一種語言）
 ```
 # Personality & Tone
 ## Personality
@@ -205,7 +213,7 @@ Language constraints ensure the model consistently responds in the intended lang
 - If the user speaks another language, politely explain that support is limited to English.
 ```
 
-This is the responses after applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令後的回應
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/lang_constraint_en.png"
@@ -214,7 +222,7 @@ This is the responses after applying the instruction using `gpt-realtime`
 
 
 
-### Example (model teaches a language)
+### 範例（模型教語言）
 ```
 # Role & Objective
 - You are a friendly, knowledgeable voice tutor for French learners.  
@@ -239,7 +247,7 @@ Use English when explaining grammar, vocabulary, or cultural context.
 Speak in French when conducting practice, giving examples, or engaging in dialogue.
 ```
 
-This is the responses after applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令後的回應
 
 
 <img
@@ -247,16 +255,16 @@ This is the responses after applying the instruction using `gpt-realtime`
   style="width:850px; height:auto;"
 />
 
-The model is able to easily code switch from one language to another based on our custom instructions!
+模型可以根據我們的自訂指令，輕鬆地在不同語言之間切換！
 
-## Reduce Repetition
-The realtime model can follow sample phrases closely to stay on-brand, but it may overuse them, making responses sound robotic or repetitive. Adding a repetition rule helps maintain variety while preserving clarity and brand voice.
+## 減少重複
+Realtime 模型會緊密地跟著範例句子走，保持品牌風格，但可能用得太頻繁，讓回應聽起來像機器人或一直重複。加一條防重複的規則，可以在保持清晰和品牌調性的同時維持變化。
 
-- **When to use**: Outputs recycle the same openings, fillers, or sentence patterns across turns or sessions.
-- **What it does**: Adds a variety constraint—discourages repeated phrases, nudges synonyms and alternate sentence structures, and keeps required terms intact.
-- **How to adapt**: Tune strictness (e.g., “don’t reuse the same opener more than once every N turns”), whitelist must-keep phrases (legal/compliance/brand), and allow tighter phrasing where consistency matters.
+- **什麼時候用**：輸出在各輪或各 session 之間重複用同樣的開頭、語助詞或句型。
+- **做什麼**：加上變化性的限制，避免重複用語、鼓勵用同義詞和不同句型，同時保留必要的詞彙。
+- **怎麼調整**：調整嚴格程度（例如「同一個開頭每 N 輪最多用一次」）、把必須保留的用語列入白名單（法規／合規／品牌），在需要一致性的地方允許更精簡的說法。
 
-### Example
+### 範例
 ```
 # Personality & Tone
 ## Personality
@@ -278,14 +286,14 @@ The realtime model can follow sample phrases closely to stay on-brand, but it ma
 - Vary your responses so it doesn't sound robotic.
 ```
 
-This is the responses **before** applying the instruction using `gpt-realtime`. The model repeats the same confirmation `Got it`.
+這是用 `gpt-realtime` 套用指令**之前**的回應。模型一直重複同樣的確認用語 `Got it`。
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/repeat_before.png"
   style="width:850px; height:auto;"
 />
 
-This is the responses **after** applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令**之後**的回應
 
 
 <img
@@ -293,17 +301,17 @@ This is the responses **after** applying the instruction using `gpt-realtime`
   style="width:850px; height:auto;"
 />
 
-Now the model is able to vary its responses and confirmation and not sound robotic.
+現在模型能變化它的回應和確認用語，不再聽起來像機器人。
 
 
-#  Reference Pronunciations
-This section covers how to ensure the model pronounces important words, numbers, names, and terms correctly during spoken interactions.
+#  參考發音
+這一段講怎麼確保模型在口語互動中，把重要的字、數字、名字和術語唸對。
 
-- **When to use**: Brand names, technical terms, or locations are often mispronounced.
-- **What it does**: Improves trust and clarity with phonetic hints.
-- **How to adapt**: Keep to a short list; update as you hear errors.
+- **什麼時候用**：品牌名稱、技術術語或地名常被唸錯。
+- **做什麼**：用發音提示提升信任感和清晰度。
+- **怎麼調整**：清單保持簡短；聽到錯誤再更新。
 
-### Example
+### 範例
 ```
 # Reference Pronunciations
 When voicing these words, use the respective pronunciations:
@@ -313,39 +321,39 @@ When voicing these words, use the respective pronunciations:
 - Pronounce "Huawei" as “HWAH-way”
 ```
 
-This is the audio from our old `gpt-4o-realtime-preview-2025-06-03` using the reference pronunciations.
+這是舊的 `gpt-4o-realtime-preview-2025-06-03` 使用參考發音的音訊。
 
-It is unable to reliably pronounce SQL as "sequel" as instructed in the system prompt.
+它無法穩定地照 system prompt 的指示把 SQL 唸成 "sequel"。
 
 ```python
 Audio("./data/audio/sql_before.mp3")
 ```
 
-This is the audio from our new GA model `gpt-realtime` using the reference pronunciations.
+這是新的 GA 模型 `gpt-realtime` 使用參考發音的音訊。
 
-It is able to correctly pronounce SQL as "sequel".
+它能正確把 SQL 唸成 "sequel"。
 
 ```python
 Audio("./data/audio/sql_after.mp3")
 ```
 
-## Alphanumeric Pronunciations
-Realtime S2S can blur or merge digits/letters when reading back key info (phone, credit card, order IDs). Explicit character-by-character confirmation prevents mishearing and drives clearer synthesis.
+## 英數字發音
+Realtime S2S 在複誦關鍵資訊（電話、信用卡、訂單編號）時，可能把數字或字母唸得糊在一起。明確要求逐字元確認，可以避免聽錯，也讓合成的聲音更清楚。
 
-- **When to use**: If the model is struggling capturing or reading back phone numbers, card numbers, 2FA codes, order IDs, serials, addresses/unit numbers, or mixed alphanumeric strings.
-- **What it does**: Forces the model to speak one character at a time (with separators), then confirms with the user and re-confirm after corrections. Optionally uses a phonetic disambiguator for letters (e.g., “A as in Alpha”).
+- **什麼時候用**：模型在擷取或複誦電話號碼、卡號、2FA 驗證碼、訂單編號、序號、地址／門牌號碼或混合英數字串時有困難。
+- **做什麼**：強制模型一次唸一個字元（中間加分隔），然後向使用者確認，更正後再確認一次。可選擇性地用拼音輔助辨識字母（例如 “A as in Alpha”）。
 
-### Example (general instruction section)
+### 範例（一般指令區段）
 ```
 # Instructions/Rules
 - When reading numbers or codes, speak each character separately, separated by hyphens (e.g., 4-1-5). 
 - Repeat EXACTLY the provided number, do not forget any.
 ```
 
-*Tip: If you are following a conversation flow prompting strategy, you can specify which conversation state needs to apply the alphanumeric pronunciations instruction.*
+*提示：如果你用的是對話流程式的 prompting 策略，可以指定哪個對話狀態要套用英數字發音指令。*
 
-### Example (instruction in conversation state)
-*(taken from the conversation flow of the prompt of our [openai-realtime-agents](https://github.com/openai/openai-realtime-agents/blob/main/src/app/agentConfigs/customerServiceRetail/authentication.ts))*
+### 範例（放在對話狀態裡的指令）
+*（取自我們 [openai-realtime-agents](https://github.com/openai/openai-realtime-agents/blob/main/src/app/agentConfigs/customerServiceRetail/authentication.ts) 的 prompt 對話流程）*
 
 ```txt
 {
@@ -368,29 +376,29 @@ Realtime S2S can blur or merge digits/letters when reading back key info (phone,
 }
 ```
 
-This is the responses **before** applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令**之前**的回應
 
 > Sure! The number is 55119765423. Let me know if you need anything else!
 
-This is the responses **after** applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令**之後**的回應
 
 > Sure! The number is: 5-5-1-1-1-9-7-6-5-4-2-3. Please let me know if you need anything else!
 
-# Instructions
-This section covers prompt guidance around instructing your model to solve your task and potentially best practices and how to fix possible problems.
+# 指令
+這一段是關於怎麼用 prompt 指示模型完成你的任務，包含最佳實務和常見問題的修法。
 
-Perhaps unsurprisingly, we recommend prompting patterns that are similar to [GPT-4.1 for best results](https://cookbook.openai.com/examples/gpt4-1_prompting_guide).
+不意外地，我們建議用跟 [GPT-4.1 類似的 prompting 模式](https://cookbook.openai.com/examples/gpt4-1_prompting_guide)，效果最好。
 
-## Instruction Following
-Like GPT-4.1 and GPT-5, if the instructions are conflicting, ambiguous or not clear, the new realtime model will perform worse
+## 指令遵循
+跟 GPT-4.1、GPT-5 一樣，如果指令互相衝突、含糊或不清楚，新的 realtime 模型表現會變差。
 
-- **When to use**: Outputs drift from rules, skip phases, or misuse tools.
-- **What it does**: Uses an LLM to point out ambiguity, conflicts, and missing definitions before you ship.
+- **什麼時候用**：輸出偏離規則、跳過階段，或誤用 tool。
+- **做什麼**：在上線前，用 LLM 指出含糊、衝突和缺少定義的地方。
 
 
-### **Instructions Quality Prompt (can be used in ChatGPT or with API)**
+### **指令品質 Prompt（可在 ChatGPT 或 API 使用）**
 
-Use the following prompt with GPT-5 to identify problematic areas in your prompt that you can fix.
+用下面這個 prompt 搭配 GPT-5，找出你的 prompt 裡有問題的地方再去修。
 
 ```
 ## Role & Objective  
@@ -424,9 +432,9 @@ Review the prompt that is meant for an LLM to follow and identify the following 
 """
 ```
 
-### **Prompt Optimization Meta Prompt (can be used in ChatGPT or with API)**
+### **Prompt 優化 Meta Prompt（可在 ChatGPT 或 API 使用）**
 
-This meta-prompt helps you improve your base system prompt by targeting a specific failure mode. Provide the current prompt and describe the issue you’re seeing, the model (GPT-5) will suggest refined variants that tighten constraints and reduce the problem.
+這個 meta-prompt 針對特定的失敗模式，協助你改進基礎 system prompt。提供目前的 prompt 並描述你看到的問題，模型（GPT-5）會建議改寫版本，收緊限制、減少該問題。
 
 ```
 Here's my current prompt to an LLM:
@@ -441,14 +449,14 @@ But I see this issue happening from the LLM:
 Can you provide some variants of the prompt so that the model can better understand the constraints to alleviate the issue?
 ```
 
-## No Audio or Unclear Audio
-Sometimes the model thinks it hears something and tries to respond. You can add a custom instruction telling the model on how to behave when it hears unclear audio or user input. Modify the desire behaviour to fit your use case (maybe you don’t want the model to ask for a clarification, but to repeat the same question for example)
+## 沒有音訊或音訊不清楚
+有時模型以為自己聽到了什麼，就試著回應。你可以加一條自訂指令，告訴模型聽到不清楚的音訊或使用者輸入時該怎麼做。依你的情境修改想要的行為（例如你可能不要模型要求澄清，而是重複同一個問題）。
 
-- **When to use**: Background noise, partial words, or silence trigger unwanted replies.
-- **What it does**: Stops spurious responses and creates graceful clarification.
-- **How to adapt**: Choose whether to ask for clarification or repeat the last question depending on use case.
+- **什麼時候用**：背景雜音、不完整的字詞或靜音觸發了不必要的回覆。
+- **做什麼**：阻止多餘的回應，並優雅地請對方澄清。
+- **怎麼調整**：依情境選擇要請對方澄清，還是重複上一個問題。
 
-### Example (coughing and unclear audio)
+### 範例（咳嗽和不清楚的音訊）
 ```
 # Instructions/Rules
 ...
@@ -460,22 +468,21 @@ Sometimes the model thinks it hears something and tries to respond. You can add 
 - If the user's audio is not clear (e.g. ambiguous input/background noise/silent/unintelligible) or if you did not fully hear or understand the user, ask for clarification using {preferred_language} phrases.
 ```
 
-This is the responses **after** applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令**之後**的回應
 
 ```python
 Audio("./data/audio/unclear_audio.mp3")
 ```
+在這個範例裡，我大聲咳嗽（非常大聲）加上音訊不清楚，模型要求澄清。
 
-In this example, the model asks for clarification after my *(very)* loud cough and unclear audio.
+## 背景音樂或聲音
+偶爾模型在生成語音時，會產生非預期的背景音樂、哼唱、有節奏的雜音，或類似聲音的瑕疵。這些會降低清晰度、分散使用者注意，或讓助理顯得不夠專業。下面的指令可以預防或大幅減少這些情況。
 
-## Background Music or Sounds
-Occasionally, the model may generate unintended background music, humming, rhythmic noises, or sound-like artifacts during speech generation. These artifacts can diminish clarity, distract users, or make the assistant feel less professional. The following instructions helps prevent or significantly reduce these occurrences.
+- **什麼時候用**：在 Realtime 音訊回應裡觀察到非預期的音樂元素或音效時。
+- **做什麼**：引導模型避免產生這些不想要的音訊瑕疵。
+- **怎麼調整**：調整指令，明確壓制你遇到的特定聲音模式。
 
-- **When to use**: Use when you observe unintended musical elements or sound effects in Realtime audio responses.
-- **What it does**: Steers the model to avoid generating these unwanted audio artifacts.s
-- **How to adapt**: Adjust the instruction to try to explicitly suppress the specific sound patterns you are encountering.
-
-### Example
+### 範例
 ```
 # Instructions/Rules
 ...
@@ -483,15 +490,15 @@ Occasionally, the model may generate unintended background music, humming, rhyth
 ```
 
 # Tools
-Use this section to tell the model how to use your functions and tools. Spell out when and when not to call a tool, which arguments to collect, what to say while a call is running, and how to handle errors or partial results.
+這一段用來告訴模型怎麼使用你的 function 和 tool。要明確寫出什麼時候該呼叫、什麼時候不該呼叫、要收集哪些參數、呼叫進行中要說什麼，以及怎麼處理錯誤或部分結果。
 
-## Tool Selection
-The new Realtime snapshot is really good at instruction following. However, this means if you have conflicting instructions in your prompt to what the model is expecting, such as mentioning tools in your prompt NOT passed in the tools list, it can lead to bad responses.
+## Tool 選擇
+新的 Realtime 版本很會遵循指令。但這也表示，如果 prompt 裡的指令和模型預期的不一致，例如 prompt 提到沒有放進 tools 清單的 tool，就可能造成不好的回應。
 
-- **When to use**: Prompts mention tools that aren’t actually available.
-- **What it does**: Review available tools and system prompt to ensure it aligns
+- **什麼時候用**：prompt 提到實際上不存在的 tool。
+- **做什麼**：檢查可用的 tool 和 system prompt 是否一致。
 
-### Example
+### 範例
 ```
 # Tools
 ## lookup_account(email_or_phone)
@@ -502,7 +509,7 @@ The new Realtime snapshot is really good at instruction following. However, this
 ...
 ```
 
-We need to ensure the tool list has the same availability tools and **the descriptions do not contradict each other**:
+我們要確保 tool 清單有相同可用的 tool，而且**描述之間不互相矛盾**：
 
 ```json
 [
@@ -521,32 +528,32 @@ We need to ensure the tool list has the same availability tools and **the descri
 ]
 ```
 
-## Tool Call Preambles
-Some use cases could benefit from the Realtime model providing an audio response at the same time as calling a tool. This leads to a better user experience, masking latency. You can modify the sample phrase to provide.
+## Tool Call Preamble
+有些情境適合讓 Realtime 模型在呼叫 tool 的同時給出語音回應。這樣可以遮掉延遲，使用者體驗更好。你可以修改範例句子。
 
 
-- **When to use**:  Users need immediate confirmation at the same time of a tool call; helps mask latency.
-- **What it does**: Adds a short, consistent preamble before a tool call.
+- **什麼時候用**：使用者需要在 tool call 的同時得到即時確認，有助於遮掉延遲。
+- **做什麼**：在 tool call 之前加一句簡短、固定的 preamble。
 
-### Example
+### 範例
 ```
 # Tools
 - Before any tool call, say one short line like “I’m checking that now.” Then call the tool immediately.
 ```
 
-This is the responses after applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令後的回應
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/tool_proactive.png"
   style="width:800px; height:auto;"
 />
 
-Using the instruction, the model outputs an audio response "I'm checking that right now" at the same time as the tool call.
+用了這個指令後，模型在呼叫 tool 的同時輸出語音回應 "I'm checking that right now"。
 
-### Tool Call Preambles + Sample Phrases
-If you want to control more closely what type of phrases the model outputs at the same time it calls a tool, you can add sample phrases in the tool spec description.
+### Tool Call Preamble 加範例句子
+如果想更仔細控制模型在呼叫 tool 的同時說出哪類句子，可以把範例句子加在 tool spec 的 description 裡。
 
-#### Example
+#### 範例
 ```python
 tools = [
   {
@@ -579,36 +586,36 @@ Preamble sample phrases:
 
 ```
 
-## Tool Calls Without Confirmation
-Sometimes the model might ask for confirmation before a tool call. For some use cases, this can lead to poor experience for the end user since the model is not being proactive.
+## 不用確認就呼叫 Tool
+有時模型會在呼叫 tool 之前先要求確認。在某些情境，這會讓使用者體驗變差，因為模型不夠主動。
 
-- **When to use**:  The agent asks for permission before obvious tool calls.
-- **What it does**:  Removes unnecessary confirmation loops.
+- **什麼時候用**：agent 在明顯該呼叫 tool 的時候還先問許可。
+- **做什麼**：移除不必要的確認迴圈。
 
-### Example
+### 範例
 ```
 # Tools
 - When calling a tool, do not ask for any user confirmation. Be proactive
 ```
 
-This is the responses **after** applying the instruction using `gpt-realtime`
+這是用 `gpt-realtime` 套用指令**之後**的回應
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/tool_no_confirm.png"
   style="width:800px; height:auto;"
 />
 
-In the example, you notice that the realtime model did not produce any response audio, it directly called the respective tool.
+在這個範例中可以看到，realtime 模型沒有產生任何語音回應，直接呼叫了對應的 tool。
 
-*Tip: If you notice the model is jumping too quickly to call a tool, try softening the wording. For example, swapping out stronger terms like “proactive” with something gentler can help guide the model to take a calmer, less eager approach.*
+*提示：如果你發現模型太快跳去呼叫 tool，可以把措辭放軟。例如把 “proactive” 這種強烈的詞換成比較溫和的說法，能引導模型採取比較冷靜、不那麼急切的做法。*
 
-## Tool Call Performance
-As use cases grow more complex and the number of available tools increases, it becomes critical to explicitly guide the model on when to use each tool and just as importantly, when not to. Clear usage rules not only improve tool call accuracy but also help the model choose the right tool at the right time.
+## Tool Call 表現
+當情境越來越複雜、可用的 tool 越來越多，明確引導模型什麼時候用每個 tool、同樣重要的是什麼時候不該用，就變得很關鍵。清楚的使用規則不只提升 tool call 的準確度，也幫助模型在對的時間選對的 tool。
 
-- **When to use**: Model is struggling with tool call performance and needs the instructions to be explicit to reduce misuse.
-- **What it does**: Add instructions on when to “use/avoid” each tool. You can also add instructions on sequences of tool calls (after Tool call A, you can call Tool call B or C)
+- **什麼時候用**：模型的 tool call 表現不好，需要把指令寫得更明確以減少誤用。
+- **做什麼**：為每個 tool 加上「何時用／何時避免」的指令。也可以加上 tool call 順序的指令（Tool call A 之後，可以呼叫 Tool call B 或 C）。
 
-### Example
+### 範例
 ```
 # Tools
 - When you call any tools, you must output at the same time a response letting the user know that you are calling the tool.
@@ -637,15 +644,15 @@ Do NOT use when: outage status = true (send status + ETA instead).
 Use when: user seems very frustrated, abuse/harassment, repeated failures, billing disputes >$50, or user requests escalation.
 ```
 
-*Tip: If a tool call can fail unpredictably, add clear failure-handling instructions so the model responds gracefully.*
+*提示：如果某個 tool call 可能不可預期地失敗，要加上清楚的失敗處理指令，讓模型能優雅地回應。*
 
-## Tool Level Behavior
-You can fine-tune how the model behaves for specific tools instead of applying one global rule. For example, you may want READ tools to be called proactively, while WRITE tools require explicit confirmation.
+## Tool 層級的行為
+你可以針對特定 tool 微調模型的行為，而不是套用單一的全域規則。例如你可能希望 READ 類 tool 主動呼叫，而 WRITE 類 tool 需要明確確認。
 
-- **When to use**:  Global instructions for proactiveness, confirmation, or preambles don’t suit every tool.
-- **What it does**: Adds per-tool behavior rules that define whether the model should call the tool immediately, confirm first, or speak a preamble before the call.
+- **什麼時候用**：全域的主動性、確認或 preamble 指令，不適合每一個 tool。
+- **做什麼**：加入每個 tool 各自的行為規則，定義模型該立刻呼叫、先確認，還是在呼叫前說一句 preamble。
 
-### Example
+### 範例
 ```
 # TOOLS
 - For the tools marked PROACTIVE: do not ask for confirmation from the user and do not output a preamble.
@@ -681,39 +688,39 @@ Use when: harassment, threats, self-harm, repeated failure, billing disputes > $
 Preamble: “Let me connect you to a senior agent who can assist further.”
 ```
 
-## Tool Output Formatting
-Some tool outputs, especially long strings that must be repeated verbatim, can be out-of-distribution for the model. During training, tool outputs commonly look like JSON objects with named fields. If your tool returns a raw string and separately asks the model to “repeat exactly,” the model may be more prone to paraphrasing, truncation, or blending in its own preamble.
+## Tool 輸出格式
+有些 tool 輸出，尤其是必須逐字重複的長字串，對模型來說可能是 out-of-distribution。訓練時，tool 輸出通常長得像有具名欄位的 JSON 物件。如果你的 tool 回傳原始字串，又另外要求模型「照原樣重複」，模型比較容易改寫、截斷，或混進自己的開場白。
 
-A practical fix is to make the tool output look like a normal tool result and make the verbatim requirement machine-explicit.
+實用的解法是讓 tool 輸出看起來像一般的 tool 結果，並把「逐字」這個要求寫成機器看得懂的明確欄位。
 
-* **When to use:** A tool returns **long or complex structured content** (multi-sentence instructions, handoff packets, IDs/links, policy summaries, multi-step procedures, etc.) and you observe **truncation, paraphrasing, dropped fields, reordering, or the model blending in its own preamble/commentary**.
+* **什麼時候用：** tool 回傳**長或複雜的結構化內容**（多句指示、handoff 資料包、ID／連結、政策摘要、多步驟流程等），而你觀察到**截斷、改寫、欄位遺漏、順序被改，或模型混進自己的開場白／評論**。
 
-* **What it does:** Wraps the tool output in a **small, explicit JSON envelope** (e.g., `response_text` plus flags like `require_repeat_verbatim`, `format`, or `content_type`) so the response looks more **in-distribution** and the expected realization behavior is **machine-clear**.
+* **做什麼：** 把 tool 輸出包進一個**小而明確的 JSON 外殼**（例如 `response_text` 加上 `require_repeat_verbatim`、`format` 或 `content_type` 之類的旗標），讓回應看起來更 **in-distribution**，預期的輸出行為也**對機器很清楚**。
 
-* **How to adapt:** Keep the schema **minimal and stable**. Clearly document the expected tool output shape in both your **Tools instructions** and next to the **tool definition** (e.g., “If `require_repeat_verbatim` is true, output exactly `response_text` and nothing else,” or “Render `response_text` as-is; do not add, omit, or reorder fields from the tool output.”).
+* **怎麼調整：** schema 保持**精簡且穩定**。在你的 **Tools 指令**和 **tool 定義旁邊**，都清楚寫明預期的 tool 輸出形狀（例如「如果 `require_repeat_verbatim` 為 true，只輸出 `response_text`，其他什麼都不要加」，或「照原樣呈現 `response_text`；不要新增、省略或重排 tool 輸出的欄位」）。
 
 
 
-### Examples
+### 範例
 
-#### Example: raw string (more error-prone)
+#### 範例：原始字串（比較容易出錯）
 
-Tool returns:
+Tool 回傳：
 
 ```python
 I just sent you an email with the verification link. Please open it and click “Confirm”.
 ```
 
-Model sometimes says:
+模型有時會說：
 
-- “I’ve emailed you a verification link…” (paraphrase)
+- “I’ve emailed you a verification link…”（改寫）
 
-- Drops the last sentence (truncation)
+- 漏掉最後一句（截斷）
 
-- Adds extra commentary (“Can I help with anything else?”)
+- 加上多餘的評論（“Can I help with anything else?”）
 
-#### Example: wrapped JSON (more in-distribution, more reliable)
-Tool returns:
+#### 範例：包成 JSON（比較 in-distribution、比較可靠）
+Tool 回傳：
 
 ```json
 {
@@ -722,23 +729,23 @@ Tool returns:
 }
 ```
 
-Because this looks like a typical tool result (JSON object), the model generally has an easier time:
+因為這看起來像典型的 tool 結果（JSON 物件），模型通常比較容易：
 
-- recognizing what the “authoritative” content is (response_text)
+- 認出哪個是「權威」內容（response_text）
 
-- understanding the realization constraint (require_repeat_verbatim)
+- 理解輸出的限制（require_repeat_verbatim）
 
-- reproducing the tool output cleanly, without truncation or extra commentary
+- 乾淨地重現 tool 輸出，不截斷也不加多餘評論
 
-## Rephrase Supervisor Tool (Responder-Thinker Architecture)
-In many voice setups, the realtime model acts as the responder (speaks to the user) while a stronger text model acts as the thinker (does planning, policy lookups, SOP completion). Text replies are not automatically good for speech, so the responder must rephrase the thinker’s text into an audio-friendly response before generating audio.
+## Rephrase Supervisor Tool（Responder-Thinker 架構）
+很多語音架構裡，realtime 模型扮演 responder（跟使用者講話），更強的文字模型扮演 thinker（負責規劃、查政策、完成 SOP）。文字回覆不一定適合用說的，所以 responder 在產生音訊之前，必須先把 thinker 的文字改寫成適合語音的回應。
 
 
-- **When to use**: When the responder’s spoken output sounds robotic, too long, or awkward after receiving a thinker response.
-- **What it does**: Adds clear instructions that guide the responder to rephrase the thinker’s text into a short, natural, speech-first reply.
-- **How to adapt**: Tweak phrasing style, openers, and brevity limits to match your use case expectation.
+- **什麼時候用**：responder 收到 thinker 的回應後，說出來的內容聽起來很機械、太長或很彆扭。
+- **做什麼**：加上清楚的指令，引導 responder 把 thinker 的文字改寫成簡短、自然、以口語為優先的回覆。
+- **怎麼調整**：調整措辭風格、開頭和簡短程度的限制，符合你的預期。
 
-### Example
+### 範例
 ```
 # Tools
 ## Supervisor Tool
@@ -774,20 +781,20 @@ Usage rules and preamble:
 - Read numbers for speech: money naturally (“$45.20” → “forty-five dollars and twenty cents”), phone numbers 3-3-4, addresses with individual digits, dates/times plainly (“August twelfth”, “three-thirty p.m.”).
 ```
 
-Here’s an example without the rephrasing instruction:
+這是沒有改寫指令的例子：
 
 >Assistant: Your current credit card balance is positive at 32,323,232 AUD.
 
-Here’s the same example with the rephrasing instruction:
+這是同樣的例子，加上改寫指令：
 
 >Assistant: Just finished checking that—your credit card balance is thirty-two million three hundred twenty-three thousand two hundred thirty-two dollars in your favor. Your last payment was processed on August first. Does that match what you expected?
 
-## Common Tools
-The new model snapshot has been trained to effectively use the following common tools. If your use case needs similar behavior, keep the names, signatures, and descriptions close to these to maximize reliability and to be more in-distribution.
+## 常用 Tool
+新的模型版本已經訓練過，能有效使用下列常用 tool。如果你的情境需要類似行為，名稱、簽章和描述請盡量貼近這些，以提高可靠度並更 in-distribution。
 
-Below are some of the important common tools that the model has been trained on:
+以下是模型訓練過的幾個重要常用 tool：
 
-### Example
+### 範例
 ```
 # answer(question: string)
 Description: Call this when the customer asks a question that you don't have an answer to or asks to perform an action.
@@ -801,16 +808,16 @@ Description: Call this when a customer asks for escalation, or to talk to someon
 Description: Call this when a customer says they're done with the session or doesn't want to continue. If it's ambiguous, confirm with the customer before calling. 
 ```
 
-# Conversation Flow
-This section covers how to structure the dialogue into clear, goal-driven phases so the model knows exactly what to do at each step. It defines the purpose of each phase, the instructions for moving through it, and the concrete “exit criteria” for transitioning to the next. This prevents the model from stalling, skipping steps, or jumping ahead, and ensures the conversation stays organized from greeting to resolution.
+# 對話流程
+這一段講怎麼把對話組織成清楚、以目標為導向的階段，讓模型清楚知道每一步該做什麼。它定義每個階段的目的、推進的指令，以及進入下一階段的具體「結束條件」。這樣可以避免模型卡住、跳步或搶先，讓對話從打招呼到解決問題都井然有序。
 
-As well, by organizing your prompt into various conversation states, it becomes easier to identify error modes and iterate more effectively.
+另外，把 prompt 組織成不同的對話狀態，也更容易找出錯誤模式、更有效地迭代。
 
-- **When to use**: If conversations feel disorganized, stall before reaching the goal or model struggling to effectively complete the objective.
-- **What it does**: Breaks the interaction into phases with clear goals, instructions and exit criteria.
-- **How to adapt**: Rename phases to match your workflow; Modify instructions for each phase to follow your intended behaviour;  keep “Exit when” concrete and minimal.
+- **什麼時候用**：對話感覺雜亂、還沒達成目標就停住，或模型很難有效完成目標。
+- **做什麼**：把互動拆成階段，每個階段有明確的目標、指令和結束條件。
+- **怎麼調整**：把階段改名以符合你的 workflow；修改每個階段的指令以符合預期行為；“Exit when” 要具體而精簡。
 
-### Example
+### 範例
 ```
 # Conversation Flow
 ## 1) Greeting
@@ -865,14 +872,14 @@ How to respond:
 Exit when: Caller declines more help.
 ```
 
-## Sample Phrases
-Sample phrases act as “anchor examples” for the model. They show the style, brevity, and tone you want it to follow, without locking it into one rigid response.
+## 範例句子
+範例句子是模型的「錨點範例」。它們展示你想要的風格、簡短程度和語氣，又不會把模型鎖死在單一個固定回應。
 
-- **When to use**: Responses lack your brand style or are not consistent.
-- **What it does**: Provides sample phrases the model can vary to stay natural and brief.
-- **How to adapt**: Swap examples for brand-fit; keep the “do not always use” warning.
+- **什麼時候用**：回應缺少你的品牌風格，或不一致。
+- **做什麼**：提供模型可以變化使用的範例句子，保持自然簡短。
+- **怎麼調整**：換成符合品牌的範例；保留 “do not always use” 這個警告。
 
-### Example
+### 範例
 ```
 # Sample Phrases
 - Below are sample examples that you should use for inspiration. DO NOT ALWAYS USE THESE EXAMPLES, VARY YOUR RESPONSES.
@@ -884,13 +891,13 @@ Empathy (brief): “That’s frustrating—let’s fix it.”
 Closers: “Anything else before we wrap?” “Happy to help next time.”
 ```
 
-*Note: If your voice system ends up consistently only repeating the sample phrases, leading to a more robotic voice experience, try adding the Variety constraint. We’ve seen this fix the issue.*
+*備註：如果你的語音系統最後一直只重複範例句子，讓語音體驗更機械，可以試著加上 Variety 限制。我們看過這樣能解決問題。*
 
-## Conversation flow + Sample Phrases
-It is an useful pattern to add sample phrases in the different conversation flow states to teach the model how a good response looks like:
+## 對話流程加範例句子
+在不同的對話流程狀態裡加入範例句子，教模型好的回應長什麼樣，是很有用的模式：
 
 
-### Example
+### 範例
 ```
 # Conversation Flow
 ## 1) Greeting
@@ -969,21 +976,21 @@ Exit when: Caller declines more help.
 
 ```
 
-## Advanced Conversation Flow
+## 進階對話流程
 
-As use cases grow more complex, you’ll need a structure that scales while keeping the model effective. The key is balancing maintainability with simplicity: too many rigid states can overload the model, hurting performance and making conversations feel robotic.
+當情境越來越複雜，你需要一種能擴充、又能讓模型保持有效的結構。關鍵是在可維護性和簡單之間取得平衡：太多僵硬的狀態會讓模型負擔過重，傷害表現，也讓對話聽起來很機械。
 
-A better approach is to design flows that reduce the model’s perceived complexity. By handling state in a structured but flexible way, you make it easier for the model to stay focused and responsive, which improves user experience.
+比較好的做法是設計能降低模型感受複雜度的流程。用結構化但有彈性的方式處理狀態，模型比較容易保持專注、反應靈活，使用者體驗也會更好。
 
-Two common patterns for managing complex scenarios are:
-1. Conversation Flow as State Machine
-2. Dynamic Conversation Flow via session.updates
+管理複雜情境有兩種常見模式：
+1. 把對話流程做成 State Machine
+2. 透過 session.updates 動態改變對話流程
 
 
-### Conversation Flow as State Machine
-Define your conversation as a JSON structure that encodes both states and transitions. This makes it easy to reason about coverage, identify edge cases, and track changes over time. Since it’s stored as code, you can version, diff, and extend it as your flow evolves. A state machine also gives you fine-grained control over exactly how and when the conversation moves from one state to another.
+### 把對話流程做成 State Machine
+把對話定義成一個 JSON 結構，同時編碼狀態和轉換。這樣容易推敲涵蓋範圍、找出邊界情況，並隨時間追蹤變更。因為它是以程式碼形式存放，你可以做版本管理、diff，並隨流程演進擴充。State machine 也讓你能細緻控制對話從一個狀態轉到另一個狀態的確切方式和時機。
 
-#### Example
+#### 範例
 ```json
 # Conversation States
 [
@@ -1041,15 +1048,14 @@ Define your conversation as a JSON structure that encodes both states and transi
 ...
 ```
 
-### Dynamic Conversation Flow
-In this pattern, the conversation adapts in real time by updating the system prompt and tool list based on the current state. Instead of exposing the model to all possible rules and tools at once, you only provide what’s relevant to the active phase of the conversation.
+### 動態對話流程
+在這個模式裡，對話會根據目前的狀態，即時更新 system prompt 和 tool 清單來調整。與其一次把所有可能的規則和 tool 都丟給模型，不如只提供和目前對話階段相關的部分。
+當一個狀態的結束條件達成時，用 session.update 切換，把 prompt 和 tool 換成下一階段需要的。
 
-When the end conditions for a state are met, you use session.update to transition, replacing the prompt and tools with those needed for the next phase.
-
-This approach reduces the model’s cognitive load, making it easier for it to handle complex tasks without being distracted by unnecessary context.
+這個做法降低模型的認知負擔，讓它處理複雜任務時不會被不必要的 context 干擾。
 
 
-#### Example
+#### 範例
 
 ```python
 from typing import Dict, List, Literal
@@ -1142,14 +1148,14 @@ def build_session_update(state: State) -> dict:
     }
 ```
 
-# Safety & Escalation
-Often with Realtime voice agents, having a reliable way to escalate to a human is important. In this section, you should modify the instructions on WHEN to escalate depending on your use case.
+# 安全與升級
+Realtime 語音 agent 常常需要一個可靠的方式把對話升級給真人。在這一段，你要依自己的情境，修改「什麼時候」該升級的指令。
 
-- **When to use**: Model is struggling in determining when to properly escalate to a human or fallback system
-- **What it does**: Defines fast, reliable escalation and what to say.
-- **How to adapt**: Insert your own thresholds and what the model has to say.
+- **什麼時候用**：模型很難判斷什麼時候該適當地升級給真人或備援系統。
+- **做什麼**：定義快速、可靠的升級方式，以及要說什麼。
+- **怎麼調整**：放入你自己的門檻，以及模型該說的話。
 
-### Example
+### 範例
 ```
 # Safety & Escalation
 When to escalate (no extra troubleshooting):
@@ -1168,20 +1174,32 @@ Examples that would require escalation:
 - “I am extremely frustrated!”
 ```
 
-This is the conversation responses from our old snapshot model `gpt-4o-realtime-preview-2025-06-03` using the instruction.
+這是我們舊版模型 `gpt-4o-realtime-preview-2025-06-03` 使用這個指令的對話回應。
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/escalate_06.png"
   style="width:800px; height:auto;"
 />
 
-This is the conversation responses from our new GA model `gpt-realtime` using the instruction.
+這是我們新的 GA 模型 `gpt-realtime` 使用這個指令的對話回應。
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/escalate_07.png"
   style="width:800px; height:auto;"
 />
 
-The new realtime model is able to better follow the instruction and escalate to a human more reliably.
+新的 realtime 模型更能遵循指令，也更可靠地升級給真人。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Realtime 的 system prompt 要用有標籤的短區段加條列，每段只管一件事；指令含糊或互相衝突，表現會明顯變差。
+- `speed` 參數只改播放速率，要讓聲音真的變快，得在 prompt 裡寫節奏和簡短程度的指令。
+- 範例句子會被緊緊跟著，所以要搭配 Variety 規則，避免回應變成機器人。
+- Tool 的行為可以全域設定，也可以每個 tool 各自設定（READ 主動、WRITE 先確認）；tool 清單和 prompt 提到的 tool 必須一致。
+- 對話複雜時，用 state machine 或 `session.update` 動態換 prompt 和 tool，降低模型每一刻要處理的規則量。
+
+## 練習
+
+1. 挑一個你自己的語音 agent prompt，把 `IF x > 3 THEN ESCALATE` 這類寫法改成文字規則，並加一條 Variety 規則，比較前後的回應。
+2. 照「Tool 輸出格式」的做法，把一個回傳長字串的 tool 改成回傳 `{"response_text": ..., "require_repeat_verbatim": true}`，並在 Tools 指令寫出對應規則，看逐字複誦有沒有變穩。
+3. 把一個三階段的對話流程（例如驗證、查詢、結案）改寫成 JSON state machine，再用 `session.update` 在每個階段結束條件達成時，換成該階段專用的 prompt 和 tool 清單。

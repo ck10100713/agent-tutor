@@ -1,155 +1,169 @@
 ---
-translated: false
+translated: true
 source: examples/partners/schemaflow_design_guide/schemaflow_cookbook.ipynb
 ---
 
-# SchemaFlow: Agentic Database Change Impact Analysis, SQL Generation, and Eval Guardrails
+# SchemaFlow：用 agent 做資料庫變更影響分析、SQL 產生與 eval guardrail
 
 > 原文：[examples/partners/schemaflow_design_guide/schemaflow_cookbook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/schemaflow_design_guide/schemaflow_cookbook.ipynb)
 
-Build a staged SchemaFlow pipeline with the OpenAI Agents SDK for database change parsing, impact analysis, rollout planning, SQL generation, guardrails, artifacts, optional File Search grounding, and Promptfoo evals.
+用 OpenAI Agents SDK 建一條分階段的 SchemaFlow pipeline：解析資料庫變更需求、分析影響、規劃上線步驟、產生 SQL、加 guardrail、存 artifact，還可以選擇接 File Search 做 grounding，最後用 Promptfoo 跑 eval。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+把一段自然語言的資料庫變更需求（例如「幫 ODS 的客戶表加一個 loyalty tier 欄位並回填」），丟進一條由多個 agent 組成的流程。流程會一步步產出結構化 JSON、影響分析、上線計畫和 SQL 草稿，再用確定性的檢查把關。最後整包結果存成 JSON，還能用 Promptfoo 自動評測。
+
+## 學完你會
+
+- 用 Agents SDK 把一個大任務拆成 parse、impact、plan、SQL 四個各管一件事的 agent，並用 Pydantic 定義每個階段的輸出格式。
+- 在階段之間加確定性的 guardrail（欄位型別、nullable、必要 SQL 關鍵字），在壞資料流到下游之前就擋掉。
+- 把整個流程存成可稽核的 artifact，並產生 Promptfoo 的 provider、assertion 和 config 來重複跑 eval。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，會呼叫付費的模型。
+- 想用 PDF 做 File Search grounding，需要自備一份 PDF（會建 OpenAI vector store）。
+- 跑 Promptfoo eval 需要 Node.js 和 npm。
+- 最後的 Neo4j 儀表板是選配，需要一個跑著的 Neo4j。
 
 ---
 
-This cookbook walks through an end-to-end **AI-assisted database change workflow** using the OpenAI Agents SDK. 
+這篇 cookbook 帶你用 OpenAI Agents SDK 走完一條端到端的 **AI 輔助資料庫變更流程**。
 
-It demonstrates how OpenAI’s tooling ecosystem can be applied to orchestrate complex, data-intensive workflows across modern enterprise infrastructures. While the current implementation focuses on a retail-oriented schema change and impact-analysis use case, the underlying architectural patterns are domain-agnostic and extensible. The same workflow design can be adapted across industries such as manufacturing, pharmaceuticals, healthcare, logistics, finance, and supply chain operations — wherever structured data workflows, operational reasoning, retrieval-augmented analysis, and automated validation are required.
+它示範怎麼用 OpenAI 的工具生態，去編排複雜、重資料的流程，適用於現代企業的基礎架構。目前的範例是零售業的 schema 變更與影響分析，但底層的架構模式跟領域無關，可以延伸。同樣的流程設計也能套用到製造、製藥、醫療、物流、金融、供應鏈等產業，只要有結構化資料流程、營運推理、retrieval 增強分析和自動驗證的需求都適用。
 
-The running example is a retail loyalty-tier change, but the same pattern applies to many database-change requests where teams need traceable impact analysis and reviewable implementation output.
+範例用的是零售的 loyalty tier 變更，不過同樣的模式可以用在很多資料庫變更需求上，只要團隊需要可追溯的影響分析和可審查的實作產出。
 
-The workflow starts from a natural-language database change request, converts it into structured JSON, optionally grounds impact analysis with PDF-based File Search context, generates a safe rollout plan, drafts SQL across data platform layers, validates the output with deterministic guardrails, saves a reusable artifact, and optionally evaluates the flow with Promptfoo.
+流程從一段自然語言的資料庫變更需求開始，先轉成結構化 JSON，再選擇性地用 PDF 的 File Search 為影響分析提供依據，接著產生安全的上線計畫，跨資料平台各層起草 SQL，用確定性的 guardrail 驗證輸出，存成可重用的 artifact，最後可選擇用 Promptfoo 評測整個流程。
 
-The notebook is intentionally self-contained: all core workflow logic, prompts, guardrails, artifact generation, and eval runtime files are created from notebook cells.
+這份 notebook 刻意做成自給自足：所有核心流程邏輯、prompt、guardrail、artifact 產生和 eval 的 runtime 檔案，都是由 notebook 的 cell 建出來的。
 
 <a id="overview"></a>
 
 ---
 
-## Overview
+## 總覽
 
-Schema changes are deceptively simple. A request like “add a nullable column and backfill it” can affect landing tables, staging models, dimensional tables, marts, reporting logic, lineage assumptions, validation checks, rollback procedures, and release sequencing.
+Schema 變更看起來很單純。像「加一個 nullable 欄位並回填」這種需求，可能牽動 landing table、staging model、維度表、mart、報表邏輯、lineage 假設、驗證檢查、rollback 程序和上線順序。
 
-The examples use retail customer data because the dependencies are easy to see, but the same kinds of handoffs show up in many analytics and platform teams.
+範例用零售客戶資料，因為依賴關係容易看懂，但很多分析和平台團隊都會遇到同樣的交接問題。
 
-This cookbook demonstrates a practical pattern for using agents as a **change-analysis and implementation assistant** for database engineering work. Instead of asking one model to produce a final SQL script directly, the workflow breaks the task into explicit stages:
+這份 cookbook 示範一個實用的模式：把 agent 當成資料庫工程的**變更分析與實作助理**。它不是叫一個模型直接吐出最終 SQL，而是把任務拆成明確的階段：
 
-1. Parse the natural-language request into structured JSON.
-2. Analyze impacted objects and operational risks.
-3. Create a rollout plan with prechecks, postchecks, and rollback guidance.
-4. Generate SQL across platform layers.
-5. Run deterministic sanity checks.
-6. Save a machine-readable artifact.
-7. Optionally run Promptfoo evals against the current flow.
+1. 把自然語言需求解析成結構化 JSON。
+2. 分析受影響的物件和營運風險。
+3. 建立包含 precheck、postcheck 和 rollback 指引的上線計畫。
+4. 跨平台各層產生 SQL。
+5. 跑確定性的 sanity check。
+6. 存成機器可讀的 artifact。
+7. 選擇性地對目前的流程跑 Promptfoo eval。
 
-The result is not just a generated SQL script. It is an auditable bundle containing the interpreted change request, impact analysis, plan, SQL, validation results, optional RAG evidence summaries, and eval outputs.
+最後的產出不只是一份 SQL 腳本，而是一包可稽核的內容：解析後的變更需求、影響分析、計畫、SQL、驗證結果、選配的 RAG 證據摘要，以及 eval 輸出。
 
 <a id="why-this-matters"></a>
 
 ---
 
-## Why This Matters
+## 為什麼重要
 
-Database change requests often move through several handoffs: product owners describe the need, data engineers interpret it, platform teams assess risk, analytics engineers propagate the field downstream, and reviewers check whether the change is safe. Important context can be lost at each step.
+資料庫變更需求通常要經過好幾次交接：產品負責人描述需求，資料工程師詮釋，平台團隊評估風險，analytics engineer 把欄位往下游推，reviewer 檢查是否安全。每一次交接都可能掉資訊。
 
-SchemaFlow addresses this by turning a free-form change request into a structured, inspectable workflow.
+SchemaFlow 的做法是把自由格式的變更需求，變成結構化、可檢視的流程。
 
-This matters because database changes can create hidden failure modes:
+這很重要，因為資料庫變更會藏著不少失敗模式：
 
-- A column added to ODS may not be propagated into staging, core, or marts.
-- A nullable field may accidentally be generated as `NOT NULL`.
-- Backfill logic may be omitted even though the request asks for historical population.
-- Index requirements may be missed.
-- Downstream reporting dependencies may be unknown unless reference documentation is consulted.
-- Generated SQL may look plausible but fail basic consistency checks.
+- 加在 ODS 的欄位，可能沒有傳到 staging、core 或 mart。
+- nullable 欄位可能不小心被產成 `NOT NULL`。
+- 需求明明要回填歷史資料，backfill 邏輯卻被漏掉。
+- 需要的 index 被忽略。
+- 沒查參考文件的話，下游報表的依賴關係可能根本不知道。
+- 產出的 SQL 看起來合理，但過不了基本的一致性檢查。
 
-This cookbook shows a pattern for reducing those risks with staged agent reasoning, typed outputs, optional retrieval context, deterministic guardrails, saved artifacts, and repeatable evals.
+這份 cookbook 展示怎麼降低這些風險：分階段的 agent 推理、型別化輸出、選配的 retrieval 上下文、確定性的 guardrail、存下來的 artifact，以及可重複跑的 eval。
 
 <a id="key-benefits"></a>
 
 ---
 
-## Key Benefits
+## 主要好處
 
-- **Structured interpretation** – Converts natural-language database requests into a normalized `change_json` contract.
-- **Separation of responsibilities** – Uses specialized agents for parse, impact analysis, rollout planning, and SQL generation.
-- **Optional RAG grounding** – Lets the impact-analysis agent use File Search over an uploaded PDF, such as an IFD, schema spec, or lineage document.
-- **Typed stage outputs** – Uses Pydantic models and Agents SDK output schemas for parse, impact, and plan stages.
-- **Guardrail-first workflow** – Adds deterministic checks between stages so obvious failures are caught before downstream steps consume bad state.
-- **Traceability** – Emits OpenAI Agents SDK traces and spans for agent runs, guardrails, artifact generation, and eval execution.
-- **Portable artifacts** – Saves the final workflow bundle as JSON under `artifacts/notebook_runs/`.
-- **Eval-ready design** – Generates Promptfoo provider, assertion, config, and result files from the live notebook state.
-- **No database side effects** – Produces draft SQL and validation output without executing against a live database.
+- **結構化詮釋**：把自然語言的資料庫需求轉成標準化的 `change_json` 契約。
+- **職責分離**：parse、影響分析、上線規劃、SQL 產生各用一個專職 agent。
+- **選配的 RAG grounding**：讓 impact 分析 agent 對上傳的 PDF（例如 IFD、schema 規格或 lineage 文件）使用 File Search。
+- **型別化的階段輸出**：parse、impact、plan 三個階段用 Pydantic model 和 Agents SDK 的 output schema。
+- **Guardrail 優先**：階段之間加確定性檢查，明顯的失敗在下游吃到壞狀態之前就被抓到。
+- **可追溯**：agent 執行、guardrail、artifact 產生和 eval 執行都會產出 OpenAI Agents SDK 的 trace 和 span。
+- **可攜的 artifact**：最終的流程包以 JSON 存在 `artifacts/notebook_runs/` 下。
+- **為 eval 而設計**：從 notebook 的即時狀態產生 Promptfoo 的 provider、assertion、config 和結果檔。
+- **不碰資料庫**：只產生 SQL 草稿和驗證輸出，不會對真實資料庫執行。
 
 <a id="what-youll-build"></a>
 
 ---
 
-## What You'll Build
+## 你會做出什麼
 
-By the end of this notebook, you will have a working SchemaFlow pipeline that produces:
+跑完這份 notebook，你會有一條可運作的 SchemaFlow pipeline，產出：
 
-- A parsed database change request:
+- 解析後的資料庫變更需求：
   - title
   - domain
   - target schema
   - target table
-  - normalized operations
+  - 標準化後的 operations
   - notes
 
-- An impact-analysis report:
-  - impacted tables, columns, indexes, views, or relationships
-  - risks
-  - assumptions
-  - optional File Search evidence summaries
+- 影響分析報告：
+  - 受影響的 table、column、index、view 或關聯
+  - 風險
+  - 假設
+  - 選配的 File Search 證據摘要
 
-- A rollout plan:
-  - implementation steps
+- 上線計畫：
+  - 實作步驟
   - prechecks
   - postchecks
-  - rollback actions
+  - rollback 動作
 
-- A draft SQL script with four required sections:
+- 一份 SQL 草稿，包含四個必要區段：
   - `LANDING (ODS)`
   - `STAGING (STG)`
   - `CORE (DIM/FACT/VIEW)`
   - `MARTS (SERVING)`
 
-- A validation result:
-  - expected table checks
-  - expected column checks
-  - required keyword checks such as `ALTER TABLE`, `UPDATE`, or `CREATE INDEX`
+- 驗證結果：
+  - 預期 table 檢查
+  - 預期 column 檢查
+  - 必要關鍵字檢查，例如 `ALTER TABLE`、`UPDATE` 或 `CREATE INDEX`
 
-- A saved JSON artifact:
-  - change request
-  - impact analysis
-  - plan
+- 存下來的 JSON artifact：
+  - 變更需求
+  - 影響分析
+  - 計畫
   - SQL
-  - validation
-  - optional RAG metadata
+  - 驗證
+  - 選配的 RAG metadata
 
-- A Promptfoo eval harness:
+- Promptfoo eval 工具組：
   - Python provider
-  - Python assertion file
-  - generated Promptfoo config
+  - Python assertion 檔
+  - 產生出來的 Promptfoo config
   - parse-only eval case
   - full-flow eval case
-  - timestamped JSON and HTML eval reports
+  - 帶時間戳的 JSON 和 HTML eval 報告
   
 
 <a id="introduction-use-case-and-solution"></a>
 
 ---
 
-## Introduction: Use Case and Solution
+## 簡介：使用情境與解法
 
-This cookbook focuses on a common enterprise data-engineering scenario: a stakeholder requests a database schema change in natural language, and the data team needs to turn that request into an implementation-ready plan.
+這份 cookbook 聚焦在企業資料工程常見的情境：利害關係人用自然語言提出 schema 變更，資料團隊要把它變成可實作的計畫。
 
-Here, the retail domain is just a concrete way to make the workflow tangible. The same staged approach can be adapted to other source systems, data products, and review processes.
+這裡用零售領域只是為了讓流程具體。同樣的分階段做法，可以調整到其他來源系統、資料產品和審查流程。
 
-The default request in this notebook is:
+這份 notebook 的預設需求是：
 
 ```text
 Add LOYALTY_TIER VARCHAR(20) to ODS.ODS_CUSTOMER_PROFILE as nullable.
@@ -157,40 +171,40 @@ Backfill from CORE.DIM_CUSTOMER on CUSTOMER_ID where IS_CURRENT=true.
 Add a non-unique index on (CUSTOMER_ID, LOYALTY_TIER).
 ```
 
-A human data engineer would typically need to answer several questions before writing production SQL:
+人類資料工程師在寫 production SQL 之前，通常得先回答幾個問題：
 
-- What table and schema are being changed?
-- What exact column, type, and nullability were requested?
-- Is historical backfill required?
-- Does the request imply an index?
-- Which downstream layers need the field propagated?
-- What risks should reviewers look for?
-- What checks should be run before and after deployment?
-- What rollback steps are reasonable?
-- Does the generated SQL include the required elements?
+- 要改哪個 schema 的哪張表？
+- 要加的欄位、型別和 nullability 到底是什麼？
+- 需不需要回填歷史資料？
+- 需求有沒有暗示要建 index？
+- 哪些下游層需要把這個欄位傳下去？
+- reviewer 該注意哪些風險？
+- 上線前後要跑哪些檢查？
+- 合理的 rollback 步驟是什麼？
+- 產出的 SQL 有沒有包含該有的元素？
 
-SchemaFlow implements this as a staged agent workflow. Each stage creates a typed intermediate output that the next stage consumes. Deterministic checks then validate the outputs before the notebook saves the final bundle and optionally runs evals.
+SchemaFlow 把這些做成分階段的 agent 流程。每個階段產出型別化的中間結果給下一階段用，再由確定性的檢查驗證，之後 notebook 才存最終的流程包，並選擇性地跑 eval。
 
 <a id="workflow-overview"></a>
 
 ---
 
-## Workflow Overview
+## 流程總覽
 
-At a high level, SchemaFlow follows this sequence:
+大方向上，SchemaFlow 照這個順序跑：
 
 ![schemaflow_seq_diagram.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/schemaflow_seq_diagram.png)
 
-The notebook is organized so readers can run the core workflow first and then decide whether they want to run the optional Promptfoo evaluation section.
+這份 notebook 的安排是讓你先跑核心流程，再決定要不要跑選配的 Promptfoo 評測。
 
 
 <a id="table-of-contents"></a>
 
 ---
 
-## Table of Contents
+## 目錄
 
-### Conceptual Guide
+### 概念說明
 
 - [Overview](#overview)
 - [Why This Matters](#why-this-matters)
@@ -202,7 +216,7 @@ The notebook is organized so readers can run the core workflow first and then de
 - [System Design](#system-design)
 - [Execution Workflow](#execution-workflow)
 
-### Notebook Implementation
+### Notebook 實作
 
 1. [Environment Setup](#environment-setup)
 2. [Input](#input)
@@ -228,7 +242,7 @@ The notebook is organized so readers can run the core workflow first and then de
     - [Run Promptfoo Eval](#run-promptfoo-eval)
     - [Review Latest Promptfoo Results](#review-latest-promptfoo-results)
 
-### Reference
+### 參考
 
 - [Notes, Assumptions, and Extension Points](#notes-assumptions-and-extension-points)
 
@@ -236,60 +250,59 @@ The notebook is organized so readers can run the core workflow first and then de
 
 ---
 
-## Architecture - Design Patterns
+## 架構：設計模式
 
-SchemaFlow uses a staged, contract-driven agent architecture. The goal is to avoid treating the model as a single black-box SQL generator. Instead, each stage has a narrow responsibility and produces an output that can be inspected, validated, traced, and reused.
+SchemaFlow 用的是分階段、以契約驅動的 agent 架構。目標是不要把模型當成單一的黑盒 SQL 產生器。每個階段只負責一件事，產出的東西可以檢視、驗證、追蹤和重用。
 
-### 1. Agent Specialization
+### 1. Agent 專職化
 
-Each agent performs one primary task:
+每個 agent 只做一件主要的事：
 
-| Agent | Responsibility | Main Output |
+| Agent | 職責 | 主要輸出 |
 |---|---|---|
-| Parse Agent | Extract structured fields from the natural-language request | `change_json` |
-| Impact Agent | Identify affected objects, assumptions, and risks | `impact_json` |
-| Plan Agent | Convert the change and impact into rollout steps | `plan_json` |
-| SQL Agent | Draft SQL across data platform layers | `sql_text` |
+| Parse Agent | 從自然語言需求抽出結構化欄位 | `change_json` |
+| Impact Agent | 找出受影響的物件、假設和風險 | `impact_json` |
+| Plan Agent | 把變更和影響轉成上線步驟 | `plan_json` |
+| SQL Agent | 跨資料平台各層起草 SQL | `sql_text` |
 
-This specialization makes the workflow easier to debug. If SQL is missing a column, you can inspect whether the issue started in parsing, impact analysis, planning, or SQL generation.
+這樣拆比較好 debug。如果 SQL 少了一個欄位，你可以回頭看問題是從 parse、impact、plan 還是 SQL 產生哪一步開始的。
 
-### 2. Typed Output Contracts
+### 2. 型別化的輸出契約
 
-The notebook defines Pydantic models for the structured stages:
+這份 notebook 為結構化的階段定義了 Pydantic model：
 
 - `ChangeRequestModel`
 - `ImpactModel`
 - `PlanModel`
 
-Those models are wrapped with `AgentOutputSchema` so the Agents SDK knows the expected output shape. The workflow also normalizes outputs after model calls to ensure expected keys exist before downstream stages run.
+這些 model 用 `AgentOutputSchema` 包起來，讓 Agents SDK 知道預期的輸出形狀。模型呼叫之後，流程還會做輸出正規化，確保下游階段執行前，該有的 key 都在。
+### 3. 用 Retrieval 增強的影響分析
 
-### 3. Retrieval-Augmented Impact Analysis
+PDF RAG 這段是選配的。當你設定了 `PDF_PATH`，notebook 會：
 
-The PDF RAG section is optional. When `PDF_PATH` is set, the notebook:
+1. 建一個 OpenAI vector store。
+2. 上傳 PDF。
+3. 讓 OpenAI 解析、切 chunk、做 embedding 並建索引。
+4. 給 Impact Agent 一個 `FileSearchTool`。
+5. 記下 File Search 回傳結果的摘要。
 
-1. Creates an OpenAI vector store.
-2. Uploads the PDF.
-3. Lets OpenAI parse, chunk, embed, and index it.
-4. Gives the Impact Agent a `FileSearchTool`.
-5. Captures a summary of returned File Search results.
+當變更需求需要以 IFD、schema 文件、lineage 檔、data contract 或架構參考資料為依據時，這個功能就很有用。
 
-This is useful when the change request needs grounding in an IFD, schema document, lineage file, data contract, or architecture reference.
+### 4. 階段之間的 Guardrail 關卡
 
-### 4. Guardrail Gates Between Stages
+notebook 在幾個主要階段之後加了確定性的檢查：
 
-The notebook adds deterministic checks after major stages:
+- Stages 1-2 的 guardrail 驗證 parse 和 impact 的輸出。
+- Stages 3-4 的 guardrail 驗證計畫完整度、資料型別傳遞和 nullability 處理。
+- Stage 5 的 SQL 檢查驗證預期的 table、column 和 SQL 關鍵字是否存在。
+- Post-artifact 檢查確認存下來的 JSON artifact 存在而且讀得回來。
+- Pre-Promptfoo 檢查確認 notebook 的狀態已經準備好跑 eval。
 
-- Stages 1-2 guardrails validate parse and impact outputs.
-- Stages 3-4 guardrails validate plan completeness, data type propagation, and nullability handling.
-- Stage 5 SQL checks validate expected table, column, and SQL keyword presence.
-- Post-artifact checks verify the saved JSON artifact exists and round-trips.
-- Pre-Promptfoo checks verify the notebook state is ready for evals.
+這些檢查不能取代人工 review，但可以及早抓到常見的無聲失敗。
 
-These checks do not replace human review, but they catch common silent failures early.
+### 5. 以 Artifact 為中心的執行
 
-### 5. Artifact-Centered Execution
-
-The final bundle is the main workflow artifact. It captures the state needed to review or debug the run:
+最終的 bundle 是整個流程的主要 artifact，記錄了 review 或 debug 這次執行所需的狀態：
 
 ```text
 bundle = {
@@ -303,138 +316,138 @@ bundle = {
 }
 ```
 
-The notebook saves this bundle under `artifacts/notebook_runs/`.
+notebook 會把這個 bundle 存在 `artifacts/notebook_runs/` 底下。
 
-### 6. Eval Runtime Generated from Notebook State
+### 6. 從 Notebook 狀態產生 Eval Runtime
 
-Promptfoo runs in a separate process, so it cannot directly read variables from the active notebook kernel. To solve this, Section 10 writes a small reusable Python module and Promptfoo runtime files from the current notebook state.
+Promptfoo 在另一個 process 執行，沒辦法直接讀 notebook kernel 裡的變數。為了解決這點，第 10 節會從目前的 notebook 狀態寫出一個小的可重用 Python module 和 Promptfoo 的 runtime 檔案。
 
-This ensures that prompt edits, `CHANGE_TEXT` edits, and model configuration changes are reflected when the eval files are regenerated.
+這樣 prompt 的修改、`CHANGE_TEXT` 的修改和模型設定的變更，在你重新產生 eval 檔案後都會反映出來。
 
 <a id="system-design"></a>
 
 ---
 
-## System Design
+## 系統設計
 
-### Component Architecture
+### 元件架構
 
 ![schemaflow_system_design.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/schemaflow_system_design.png)
 
-### Primary Runtime Objects
+### 主要的 Runtime 物件
 
-| Object | Created in | Purpose |
+| 物件 | 建立位置 | 用途 |
 |---|---|---|
-| `CHANGE_TEXT` | Input section | The natural-language database change request |
-| `change_json` | Stage 1 | Structured interpretation of the request |
-| `rag_vector_store_id` | Optional PDF RAG section | Hosted vector store ID for uploaded PDF context |
-| `rag_file_search_results` | Stage 2 | Summary of File Search results returned to the Impact Agent |
-| `impact_json` | Stage 2 | Impacted objects, risks, and assumptions |
-| `plan_json` | Stage 3 | Rollout plan, checks, and rollback guidance |
-| `sql_text` | Stage 4 | Draft SQL script |
-| `validation` | Stage 5 | Deterministic SQL sanity-check result |
-| `bundle` | Final Bundle section | Consolidated workflow output |
-| `out_path` | Save Artifact section | Saved JSON artifact path |
-| `promptfoo_config` | Promptfoo section | Generated eval configuration |
+| `CHANGE_TEXT` | Input 區段 | 自然語言的資料庫變更需求 |
+| `change_json` | Stage 1 | 對需求的結構化詮釋 |
+| `rag_vector_store_id` | 選配的 PDF RAG 區段 | 上傳 PDF 上下文用的託管 vector store ID |
+| `rag_file_search_results` | Stage 2 | 回傳給 Impact Agent 的 File Search 結果摘要 |
+| `impact_json` | Stage 2 | 受影響的物件、風險和假設 |
+| `plan_json` | Stage 3 | 上線計畫、檢查和 rollback 指引 |
+| `sql_text` | Stage 4 | SQL 草稿 |
+| `validation` | Stage 5 | 確定性的 SQL sanity check 結果 |
+| `bundle` | Final Bundle 區段 | 彙整後的流程輸出 |
+| `out_path` | Save Artifact 區段 | 存下來的 JSON artifact 路徑 |
+| `promptfoo_config` | Promptfoo 區段 | 產生出來的 eval 設定 |
 
-### Important Boundary
+### 重要的邊界
 
-SchemaFlow generates draft implementation artifacts. It does **not** execute SQL against a database, apply migrations, open pull requests, or modify production systems.
+SchemaFlow 產生的是實作草稿。它**不會**對資料庫執行 SQL、套用 migration、開 pull request，或修改 production 系統。
 
 <a id="execution-workflow"></a>
 
 ---
 
-## Execution Workflow
+## 執行流程
 
-Run the notebook in order.
+照順序跑 notebook。
 
-### Core Workflow
+### 核心流程
 
 1. **Environment Setup**
-   - Imports dependencies.
-   - Verifies the OpenAI Agents SDK version.
-   - Reads `OPENAI_API_KEY`.
-   - Configures tracing and model selection.
+   - import 相依套件。
+   - 確認 OpenAI Agents SDK 的版本。
+   - 讀取 `OPENAI_API_KEY`。
+   - 設定 tracing 和模型選擇。
 
 2. **Input**
-   - Defines `CHANGE_TEXT`.
-   - This is the only required business input for the core workflow.
+   - 定義 `CHANGE_TEXT`。
+   - 這是核心流程唯一需要的業務輸入。
 
-3. **Optional PDF RAG Context**
-   - Leave `PDF_PATH = None` to run without retrieval.
-   - Set `PDF_PATH` to a local PDF to enable File Search context for impact analysis.
+3. **選配的 PDF RAG 上下文**
+   - 保持 `PDF_PATH = None` 就不用 retrieval。
+   - 把 `PDF_PATH` 設成本機 PDF，就會為影響分析啟用 File Search 上下文。
 
 4. **Stages 1-2**
-   - Parse the change request.
-   - Analyze impact.
-   - Optionally use File Search during impact analysis.
+   - 解析變更需求。
+   - 分析影響。
+   - 影響分析時可選擇使用 File Search。
 
 5. **Stages 1-2 Guardrails**
-   - Confirm parse output is well-formed.
-   - Confirm impact output includes the target.
-   - Confirm impacted objects contain required fields.
+   - 確認 parse 輸出格式正確。
+   - 確認 impact 輸出包含 target。
+   - 確認受影響的物件都有必要欄位。
 
 6. **Stages 3-4**
-   - Generate an execution plan.
-   - Generate SQL across landing, staging, core, and mart layers.
+   - 產生執行計畫。
+   - 跨 landing、staging、core、mart 各層產生 SQL。
 
 7. **Stages 3-4 Guardrails**
-   - Confirm plan sections are populated.
-   - Confirm data type propagation.
-   - Confirm nullability behavior matches the request.
+   - 確認計畫各區段都有內容。
+   - 確認資料型別有被傳遞。
+   - 確認 nullability 的行為符合需求。
 
 8. **Stage 5 SQL Sanity Checks**
-   - Check for empty SQL.
-   - Check expected target table and columns.
-   - Check required SQL actions implied by the request.
+   - 檢查 SQL 是否為空。
+   - 檢查預期的 target table 和 column。
+   - 檢查需求暗示的必要 SQL 動作。
 
-9. **Final Bundle and Artifact**
-   - Assemble the full output bundle.
-   - Save it as JSON.
-   - Verify the artifact round-trips successfully.
+9. **Final Bundle 與 Artifact**
+   - 組出完整的輸出 bundle。
+   - 存成 JSON。
+   - 確認 artifact 讀寫來回沒問題。
 
-### Optional Eval Workflow
+### 選配的 Eval 流程
 
 10. **Pre-Promptfoo Checks**
-    - Confirm the notebook state is ready for evals.
+    - 確認 notebook 狀態已準備好跑 eval。
 
-11. **Promptfoo Runtime Generation**
-    - Create a reusable SchemaFlow core module.
-    - Write a Promptfoo provider.
-    - Write a Promptfoo assertion file.
-    - Generate Promptfoo test cases and config.
+11. **產生 Promptfoo Runtime**
+    - 建立可重用的 SchemaFlow core module。
+    - 寫 Promptfoo provider。
+    - 寫 Promptfoo assertion 檔。
+    - 產生 Promptfoo 測試案例和 config。
 
-12. **Promptfoo Eval Execution**
-    - Run parse-only and full-flow evals.
-    - Save timestamped JSON and HTML reports.
-    - Refresh `schemaflow_cookbook_eval_latest.*` aliases.
+12. **執行 Promptfoo Eval**
+    - 跑 parse-only 和 full-flow 的 eval。
+    - 存帶時間戳的 JSON 和 HTML 報告。
+    - 更新 `schemaflow_cookbook_eval_latest.*` 這些別名檔。
 
 <a id="environment-setup"></a>
 
 ---
 
-## 1) Environment Setup
+## 1) 環境設定
 
-This section prepares the runtime for the SchemaFlow workflow.
+這一節準備 SchemaFlow 流程的 runtime。
 
-The setup cell does the following:
+setup cell 做了這些事：
 
-- Imports standard Python utilities used throughout the notebook.
-- Imports the OpenAI client.
-- Imports the OpenAI Agents SDK primitives:
+- import 整份 notebook 會用到的標準 Python 工具。
+- import OpenAI client。
+- import OpenAI Agents SDK 的基本元件：
   - `Agent`
   - `Runner`
   - `RunConfig`
   - `AgentOutputSchema`
   - `FileSearchTool`
-  - tracing and span helpers
-- Verifies that the installed `openai-agents` package meets the minimum required version.
-- Reads `OPENAI_API_KEY` from the environment or prompts for it.
-- Sets the model with `OPENAI_MODEL`, defaulting to `gpt-5.5`.
-- Creates a trace group ID so all related agent runs and guardrail spans can be grouped together.
+  - tracing 和 span 的 helper
+- 確認安裝的 `openai-agents` 套件符合最低版本要求。
+- 從環境變數讀 `OPENAI_API_KEY`，沒有就跳出提示請你輸入。
+- 用 `OPENAI_MODEL` 設定模型，預設是 `gpt-5.5`。
+- 建立一個 trace group ID，讓相關的 agent 執行和 guardrail span 可以歸成一組。
 
-The workflow intentionally enables sensitive trace payloads for this demo so prompts, outputs, eval bundles, and tool data are visible in traces. For production usage, review this setting before handling private data.
+這個 demo 刻意開啟敏感 trace payload，讓 prompt、輸出、eval bundle 和 tool 資料都看得到。用在 production 時，處理私有資料之前請先檢查這個設定。
 
 ```python
 %pip install --quiet -U "openai" "openai-agents>=0.17.0"
@@ -731,27 +744,27 @@ def pretty(obj):
 
 ---
 
-## 2) Input
+## 2) 輸入
 
-This section defines the database change request that SchemaFlow will process. Think of it as the compact ticket, issue, or message a data team might receive before turning the request into implementation details.
+這一節定義 SchemaFlow 要處理的資料庫變更需求。可以把它想成資料團隊收到的精簡工單、issue 或訊息，之後才會被轉成實作細節。
 
-The default request asks the workflow to:
+預設的需求要流程做這些事：
 
-1. Add `LOYALTY_TIER VARCHAR(20)` to `ODS.ODS_CUSTOMER_PROFILE`.
-2. Treat the new column as nullable.
-3. Backfill from `CORE.DIM_CUSTOMER`.
-4. Join on `CUSTOMER_ID`.
-5. Filter the source to current records with `IS_CURRENT=true`.
-6. Add a non-unique index on `(CUSTOMER_ID, LOYALTY_TIER)`.
+1. 在 `ODS.ODS_CUSTOMER_PROFILE` 加 `LOYALTY_TIER VARCHAR(20)`。
+2. 把新欄位當成 nullable。
+3. 從 `CORE.DIM_CUSTOMER` 回填。
+4. 用 `CUSTOMER_ID` 做 join。
+5. 來源只取 `IS_CURRENT=true` 的當前紀錄。
+6. 在 `(CUSTOMER_ID, LOYALTY_TIER)` 上加一個非 unique 的 index。
 
-This input is intentionally compact but rich enough to exercise the full workflow:
+這個輸入刻意寫得精簡，但內容夠豐富，能把整個流程都練過一遍：
 
-- parsing target schema and table
-- extracting column name, type, and nullability
-- recognizing backfill requirements
-- recognizing index requirements
-- generating multi-layer SQL
-- running validation checks for expected table, column, and SQL actions
+- 解析 target schema 和 table
+- 抽出欄位名稱、型別和 nullability
+- 辨識 backfill 的需求
+- 辨識 index 的需求
+- 產生跨多層的 SQL
+- 對預期的 table、column 和 SQL 動作做驗證檢查
 
 ```python
 CHANGE_TEXT = """Add LOYALTY_TIER VARCHAR(20) to ODS.ODS_CUSTOMER_PROFILE as nullable.
@@ -764,33 +777,33 @@ print(CHANGE_TEXT)
 
 ---
 
-## 3) Optional PDF RAG Context
+## 3) 選配的 PDF RAG 上下文
 
-SchemaFlow can run with or without retrieval context, so readers can start with the request alone and add reference docs only when the change needs them.
+SchemaFlow 有沒有 retrieval 上下文都能跑，所以你可以先只用變更需求開始，等變更真的需要時再加參考文件。
 
-The sample PDF path in the code cell below points to a file included in the cookbook folder under `data/`, not to bytes embedded inside the notebook. Leave `PDF_PATH = None` for static article previews or generic runs.
+下面 code cell 裡的範例 PDF 路徑，指向 cookbook 資料夾 `data/` 底下附的檔案，不是嵌在 notebook 裡的 bytes。如果是靜態的文章預覽或一般執行，請保持 `PDF_PATH = None`。
 
-With the default `PDF_PATH = None`, the notebook uses only the natural-language change request. This is enough to demonstrate the core staged workflow.
+預設 `PDF_PATH = None` 時，notebook 只用自然語言的變更需求。這樣就足以展示核心的分階段流程。
 
-Set `PDF_PATH` to a local PDF when you want the Impact Agent to ground its analysis in reference material, such as:
+想讓 Impact Agent 的分析以參考資料為依據時，把 `PDF_PATH` 設成本機 PDF，例如：
 
-- interface design documents
-- schema specifications
-- lineage documentation
-- data contracts
-- platform architecture notes
-- downstream dependency documentation
+- 介面設計文件
+- schema 規格
+- lineage 文件
+- data contract
+- 平台架構筆記
+- 下游依賴文件
 
-When a PDF is configured, this section:
+設定了 PDF 之後，這一節會：
 
-1. Validates that the file exists and is a PDF.
-2. Creates an OpenAI vector store with a one-day expiration policy.
-3. Uploads the PDF to the vector store.
-4. Lets OpenAI handle parsing, chunking, embedding, and retrieval.
-5. Stores the vector store ID for the Impact Agent.
-6. Later summarizes any File Search results returned during impact analysis.
+1. 驗證檔案存在而且是 PDF。
+2. 建一個有效期限一天的 OpenAI vector store。
+3. 把 PDF 上傳到 vector store。
+4. 讓 OpenAI 處理解析、切 chunk、embedding 和 retrieval。
+5. 把 vector store ID 存起來給 Impact Agent 用。
+6. 之後再彙整影響分析時 File Search 回傳的結果。
 
-This keeps the cookbook lightweight because it does not require local embedding models, Chroma, Neo4j, LangGraph, or project-specific Python modules.
+這樣 cookbook 可以保持輕量，因為不需要本機的 embedding model、Chroma、Neo4j、LangGraph，也不需要專案專屬的 Python module。
 
 ```python
 from pathlib import Path
@@ -839,15 +852,15 @@ else:
 
 ---
 
-## 4) Stages 1-2 - Parse Change Request + Impact Analysis
+## 4) Stages 1-2：解析變更需求與影響分析
 
-This section runs the first two agent stages back to back. Together, they answer two practical questions: what exactly was requested, and what else could be affected?
+這一節連續跑前兩個 agent 階段。兩者合起來回答兩個實務問題：到底要求了什麼，還有什麼可能受影響？
 
-### Stage 1: Parse Change Request
+### Stage 1：解析變更需求
 
-The Parse Agent converts `CHANGE_TEXT` into a structured `change_json` object.
+Parse Agent 把 `CHANGE_TEXT` 轉成結構化的 `change_json` 物件。
 
-Expected fields include:
+預期的欄位包括：
 
 - `title`
 - `domain`
@@ -856,31 +869,31 @@ Expected fields include:
 - `operations`
 - `notes`
 
-This stage creates the normalized contract that every downstream stage consumes. If the parse step misses the target table, column, data type, nullability, backfill, or index intent, later stages may produce incomplete output. That is why the notebook validates this stage immediately afterward.
+這個階段建立的是標準化契約，之後每個下游階段都會用它。如果 parse 漏掉了 target table、column、資料型別、nullability、backfill 或 index 的意圖，後面的階段就可能產出不完整的結果。所以 notebook 在這個階段之後馬上做驗證。
 
-### Stage 2: Impact Analysis
+### Stage 2：影響分析
 
-The Impact Agent consumes `change_json` and produces `impact_json`.
+Impact Agent 讀進 `change_json`，產出 `impact_json`。
 
-Expected fields include:
+預期的欄位包括：
 
 - `impacted_objects`
 - `risks`
 - `assumptions`
 
-If `PDF_PATH` was configured earlier, the Impact Agent also receives a `FileSearchTool` connected to the uploaded PDF vector store. This lets the model search reference documentation before returning impact claims.
+如果前面設定了 `PDF_PATH`，Impact Agent 還會拿到一個連到上傳 PDF vector store 的 `FileSearchTool`。這樣模型在回傳影響結論之前，可以先搜參考文件。
 
-The output is intentionally conservative. When the agent is uncertain, it should call out assumptions and risks instead of inventing undocumented certainty.
+輸出刻意偏保守。當 agent 不確定時，應該明說假設和風險，而不是編出沒有文件依據的確定性。
 
 <a id="impact-dashboard-preview"></a>
 
 ---
 
-### Impact Dashboard Preview
+### Impact Dashboard 預覽
 
-The impact-analysis stage produces structured `impact_json` that can be visualized as a graph of affected objects and relationships.
+影響分析階段產出的結構化 `impact_json`，可以畫成受影響物件與關聯的圖。
 
-The preview below shows the kind of customer loyalty lineage graph built in the optional Neo4j dashboard section later in the notebook. Run that section to generate the local graph UI from the sample knowledge-graph seed and inspect impacted objects interactively.
+下面的預覽是客戶 loyalty lineage 圖的樣子，它是 notebook 後面選配的 Neo4j 儀表板區段建出來的。跑那一節就能用範例的知識圖譜 seed 產生本機的圖形 UI，並互動式地檢視受影響的物件。
 
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/schemaflow_kbgraph-small.gif"
@@ -979,20 +992,20 @@ flush_traces()
 
 ---
 
-### Stages 1-2 Output Guardrails
+### Stages 1-2 輸出 Guardrails
 
-This guardrail cell performs deterministic checks on the Parse and Impact outputs before the workflow continues.
+這個 guardrail cell 在流程繼續之前，對 Parse 和 Impact 的輸出做確定性檢查。
 
-The checks verify that:
+檢查內容：
 
-- `change_json` contains a target schema.
-- `change_json` contains a target table.
-- `change_json.operations` is a non-empty list.
-- `impact_json.impacted_objects` contains at least one object.
-- The impact output references the parsed target table.
-- Each impacted object has basic required fields such as type, name, and reason.
+- `change_json` 有 target schema。
+- `change_json` 有 target table。
+- `change_json.operations` 是非空的 list。
+- `impact_json.impacted_objects` 至少有一個物件。
+- impact 輸出有提到解析出來的 target table。
+- 每個受影響的物件都有基本必要欄位，例如 type、name 和 reason。
 
-These checks are deliberately lightweight. They do not prove that the analysis is complete, but they catch obvious failure modes before the Plan Agent or SQL Agent consumes malformed or incomplete state.
+這些檢查刻意做得輕量。它們不能證明分析很完整，但可以在 Plan Agent 或 SQL Agent 吃到格式錯誤或不完整的狀態之前，先抓到明顯的失敗。
 
 ```python
 # Stages 1-2 Output Guardrails - inspects change_json (Parse) and impact_json (Impact).
@@ -1027,41 +1040,39 @@ for _c in stages_1_2_guardrails:
 
 ---
 
-## 5) Stages 3-4 - Execution Plan + SQL Generation
+## 5) Stages 3-4：執行計畫與 SQL 產生
 
-This section runs the implementation-planning and SQL-generation stages. At this point the workflow shifts from understanding the request to drafting an implementation handoff.
+這一節跑實作規劃和 SQL 產生兩個階段。到這裡，流程從理解需求轉成起草實作交接內容。
 
-### Stage 3: Execution Plan
+### Stage 3：執行計畫
 
-The Plan Agent consumes:
+Plan Agent 的輸入是：
 
 - `change_json`
 - `impact_json`
 
-It returns `plan_json` with four sections:
+它回傳 `plan_json`，裡面有四個區段：
 
 - `plan_steps`
 - `prechecks`
 - `postchecks`
 - `rollback`
 
-The goal is to make the implementation strategy explicit before generating SQL. This helps separate “what should be done” from “what exact SQL should be drafted.”
+目的是在產生 SQL 之前，先把實作策略講清楚。這樣能把「該做什麼」和「該起草怎樣的 SQL」分開。
 
-### Stage 4: SQL Generation
+### Stage 4：SQL 產生
 
-The SQL Agent consumes:
+SQL Agent 的輸入是：
 
 - `change_json`
 - `plan_json`
 
-It returns a single plaintext SQL script. The prompt requires four sections in order:
-
-1. `-- === LANDING (ODS) ===`
+它回傳一份純文字的 SQL 腳本。prompt 要求依序包含四個區段：1. `-- === LANDING (ODS) ===`
 2. `-- === STAGING (STG) ===`
 3. `-- === CORE (DIM/FACT/VIEW) ===`
 4. `-- === MARTS (SERVING) ===`
 
-The generated SQL is intended as a reviewable draft. It should be checked by engineers before any production use.
+產生的 SQL 只是給人審查的草稿，任何 production 使用之前，都要經過工程師檢查。
 
 ```python
 # =============================================================
@@ -1125,22 +1136,22 @@ flush_traces()
 
 ---
 
-### Stages 3-4 Output Guardrails
+### Stages 3-4 輸出 Guardrails
 
-This guardrail cell validates the plan and SQL draft before the notebook moves to the final SQL sanity checks.
+這個 guardrail cell 在 notebook 進入最後的 SQL sanity check 之前，先驗證計畫和 SQL 草稿。
 
-The checks verify that:
+檢查內容：
 
-- all four plan sections are populated:
+- 計畫的四個區段都有內容：
   - `plan_steps`
   - `prechecks`
   - `postchecks`
   - `rollback`
-- the data type requested in `CHANGE_TEXT` appears in the generated SQL
-- nullable requests do not accidentally create `NOT NULL` constraints
-- explicit `NOT NULL` requests are reflected when present
+- `CHANGE_TEXT` 要求的資料型別有出現在產生的 SQL 裡
+- 需求是 nullable 的話，不會不小心建出 `NOT NULL` 限制
+- 需求明確要求 `NOT NULL` 時，SQL 有反映出來
 
-These checks complement Stage 5. Stages 3-4 guardrails focus on plan completeness and semantic consistency, while Stage 5 focuses on expected SQL terms and actions.
+這些檢查是 Stage 5 的補充。Stages 3-4 的 guardrail 著重在計畫完整度和語意一致性，Stage 5 則著重在預期的 SQL 詞彙和動作。
 
 ```python
 # Stages 3-4 Output Guardrails - inspects plan_json (Plan) and sql_text (SQL).
@@ -1199,23 +1210,23 @@ for _c in stages_3_4_guardrails:
 
 ---
 
-## 6) Stage 5 - Lightweight SQL Sanity Checks
+## 6) Stage 5：輕量的 SQL Sanity Checks
 
-This section runs deterministic checks against the generated SQL for the current notebook run.
+這一節對本次 notebook 執行產生的 SQL 做確定性檢查。
 
-This is not a full SQL parser and it does not execute the SQL. Instead, it checks for obvious mismatches between the original request, parsed change object, and generated script. These checks are intentionally small and explainable, so a reader can see exactly what passed or failed before the result is saved or evaluated.
+這不是完整的 SQL parser，也不會執行 SQL。它只檢查原始需求、解析後的變更物件和產生的腳本之間，有沒有明顯對不上的地方。這些檢查刻意做得小而好解釋，讀的人能清楚看到哪些通過、哪些失敗，之後才存檔或拿去 eval。
 
-The checks look for:
+檢查項目：
 
-- empty SQL output
-- missing target table
-- missing expected columns
-- required SQL keywords inferred from the request:
+- SQL 輸出是否為空
+- 是否缺少 target table
+- 是否缺少預期的 column
+- 從需求推出的必要 SQL 關鍵字：
   - `ALTER TABLE`
-  - `UPDATE` when the request implies backfill or source-based population
-  - `CREATE INDEX` when the request mentions an index
+  - 需求暗示 backfill 或從來源填值時要有 `UPDATE`
+  - 需求提到 index 時要有 `CREATE INDEX`
 
-The output is stored in `validation`, which becomes part of the final bundle and is also used by the Promptfoo full-flow assertion.
+輸出存在 `validation`，它會成為最終 bundle 的一部分，也會被 Promptfoo 的 full-flow assertion 使用。
 
 ```python
 with trace("SchemaFlow Stage 5 SQL Sanity Checks", group_id=SCHEMAFLOW_TRACE_GROUP_ID, metadata={"stage": "sql_sanity_checks"}):
@@ -1261,9 +1272,9 @@ pretty(validation)
 
 ## 7) Final Bundle
 
-This section assembles the main SchemaFlow output object.
+這一節組出 SchemaFlow 的主要輸出物件。
 
-The final `bundle` contains:
+最終的 `bundle` 包含：
 
 - `summary`
 - `rag`
@@ -1273,16 +1284,16 @@ The final `bundle` contains:
 - `sql`
 - `validation`
 
-This object is the reviewable handoff artifact for the notebook run. It collects the model-generated outputs, deterministic validation results, and optional retrieval metadata in one place, so a reviewer does not have to reconstruct the flow from separate cells.
+這個物件是本次 notebook 執行的審查交接 artifact。它把模型產生的輸出、確定性的驗證結果和選配的 retrieval metadata 集中在一起，reviewer 不用從分散的 cell 重建整個流程。
 
-The printed summary gives a compact view of the most important run-level information:
+印出的 summary 簡要列出這次執行最重要的資訊：
 
-- parsed title
-- parsed target
-- number of RAG hits
-- number of plan steps
-- validation status
-- validation issues
+- 解析出的 title
+- 解析出的 target
+- RAG 命中數
+- 計畫步驟數
+- 驗證狀態
+- 驗證問題
 
 ```python
 with trace("SchemaFlow Final Bundle", group_id=SCHEMAFLOW_TRACE_GROUP_ID, metadata={"stage": "final_bundle"}):
@@ -1304,26 +1315,26 @@ pretty({"title": change_json.get("title"), "target": ".".join([x for x in [chang
 
 ---
 
-## 8) Save Artifact
+## 8) 儲存 Artifact
 
-This section writes the final `bundle` to disk as JSON.
+這一節把最終的 `bundle` 以 JSON 寫到磁碟。
 
-Artifacts are saved under:
+Artifact 存在：
 
 ```text
 artifacts/notebook_runs/
 ```
 
-Each run receives a timestamped filename, which makes it easy to compare outputs across different prompts, models, inputs, or retrieval documents.
+每次執行都會得到一個帶時間戳的檔名，方便你比較不同 prompt、模型、輸入或檢索文件之間的輸出差異。
 
-The saved artifact is useful for:
+存下來的 artifact 可以用在：
 
 - code review
-- audit trails
-- debugging
-- regression comparison
-- eval fixture creation
-- downstream automation
+- 稽核紀錄
+- debug
+- regression 比對
+- 建立 eval fixture
+- 下游自動化
 
 ```python
 from pathlib import Path
@@ -1342,18 +1353,18 @@ print("Saved artifact:", out_path.resolve())
 
 ---
 
-### Post-Artifact Generation Sanity Check
+### Post-Artifact 產生後的 Sanity Check
 
-This cell verifies that the saved artifact is usable.
+這個 cell 驗證存下來的 artifact 能用。
 
-It checks that:
+它檢查：
 
-- the artifact file exists
-- the artifact file is non-empty
-- the file can be loaded with `json.loads`
-- the top-level keys on disk match the in-memory `bundle`
+- artifact 檔案存在
+- artifact 檔案不是空的
+- 檔案可以用 `json.loads` 載入
+- 磁碟上的頂層 key 跟記憶體裡的 `bundle` 一致
 
-This catches file-write issues immediately instead of letting a later review, eval, or automation step consume a missing or malformed artifact.
+這樣檔案寫入的問題會馬上被發現，不會等到後面的 review、eval 或自動化步驟才吃到遺失或壞掉的 artifact。
 
 ```python
 # Post-Artifact Generation Sanity Check - re-reads the file Save Artifact wrote.
@@ -1387,17 +1398,17 @@ for _c in post_artifact_checks:
 
 ---
 
-## 9) Optional Cleanup
+## 9) 選配的清理
 
-This section handles cleanup for the optional PDF vector store.
+這一節處理選配 PDF vector store 的清理。
 
-By default, `DELETE_VECTOR_STORE_AFTER_RUN = False`.
+預設 `DELETE_VECTOR_STORE_AFTER_RUN = False`。
 
-That default is safe for interactive notebook usage because the vector store is created with a one-day expiration policy. Keeping it temporarily can be useful if you want to inspect traces, rerun downstream stages, or debug File Search behavior.
+這個預設對互動式 notebook 比較安全，因為 vector store 建立時有一天的到期政策。暫時留著，方便你檢查 trace、重跑下游階段或 debug File Search 的行為。
 
-Set `DELETE_VECTOR_STORE_AFTER_RUN = True` before running this cell if you want to delete the vector store immediately after the notebook run.
+如果想在 notebook 跑完後立刻刪掉 vector store，執行這個 cell 之前先把 `DELETE_VECTOR_STORE_AFTER_RUN = True` 設好。
 
-If no PDF was configured, this cell simply reports that no vector store was created.
+如果沒有設定 PDF，這個 cell 只會回報沒有建立 vector store。
 
 ```python
 DELETE_VECTOR_STORE_AFTER_RUN = False
@@ -1421,23 +1432,23 @@ with trace("SchemaFlow Optional Cleanup", group_id=SCHEMAFLOW_TRACE_GROUP_ID, me
 
 ### Pre-Promptfoo Checks / Guardrails
 
-This cell is the readiness gate before running Promptfoo.
+這個 cell 是跑 Promptfoo 之前的準備關卡。
 
-Promptfoo runs the workflow in a separate process, so it is important to confirm that the notebook state is complete and internally consistent before generating eval files.
+Promptfoo 在另一個 process 執行流程，所以在產生 eval 檔案之前，要先確認 notebook 的狀態完整而且內部一致。
 
-The preflight checks verify that:
+preflight 檢查包括：
 
-- `bundle` exists in the notebook kernel.
-- `bundle` reflects the current `change_json` and `plan_json`.
-- Stage 5 validation passed.
-- Stages 1-2 guardrails passed.
-- Stages 3-4 guardrails passed.
-- The saved artifact sanity check passed.
-- `CHANGE_TEXT` is consistent with the parsed bundle target.
-- `OPENAI_API_KEY` is present.
-- The installed Agents SDK version meets the minimum requirement.
+- `bundle` 存在於 notebook kernel 裡。
+- `bundle` 反映目前的 `change_json` 和 `plan_json`。
+- Stage 5 的驗證通過。
+- Stages 1-2 的 guardrail 通過。
+- Stages 3-4 的 guardrail 通過。
+- 存下來的 artifact sanity check 通過。
+- `CHANGE_TEXT` 跟解析出的 bundle target 一致。
+- `OPENAI_API_KEY` 存在。
+- 安裝的 Agents SDK 版本符合最低要求。
 
-If this section reports failures, rerun or fix the earlier notebook sections before running Promptfoo.
+如果這一節回報失敗，先重跑或修好前面的 notebook 區段，再跑 Promptfoo。
 
 ```python
 # Pre-Promptfoo Checks / Guardrails - deterministic, no LLM calls.
@@ -1485,60 +1496,60 @@ if not pre_promptfoo_passed:
 
 ---
 
-## 10) Evaluate the Flow with Promptfoo
+## 10) 用 Promptfoo 評測流程
 
-Promptfoo is now part of OpenAI. This section uses Promptfoo's Jupyter/Colab pattern to run evals from notebook cells while keeping the SchemaFlow logic readable in Python. Promptfoo itself runs via Node.js, and the evaluated flow is provided through Promptfoo's Python `file://` provider and Python assertion integrations.
+Promptfoo 現在是 OpenAI 的一部分。這一節用 Promptfoo 的 Jupyter/Colab 模式，從 notebook cell 跑 eval，同時讓 SchemaFlow 的邏輯保持在好讀的 Python 裡。Promptfoo 本身透過 Node.js 執行，被評測的流程則透過 Promptfoo 的 Python `file://` provider 和 Python assertion 整合進來。
 
-This optional section turns the notebook workflow into a repeatable eval.
+這個選配區段把 notebook 流程變成可重複跑的 eval。
 
-The core notebook run validates one live example. Promptfoo adds a reusable eval harness that can run parse-only and full-flow checks using generated provider and assertion files, which is useful when you want to keep the same workflow stable as prompts, models, or inputs change.
+核心的 notebook 執行只驗證一個即時範例。Promptfoo 多提供一套可重用的 eval 工具組，用產生出來的 provider 和 assertion 檔跑 parse-only 與 full-flow 的檢查，當你調整 prompt、模型或輸入、又想讓流程保持穩定時就很有用。
 
-Because Promptfoo launches a separate Python process, it cannot directly access variables that only exist inside the active notebook kernel. To solve that, the next cells publish runtime files from the current notebook state:
+因為 Promptfoo 會啟動另一個 Python process，它沒辦法直接存取只存在於 notebook kernel 裡的變數。為了解決這點，接下來的 cell 會從目前的 notebook 狀態發布 runtime 檔案：
 
-- a reusable `schemaflow_cookbook_core.py` module
-- a Python Promptfoo provider
-- a Python Promptfoo assertion file
-- generated eval cases
-- a generated Promptfoo config
+- 可重用的 `schemaflow_cookbook_core.py` module
+- 一個 Python Promptfoo provider
+- 一個 Python Promptfoo assertion 檔
+- 產生出來的 eval case
+- 產生出來的 Promptfoo config
 
-This section includes three validation layers:
+這一節包含三層驗證：
 
 1. **Input preflight**
-   - deterministic checks before writing the config
-   - no model calls
+   - 寫 config 之前的確定性檢查
+   - 不呼叫模型
 
 2. **Parse-only eval**
-   - checks Stage 1 behavior
-   - verifies target, operation presence, expected added column, and expected data type
+   - 檢查 Stage 1 的行為
+   - 驗證 target、operation 是否存在、預期新增的欄位和預期的資料型別
 
 3. **Full-flow eval**
-   - checks downstream impact, SQL terms, and validation status
+   - 檢查下游的影響分析、SQL 詞彙和驗證狀態
 
-Eval results are printed in the notebook and exported as timestamped JSON and HTML files under:
+Eval 結果會印在 notebook 裡，並匯出成帶時間戳的 JSON 和 HTML 檔，存放在：
 
 ```text
 artifacts/promptfoo/results/
 ```
 
-The latest successful run also refreshes:
+最近一次成功的執行還會更新：
 
 ```text
 schemaflow_cookbook_eval_latest.json
 schemaflow_cookbook_eval_latest.html
 ```
 
-Runtime note: the core SchemaFlow cells require Python and an OpenAI API key. The Promptfoo cells additionally require Node.js and npm in the same executable notebook runtime.
+Runtime 注意事項：核心的 SchemaFlow cell 需要 Python 和 OpenAI API key。Promptfoo 的 cell 另外需要在同一個可執行 notebook 的 runtime 裡有 Node.js 和 npm。
 
-After the eval runs, Promptfoo provides a compact view of the current change request, expected fields, parse-only check, and full-flow check.
+eval 跑完後，Promptfoo 會提供一個精簡的檢視，包含目前的變更需求、預期欄位、parse-only 檢查和 full-flow 檢查。
 
-Use this view to answer questions such as:
+用這個檢視可以回答這些問題：
 
-- Did the Parse Agent extract the expected target table?
-- Did it detect the expected added column?
-- Did it preserve the requested data type?
-- Did the full flow produce impact risks?
-- Did the SQL include required terms?
-- Did deterministic validation pass?
+- Parse Agent 有抽出預期的 target table 嗎？
+- 它有偵測到預期新增的欄位嗎？
+- 它有保留要求的資料型別嗎？
+- full flow 有產出 impact 風險嗎？
+- SQL 有包含必要的詞彙嗎？
+- 確定性驗證通過了嗎？
 
 ![Promptfoo eval results view](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/schemaflow_promptfoo.gif)
 
@@ -1547,13 +1558,13 @@ Use this view to answer questions such as:
 
 ---
 
-### Promptfoo Runtime Directory Setup
+### Promptfoo Runtime 目錄設定
 
-This cell creates notebook-local directories for Promptfoo config, logs, cache, npm cache, and results.
+這個 cell 在 notebook 旁邊建立 Promptfoo config、log、cache、npm cache 和結果用的目錄。
 
-Keeping these directories under `artifacts/promptfoo/` makes the eval runtime portable and avoids relying on global Promptfoo state under the user’s home directory.
+把這些目錄放在 `artifacts/promptfoo/` 底下，讓 eval runtime 可攜，也不用依賴使用者家目錄下的全域 Promptfoo 狀態。
 
-The cell also exports environment variables so the generated provider, assertion, and Promptfoo command all use the same trace group and local runtime paths.
+這個 cell 也會匯出環境變數，讓產生出來的 provider、assertion 和 Promptfoo 指令都用同一個 trace group 和本機 runtime 路徑。
 
 ```python
 from pathlib import Path
@@ -1586,17 +1597,17 @@ print("Promptfoo trace group:", SCHEMAFLOW_TRACE_GROUP_ID)
 
 ---
 
-### Node.js and npm Runtime Check
+### Node.js 與 npm Runtime 檢查
 
-Promptfoo runs through Node.js, even though the SchemaFlow provider and assertion logic are written in Python.
+即使 SchemaFlow 的 provider 和 assertion 邏輯是用 Python 寫的，Promptfoo 還是透過 Node.js 執行。
 
-This cell verifies that the notebook runtime has a supported `node` and `npm` available.
+這個 cell 確認 notebook 的 runtime 有支援的 `node` 和 `npm`。
 
-The check is intentionally explicit. The notebook does not silently install or upgrade Node because that depends on the execution environment.
+這個檢查刻意做得明確。notebook 不會偷偷安裝或升級 Node，因為那要看執行環境。
 
-For local macOS notebooks, the cell prefers a supported `nvm` Node runtime before common Homebrew paths. This helps ensure that the notebook and terminal use the same Node ABI and avoids stale native dependencies.
+在本機 macOS 的 notebook 上，這個 cell 會優先選支援的 `nvm` Node runtime，再看常見的 Homebrew 路徑。這樣可以確保 notebook 和終端機用同一個 Node ABI，避免過期的 native 相依套件。
 
-If this check fails, fix the runtime first and then rerun the Promptfoo section.
+如果檢查失敗，先修好 runtime，再重跑 Promptfoo 區段。
 
 ```python
 import os
@@ -1686,29 +1697,29 @@ ensure_promptfoo_node_runtime()
 
 ---
 
-### Publish SchemaFlow Core Runtime
+### 發布 SchemaFlow Core Runtime
 
-Promptfoo runs the evaluated flow in a separate Python process. This cell writes a reusable Python module named:
+Promptfoo 在另一個 Python process 裡執行被評測的流程。這個 cell 寫出一個可重用的 Python module，名稱是：
 
 ```text
 artifacts/promptfoo/schemaflow_cookbook_core.py
 ```
 
-The generated module contains the same core SchemaFlow logic used by the notebook:
+產生的 module 包含 notebook 裡用的同一套 SchemaFlow 核心邏輯：
 
-- Pydantic models
-- Agents SDK setup
-- output normalization helpers
-- Parse Agent execution
-- Impact Agent execution
-- optional PDF vector store creation
-- Plan Agent execution
-- SQL Agent execution
-- SQL validation
-- parse-only eval entrypoint
-- full-flow eval entrypoint
+- Pydantic model
+- Agents SDK 設定
+- 輸出正規化的 helper
+- Parse Agent 的執行
+- Impact Agent 的執行
+- 選配的 PDF vector store 建立
+- Plan Agent 的執行
+- SQL Agent 的執行
+- SQL 驗證
+- parse-only eval 的進入點
+- full-flow eval 的進入點
 
-The prompt strings are injected from the current notebook variables. That means if you edit the Parse, Impact, Plan, or SQL prompts above and rerun this cell, the Promptfoo runtime receives the updated prompts.
+prompt 字串是從目前 notebook 的變數注入的。也就是說，如果你改了上面的 Parse、Impact、Plan 或 SQL prompt 再重跑這個 cell，Promptfoo runtime 就會拿到更新後的 prompt。
 
 ````python
 from pathlib import Path
@@ -2135,28 +2146,28 @@ print("Published SchemaFlow core:", core_path.resolve())
 
 ### Promptfoo Provider Runtime
 
-This cell writes the Promptfoo provider file:
+這個 cell 寫出 Promptfoo 的 provider 檔：
 
 ```text
 artifacts/promptfoo/schemaflow_cookbook_eval_provider.py
 ```
 
-The provider is the bridge between Promptfoo and SchemaFlow.
+provider 是 Promptfoo 和 SchemaFlow 之間的橋樑。
 
-For each Promptfoo test case, it reads variables such as:
+對每個 Promptfoo 測試案例，它會讀這些變數：
 
 - `change_text`
 - `eval_mode`
-- optional `pdf_path`
-- optional `rag_max_results`
-- validation keywords
+- 選配的 `pdf_path`
+- 選配的 `rag_max_results`
+- 驗證用的關鍵字
 
-Then it chooses one of two execution paths:
+然後選擇兩條執行路徑之一：
 
-- `parse_only` runs only Stage 1 and returns a parse bundle.
-- `full_flow` runs the complete SchemaFlow pipeline and returns the full bundle.
+- `parse_only` 只跑 Stage 1，回傳 parse bundle。
+- `full_flow` 跑完整的 SchemaFlow pipeline，回傳完整的 bundle。
 
-The provider returns JSON so Promptfoo assertions can inspect structured fields instead of parsing notebook text output.
+provider 回傳 JSON，讓 Promptfoo assertion 可以直接檢查結構化欄位，不用去解析 notebook 的文字輸出。
 
 ```python
 %%writefile artifacts/promptfoo/schemaflow_cookbook_eval_provider.py
@@ -2206,32 +2217,32 @@ def call_api(prompt, options, context):
 
 ### Promptfoo Assertion Runtime
 
-This cell writes the Promptfoo assertion file:
+這個 cell 寫出 Promptfoo 的 assertion 檔：
 
 ```text
 artifacts/promptfoo/schemaflow_cookbook_eval_assert.py
 ```
 
-The assertion file validates provider output for both eval modes.
+assertion 檔對兩種 eval 模式的 provider 輸出做驗證。
 
-For `parse_only`, it checks:
+對 `parse_only`，它檢查：
 
-- output is valid JSON
-- target schema and table match expectations
-- at least one parsed operation is present
-- expected added column appears in parsed operations
-- expected data type appears structurally in parsed operations
+- 輸出是合法的 JSON
+- target schema 和 table 符合預期
+- 至少有一個解析出的 operation
+- 預期新增的 column 有出現在解析出的 operations 裡
+- 預期的資料型別以結構化的方式出現在解析出的 operations 裡
 
-For `full_flow`, it checks:
+對 `full_flow`，它檢查：
 
-- output is valid JSON
-- target schema and table match expectations
-- at least one parsed operation is present
-- impact risks are present
-- required SQL terms are present
-- validation passed
+- 輸出是合法的 JSON
+- target schema 和 table 符合預期
+- 至少有一個解析出的 operation
+- 有 impact 風險
+- 有必要的 SQL 詞彙
+- 驗證通過
 
-The assertion also emits guardrail spans so eval failures are visible in traces.
+assertion 也會送出 guardrail span，讓 eval 失敗在 trace 裡看得到。
 
 ```python
 %%writefile artifacts/promptfoo/schemaflow_cookbook_eval_assert.py
@@ -2351,33 +2362,33 @@ def get_assert(output, context):
 
 ---
 
-### Build Promptfoo Test Cases and Config
+### 建立 Promptfoo 測試案例與 Config
 
-This cell builds Promptfoo test cases from the current notebook input.
+這個 cell 從目前 notebook 的輸入建立 Promptfoo 測試案例。
 
-By default, it creates two test cases from the current `CHANGE_TEXT`, carrying through `PDF_PATH` when a PDF is configured:
+預設會從目前的 `CHANGE_TEXT` 建兩個測試案例，若有設定 PDF 也會帶上 `PDF_PATH`：
 
-1. a parse-only test
-2. a full-flow test
+1. 一個 parse-only 測試
+2. 一個 full-flow 測試
 
-The helper functions infer expectations from the change request, including:
+helper 函式會從變更需求推出預期值，包括：
 
-- expected schema
-- expected table
-- expected added column
-- expected data type
-- expected SQL terms
-- expected validation keywords
+- 預期的 schema
+- 預期的 table
+- 預期新增的 column
+- 預期的資料型別
+- 預期的 SQL 詞彙
+- 預期的驗證關鍵字
 
-The cell also includes optional regression fixtures. Set:
+這個 cell 也包含選配的 regression fixture。設定：
 
 ```python
 RUN_EXTRA_REGRESSION_CASES = True
 ```
 
-to add those extra cases to the generated config.
+就能把這些額外的案例加進產生的 config。
 
-Before writing `promptfooconfig.yaml`, the cell runs deterministic input preflight checks. This prevents obviously malformed eval inputs from producing confusing Promptfoo failures.
+在寫出 `promptfooconfig.yaml` 之前，這個 cell 會先跑確定性的 input preflight 檢查。這樣可以避免明顯格式錯誤的 eval 輸入，造成讓人困惑的 Promptfoo 失敗。
 
 ```python
 import json
@@ -2570,27 +2581,25 @@ for case in PROMPTFOO_EVAL_CASES:
 
 ---
 
-### Run Promptfoo Eval
+### 執行 Promptfoo Eval
 
-This cell runs Promptfoo non-interactively from the notebook.
+這個 cell 從 notebook 以非互動的方式執行 Promptfoo。這個指令：
 
-The command:
+- 在 `artifacts/promptfoo/` 底下執行
+- 使用產生出來的 `promptfooconfig.yaml`
+- 使用 notebook 本機的 Promptfoo config、cache、log 和 npm cache
+- 以 concurrency `1` 執行，讓 notebook 的行為可預測
+- 讓 CLI 輸出留在 notebook 裡看得到
+- 寫出帶時間戳的 JSON 和 HTML 報告
+- 成功執行後更新 latest 別名檔
 
-- runs from `artifacts/promptfoo/`
-- uses the generated `promptfooconfig.yaml`
-- uses notebook-local Promptfoo config, cache, logs, and npm cache
-- runs with concurrency `1` for predictable notebook behavior
-- keeps CLI output visible in the notebook
-- writes timestamped JSON and HTML reports
-- refreshes latest-result aliases after a successful run
-
-The exported result files are saved under:
+匯出的結果檔存放在：
 
 ```text
 artifacts/promptfoo/results/
 ```
 
-If the Node.js/npm runtime check failed earlier, fix the runtime before running this cell.
+如果前面的 Node.js/npm runtime 檢查失敗，請先修好 runtime 再跑這個 cell。
 
 ```python
 %%bash
@@ -2625,20 +2634,20 @@ printf 'Trace group:\n  %s\n' "$SCHEMAFLOW_TRACE_GROUP_ID"
 
 ---
 
-### Review Latest Promptfoo Results
+### 檢視最新的 Promptfoo 結果
 
-This cell checks whether the latest Promptfoo result aliases exist and prints their paths and sizes.
+這個 cell 檢查最新的 Promptfoo 結果別名檔是否存在，並印出它們的路徑和大小。
 
-Expected files:
+預期的檔案：
 
 ```text
 artifacts/promptfoo/results/schemaflow_cookbook_eval_latest.json
 artifacts/promptfoo/results/schemaflow_cookbook_eval_latest.html
 ```
 
-If the latest JSON file exists, the cell also prints available eval metadata such as the eval ID and aggregate stats.
+如果最新的 JSON 檔存在，這個 cell 也會印出可用的 eval metadata，例如 eval ID 和彙總統計。
 
-Use this section as a quick confirmation that the eval completed and exported artifacts successfully.
+這一節可以拿來快速確認 eval 已完成，而且結果檔已成功匯出。
 
 ```python
 from pathlib import Path
@@ -2665,30 +2674,30 @@ if latest_json.exists():
         print("Stats:", stats)
 ```
 
-## 11) Optional Neo4j Knowledge Graph & Dashboard
+## 11) 選配：Neo4j 知識圖譜與儀表板
 
-This optional section is **fully self-contained** and **does not affect the core pipeline above**. It uses a small synthetic customer-loyalty graph seed plus inline dashboard code so the cookbook stays portable. Readers can treat it as a visual appendix: the core workflow works without Neo4j, but graph views make lineage and downstream impact easier to inspect.
+這個選配區段**完全自給自足**，而且**不影響上面的核心 pipeline**。它用一個小型的合成客戶 loyalty 圖譜 seed，加上內嵌的儀表板程式碼，讓 cookbook 保持可攜。你可以把它當成視覺化的附錄：沒有 Neo4j 核心流程照樣能跑，但圖形檢視能讓 lineage 和下游影響更容易檢查。
 
-**What this section does, in order:**
+**這一節依序做的事：**
 
-1. **Step 1 - Seed**: define a synthetic customer-loyalty graph with ODS, staging, core, mart, and CRM objects, their columns, lineage, and joins as an inline Python data structure - no external files.
-2. **Step 2 - AI Enrichment**: use the OpenAI `client` already loaded in Section 1 to fill in `semantic_meaning` (a short 2-5 word tag like `natural-key`, `foreign-key`, `monetary-amount`, `timestamp`) for every column.
-3. **Step 3 - Upsert to Neo4j**: write the enriched data to a running Neo4j instance via idempotent `MERGE` Cypher. Nodes are labeled `SchemaFlowCookbook` so the dashboard ignores stale sample data from older local runs.
-4. **Dashboard**: write a small FastAPI server + D3.js page next to the notebook, launch it on `http://127.0.0.1:8005`, and print a clickable link.
+1. **Step 1 - Seed**：用內嵌的 Python 資料結構，定義一個合成的客戶 loyalty 圖譜，包含 ODS、staging、core、mart 和 CRM 物件、它們的欄位、lineage 和 join，不需要外部檔案。
+2. **Step 2 - AI Enrichment**：用第 1 節已載入的 OpenAI `client`，為每個欄位填上 `semantic_meaning`（2-5 個字的簡短標籤，例如 `natural-key`、`foreign-key`、`monetary-amount`、`timestamp`）。
+3. **Step 3 - Upsert 到 Neo4j**：用 idempotent 的 `MERGE` Cypher，把豐富化後的資料寫進跑著的 Neo4j。節點會標上 `SchemaFlowCookbook` label，讓儀表板忽略舊的本機範例資料。
+4. **Dashboard**：在 notebook 旁邊寫一個小的 FastAPI server 加 D3.js 頁面，在 `http://127.0.0.1:8005` 啟動，並印出可點擊的連結。
 
-**Prerequisites for this section:**
+**這一節的前置條件：**
 
-- A running Neo4j instance, e.g. via Docker: `docker run -d -p 7687:7687 -p 7474:7474 -e NEO4J_AUTH=neo4j/change-me-please neo4j:5` (Neo4j Desktop or AuraDB free tier also work).
-- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` (loaded via env, or entered at the prompt below).
-- A free local port `8005` for the dashboard (override via `NEO4J_DASHBOARD_PORT`).
-- Optional packages `neo4j`, `fastapi`, `uvicorn` - the next cell will install them lazily if missing.
+- 一個跑著的 Neo4j，例如用 Docker：`docker run -d -p 7687:7687 -p 7474:7474 -e NEO4J_AUTH=neo4j/change-me-please neo4j:5`（Neo4j Desktop 或 AuraDB 免費方案也可以）。
+- `NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`（從環境變數載入，或在下面的提示輸入）。
+- 儀表板用的一個空閒本機 port `8005`（可用 `NEO4J_DASHBOARD_PORT` 覆寫）。
+- 選配套件 `neo4j`、`fastapi`、`uvicorn`，缺的話下一個 cell 會按需安裝。
 
-If any prerequisite is missing, every cell below short-circuits with a clear message; nothing throws and the rest of the notebook is unaffected.
+如果缺少任何前置條件，下面每個 cell 都會直接跳過並顯示清楚的訊息，不會丟例外，notebook 其他部分不受影響。
 
 
-### 11.1) Environment Setup & Optional Dependencies
+### 11.1) 環境設定與選配相依套件
 
-Mirrors Section 1's OpenAI env loading pattern. Lazy-installs `neo4j`, `fastapi`, and `uvicorn` only when they are not importable, then reads `NEO4J_URI`, `NEO4J_USER`, and `NEO4J_PASSWORD` from the environment (or prompts via `getpass` if missing). If you press Enter at any prompt without typing, the section is disabled (`NEO4J_SECTION_ENABLED = False`) and the remaining cells skip cleanly.
+沿用第 1 節載入 OpenAI 環境的做法。只有在 `neo4j`、`fastapi`、`uvicorn` 無法 import 時才會按需安裝，然後從環境變數讀 `NEO4J_URI`、`NEO4J_USER` 和 `NEO4J_PASSWORD`（缺的話用 `getpass` 提示輸入）。任何提示如果直接按 Enter 不輸入，這一節就會停用（`NEO4J_SECTION_ENABLED = False`），後面的 cell 會乾淨地跳過。
 
 ```python
 import os
@@ -2757,13 +2766,13 @@ else:
 print(f"NEO4J_SECTION_ENABLED = {NEO4J_SECTION_ENABLED}")
 ```
 
-### 11.2) Step 1 - Seed: Define the Knowledge Graph Data
+### 11.2) Step 1 - Seed：定義知識圖譜資料
 
-Builds the in-memory data structure for the graph: schemas, tables (with `description`, `primary_key`), columns (with `type`, `nullable`, `is_primary_key`, optional `description`, and a `semantic_meaning` placeholder to be filled by AI in the next step), foreign keys, views, lineage edges (`DERIVED_FROM`), and joins.
+建出圖譜的記憶體內資料結構：schema、table（含 `description`、`primary_key`）、column（含 `type`、`nullable`、`is_primary_key`、選配的 `description`，以及下一步要由 AI 填的 `semantic_meaning` 佔位值）、foreign key、view、lineage 邊（`DERIVED_FROM`）和 join。
 
-This inline synthetic retail graph is aligned to the cookbook change request: `LOYALTY_TIER` is added to `ODS.ODS_CUSTOMER_PROFILE`, sourced from `CORE.DIM_CUSTOMER`, and propagated into downstream staging, core, mart, and CRM consumers.
+這個內嵌的合成零售圖譜，跟 cookbook 的變更需求對齊：`LOYALTY_TIER` 加在 `ODS.ODS_CUSTOMER_PROFILE`，來源是 `CORE.DIM_CUSTOMER`，並傳遞到下游的 staging、mart 和 CRM 消費者。
 
-**No Neo4j calls here** - this cell only prepares Python data structures. Nothing is written until Step 3.
+**這裡不呼叫 Neo4j**，這個 cell 只準備 Python 資料結構。要到 Step 3 才會寫入。
 
 
 ```python
@@ -2956,9 +2965,9 @@ print(f"Seed prepared: {len(SCHEMAS)} schemas, {len(TABLES)} tables, {len(VIEWS)
 
 ### 11.3) Step 2 - AI Enrichment
 
-Uses the OpenAI `client` and `MODEL` already initialized in Section 1 to generate a short `semantic_meaning` tag (2-5 words, e.g. `natural-key`, `foreign-key`, `monetary-amount`, `timestamp`, `descriptive-text`) for every column whose value is currently `None`. One LLM call per column, plain-text response. The prompt is defined inline so this cell remains self-contained.
+用第 1 節已初始化的 OpenAI `client` 和 `MODEL`，為每個目前值是 `None` 的欄位產生簡短的 `semantic_meaning` 標籤（2-5 個字，例如 `natural-key`、`foreign-key`、`monetary-amount`、`timestamp`、`descriptive-text`）。每個欄位一次 LLM 呼叫，回應是純文字。prompt 內嵌定義，讓這個 cell 自給自足。
 
-Cost control: capped at **`MAX_ENRICH_COLS = 30`** columns per run (override via env `SEED_AI_ENRICH_LIMIT`). Set `SEED_AI_ENRICH=0` to skip enrichment entirely. Per-column failures are caught and logged; the cell never raises. Skipped entirely if Section 11 was disabled in Step 0.
+成本控制：每次執行最多 **`MAX_ENRICH_COLS = 30`** 個欄位（可用環境變數 `SEED_AI_ENRICH_LIMIT` 覆寫）。設 `SEED_AI_ENRICH=0` 可完全跳過豐富化。單一欄位的失敗會被捕捉並記錄，cell 不會丟例外。如果第 11 節在 Step 0 被停用，這個 cell 會整個跳過。
 
 ```python
 ENRICH_SYSTEM = (
@@ -3043,21 +3052,21 @@ def _run_ai_enrichment():
 _run_ai_enrichment()
 ```
 
-### 11.4) Step 3 - Upsert the Enriched Graph to Neo4j
+### 11.4) Step 3 - 把豐富化後的圖譜 Upsert 到 Neo4j
 
-Opens a Neo4j driver using the env vars loaded in Step 0, creates uniqueness constraints, then performs idempotent `MERGE` upserts for:
+用 Step 0 載入的環境變數開 Neo4j driver，建立唯一性限制，再對下列內容做 idempotent 的 `MERGE` upsert：
 
-- **Schemas** (`Schema` nodes with `:CONTAINS` edges to Tables/Views)
-- **Tables** with `description`
-- **Columns** with `type`, `nullable`, `is_primary_key`, `description`, `semantic_meaning`
-- **Foreign Keys** as `Column-[:FK_TO]->Column`
-- **Views** with `description`
-- **Lineage** as `(Table|View)-[:DERIVED_FROM]->(Table|View)`
-- **Joins** as `(Table|View)-[:JOINS]->(Table|View)`
+- **Schema**（`Schema` 節點，用 `:CONTAINS` 邊連到 Table/View）
+- **Table**，含 `description`
+- **Column**，含 `type`、`nullable`、`is_primary_key`、`description`、`semantic_meaning`
+- **Foreign Key**，以 `Column-[:FK_TO]->Column` 表示
+- **View**，含 `description`
+- **Lineage**，以 `(Table|View)-[:DERIVED_FROM]->(Table|View)` 表示
+- **Join**，以 `(Table|View)-[:JOINS]->(Table|View)` 表示
 
-The Cypher is intentionally written inline so this cell remains self-contained. The `MERGE` pattern matches the inline seed structures above, and every cookbook node receives a `SchemaFlowCookbook` label so re-running refreshes this sample graph without exposing older local seed data in the dashboard.
+Cypher 刻意內嵌寫出，讓這個 cell 自給自足。`MERGE` 的寫法對應上面內嵌的 seed 結構，而且每個 cookbook 節點都會有 `SchemaFlowCookbook` label，所以重跑只會更新這份範例圖譜，不會讓儀表板露出舊的本機 seed 資料。
 
-The whole operation is wrapped in `try/except` - if Neo4j is unreachable, the cell prints a clear diagnostic and returns without raising.
+整個操作包在 `try/except` 裡。如果連不上 Neo4j，cell 會印出清楚的診斷訊息然後返回，不會丟例外。
 
 ```python
 def _upsert_to_neo4j():
@@ -3207,20 +3216,20 @@ def _upsert_to_neo4j():
 _upsert_to_neo4j()
 ```
 
-### 11.5) Launch the Local Dashboard
+### 11.5) 啟動本機儀表板
 
-The next six cells set up and launch a small FastAPI + D3.js dashboard pointed at your Neo4j instance. Files live in `_neo4j_dashboard/` next to this notebook so you can read and edit them in place - no base64, no encoding tricks.
+接下來的六個 cell 會設定並啟動一個小型的 FastAPI + D3.js 儀表板，連到你的 Neo4j。檔案放在 notebook 旁邊的 `_neo4j_dashboard/`，你可以直接讀和改，不用 base64，也沒有編碼的花招。
 
-1. **Prep cell**: `mkdir _neo4j_dashboard/` and pick the dashboard port (default `8005`, override via `NEO4J_DASHBOARD_PORT`).
-2. **`%%writefile _neo4j_dashboard/graph_server.py`**: FastAPI backend - exposes `GET /api/knowledge-graph` (read), `POST /api/update-column-semantic-meaning` (write), `POST /api/update-relationship`, `POST /api/delete-relationship`.
-3. **`%%writefile _neo4j_dashboard/index.html`**: DOM skeleton with the stats bar, SVG graph container, sidebar, and AI Semantic Insights panel (with Edit / Save buttons).
-4. **`%%writefile _neo4j_dashboard/style.css`**: All visual styling.
-5. **`%%writefile _neo4j_dashboard/script.js`**: D3 force simulation, click handlers, fetch calls. The Edit button turns Semantic Meaning values into inputs; Save POSTs each one to the backend, which `MATCH ... SET c.semantic_meaning = ...` against Neo4j.
-6. **Launch cell**: starts `uvicorn graph_server:app` via `subprocess.Popen` on `127.0.0.1:8005`, polls `GET /api/knowledge-graph` for up to 20 s, then prints a clickable Markdown link only when the graph API is ready, plus the server PID.
+1. **Prep cell**：`mkdir _neo4j_dashboard/` 並選儀表板的 port（預設 `8005`，可用 `NEO4J_DASHBOARD_PORT` 覆寫）。
+2. **`%%writefile _neo4j_dashboard/graph_server.py`**：FastAPI 後端，提供 `GET /api/knowledge-graph`（讀）、`POST /api/update-column-semantic-meaning`（寫）、`POST /api/update-relationship`、`POST /api/delete-relationship`。
+3. **`%%writefile _neo4j_dashboard/index.html`**：DOM 骨架，含統計列、SVG 圖形容器、側邊欄，以及 AI Semantic Insights 面板（有 Edit / Save 按鈕）。
+4. **`%%writefile _neo4j_dashboard/style.css`**：所有視覺樣式。
+5. **`%%writefile _neo4j_dashboard/script.js`**：D3 force simulation、點擊處理和 fetch 呼叫。Edit 按鈕會把 Semantic Meaning 的值變成輸入框，Save 會把每個值 POST 給後端，後端再對 Neo4j 執行 `MATCH ... SET c.semantic_meaning = ...`。
+6. **啟動 cell**：用 `subprocess.Popen` 在 `127.0.0.1:8005` 啟動 `uvicorn graph_server:app`，最多輪詢 `GET /api/knowledge-graph` 20 秒，等圖譜 API 就緒後才印出可點擊的 Markdown 連結，同時印出 server 的 PID。
 
-These cells generate a small local dashboard app next to the notebook, using `semantic_meaning` as the editable column insight field. Open any generated file in the notebook workspace to tweak colors, add endpoints, etc. - changes take effect the next time you re-run the writefile and launch cells. Re-running the launch cell restarts the prior dashboard process from the same kernel so the browser is not left on stale graph data.
+這些 cell 會在 notebook 旁邊產生一個小型本機儀表板應用，並用 `semantic_meaning` 當作可編輯的欄位洞察欄位。你可以打開任何產生出來的檔案，在 notebook 工作區裡調整顏色、加 endpoint 等，修改會在下次重跑 writefile 和啟動 cell 時生效。重跑啟動 cell 時，會重啟同一個 kernel 啟動的前一個儀表板 process，瀏覽器就不會停在過期的圖譜資料上。
 
-**To stop the dashboard later**, run `kill <pid>` (the PID is printed by the launch cell) - or simply restart the Jupyter kernel.
+**之後要停止儀表板**，執行 `kill <pid>`（PID 由啟動 cell 印出），或直接重啟 Jupyter kernel。
 
 ```python
 import os
@@ -4353,122 +4362,122 @@ _dashboard_proc = _launch_dashboard()
 
 ---
 
-## Notes, Assumptions, and Extension Points
+## 備註、假設與擴充點
 
-### What This Cookbook Is Designed For
+### 這份 Cookbook 的設計用途
 
-This cookbook is a compact, self-contained demonstration of an agentic database-change workflow. It is meant to show how to combine:
+這份 cookbook 是一個精簡、自給自足的 agent 式資料庫變更流程示範。它要展示怎麼組合：
 
-- staged agent orchestration
-- typed intermediate outputs
-- optional retrieval context
-- deterministic guardrails
+- 分階段的 agent 編排
+- 型別化的中間輸出
+- 選配的 retrieval 上下文
+- 確定性的 guardrail
 - trace instrumentation
-- artifact generation
-- Promptfoo evals
+- artifact 產生
+- Promptfoo eval
 
-The workflow is intentionally portable and does not depend on external project-specific modules, local vector databases, graph databases, or a live data warehouse connection. The retail example is deliberately concrete, but the same staged pattern can be adapted to other domains where schema changes need analysis, implementation planning, and review.
+這個流程刻意做成可攜，不依賴專案專屬的外部 module、本機 vector database、graph database 或即時的資料倉儲連線。零售範例刻意寫得具體，但同樣的分階段模式可以調整到其他需要 schema 變更分析、實作規劃和審查的領域。
 
-### What This Cookbook Does Not Do
+### 這份 Cookbook 不做的事
 
-This notebook does not:
+這份 notebook 不會：
 
-- execute SQL against a database
-- inspect a live schema catalog
-- open pull requests
-- modify production infrastructure
-- validate SQL with a database parser
-- enforce organization-specific migration standards
-- replace human code review
+- 對資料庫執行 SQL
+- 檢視即時的 schema catalog
+- 開 pull request
+- 修改 production 基礎設施
+- 用資料庫 parser 驗證 SQL
+- 強制執行組織專屬的 migration 標準
+- 取代人工 code review
 
-The generated SQL should be treated as a draft for review.
+產生的 SQL 應該當成待審查的草稿。
 
-### Tracing and Sensitive Data
+### Tracing 與敏感資料
 
-The notebook defaults to redacted traces for publication hygiene. Set `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=true` only for non-sensitive demo runs where retaining prompt and output payloads is intentional.
+為了發布時的衛生，notebook 預設用遮蔽過的 trace。只有在非敏感的 demo 執行、而且刻意要保留 prompt 和輸出 payload 時，才把 `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA=true`。
 
-Before adapting this for sensitive enterprise data, review:
+在拿這個流程處理敏感的企業資料之前，請先檢查：
 
 - `OPENAI_AGENTS_TRACE_INCLUDE_SENSITIVE_DATA`
-- API key handling
-- PDF upload policy
-- data retention expectations
-- access controls around generated artifacts
+- API key 的處理方式
+- PDF 上傳政策
+- 資料保存期限的預期
+- 產生出來的 artifact 的存取控制
 
-### Optional PDF RAG
+### 選配的 PDF RAG
 
-The optional RAG path uses OpenAI Vector Stores and the Agents SDK `FileSearchTool`.
+選配的 RAG 路徑使用 OpenAI Vector Stores 和 Agents SDK 的 `FileSearchTool`。
 
-This is useful when impact analysis should be grounded in a reference PDF such as:
+當影響分析應該以參考 PDF 為依據時很有用，例如：
 
-- an interface design document
-- an implementation field definition
-- schema documentation
-- lineage documentation
-- downstream dependency notes
+- 介面設計文件
+- 欄位實作定義
+- schema 文件
+- lineage 文件
+- 下游依賴筆記
 
-The vector store is configured to expire automatically after one day of inactivity. You can also delete it immediately in the cleanup section.
+vector store 設定成閒置一天後自動過期。你也可以在清理區段立刻刪掉它。
 
-### Promptfoo Eval Path
+### Promptfoo Eval 路徑
 
-The Promptfoo section generates runtime files under:
+Promptfoo 區段會在下面這個路徑產生 runtime 檔案：
 
 ```text
 artifacts/promptfoo/
 ```
 
-The generated core module injects the current notebook prompt strings, so prompt edits and `CHANGE_TEXT` edits are reflected after rerunning the generation cells.
+產生的 core module 會注入目前 notebook 的 prompt 字串，所以重跑產生 cell 之後，prompt 和 `CHANGE_TEXT` 的修改都會反映出來。
 
-By default, the eval flow includes:
+預設的 eval 流程包含：
 
-- deterministic input preflight
-- one parse-only eval for the current request
-- one full-flow eval for the current request
+- 確定性的 input preflight
+- 針對目前需求的一個 parse-only eval
+- 針對目前需求的一個 full-flow eval
 
-Set `RUN_EXTRA_REGRESSION_CASES = True` to include the optional regression fixtures.
+把 `RUN_EXTRA_REGRESSION_CASES = True` 就會加入選配的 regression fixture。
 
-### Suggested Production Extensions
+### 建議的 Production 擴充
 
-For a production-grade implementation, consider adding:
+要做成 production 等級的實作，可以考慮加上：
 
-- schema catalog lookup
-- database-specific SQL validation
-- SQL formatting and linting
-- migration framework integration
-- pull request creation
-- data lineage graph integration
-- approval workflows
-- policy checks for destructive changes
-- richer eval suites
-- golden test fixtures
-- organization-specific SQL templates
-- environment-specific deployment plans
+- schema catalog 查詢
+- 資料庫專屬的 SQL 驗證
+- SQL 格式化與 lint
+- 整合 migration framework
+- 自動建立 pull request
+- 整合 data lineage 圖
+- 核准流程
+- 針對破壞性變更的政策檢查
+- 更完整的 eval 套件
+- golden test fixture
+- 組織專屬的 SQL 範本
+- 各環境專屬的部署計畫
 
-### Recommended Review Checklist
+### 建議的 Review 檢查清單
 
-Before using generated output for real implementation, review:
+在把產生的輸出用在真實實作之前，請檢查：
 
-- parsed target schema and table
-- parsed operations
-- data type and nullability
-- backfill logic
-- index strategy
-- downstream propagation assumptions
-- prechecks and postchecks
-- rollback feasibility
-- generated SQL dialect compatibility
-- validation issues
-- trace output
-- saved artifact contents
-- Promptfoo eval results
+- 解析出的 target schema 和 table
+- 解析出的 operations
+- 資料型別和 nullability
+- backfill 邏輯
+- index 策略
+- 下游傳遞的假設
+- prechecks 和 postchecks
+- rollback 的可行性
+- 產生的 SQL 方言相容性
+- 驗證問題
+- trace 輸出
+- 存下來的 artifact 內容
+- Promptfoo eval 結果
 
 <a id="contributors"></a>
 
 ---
 
-## Contributors
+## 貢獻者
 
-This cookbook serves as a joint collaboration between OpenAI and [Altimetrik](https://www.altimetrik.com/).
+這份 cookbook 是 OpenAI 和 [Altimetrik](https://www.altimetrik.com/) 的共同合作成果。
 
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 - [Atharva Joshi](https://www.linkedin.com/in/attharvaj3147/)
@@ -4477,4 +4486,16 @@ This cookbook serves as a joint collaboration between OpenAI and [Altimetrik](ht
 - [Shashwat Jha](https://www.linkedin.com/in/shashjha/)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 不要叫一個模型直接吐出最終 SQL，把任務拆成 parse、impact、plan、SQL 四個專職 agent，出問題時才知道是哪一階段開始錯。
+- 每個階段用 Pydantic model 加 `AgentOutputSchema` 規定輸出形狀，下游拿到的是契約，不是自由文字。
+- 確定性的 guardrail 補足模型的不穩定，專門抓 nullable 變成 `NOT NULL`、漏掉 backfill 或 index 這類無聲失敗。
+- 整個流程的結果收進一個可稽核的 `bundle` 並存成 JSON，review、debug 和 regression 比對都靠它。
+- Promptfoo 在另一個 process 跑，所以要從 notebook 狀態寫出 provider、assertion 和 config，這樣改 prompt 後 eval 才跟著更新。
+
+## 練習
+
+1. 把 `CHANGE_TEXT` 改成要求 `NOT NULL` 的欄位（例如 `TIER_CODE VARCHAR(10) NOT NULL`），重跑 Stages 3-4 guardrail，觀察 nullability 的檢查怎麼反映這個變化。
+2. 在 Stage 5 的 SQL 檢查裡，加一條規則：如果需求提到「unique」，SQL 必須包含 `UNIQUE`，然後拿一份沒有 unique 的 SQL 測試它會不會報錯。
+3. 設定 `RUN_EXTRA_REGRESSION_CASES = True`，並自己新增一個 regression fixture（例如改 `DIM_CUSTOMER` 的欄位型別），重新產生 Promptfoo config 後跑 eval，看 parse-only 和 full-flow 哪個先失敗。

@@ -1,42 +1,53 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/document_and_multimodal_understanding_tips.ipynb
 ---
-
-# Getting the Most out of GPT-5.4 for Vision and Document Understanding
+# 用 GPT-5.4 發揮視覺與文件理解的最佳表現
 
 > 原文：[examples/multimodal/document_and_multimodal_understanding_tips.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/document_and_multimodal_understanding_tips.ipynb)
 
-A practical guide to get the best performance on vision tasks with GPT-5.4.
+用 GPT-5.4 處理視覺任務、拿到最佳表現的實用指南。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+整理用 GPT-5.4 處理文件和圖片時，影響結果最大的幾個 request 參數：image detail、verbosity、reasoning effort 和 Code Interpreter。每個設定都搭配實際範例（手寫表單、報紙、平面圖、圖表、賽程表、警察報告表單），說明什麼情況該調哪一個。
+
+## 學完你會
+
+- 依失敗的樣子選對設定：小字或手寫用 `detail="original"`，要逐字轉錄用高 verbosity，需要整合多區域資訊就提高 reasoning effort。
+- 用 Code Interpreter 加上固定座標格式（`[x_min, y_min, x_max, y_max]`，`0..999`）做 bounding box 定位。
+- 在不能用 Code Interpreter 的環境，改用「定位、本機裁切、重跑」的流程。
+
+## 開跑前
+
+需要 `OPENAI_API_KEY`，並且帳號要能使用 GPT-5.4 和 Responses API。
 
 
-GPT-5.4 is a major step forward for real-world multimodal workloads.
+GPT-5.4 是真實世界多模態工作負載的一大進步。
 
-Documents that previously strained vision systems or required stitching together OCR, layout detection, and custom parsers, including dense scans, handwritten forms, engineering diagrams, and chart-heavy reports, can now often be interpreted and reasoned over in a single model pass with GPT-5.4.
+以前讓視覺系統吃力、或需要把 OCR、版面偵測和自訂 parser 拼在一起的文件，包括密集的掃描檔、手寫表單、工程圖和滿是圖表的報告，現在常常能用 GPT-5.4 一次推論就解讀並推理完。
 
-However, model configuration is key for unlocking SOTA results. Small choices around image detail, verbosity, reasoning effort, and tool usage can significantly affect performance. 
+不過，要拿到最好的結果，模型設定是關鍵。image detail、verbosity、reasoning effort 和 tool 使用這些小選擇，會大幅影響表現。
 
-This notebook focuses on the highest-leverage adjustments for document workloads: image detail, verbosity, reasoning effort, and tool use. The goal is to show when each one matters, how it changes the output, and how to choose a setup that is both robust and practical.
+這份 notebook 專注在對文件工作影響最大的幾個調整：image detail、verbosity、reasoning effort 和 tool 使用。目標是說明每一個在什麼時候重要、會怎麼改變輸出，以及怎麼選出既穩健又實用的設定組合。
 
-All examples in this notebook use the **Responses API** via `client.responses.create(...)`. The “settings” we talk about are request parameters you pass into that call.
+這份 notebook 的所有範例都透過 `client.responses.create(...)` 使用 **Responses API**。我們說的「設定」就是傳進這個呼叫的 request 參數。
 
-### Input shape
+### 輸入格式
 
-- **`input`**: a list of message-like objects (commonly one `{ "role": "user", "content": [...] }`)
-- **`content`**: a list of typed blocks, typically:
+- **`input`**：類似 message 的物件列表（通常是一個 `{ "role": "user", "content": [...] }`）
+- **`content`**：有型別的區塊列表，通常是：
   - `{ "type": "input_text", "text": "..." }`
   - `{ "type": "input_image", "image_url": "...", "detail": "auto" | "original" }`
 
-### Parameters used throughout this notebook
+### 這份 notebook 會用到的參數
 
-- **Image detail** (`input_image.detail`): controls the image resolution used for vision. Use `"auto"` for most pages; use `"original"` when text is tiny, handwritten, or the scan is low-quality.
-- **Verbosity** (`text={"verbosity": ...}`): influences how compressed vs literal the text output is. Higher verbosity is helpful for faithful transcription.
-- **Reasoning effort** (`reasoning={"effort": ...}`): allocates more compute to multi-step visual reasoning (charts, tables, diagrams) once the image is already readable.
-- **Tool use** (`tools=[...]` + `instructions=...`): optionally lets the model use tools like **Code Interpreter** to zoom/crop/inspect before answering; omit tools when a single-pass answer is enough.
+- **Image detail**（`input_image.detail`）：控制視覺處理時使用的圖片解析度。大多數頁面用 `"auto"`；文字很小、手寫或掃描品質差時用 `"original"`。
+- **Verbosity**（`text={"verbosity": ...}`）：影響文字輸出是壓縮還是逐字貼近原文。要忠實轉錄時，高 verbosity 有幫助。
+- **Reasoning effort**（`reasoning={"effort": ...}`）：在圖片已經看得清楚之後，把更多算力用在多步驟的視覺推理（圖表、表格、示意圖）。
+- **Tool 使用**（`tools=[...]` + `instructions=...`）：可選擇讓模型在回答前使用像 **Code Interpreter** 這樣的 tool 做縮放、裁切、檢查；一次回答就夠的話就不要加 tool。
 
-A minimal request looks like:
+最簡單的 request 長這樣：
 
 ```python
 response = client.responses.create(
@@ -57,34 +68,34 @@ response = client.responses.create(
 )
 ```
 
-### Output shape
+### 輸出格式
 
-- The model returns a **response object** with one or more output items.
-- In this notebook, we mostly use `response.output_text` as a convenient way to get the final text.
-- For **structured outputs**, you still receive text — you just ask the model to format it as JSON using `text={"format": ...}` and then `json.loads(response.output_text)`. 
+- 模型會回傳一個 **response 物件**，裡面有一個或多個 output item。
+- 這份 notebook 大多用 `response.output_text` 來方便地取得最終文字。
+- **結構化輸出**拿到的仍然是文字，只是你用 `text={"format": ...}` 要求模型輸出成 JSON，再用 `json.loads(response.output_text)` 解析。
 
 
-## A quick decision guide
-Use this as a starting point. A good rule of thumb is to start simple, then adjust the setting that matches the failure mode. 
+## 快速決策指南
+這張表可以當起點。好的經驗法則是先從簡單設定開始，再針對失敗的樣子調整對應的設定。
 
-| If your task looks like this | Start with this setup | Why |
+| 如果你的任務像這樣 | 先用這個設定 | 原因 |
 |---|---|---|
-| Ordinary document QA or extraction | `detail="auto"` | Lowest-friction default for readable pages |
-| Dense scans, screenshots, handwriting, or tiny labels | `detail="original"` | Preserves small visual signals that often get lost |
-| Literal transcription or markdown conversion | `text={"verbosity": "high"}` | Encourages the model to keep more layout and fewer paraphrases |
-| Region localization | Ask for `[x_min, y_min, x_max, y_max]` in a fixed `0..999` grid | Easy to crop, draw, debug, and feed into downstream systems |
-| Chart, table, form, or drawing QA across multiple regions | increase reasoning effort to 'high' or 'xhigh' | Improves multi-step visual reasoning |
-| Multi-pass visual inspection | Add Code Interpreter | Best when a human would zoom, crop, rotate, or inspect several subregions before answering |
+| 一般文件問答或擷取 | `detail="auto"` | 對清晰頁面來說，阻力最低的預設值 |
+| 密集掃描檔、螢幕截圖、手寫或很小的標籤 | `detail="original"` | 保留常常會流失的細小視覺訊號 |
+| 逐字轉錄或轉成 markdown | `text={"verbosity": "high"}` | 鼓勵模型保留更多版面，少做改寫 |
+| 區域定位 | 要求回傳固定 `0..999` 網格中的 `[x_min, y_min, x_max, y_max]` | 容易裁切、畫框、除錯，也方便餵給下游系統 |
+| 跨多個區域的圖表、表格、表單或圖面問答 | 把 reasoning effort 提高到 'high' 或 'xhigh' | 改善多步驟視覺推理 |
+| 多輪視覺檢查 | 加上 Code Interpreter | 適合人類會先縮放、裁切、旋轉或檢查好幾個子區域才回答的情況 |
 
-## Setup
+## 環境設定
 
-Before running this notebook, make sure you have `OPENAI_API_KEY` set in your environment. If you don’t have an API key yet, you can create one at [platform.openai.com](https://platform.openai.com/api-keys).
+執行這份 notebook 之前，請確認環境裡已設定 `OPENAI_API_KEY`。如果還沒有 API key，可以到 [platform.openai.com](https://platform.openai.com/api-keys) 建立。
 
 ```bash
 export OPENAI_API_KEY="your_api_key_here"
 ```
 
-If needed, install the notebook dependencies:
+需要的話，安裝 notebook 的相依套件：
 
 ```bash
 pip install --upgrade openai pillow
@@ -116,11 +127,11 @@ def image_to_data_url(image_path: str | Path) -> str:
     return f"data:{mime_type};base64,{encoded}"
 ```
 
-## 1. Increase image detail for dense pages and handwriting
+## 1. 密集頁面和手寫：提高 image detail
 
-The `detail` parameter controls the resolution the model uses when processing an image. Most applications should start with `detail="auto"` which lets the model choose an appropriate resolution. However, when pages contain handwriting, small labels, dense tables, low contrast scans, or screenshots with fine text, switching to `detail="original"` can significantly improve results. If the model is mostly correct but consistently misses small fields or annotations, increasing image detail is usually the first adjustment to try.
+`detail` 參數控制模型處理圖片時使用的解析度。大多數應用應該從 `detail="auto"` 開始，讓模型自己選合適的解析度。但如果頁面有手寫、小標籤、密集表格、低對比的掃描檔，或是有細小文字的螢幕截圖，改成 `detail="original"` 可以大幅改善結果。如果模型大致正確，卻一直漏掉小欄位或註記，提高 image detail 通常是第一個該試的調整。
 
-This example intentionally includes small email and phone fields, not just the larger handwritten names. Those are the kinds of details that tend to degrade first when the image is downsampled.
+這個範例刻意放了很小的 email 和電話欄位，而不只是較大的手寫姓名。圖片被降低解析度時，最先劣化的就是這類細節。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3C_insurance_form.png" alt="Handwritten insurance form" style="max-width: 100%; width: 720px;" />
 
@@ -173,13 +184,13 @@ display(Markdown(f"### Extracted insurance form\n\n```json\n{json.dumps(handwrit
     <IPython.core.display.Markdown object>
     ```
 
-## 2. Increase verbosity for faithful transcription
+## 2. 要忠實轉錄：提高 verbosity
 
-When asked to transcribe documents, multimodal models tend to compress layout. They preserve meaning but may simplify whitespace, line breaks, and table-like layout. This behavior is often desirable for question answering, but not for OCR-style tasks.
+請多模態模型轉錄文件時，它們傾向壓縮版面。意思會保留，但空白、換行和類似表格的排版可能被簡化。這種行為在問答時通常是好事，但在 OCR 類的任務就不是。
 
-Increase verbosity - `text={"verbosity": "high"}` encourages the model toward a more literal rendering and precise transcription. Use it for OCR-style workloads and targeted extractions where completeness and formatting fidelity matter.
+提高 verbosity，也就是 `text={"verbosity": "high"}`，會讓模型更偏向逐字呈現和精確轉錄。OCR 類的工作負載，以及重視完整性和格式忠實度的目標擷取，都適合這個設定。
 
-The example below  `Ticket To The Arts` panel, asking for a full transcription of all four listings while keeping the image detail fixed.
+下面的範例用 `Ticket To The Arts` 版面，要求完整轉錄四則刊登內容，同時固定 image detail 不變。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/newspaper.png" alt="Newspaper clipping" style="max-width: 100%; width: 720px;" />
 
@@ -215,17 +226,17 @@ display(Markdown(f"### Transcription preview\n\n```text\n{section_response.outpu
     <IPython.core.display.Markdown object>
     ```
 
-## 3. Raise reasoning effort when the image is readable but the answer is compositional
+## 3. 圖片看得清楚但答案需要組合資訊：提高 reasoning effort
 
-Once the image is readable, the next bottleneck is often reasoning instead of perception. This shows up in documents where the answer depends on combining information across multiple parts of the image rather than reading a single field. Charts, tables, technical diagrams, and dense visual layouts often fall into this category.
+圖片讀得清楚之後，下一個瓶頸常常是推理而不是感知。這在答案必須整合圖片多個部分的資訊、而不是讀單一欄位的文件上很常見。圖表、表格、技術示意圖和密集的視覺版面常屬於這一類。
 
-In those cases, increasing reasoning effort `reasoning={"effort": "high"}` can help more than increasing image detail. The model already sees the content. What it needs is more capacity to connect labels, compare regions, follow structure, and compute the final answer correctly.
+這種情況下，提高 reasoning effort（`reasoning={"effort": "high"}`）可能比提高 image detail 更有幫助。模型已經看到內容了，它需要的是更多能力去連結標籤、比較區域、跟隨結構，並正確算出最終答案。
 
-Below are examples of different types of tasks or images where higher reasoning is helpful.
+下面是幾種不同類型的任務或圖片，更高的 reasoning 在這些情況下有幫助。
 
-### Example: floorplan reasoning
+### 範例：平面圖推理
 
-The floorplan below is a good example of a task that goes beyond transcription. To answer correctly, the model has to read room labels, interpret spatial relationships, and use visible dimensions to compute values.
+下面的平面圖是個好例子，任務已經超出轉錄。要答對，模型得讀房間標籤、理解空間關係，並利用圖上可見的尺寸算出數值。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/apartment_floorplan.png" alt="Apartment floorplan" style="max-width: 100%; width: 720px;" />
 
@@ -276,9 +287,9 @@ display(Markdown(f"### Floorplan reasoning result\n\n```json\n{json.dumps(floorp
     <IPython.core.display.Markdown object>
     ```
 
-### Example: chart understanding
+### 範例：圖表理解
 
-The same pattern shows up in chart understanding. If the task is simply to read a title or identify one plotted value, default settings may be enough. But if the answer depends on comparing multiple series, tracking changes across adjacent intervals, or estimating trends over time, reasoning becomes the limiting factor.
+圖表理解也有同樣的模式。如果任務只是讀標題或找出某一個點的數值，預設設定可能就夠了。但如果答案取決於比較多條數列、追蹤相鄰區間的變化，或估計隨時間的趨勢，推理就會變成限制因素。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/NotRealCorp_chart.png" alt="Line chart" style="max-width: 100%; width: 720px;" />
 
@@ -326,9 +337,9 @@ display(Markdown(f"### Chart reasoning result\n\n```json\n{json.dumps(chart_resu
     <IPython.core.display.Markdown object>
     ```
 
-### Example: long-range visual reasoning on a dense bracket
+### 範例：密集賽程表的長距離視覺推理
 
-Dense tournament brackets are a strong candidate for reasoning because the model has to follow paths across a crowded layout, keep left and right regions distinct, and identify the final outcomes without losing track of structure.
+密集的比賽賽程表很適合用來測試 reasoning，因為模型要在擁擠的版面中沿著路徑追蹤，分清左右兩邊的區域，並在不迷失結構的情況下找出最終結果。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/bracket.png" alt="Tournament bracket" style="max-width: 100%; width: 1000px;" />
 
@@ -379,18 +390,18 @@ display(Markdown(f"### Bracket reasoning result\n\n```json\n{json.dumps(bracket_
     <IPython.core.display.Markdown object>
     ```
 
-## 4. Use Code Interpreter for multi-pass inspection and bounding-box localization
+## 4. 多輪檢查和 bounding box 定位：用 Code Interpreter
 
-Some document tasks are easier to solve the way a person would: inspect the full page, zoom or crop a region, check another area, and then combine evidence into a final answer.
+有些文件任務用人的方式來解比較容易：看整頁、縮放或裁切某個區域、檢查另一個地方，再把證據整合成最終答案。
 
-Code Interpreter is particularly useful for vision tasks when:
-- the page is dense and evidence is spread across multiple regions
-- the model needs to zoom, crop, rotate, or run intermediate checks
-- qualitative accuracy matters more than minimum latency
+Code Interpreter 在這些視覺任務特別有用：
+- 頁面很密集，證據分散在多個區域
+- 模型需要縮放、裁切、旋轉，或做中間檢查
+- 品質上的準確度比最低延遲更重要
 
-For localization tasks (including bounding boxes), provide access to code interpreter as well as a strict coordinate contract like `[x_min, y_min, x_max, y_max]` and a fixed coordinate space such as `0..999` with the origin in the top-left corner.
+對定位任務（包含 bounding box），除了開放 code interpreter，還要給嚴格的座標約定，例如 `[x_min, y_min, x_max, y_max]`，以及固定的座標空間，像是原點在左上角的 `0..999`。
 
-In practice, this combination (code interpreter tool use + explicit box format) is often more reliable and repeatable than a single-pass vision call.
+實務上，這個組合（code interpreter 加上明確的框格式）通常比單次視覺呼叫更可靠、更可重現。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/police_form.png" alt="Police report form" style="max-width: 100%; width: 720px;" />
 
@@ -516,15 +527,15 @@ display(annotated)
     <IPython.core.display.Markdown object>
     ```
 
-## 5. If you cannot use Code Interpreter, build a narrow crop-and-rerun pipeline
+## 5. 不能用 Code Interpreter：做窄範圍的裁切再重跑流程
 
-In restricted environments, you may not want to grant the model a general Python sandbox. A practical alternative is a two-stage workflow:
+在受限的環境裡，你可能不想給模型一個通用的 Python sandbox。實用的替代方案是兩階段流程：
 
-1. localize the field or region you care about
-2. crop that region locally
-3. rerun a smaller, more focused prompt on the crop
+1. 定位你在意的欄位或區域
+2. 在本機裁切該區域
+3. 對裁切結果重跑一個更小、更聚焦的 prompt
 
-This often recovers much of the value of multi-pass inspection while keeping the control surface small.
+這通常能拿回多輪檢查的大部分價值，同時讓可操作的範圍保持很小。
 
 
 ````python
@@ -616,22 +627,34 @@ display(Markdown(f"### Crop-and-rerun result\n\n```json\n{json.dumps(crop_result
     <IPython.core.display.Markdown object>
     ```
 
-## Conclusion
+## 結論
 
-To summarize, start simple: use native vision with detail="auto" and no tools when the task is simple and the page is clear.
+總結一下：先從簡單的開始。任務簡單、頁面清楚時，用原生視覺、`detail="auto"`，不加 tool。
 
-Raise image detail (detail="original") when text is tiny, handwritten, low-contrast, or scan quality is poor.
+文字很小、手寫、低對比，或掃描品質差時，提高 image detail（`detail="original"`）。
 
-Raise verbosity when you need faithful transcription rather than compressed summaries.
+需要忠實轉錄而不是壓縮摘要時，提高 verbosity。
 
-Raise reasoning effort when the image is readable but the answer requires combining multiple regions.
+圖片看得清楚、但答案需要整合多個區域時，提高 reasoning effort。
 
-Use Code Interpreter for multi-pass inspection (zoom/crop/rotate), especially on dense pages.
+需要多輪檢查（縮放、裁切、旋轉）時用 Code Interpreter，尤其是密集頁面。
 
-For bounding boxes, require a strict contract: [x_min, y_min, x_max, y_max] in a fixed 0..999 coordinate space (top-left origin), and enforce structured JSON output.
+做 bounding box 時，要求嚴格的約定：固定 `0..999` 座標空間（左上角為原點）中的 `[x_min, y_min, x_max, y_max]`，並強制結構化 JSON 輸出。
 
-If Code Interpreter is unavailable, use crop-and-rerun: localize, crop locally, then run a focused extraction prompt.
+如果不能用 Code Interpreter，就用裁切再重跑：定位、在本機裁切，再跑聚焦的擷取 prompt。
 
-In restricted environments, expose lightweight visual tools (crop/zoom/rotate/OCR-region fallback) for tighter control.
+在受限環境裡，提供輕量的視覺工具（裁切、縮放、旋轉、OCR 區域備援），可以控制得更緊。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 從簡單設定開始，再針對失敗的樣子調整對應的參數，不要一次全開。
+- 小字和手寫是感知問題，用 `detail="original"`；需要整合多區域資訊是推理問題，提高 reasoning effort。
+- 逐字轉錄要用高 verbosity，不然模型會壓縮版面。
+- 定位任務要給固定的座標約定並輸出結構化 JSON，才好下游處理。
+- 沒有 Code Interpreter 時，用「定位、本機裁切、重跑」也能拿回多輪檢查的大部分效果。
+
+## 練習
+
+1. 拿保險表單範例，把 `detail` 分別設成 `"auto"` 和 `"original"`，比較小欄位（email、電話）的辨識差異。
+2. 在報紙範例中，把 `verbosity` 從預設改成 `"high"`，檢查換行和排版有沒有更貼近原文。
+3. 在平面圖或圖表範例中，把 reasoning effort 從低調到 `"high"`，並寫一個需要跨區域計算的新問題，比較答案的正確性和花費的 token。

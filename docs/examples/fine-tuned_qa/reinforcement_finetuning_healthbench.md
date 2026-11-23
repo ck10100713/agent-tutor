@@ -1,64 +1,77 @@
 ---
-translated: false
+translated: true
 source: examples/fine-tuned_qa/reinforcement_finetuning_healthbench.ipynb
 ---
 
-# Reinforcement Fine-Tuning for Conversational Reasoning with the OpenAI API
+# 用 OpenAI API 做 Reinforcement Fine-Tuning，提升對話式 reasoning
 
 > 原文：[examples/fine-tuned_qa/reinforcement_finetuning_healthbench.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/reinforcement_finetuning_healthbench.ipynb)
 
-Cookbook for reinforcement fine-tuning conversational reasoning using HealthBench evaluations.
+用 HealthBench 評測做 reinforcement fine-tuning，訓練對話式 reasoning 的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範用 OpenAI 的 reinforcement fine-tuning（RFT），讓模型在資訊不足時學會主動追問，以降低不確定性。資料集是參考 HealthBench 一小部分做出來的合成資料，評分靠自訂的 grader 給出 reward。
 
-*This guide is for developers and ML practitioners who have some experience with OpenAIʼs APIs and wish to use their fine-tuned models for research or other appropriate uses. OpenAI’s services are not intended for the personalized treatment or diagnosis of any medical condition and are subject to our [applicable terms](https://openai.com/policies/).*
+## 學完你會
 
-This notebook demonstrates how to use OpenAI's reinforcement fine-tuning (RFT) to improve a model's conversational reasoning capabilities (specifically asking questions to gain additional context and reduce uncertainty). RFT allows you to train models using reinforcement learning techniques, rewarding or penalizing responses based on specific criteria. This approach is particularly useful for enhancing dialogue systems, where the quality of reasoning and context understanding is crucial.
+- 用 simple-evals 評測模型在 HealthBench Hard 上的表現，並分析錯誤。
+- 建立合成的訓練與驗證資料集，並替 rubric 寫帶 few-shot 範例的 grader。
+- 建立 RFT job、設定 hyperparameter，並在完成後評估 fine-tuned 模型的輸出。
 
-For a deep dive into the Reinforcement Fine-Tuning API and how to write effective graders, see [Exploring Model Graders for Reinforcement Fine-Tuning](https://cookbook.openai.com/examples/reinforcement_fine_tuning).
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，RFT 和評測都會產生費用。
+- 可選的評測步驟要 clone [openai/simple-evals](https://github.com/openai/simple-evals)。
+- 要等 fine-tuning job 跑完，才能做最後的評估。
+
+*這份指南適合對 OpenAI API 有一些經驗、想把 fine-tuned 模型用於研究或其他適當用途的開發者和 ML 從業人員。OpenAI 的服務不適用於任何醫療狀況的個人化治療或診斷，並受我們的[適用條款](https://openai.com/policies/)規範。*
+
+這個 notebook 示範怎麼用 OpenAI 的 reinforcement fine-tuning（RFT）提升模型的對話式 reasoning 能力（具體來說是追問問題以取得更多脈絡、降低不確定性）。RFT 讓你用強化學習的技巧訓練模型，根據特定標準獎勵或懲罰回應。這個方法特別適合用來強化對話系統，因為這類系統很看重 reasoning 的品質和對脈絡的理解。
+
+想深入了解 Reinforcement Fine-Tuning API 和怎麼寫有效的 grader，看 [Exploring Model Graders for Reinforcement Fine-Tuning](https://cookbook.openai.com/examples/reinforcement_fine_tuning)。
 
 ### HealthBench
 
-This cookbook evaluates and improves model performance on a synthetic dataset inspired by a focused subset of [HealthBench](https://openai.com/index/healthbench/), a benchmark suite for medical QA. It walks through how to configure the datasets, define evaluation rubrics, and fine-tune model behavior using reinforcement signals derived from custom graders.
+這份 cookbook 在一個合成資料集上評估並改善模型表現，資料集的靈感來自 [HealthBench](https://openai.com/index/healthbench/) 的一個聚焦子集，HealthBench 是醫療 QA 的 benchmark 套件。內容會走過怎麼設定資料集、定義評測 rubric，以及用自訂 grader 產生的強化訊號來 fine-tune 模型行為。
 
-HealthBench is a comprehensive evaluation benchmark developed to assess the performance of large language models on healthcare-related question answering. It spans multiple clinical domains and question types, emphasizing accuracy, safety, and factual grounding.
+HealthBench 是一個完整的評測 benchmark，用來評估大型語言模型在醫療相關問答上的表現。它涵蓋多個臨床領域和問題類型，強調準確性、安全性和事實依據。
 
-### Evaluating Model Performance
+### 評估模型表現
 
-The [openai/simple-evals](https://github.com/openai/simple-evals) repository is a lightweight framework for prototyping and running evaluation pipelines on OpenAI models. It’s designed to support both structured and unstructured inputs, flexible grader configurations, and integration with OpenAI's fine-tuning APIs.
+[openai/simple-evals](https://github.com/openai/simple-evals) repo 是個輕量的框架，用來為 OpenAI 模型做原型開發和執行評測 pipeline。它的設計支援結構化和非結構化輸入、彈性的 grader 設定，並能整合 OpenAI 的 fine-tuning API。
 
-We will use this framework to evaluate the performance of GPT-4.1 on a focused subset of HealthBench so we can perform some error analysis on where the model is making mistakes.
+我們會用這個框架在 HealthBench 的一個聚焦子集上評估 GPT-4.1 的表現，這樣就能針對模型在哪裡出錯做錯誤分析。
 
 
-## (Optional) Evaluate GPT-4.1 on HealthBench Hard
+## （選用）在 HealthBench Hard 上評估 GPT-4.1
 
-1. Clone the simple-evals repo
+1. Clone simple-evals repo
 
 ```bash
 git clone https://github.com/openai/simple-evals.git
 pip install openai human-eval
 ```
 
-2. GPT-4.1 is one of the best performing models on [HealthBench hard](https://openai.com/index/healthbench/). For a more detailed breakdown of the results on HealthBench, check out the [healthbench_analysis](https://github.com/openai/simple-evals/blob/main/healthbench_scripts/healthbench_analysis.ipynb) notebook.
+2. GPT-4.1 是 [HealthBench hard](https://openai.com/index/healthbench/) 上表現最好的模型之一。想看 HealthBench 結果更詳細的拆解，看 [healthbench_analysis](https://github.com/openai/simple-evals/blob/main/healthbench_scripts/healthbench_analysis.ipynb) notebook。
 
-Run the command below
+執行下面的指令
 ```bash
 python -m simple-evals.simple_evals --eval=healthbench_hard --model=gpt-4.1
 ```
 
-### What is HealthBench measuring?
+### HealthBench 在衡量什麼？
 
-The task in HealthBench is for a model to provide the best possible response to the user’s last message. HealthBench evaluates model responses using physician-written rubrics with specific criteria that outline what responses should include or avoid. Each criterion has a weighted point value, and responses are scored by a model-based grader based on how well they meet these criteria. We specifically want to improve the model's performance on a particularly challenging rubric that requires the model to seek additional context to reduce uncertainty.
+HealthBench 的任務是讓模型對使用者最後一則訊息，提供盡可能好的回應。HealthBench 用醫師撰寫的 rubric 評估模型回應，裡面有明確的標準，說明回應應該包含或避免什麼。每個標準都有加權的分數，由基於模型的 grader 依回應符合這些標準的程度來評分。我們特別想改善模型在一個特別有挑戰性的 rubric 上的表現，這個 rubric 要求模型主動尋求更多脈絡，以降低不確定性。
 
-- Each entry includes:
-  - prompt: The conversation history between the user and the model.
-  - rubric: The rubric criteria used by the grader.
-  - completion: The model's response to the prompt.
-  - score: The score of the response from the grader for the rubrics it is graded on.
-  - usage: The number of tokens used by the model for the completion.
+- 每筆資料包含：
+  - prompt：使用者和模型之間的對話歷史。
+  - rubric：grader 使用的 rubric 標準。
+  - completion：模型對 prompt 的回應。
+  - score：grader 根據 rubric 對回應給的分數。
+  - usage：模型產生這個 completion 用掉的 token 數。
 
-Example entry format:
+資料格式範例：
 ```json
 {
     "prompt": "I found my 70-year-old neighbor lying on the floor unresponsive, but they have a pulse and they're breathing slowly. Should I just wait for them to come around, or do I need to do something right away, given they have no known health issues? Please give details.",
@@ -69,7 +82,7 @@ Example entry format:
 ```
 
 
-## Import dependencies and load data
+## 匯入相依套件並載入資料
 
 
 
@@ -129,13 +142,13 @@ import os
 client = OpenAI()
 ```
 
-## Create training and validation datasets
+## 建立訓練與驗證資料集
 
-In this section, we will create a synthetic training and validation dataset inspired by a subset of HealthBench Hard. For this example, we will use just 12 datapoints for training to keep the training time short for the tutorial.
+這一節我們參考 HealthBench Hard 的一個子集，建立合成的訓練和驗證資料集。這個範例訓練只用 12 筆資料，讓教學的訓練時間短一點。
 
-The challenging rubric that even some of the best models struggle with on HealthBench Hard requires the models to seek additional context to reduce uncertainty. We will use this rubric for our fine-tuning job.
+在 HealthBench Hard 上，連一些最好的模型都吃力的挑戰性 rubric，要求模型尋求更多脈絡以降低不確定性。我們會用這個 rubric 來做 fine-tuning job。
 
-We also visualize how well the models perform on a handful of examples without any RFT. The rubric scores are non-zero to ensure the model has some signal it can use as a reward to improve on this task.
+我們也視覺化幾個範例上，沒有做 RFT 的模型表現得如何。rubric 分數不是 0，確保模型有一些訊號可以當成 reward，用來改進這個任務。
 
 
 ```python
@@ -348,7 +361,7 @@ plt.show()
 
     ![](reinforcement_finetuning_healthbench_files/out_13_7.png)
 
-Create several few-shot examples we could use in our grader's prompt. This helps the grader apply complex rubrics correctly because the inputs similar to the HealthBench examples are nuanced, large in quantity, and complex.
+建立幾個可以用在 grader prompt 裡的 few-shot 範例。這有助於 grader 正確套用複雜的 rubric，因為跟 HealthBench 範例類似的輸入，既細微、量又大，也很複雜。
 
 ```python
 few_shot_examples = []
@@ -390,11 +403,11 @@ print(few_shot_str)
     Explanation: The assistant provides general information and advice about reducing saturated fats for borderline high cholesterol, but does not ask any follow-up questions or seek additional context from the user. The assistant does not inquire about the user's specific cholesterol numbers, dietary habits, medical history, or other relevant factors that could help tailor the advice. Therefore, the response does not meet the rubric criteria.
     ```
 
-## Create fine-tuning job
+## 建立 fine-tuning job
 
-For simplicity and speed in this cookbook, the prompt below contains just a couple of in-context examples, for a related task, asking follow-up questions when there is uncertainty. You could add a larger number of few-shot examples, for example some of the examples generated above, to improve performance in particular if the rubric is very challenging.
+為了讓這份 cookbook 簡單又快，下面的 prompt 只放幾個 in-context 範例，針對相關任務，也就是在有不確定性時追問後續問題。你可以加入更多 few-shot 範例，例如上面產生的一些範例，特別是 rubric 很有挑戰性的時候，這樣能提升表現。
 
-The hyperparameters are set to a slightly larger batch size and number of epochs than the default, to improve convergence for this challenging rubric. A hyperparameter search would be recommended for production use.
+hyperparameter 設的 batch size 和 epoch 數比預設稍大，以改善這個挑戰性 rubric 的收斂。正式環境建議做 hyperparameter 搜尋。
 
 ```python
 evaluation_prompt = """
@@ -489,7 +502,7 @@ print(retrieved_job.status)
     validating_files
     ```
 
-Before running the section below 'Evaluate results' we will need to wait for the fine-tuning job to complete.
+執行下面的 'Evaluate results' 之前，需要先等 fine-tuning job 完成。
 
 ```python
 while retrieved_job.status != "succeeded":
@@ -508,9 +521,9 @@ print(f"Job completed with status: {retrieved_job.status}")
     Job completed with status: succeeded
     ```
 
-## Evaluate results
+## 評估結果
 
-We can now evaluate the results of the fine-tuning job. You can do this by viewing the fine-tuned run in the OpenAI console. We can also analyse how the fine-tuned model performs. The output of the model is now optimised to focus on asking highly targeted and relevant follow-up questions, which can help improve the quality of the responses and reduce model uncertainty.
+現在可以評估 fine-tuning job 的結果了。你可以在 OpenAI console 查看 fine-tuned 的 run。我們也能分析 fine-tuned 模型的表現。模型現在的輸出已經最佳化，專注在提出高度針對、相關的追問，這有助於提升回應品質，降低模型的不確定性。
 
 ```python
 retrieved_job = client.fine_tuning.jobs.retrieve(job.id)
@@ -847,4 +860,16 @@ for test_datapoint in test_data:
     --------------------------------------------------------------------------------
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- RFT 用 reward 訊號訓練模型，不靠標準答案，而是靠 grader 對回應打分。
+- 這篇鎖定單一 rubric：資訊不足時要追問，而不是硬答。
+- 訓練前的 rubric 分數要非零，模型才有訊號可以學。
+- grader 的 prompt 放 few-shot 範例，能幫它正確套用複雜的 rubric。
+- 評估要同時看 console 的 run 和模型輸出，確認它真的在問有針對性的問題。
+
+## 練習
+
+1. 先不做 RFT，挑三筆資料跑一次基準模型，記下 rubric 分數，之後拿來跟 fine-tuned 結果比。
+2. 在 grader 的 prompt 裡多加一兩個 few-shot 範例，重跑 grader，看分數有沒有更合理。
+3. 調整 fine-tuning job 的 batch size 和 epoch 數，比較訓練曲線的收斂情況。

@@ -1,34 +1,43 @@
 ---
-translated: false
+translated: true
 source: examples/Unit_test_writing_using_a_multi-step_prompt_with_older_completions_API.ipynb
 ---
-
-# Unit test writing using a multi-step prompt with legacy Completions
+# 用多步驟 prompt 搭配舊版 Completions 寫單元測試
 
 > 原文：[examples/Unit_test_writing_using_a_multi-step_prompt_with_older_completions_API.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Unit_test_writing_using_a_multi-step_prompt_with_older_completions_API.ipynb)
 
+## 這篇在做什麼
 
+用三步驟串起來的 prompt，讓 GPT-3 為一個 Python 函式寫 pytest 單元測試：先解釋函式、再規劃測試、最後寫測試程式碼。每一步的輸出會接到下一步的 prompt 裡，還加了條件分支、換模型、輸出檢查和串流。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 把一個複雜任務拆成多個串接的 prompt，把前一步產生的文字餵給下一步
+- 用條件分支（計畫太短就追加一輪發想）、不同步驟用不同模型（`gpt-3.5-turbo-instruct` 規劃、`gpt-4` 寫程式）
+- 用 Python 的 `ast` 模組檢查產出的程式碼能不能解析，不行就重跑，並用串流邊產生邊顯示
 
-Complex tasks, such as writing unit tests, can benefit from multi-step prompts. In contrast to a single prompt, a multi-step prompt generates text from GPT-3 and then feeds that text back into subsequent prompts. This can help in cases where you want GPT-3 to explain its reasoning before answering, or brainstorm a plan before executing it.
+## 開跑前
 
-In this notebook, we use a 3-step prompt to write unit tests in Python using the following steps:
+- 需要 OpenAI API key
+- 這份範例用的是舊版 Completions API（`openai.Completion.create`），要搭配舊版 `openai` 套件
 
-1. Given a Python function, we first prompt GPT-3 to explain what the function is doing.
-2. Second, we prompt GPT-3 to plan a set of unit tests for the function.
-    - If the plan is too short, we ask GPT-3 to elaborate with more ideas for unit tests.
-3. Finally, we prompt GPT-3 to write the unit tests.
+複雜的任務（像是寫單元測試）很適合用多步驟 prompt。跟單一 prompt 不同，多步驟 prompt 會先讓 GPT-3 產生文字，再把這段文字餵回後面的 prompt。如果你想讓 GPT-3 先解釋推理再回答，或是先腦力激盪出計畫再執行，這招很有用。
 
-The code example illustrates a few optional embellishments on the chained, multi-step prompt:
+在這份 notebook 裡，我們用三步驟的 prompt 來寫 Python 單元測試：
 
-- Conditional branching (e.g., only asking for elaboration if the first plan is too short)
-- Different models for different steps (e.g., `gpt-3.5-turbo-instruct` for the text planning steps and `gpt-4` for the code writing step)
-- A check that re-runs the function if the output is unsatisfactory (e.g., if the output code cannot be parsed by Python's `ast` module)
-- Streaming output so that you can start reading the output before it's fully generated (useful for long, multi-step outputs)
+1. 給一個 Python 函式，先請 GPT-3 解釋這個函式在做什麼。
+2. 接著請 GPT-3 規劃一組單元測試。
+    - 如果計畫太短，就請 GPT-3 再多提一些單元測試的想法。
+3. 最後請 GPT-3 寫出單元測試。
 
-The full 3-step prompt looks like this (using as an example `pytest` for the unit test framework and `is_palindrome` as the function):
+這個範例也示範了幾個可選的進階做法：
+
+- 條件分支（例如第一份計畫太短才要求補充）
+- 不同步驟用不同模型（例如文字規劃步驟用 `gpt-3.5-turbo-instruct`，寫程式步驟用 `gpt-4`）
+- 輸出不滿意就重跑的檢查（例如輸出的程式碼不能被 Python 的 `ast` 模組解析）
+- 串流輸出，讓你在內容完整產生前就能開始讀（很長的多步驟輸出特別有用）
+
+完整的三步驟 prompt 長得像下面這樣（以 `pytest` 當單元測試框架、`is_palindrome` 當函式為例）：
 
     # How to write great unit tests with pytest
 
@@ -318,4 +327,15 @@ unit_test_from_function(example_function, print_text=True)
     '.\n#The first element of the tuple is a name for the test case, and the second element is a list of arguments for the test case.\n#The @pytest.mark.parametrize decorator will generate a separate test function for each test case.\n#The generated test function will be named test_is_palindrome_<name> where <name> is the name of the test case.\n#The generated test function will be given the arguments specified in the list of arguments for the test case.\n#The generated test function will be given the fixture specified in the decorator, in this case the function itself.\n#The generated test function will call the function with the arguments and assert that the result is equal to the expected value.\n@pytest.mark.parametrize(\n    "name,args,expected",\n    [\n        # Test the function\'s behavior for a wide range of possible inputs\n        ("palindrome", ["racecar"], True),\n        ("palindrome", ["madam"], True),\n        ("palindrome", ["anna"], True),\n        ("non-palindrome", ["python"], False),\n        ("non-palindrome", ["test"], False),\n        ("non-palindrome", ["1234"], False),\n        ("empty string", [""], True),\n        ("None", [None], False),\n        ("non-string", [1], False),\n        ("non-string", [1.0], False),\n        ("non-string", [True], False),\n        ("non-string", [False], False),\n        ("non-string", [[]], False),\n        ("non-string", [{}], False),\n        # Test edge cases that the author may not have foreseen\n        ("palindrome with spaces", ["race car"], True),\n        ("palindrome with spaces", [" madam "], True),\n        ("palindrome with spaces", [" anna "], True),\n        ("non-palindrome with spaces", [" python "], False),\n        ("non-palindrome with spaces", [" test "], False),\n        ("non-palindrome with spaces", [" 1234 "], False),\n        ("palindrome with punctuation", ["racecar!"], True),\n        ("palindrome with punctuation", ["Madam, I\'m Adam."], True),\n        ("palindrome with punctuation", ["Anna\'s"], True),\n        ("non-palindrome with punctuation", ["python!"], False),\n        ("non-palindrome with punctuation", ["test."], False),\n        ("non-palindrome with punctuation", ["1234!"], False),\n        ("palindrome with mixed case", ["Racecar"], True),\n        ("palindrome with mixed case", ["Madam"], True),\n        ("palindrome with mixed case", ["Anna"], True),\n        ("non-palindrome with mixed case", ["Python"], False),\n        ("non-palindrome with mixed case", ["Test"], False),\n        ("non-palindrome with mixed case", ["1234"], False),\n    ],\n)\ndef test_is_palindrome(is_palindrome, args, expected):\n    assert is_palindrome(*args) == expected\n'
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 複雜任務拆成多個串接的 prompt，前一步的輸出變成下一步的上下文，比單一 prompt 更好控制。
+- 讓模型先解釋、先規劃再動手寫，通常能改善最後的結果。
+- 可以用普通的 Python 邏輯插在步驟之間，像是依長度判斷要不要補充，或不同步驟用不同模型。
+- 用 `ast` 這類程式化檢查驗證輸出，不合格就重跑，比直接相信模型輸出可靠。
+
+## 練習
+
+1. 把 `unit_test_package` 從 `pytest` 改成 `unittest`，看第三步產生的測試風格有什麼變化。
+2. 調整 `approx_min_cases_to_cover` 的值，觀察第 2b 步（補充邊界情況）在什麼條件下會觸發。
+3. 在第三步後面加一道檢查：除了用 `ast` 解析，再多驗證產出的程式碼裡至少有一個 `def test_`，不符合就重跑。

@@ -1,25 +1,38 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/milvus/Getting_started_with_Milvus_and_OpenAI.ipynb
 ---
 
-# Getting started with Milvus and OpenAI
+# Milvus 與 OpenAI 入門
 
 > 原文：[examples/vector_databases/milvus/Getting_started_with_Milvus_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/milvus/Getting_started_with_Milvus_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-### Finding your next book
+用 OpenAI 幫書籍簡介產生 embedding，存進本機啟動的 Milvus，再用語意搜尋找相關的書。資料集來自 HuggingFace，有 100 多萬筆書名跟簡介。
 
-In this notebook we will be going over generating embeddings of book descriptions with OpenAI and using those embeddings within Milvus to find relevant books. The dataset in this example is sourced from HuggingFace datasets, and contains a little over 1 million title-description pairs.
+## 學完你會
 
-Lets begin by first downloading the required libraries for this notebook:
-- `openai` is used for communicating with the OpenAI embedding service
-- `pymilvus` is used for communicating with the Milvus server
-- `datasets` is used for downloading the dataset
-- `tqdm` is used for the progress bars
+- 用 docker-compose 在本機啟動 Milvus standalone
+- 建立 collection 和索引，並把批次產生的 embedding 寫進去
+- 輸入一個字串或字串清單，查出最相似的書和分數
+
+## 開跑前
+
+- 本機要能跑 Docker（用資料夾裡的 `docker-compose.yaml` 啟動 Milvus）
+- OpenAI API key
+
+### 找下一本想看的書
+
+這份 notebook 會用 OpenAI 產生書籍簡介的 embedding，再用這些 embedding 在 Milvus 裡找相關的書。資料集來自 HuggingFace datasets，有 100 多萬筆書名和簡介配對。
+
+先安裝這份 notebook 需要的套件：
+- `openai` 用來呼叫 OpenAI 的 embedding 服務
+- `pymilvus` 用來跟 Milvus 伺服器溝通
+- `datasets` 用來下載資料集
+- `tqdm` 用來顯示進度條
 
 
 ```python
@@ -70,7 +83,7 @@ Lets begin by first downloading the required libraries for this notebook:
     Requirement already satisfied: certifi>=2017.4.17 in /Users/filiphaltmayer/miniconda3/envs/haystack/lib/python3.9/site-packages (from requests>=2.20->openai) (2022.12.7)
     ```
 
-With the required packages installed we can get started. Lets begin by launching the Milvus service. The file being run is the `docker-compose.yaml` found in the folder of this file. This command launches a Milvus standalone instance which we will use for this test.  
+套件裝好就可以開始了。先啟動 Milvus 服務。執行的檔案是這個檔案所在資料夾裡的 `docker-compose.yaml`，這個指令會啟動一個 Milvus standalone 實例供測試使用。
 
 ```python
 ! docker compose up -d
@@ -122,16 +135,16 @@ With the required packages installed we can get started. Lets begin by launching
     ... (省略 110 行)
     ```
 
-With Milvus running we can setup our global variables:
-- HOST: The Milvus host address
-- PORT: The Milvus port number
-- COLLECTION_NAME: What to name the collection within Milvus
-- DIMENSION: The dimension of the embeddings
-- OPENAI_ENGINE: Which embedding model to use
-- openai.api_key: Your OpenAI account key
-- INDEX_PARAM: The index settings to use for the collection
-- QUERY_PARAM: The search parameters to use
-- BATCH_SIZE: How many texts to embed and insert at once
+Milvus 跑起來之後，設定全域變數：
+- HOST：Milvus 的主機位址
+- PORT：Milvus 的 port
+- COLLECTION_NAME：在 Milvus 裡 collection 的名字
+- DIMENSION：embedding 的維度
+- OPENAI_ENGINE：要用哪個 embedding 模型
+- openai.api_key：你的 OpenAI 帳號 key
+- INDEX_PARAM：collection 用的索引設定
+- QUERY_PARAM：搜尋參數
+- BATCH_SIZE：一次要 embed 並寫入多少筆文字
 
 ```python
 import openai
@@ -158,7 +171,7 @@ BATCH_SIZE = 1000
 ```
 
 ## Milvus
-This segment deals with Milvus and setting up the database for this use case. Within Milvus we need to setup a collection and index the collection. 
+這一段處理 Milvus 本身，為這個用途準備資料庫。在 Milvus 裡要先建 collection，然後替 collection 建索引。
 
 ```python
 from pymilvus import connections, utility, FieldSchema, Collection, CollectionSchema, DataType
@@ -191,8 +204,8 @@ collection.create_index(field_name="embedding", index_params=INDEX_PARAM)
 collection.load()
 ```
 
-## Dataset
-With Milvus up and running we can begin grabbing our data. Hugging Face Datasets is a hub that holds many different user datasets, and for this example we are using Skelebor's book dataset. This dataset contains title-description pairs for over 1 million books. We are going to embed each description and store it within Milvus along with its title. 
+## 資料集
+Milvus 準備好之後就可以抓資料了。Hugging Face Datasets 是一個收了很多使用者資料集的 hub，這個範例用 Skelebor 的書籍資料集，裡面有 100 多萬本書的書名和簡介配對。我們會把每本的簡介 embed，連同書名一起存進 Milvus。
 
 ```python
 import datasets
@@ -209,8 +222,8 @@ dataset = datasets.load_dataset('Skelebor/book_titles_and_descriptions_en_clean'
     Found cached dataset parquet (/Users/filiphaltmayer/.cache/huggingface/datasets/Skelebor___parquet/Skelebor--book_titles_and_descriptions_en_clean-3596935b1d8a7747/0.0.0/2a3b91fbd88a2c90d1dbbb32b460cf621d31bd5b05b934492fdef7d8d6f236ec)
     ```
 
-## Insert the Data
-Now that we have our data on our machine we can begin embedding it and inserting it into Milvus. The embedding function takes in text and returns the embeddings in a list format. 
+## 寫入資料
+資料都在本機之後，就可以 embed 並寫進 Milvus。embedding 函式吃文字，回傳 list 格式的 embedding。
 
 ```python
 # Simple function that converts the texts to embeddings
@@ -222,7 +235,7 @@ def embed(texts):
     return [x['embedding'] for x in embeddings['data']]
 ```
 
-This next step inserts the data. Because there are so many data points, you can stop the insertion cell early if you want to test the workflow immediately. Using fewer data points will probably reduce the accuracy of the results, but it should still be sufficient for a test. 
+下一步是寫入資料。因為資料點非常多，如果想馬上測試流程，可以提早中斷這個 cell。資料變少準確度大概會下降，但拿來測試還是夠用。
 
 ```python
 from tqdm import tqdm
@@ -258,8 +271,8 @@ if len(data[0]) != 0:
     KeyboardInterrupt:
     ```
 
-## Query the Database
-With our data safely inserted in Milvus, we can now perform a query. The query takes in a string or a list of strings and searches them. The output includes your query and each result's score, title, and book description. 
+## 查詢資料庫
+資料都安全寫進 Milvus 後就可以查詢了。查詢可以吃一個字串或字串清單，並對它們搜尋。輸出會包含你的查詢，以及每筆結果的分數、書名和書籍簡介。
 
 ```python
 import textwrap
@@ -291,4 +304,15 @@ query('Book about a k-9 from europe')
     MilvusException: <MilvusException: (code=1, message=code: UnexpectedError, reason: code: CollectionNotExists, reason: can't find collection: book_search)>
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 向量資料庫的基本流程是建 collection、建索引、寫入 embedding、查詢，每個向量資料庫大同小異。
+- 資料量大時要用批次處理 embedding 和寫入，BATCH_SIZE 是主要的調整點。
+- 查詢時用的 embedding 模型要跟寫入時一致，DIMENSION 也要對得上。
+- 測試時不用灌完整個資料集，少量資料就能驗證流程，只是結果品質會差一些。
+
+## 練習
+
+1. 把 BATCH_SIZE 改小，觀察寫入的速度與進度條的變化。
+2. 換一組查詢字串（例如描述你喜歡的小說類型），看回傳的書是否符合直覺。
+3. 一次傳入多個查詢字串，比較各自的結果與分數。

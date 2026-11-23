@@ -1,71 +1,84 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/cassandra_astradb/Philosophical_Quotes_cassIO.ipynb
 ---
 
-# Philosophy with vector embeddings, OpenAI and Cassandra / Astra DB
+# 用 vector embedding、OpenAI 和 Cassandra / Astra DB 做哲學
 
 > 原文：[examples/vector_databases/cassandra_astradb/Philosophical_Quotes_cassIO.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/cassandra_astradb/Philosophical_Quotes_cassIO.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 OpenAI 的 embedding 把一批哲學家名言轉成向量，存進 Cassandra / Astra DB 當 vector store，然後做出名言搜尋引擎，再用搜尋到的名言當範例，讓 LLM 生成新的名言。最後還會示範用 partition 加速只查單一作者的情境。
+
+## 學完你會
+
+- 用 CassIO 建立支援向量和 metadata 的資料表，並批次計算 embedding 後寫入
+- 寫出帶 metadata 條件（作者、tag）和距離門檻的相似度搜尋函式
+- 把搜尋結果塞進 prompt 模板，做出名言生成器，並用 partition 優化單一作者的查詢
+
+## 開跑前
+
+- 需要 OpenAI API key（呼叫 embedding 和 Chat Completion 會計費）。
+- 需要 Astra DB 帳號，並取得 Database Administrator 角色的 Token（長得像 `AstraCS:...`）和 database ID。也可以改用支援 Vector Search 的 Cassandra cluster。
 
 
-### CassIO version
+### CassIO 版本
 
-In this quickstart you will learn how to build a "philosophy quote finder & generator" using OpenAI's vector embeddings and [Apache Cassandra®](https://cassandra.apache.org), or equivalently DataStax [Astra DB through CQL](https://docs.datastax.com/en/astra-serverless/docs/vector-search/quickstart.html), as the vector store for data persistence.
+這份快速入門會教你用 OpenAI 的 vector embedding 和 [Apache Cassandra®](https://cassandra.apache.org)（或同樣的，透過 CQL 使用 DataStax [Astra DB](https://docs.datastax.com/en/astra-serverless/docs/vector-search/quickstart.html)）當作資料持久化的 vector store，做出一個「哲學名言搜尋與生成器」。
 
-The basic workflow of this notebook is outlined below. You will evaluate and store the vector embeddings for a number of quotes by famous philosophers, use them to build a powerful search engine and, after that, even a generator of new quotes!
+整個流程大致如下：你會計算並儲存一批著名哲學家名言的 vector embedding，用它們做出強大的搜尋引擎，之後甚至做出能生成新名言的生成器！
 
-The notebook exemplifies some of the standard usage patterns of vector search -- while showing how easy is it to get started with the vector capabilities of [Cassandra](https://cassandra.apache.org/doc/trunk/cassandra/vector-search/overview.html) / [Astra DB through CQL](https://docs.datastax.com/en/astra-serverless/docs/vector-search/quickstart.html).
+這份 notebook 示範了 vector search 的一些標準用法，同時也展現用 [Cassandra](https://cassandra.apache.org/doc/trunk/cassandra/vector-search/overview.html) / [透過 CQL 的 Astra DB](https://docs.datastax.com/en/astra-serverless/docs/vector-search/quickstart.html) 的向量功能入門有多簡單。
 
-For a background on using vector search and text embeddings to build a question-answering system, please check out this excellent hands-on notebook: [Question answering using embeddings](https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb).
+如果想了解用 vector search 和文字 embedding 做問答系統的背景，可以看這份很棒的實作 notebook：[Question answering using embeddings](https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb)。
 
-#### _Choose-your-framework_
+#### _選擇你的框架_
 
-Please note that this notebook uses the [CassIO library](https://cassio.org), but we cover other choices of technology to accomplish the same task. Check out this folder's [README](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases/cassandra_astradb) for other options. This notebook can run either as a Colab notebook or as a regular Jupyter notebook.
+注意這份 notebook 用的是 [CassIO library](https://cassio.org)，但同一件事也有其他技術選擇可以做到。其他選項請看這個資料夾的 [README](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases/cassandra_astradb)。
 
-Table of contents:
-- Setup
-- Get DB connection
-- Connect to OpenAI
-- Load quotes into the Vector Store
-- Use case 1: **quote search engine**
-- Use case 2: **quote generator**
-- (Optional) exploit partitioning in the Vector Store
+目錄：
+- 環境設定
+- 取得資料庫連線
+- 連接 OpenAI
+- 把名言載入 Vector Store
+- 使用案例 1：**名言搜尋引擎**
+- 使用案例 2：**名言生成器**
+- （選用）善用 Vector Store 的 partition
 
-### How it works
+### 運作方式
 
-**Indexing**
+**建立索引**
 
-Each quote is made into an embedding vector with OpenAI's `Embedding`. These are saved in the Vector Store for later use in searching. Some metadata, including the author's name and a few other pre-computed tags, are stored alongside, to allow for search customization.
+每句名言都用 OpenAI 的 `Embedding` 轉成 embedding 向量，存進 Vector Store 以便之後搜尋。作者名字和其他一些預先算好的 tag 這類 metadata 會一起存，讓搜尋可以客製化。
 
 ![1_vector_indexing](https://user-images.githubusercontent.com/14221764/282440878-dc3ed680-7d0e-4b30-9a74-d2d66a7394f7.png)
 
-**Search**
+**搜尋**
 
-To find a quote similar to the provided search quote, the latter is made into an embedding vector on the fly, and this vector is used to query the store for similar vectors ... i.e. similar quotes that were previously indexed. The search can optionally be constrained by additional metadata ("find me quotes by Spinoza similar to this one ...").
+要找出跟給定名言相似的名言，會先即時把給定的名言轉成 embedding 向量，再用這個向量去查詢 store 裡相似的向量，也就是先前已建立索引的相似名言。搜尋還可以選擇性地加上 metadata 條件（「找出 Spinoza 寫的、跟這句相似的名言⋯⋯」）。
 
 ![2_vector_search](https://user-images.githubusercontent.com/14221764/282440908-683e3ee1-0bf1-46b3-8621-86c31fc7f9c9.png)
 
-The key point here is that "quotes similar in content" translates, in vector space, to vectors that are metrically close to each other: thus, vector similarity search effectively implements semantic similarity. _This is the key reason vector embeddings are so powerful._
+關鍵在於，「內容相似的名言」在向量空間裡，對應到距離彼此很近的向量，所以向量相似度搜尋實際上做的就是語意相似度。_這就是 vector embedding 這麼強大的關鍵原因。_
 
-The sketch below tries to convey this idea. Each quote, once it's made into a vector, is a point in space. Well, in this case it's on a sphere, since OpenAI's embedding vectors, as most others, are normalized to _unit length_. Oh, and the sphere is actually not three-dimensional, rather 1536-dimensional!
+下面的示意圖想傳達這個概念。每句名言轉成向量後就是空間中的一個點。更精確地說，因為 OpenAI 的 embedding 向量跟大多數模型一樣會正規化成_單位長度_，所以這些點是在一個球面上。而且這個球面其實不是三維，是 1536 維！
 
-So, in essence, a similarity search in vector space returns the vectors that are closest to the query vector:
+所以本質上，在向量空間做相似度搜尋，就是回傳離查詢向量最近的那些向量：
 
 ![3_vector_space](https://user-images.githubusercontent.com/14221764/262321363-c8c625c1-8be9-450e-8c68-b1ed518f990d.png)
 
-**Generation**
+**生成**
 
-Given a suggestion (a topic or a tentative quote), the search step is performed, and the first returned results (quotes) are fed into an LLM prompt which asks the generative model to invent a new text along the lines of the passed examples _and_ the initial suggestion.
+給定一個提示（一個主題或一句暫定的名言），先做搜尋，把最前面的結果（名言）放進 LLM 的 prompt，請生成模型照著這些範例_和_最初的提示，編出新的文字。
 
 ![4_quote_generation](https://user-images.githubusercontent.com/14221764/282440927-d56f36eb-d611-4342-8026-7736edc6f5c9.png)
 
-## Setup
+## 環境設定
 
-First install some required packages:
+先安裝一些必要的套件：
 
 ```python
 !pip install --quiet "cassio>=0.1.3" "openai>=1.0.0" datasets
@@ -82,15 +95,15 @@ import openai
 from datasets import load_dataset
 ```
 
-## Get DB connection
+## 取得資料庫連線
 
-In order to connect to your Astra DB through CQL, you need two things:
-- A Token, with role "Database Administrator" (it looks like `AstraCS:...`)
-- the database ID (it looks like `3df2a5b6-...`)
+要透過 CQL 連到你的 Astra DB，需要兩樣東西：
+- 一個角色為 "Database Administrator" 的 Token（長得像 `AstraCS:...`）
+- database ID（長得像 `3df2a5b6-...`）
 
-    Make sure you have both strings -- which are obtained in the [Astra UI](https://astra.datastax.com) once you sign in. For more information, see here: [database ID](https://awesome-astra.github.io/docs/pages/astra/faq/#where-should-i-find-a-database-identifier) and [Token](https://awesome-astra.github.io/docs/pages/astra/create-token/#c-procedure).
+    請確定兩個字串都拿到了，登入 [Astra UI](https://astra.datastax.com) 就能取得。詳情請看：[database ID](https://awesome-astra.github.io/docs/pages/astra/faq/#where-should-i-find-a-database-identifier) 和 [Token](https://awesome-astra.github.io/docs/pages/astra/create-token/#c-procedure)。
 
-If you want to _connect to a Cassandra cluster_ (which however must [support](https://cassandra.apache.org/doc/trunk/cassandra/vector-search/overview.html) Vector Search), replace it with `cassio.init(session=..., keyspace=...)`, using a suitable session and keyspace name for your cluster.
+如果想_連到 Cassandra cluster_（不過必須[支援](https://cassandra.apache.org/doc/trunk/cassandra/vector-search/overview.html) Vector Search），就改成 `cassio.init(session=..., keyspace=...)`，帶入適合你的 cluster 的 session 和 keyspace 名稱。
 
 ```python
 astra_token = getpass("Please enter your Astra token ('AstraCS:...')")
@@ -108,23 +121,23 @@ database_id = input("Please enter your database id ('3df2a5b6-...')")
 cassio.init(token=astra_token, database_id=database_id)
 ```
 
-### Creation of the DB connection
+### 建立資料庫連線
 
-This is how you create a connection to Astra DB through CQL:
+這是透過 CQL 建立 Astra DB 連線的方法：
 
-_(Incidentally, you could also use any Cassandra cluster (as long as it provides Vector capabilities), just by [changing the parameters](https://docs.datastax.com/en/developer/python-driver/latest/getting_started/#connecting-to-cassandra) to the following `Cluster` instantiation.)_
+_（順帶一提，只要[改參數](https://docs.datastax.com/en/developer/python-driver/latest/getting_started/#connecting-to-cassandra)，改下面的 `Cluster` 實例化，也可以用任何有 Vector 功能的 Cassandra cluster。）_
 
-### Creation of the Vector Store through CassIO
+### 透過 CassIO 建立 Vector Store
 
-You need a table which support vectors and is equipped with metadata. Call it "philosophers_cassio":
+你需要一個支援向量、並且附帶 metadata 的資料表。把它命名為 "philosophers_cassio"：
 
 ```python
 v_table = MetadataVectorCassandraTable(table="philosophers_cassio", vector_dimension=1536)
 ```
 
-## Connect to OpenAI
+## 連接 OpenAI
 
-### Set up your secret key
+### 設定你的 secret key
 
 ```python
 OPENAI_API_KEY = getpass("Please enter your OpenAI API Key: ")
@@ -136,9 +149,9 @@ OPENAI_API_KEY = getpass("Please enter your OpenAI API Key: ")
     Please enter your OpenAI API Key:  ········
     ```
 
-### A test call for embeddings
+### 測試呼叫 embedding
 
-Quickly check how one can get the embedding vectors for a list of input texts:
+快速確認怎麼取得一組輸入文字的 embedding 向量：
 
 ```python
 client = openai.OpenAI(api_key=OPENAI_API_KEY)
@@ -153,7 +166,7 @@ result = client.embeddings.create(
 )
 ```
 
-_Note: the above is the syntax for OpenAI v1.0+. If using previous versions, the code to get the embeddings will look different._
+_注意：上面是 OpenAI v1.0+ 的語法。如果用舊版，取得 embedding 的程式碼會不一樣。_
 
 ```python
 print(f"len(result.data)              = {len(result.data)}")
@@ -169,15 +182,15 @@ print(f"len(result.data[1].embedding) = {len(result.data[1].embedding)}")
     len(result.data[1].embedding) = 1536
     ```
 
-## Load quotes into the Vector Store
+## 把名言載入 Vector Store
 
-_Note: the above is the syntax for OpenAI v1.0+. If using previous versions, the code to get the embeddings will look different._
+_注意：上面是 OpenAI v1.0+ 的語法。如果用舊版，取得 embedding 的程式碼會不一樣。_
 
 ```python
 philo_dataset = load_dataset("datastax/philosopher-quotes")["train"]
 ```
 
-A quick inspection:
+快速檢查一下：
 
 ```python
 print("An example entry:")
@@ -191,7 +204,7 @@ print(philo_dataset[16])
     {'author': 'aristotle', 'quote': 'Love well, be loved and do something of value.', 'tags': 'love;ethics'}
     ```
 
-Check the dataset size:
+檢查資料集大小：
 
 ```python
 author_count = Counter(entry["author"] for entry in philo_dataset)
@@ -215,13 +228,13 @@ for author, count in author_count.most_common():
         kant                : 50 quotes
     ```
 
-### Insert quotes into vector store
+### 把名言寫入 vector store
 
-You will compute the embeddings for the quotes and save them into the Vector Store, along with the text itself and the metadata planned for later use. Note that the author is added as a metadata field along with the "tags" already found with the quote itself.
+你要計算名言的 embedding，連同文字本身和之後會用到的 metadata 一起存進 Vector Store。注意作者會被加成 metadata 欄位，跟名言本身已有的 "tags" 放在一起。
 
-To optimize speed and reduce the calls, you'll perform batched calls to the embedding OpenAI service.
+為了加快速度並減少呼叫次數，會對 OpenAI embedding 服務做批次呼叫。
 
-_(Note: for faster execution, Cassandra and CassIO would let you do concurrent inserts, which we don't do here for a more straightforward demo code.)_
+_（注意：為了加快執行，Cassandra 和 CassIO 可以並行寫入，這裡為了讓範例程式碼更直白就沒這樣做。）_
 
 ```python
 BATCH_SIZE = 50
@@ -282,11 +295,11 @@ print("\nFinished storing entries.")
     Finished storing entries.
     ```
 
-## Use case 1: **quote search engine**
+## 使用案例 1：**名言搜尋引擎**
 
-For the quote-search functionality, you need first to make the input quote into a vector, and then use it to query the store (besides handling the optional metadata into the search call, that is).
+名言搜尋功能要先把輸入的名言轉成向量，再用它查詢 store（另外還要處理搜尋呼叫裡選用的 metadata）。
 
-Encapsulate the search-engine functionality into a function for ease of reuse:
+把搜尋引擎的功能包成函式，方便重複使用：
 
 ```python
 def find_quote_and_author(query_quote, n, author=None, tags=None):
@@ -312,9 +325,9 @@ def find_quote_and_author(query_quote, n, author=None, tags=None):
     ]
 ```
 
-### Putting search to test
+### 實際測試搜尋
 
-Passing just a quote:
+只傳入一句名言：
 
 ```python
 find_quote_and_author("We struggle all our life for nothing", 3)
@@ -331,7 +344,7 @@ find_quote_and_author("We struggle all our life for nothing", 3)
       'freud')]
     ```
 
-Search restricted to an author:
+限定某位作者的搜尋：
 
 ```python
 find_quote_and_author("We struggle all our life for nothing", 2, author="nietzsche")
@@ -346,7 +359,7 @@ find_quote_and_author("We struggle all our life for nothing", 2, author="nietzsc
       'nietzsche')]
     ```
 
-Search constrained to a tag (out of those saved earlier with the quotes):
+限定某個 tag 的搜尋（tag 是先前跟名言一起存進去的）：
 
 ```python
 find_quote_and_author("We struggle all our life for nothing", 2, tags=["politics"])
@@ -361,16 +374,16 @@ find_quote_and_author("We struggle all our life for nothing", 2, tags=["politics
       'nietzsche')]
     ```
 
-### Cutting out irrelevant results
+### 濾掉不相關的結果
 
-The vector similarity search generally returns the vectors that are closest to the query, even if that means results that might be somewhat irrelevant if there's nothing better.
+向量相似度搜尋通常會回傳離查詢最近的向量，就算沒有更好的選擇，結果可能有點不相關也一樣。
 
-To keep this issue under control, you can get the actual "distance" between the query and each result, and then set a cutoff on it, effectively discarding results that are beyond that threshold.
-Tuning this threshold correctly is not an easy problem: here, we'll just show you the way.
+要控制這個問題，可以取得查詢和每個結果之間實際的「距離」，再設定一個門檻，把超過門檻的結果丟掉。
+要把這個門檻調對並不容易，這裡只示範做法。
 
-To get a feeling on how this works, try the following query and play with the choice of quote and threshold to compare the results:
+想感受它怎麼運作，可以試試下面的查詢，改變名言和門檻的選擇，比較結果：
 
-_Note (for the mathematically inclined): this "distance" is exactly the cosine similarity between the vectors, i.e. the scalar product divided by the product of the norms of the two vectors. As such, it is a number ranging from -1 to +1, where -1 is for exactly opposite-facing vectors and +1 for identically-oriented vectors. Elsewhere (e.g. in the "CQL" counterpart of this demo) you would get a rescaling of this quantity to fit the [0, 1] interval, which means the resulting numerical values and adequate thresholds there are transformed accordingly._
+_註（給數學愛好者）：這個「距離」其實就是向量之間的 cosine similarity，也就是內積除以兩個向量長度的乘積。所以它是一個從 -1 到 +1 的數，-1 代表方向完全相反的向量，+1 代表方向完全相同的向量。在別的地方（例如這份 demo 的「CQL」版本），這個值會被重新縮放到 [0, 1] 區間，所以那邊的數值和合適的門檻也會跟著轉換。_
 
 ```python
 quote = "Animals are our equals."
@@ -405,11 +418,11 @@ for idx, result in enumerate(results):
         2. [distance=0.841] "At his best, man is the noblest of all animals; separated from law and..."
     ```
 
-## Use case 2: **quote generator**
+## 使用案例 2：**名言生成器**
 
-For this task you need another component from OpenAI, namely an LLM to generate the quote for us (based on input obtained by querying the Vector Store).
+這個任務需要 OpenAI 的另一個元件，也就是一個 LLM，根據查詢 Vector Store 得到的輸入來替我們生成名言。
 
-You also need a template for the prompt that will be filled for the generate-quote LLM completion task.
+你還需要一個 prompt 模板，用來填入生成名言的 LLM completion 任務。
 
 ```python
 completion_model_name = "gpt-3.5-turbo"
@@ -425,7 +438,7 @@ ACTUAL EXAMPLES:
 """
 ```
 
-Like for search, this functionality is best wrapped into a handy function (which internally uses search):
+跟搜尋一樣，這個功能最好也包成方便的函式（內部會用到搜尋）：
 
 ```python
 def generate_quote(topic, n=2, author=None, tags=None):
@@ -453,11 +466,11 @@ def generate_quote(topic, n=2, author=None, tags=None):
         return None
 ```
 
-_Note: similar to the case of the embedding computation, the code for the Chat Completion API would be slightly different for OpenAI prior to v1.0._
+_注意：跟計算 embedding 的情況類似，OpenAI v1.0 之前的版本，Chat Completion API 的程式碼會稍有不同。_
 
-#### Putting quote generation to test
+#### 實際測試名言生成
 
-Just passing a text (a "quote", but one can actually just suggest a topic since its vector embedding will still end up at the right place in the vector space):
+只傳入一段文字（一句「名言」，不過其實給個主題也可以，因為它的 vector embedding 一樣會落在向量空間的正確位置）：
 
 ```python
 q_topic = generate_quote("politics and virtue")
@@ -477,7 +490,7 @@ print(q_topic)
     Virtuous politics purifies society, while corrupt politics breeds chaos and decay.
     ```
 
-Use inspiration from just a single philosopher:
+只用單一哲學家的靈感：
 
 ```python
 q_topic = generate_quote("animals", author="schopenhauer")
@@ -497,17 +510,17 @@ print(q_topic)
     The true measure of humanity lies not in our dominion over animals, but in our ability to show compassion and respect for all living beings.
     ```
 
-## (Optional) **Partitioning**
+## （選用）**Partitioning**
 
-There's an interesting topic to examine before completing this quickstart. While, generally, tags and quotes can be in any relationship (e.g. a quote having multiple tags), _authors_ are effectively an exact grouping (they define a "disjoint partitioning" on the set of quotes): each quote has exactly one author (for us, at least).
+結束這份快速入門之前，有個有趣的主題值得看。一般來說，tags 和名言之間可以是任何關係（例如一句名言有多個 tag），但_作者_實際上是一種精確的分組（它們在名言集合上定義了「不相交的劃分」）：每句名言剛好有一位作者（至少在我們的資料裡是這樣）。
 
-Now, suppose you know in advance your application will usually (or always) run queries on a _single author_. Then you can take full advantage of the underlying database structure: if you group quotes in **partitions** (one per author), vector queries on just an author will use less resources and return much faster.
+假設你事先知道，你的應用程式通常（或總是）只對_單一作者_做查詢。那你就能充分利用底層的資料庫結構：如果把名言分組放進 **partition**（每位作者一個），只查某位作者的向量查詢會用比較少的資源，回傳也快得多。
 
-We'll not dive into the details here, which have to do with the Cassandra storage internals: the important message is that **if your queries are run within a group, consider partitioning accordingly to boost performance**.
+這裡不深入細節，那些跟 Cassandra 的儲存內部機制有關，重點是：**如果你的查詢都是在某個群組內執行，考慮照群組做 partition 來提升效能**。
 
-You'll now see this choice in action.
+接下來實際看看這個選擇的效果。
 
-First, you need a different table abstraction from CassIO:
+首先，你需要 CassIO 提供的另一種資料表抽象：
 
 ```python
 from cassio.table import ClusteredMetadataVectorCassandraTable
@@ -517,13 +530,13 @@ from cassio.table import ClusteredMetadataVectorCassandraTable
 v_table_partitioned = ClusteredMetadataVectorCassandraTable(table="philosophers_cassio_partitioned", vector_dimension=1536)
 ```
 
-Now repeat the compute-embeddings-and-insert step on the new table.
+現在在新的資料表上重做一次計算 embedding 並寫入的步驟。
 
-Compared to what you have seen earlier, there is a crucial difference in that now the quote's author is stored as the _partition id_ for the inserted row, instead of being added to the catch-all "metadata" dictionary.
+跟前面看過的不同，關鍵差異在於現在名言的作者是存成寫入資料列的 _partition id_，而不是加進包山包海的 "metadata" 字典。
 
-While you are at it, by way of demonstration, you will insert all quotes by a given author _concurrently_: with CassIO, this is done by using the asynchronous `put_async` method for each quote, collecting the resulting list of `Future` objects, and calling the `result()` method on them all afterwards, to ensure they all have executed. Cassandra / Astra DB well supports a high degree of concurrency in I/O operations.
+順便示範一下：你會_並行_寫入某位作者的所有名言。在 CassIO 裡做法是對每句名言用非同步的 `put_async` 方法，收集回傳的 `Future` 物件清單，之後對它們全部呼叫 `result()` 方法，確保都執行完了。Cassandra / Astra DB 很能支援高度並行的 I/O 操作。
 
-_(Note: one could have cached the embeddings computed previously to save a few API tokens -- here, however, we wanted to keep the code easier to inspect.)_
+_（注意：其實可以把先前算好的 embedding 快取起來，省下一些 API token，不過這裡想讓程式碼更容易檢視。）_
 
 ```python
 BATCH_SIZE = 50
@@ -589,7 +602,7 @@ print("\nFinished storing entries.")
     Finished storing entries.
     ```
 
-With this new table, the similarity search changes accordingly (note the arguments to `ann_search`):
+有了這張新資料表，相似度搜尋也要跟著改（注意 `ann_search` 的參數）：
 
 ```python
 def find_quote_and_author_p(query_quote, n, author=None, tags=None):
@@ -617,7 +630,7 @@ def find_quote_and_author_p(query_quote, n, author=None, tags=None):
     ]
 ```
 
-That's it: the new table still supports the "generic" similarity searches all right ...
+這樣就好了：新資料表依然支援「一般」的相似度搜尋⋯⋯
 
 ```python
 find_quote_and_author_p("We struggle all our life for nothing", 3)
@@ -634,7 +647,7 @@ find_quote_and_author_p("We struggle all our life for nothing", 3)
       'freud')]
     ```
 
-... but it's when an author is specified that you would notice a _huge_ performance advantage:
+⋯⋯但指定作者時，你才會發現_巨大_的效能優勢：
 
 ```python
 find_quote_and_author_p("We struggle all our life for nothing", 2, author="nietzsche")
@@ -649,19 +662,19 @@ find_quote_and_author_p("We struggle all our life for nothing", 2, author="nietz
       'nietzsche')]
     ```
 
-Well, you _would_ notice a performance gain, if you had a realistic-size dataset. In this demo, with a few tens of entries, there's no noticeable difference -- but you get the idea.
+嗯，如果你有真實規模的資料集，你_就會_發現效能提升。在這份 demo 裡只有幾十筆資料，沒有明顯差別，不過你應該懂這個概念。
 
-## Conclusion
+## 結論
 
-Congratulations! You have learned how to use OpenAI for vector embeddings and Cassandra / Astra DB through CQL for storage in order to build a sophisticated philosophical search engine and quote generator.
+恭喜！你學會了怎麼用 OpenAI 做 vector embedding，並用 Cassandra / Astra DB（透過 CQL）儲存，做出一個完整的哲學名言搜尋引擎和名言生成器。
 
-This example used [CassIO](https://cassio.org) to interface with the Vector Store - but this is not the only choice. Check the [README](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases/cassandra_astradb) for other options and integration with popular frameworks.
+這個範例用 [CassIO](https://cassio.org) 跟 Vector Store 介接，但這不是唯一的選擇。其他選項和跟常見框架的整合，請看 [README](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases/cassandra_astradb)。
 
-To find out more on how Astra DB's Vector Search capabilities can be a key ingredient in your ML/GenAI applications, visit [Astra DB](https://docs.datastax.com/en/astra/home/astra.html)'s web page on the topic.
+想進一步了解 Astra DB 的 Vector Search 功能怎麼成為你的 ML/GenAI 應用的關鍵元素，可以看 [Astra DB](https://docs.datastax.com/en/astra/home/astra.html) 網站上的相關頁面。
 
-## Cleanup
+## 清除資源
 
-If you want to remove all resources used for this demo, run this cell (_warning: this will delete the tables and the data inserted in them!_):
+如果想移除這份 demo 用到的所有資源，執行這個 cell（_警告：這會刪除資料表和裡面寫入的資料！_）：
 
 ```python
 # we peek at CassIO's config to get a direct handle to the DB connection
@@ -678,4 +691,16 @@ session.execute(f"DROP TABLE IF EXISTS {keyspace}.philosophers_cassio_partitione
     <cassandra.cluster.ResultSet at 0x7fdcc42e8f10>
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 名言轉成 embedding 後，語意相似就等於向量距離近，搜尋本質上就是找最近的向量。
+- metadata（作者、tag）可以跟向量一起存，搜尋時當過濾條件。
+- 向量搜尋永遠會回傳最近的結果，所以要用距離（cosine similarity）設門檻擋掉不相關的。
+- 生成器的做法是先搜尋，再把結果當範例塞進 prompt，這就是簡單的 RAG 模式。
+- 如果查詢幾乎都落在某個群組內，用 partition 照群組存放，可以省資源並加快查詢。
+
+## 練習
+
+1. 改搜尋函式的 `n` 參數，並在 prompt 裡改變塞進去的名言數量，觀察生成名言的風格怎麼變。
+2. 在「濾掉不相關結果」的範例裡，換幾句不同的查詢名言和門檻，找出一個你覺得結果品質剛好的門檻。
+3. 在 partition 版本的資料表，加入第二個維度的過濾（例如只查某位作者且帶特定 tag 的名言），改寫 `ann_search` 的呼叫。

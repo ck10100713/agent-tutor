@@ -1,38 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/Search_reranking_with_cross-encoders.ipynb
 ---
 
-# Search reranking with cross-encoders
+# 用 cross-encoder 做搜尋結果重排序
 
 > 原文：[examples/Search_reranking_with_cross-encoders.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Search_reranking_with_cross-encoders.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 GPT 當 cross-encoder，對 arXiv 搜尋結果做 re-rank。做法是 few-shot prompt 判斷 Yes/No，再用 logprobs 排序。
 
+## 學完你會
+- 分清楚 bi-encoder 和 cross-encoder 的成本與準確度差異，知道為什麼要兩階段搭配。
+- 用 Completions endpoint、few-shot 範例和 `logit_bias` 做出 Yes/No 相關性分類器。
+- 用 ` Yes` 的 logprobs 當分數，把搜尋結果重新排序。
 
-This notebook takes you through examples of using a cross-encoder to re-rank search results.
+## 開跑前
+- 需要 OpenAI API key。
+- 範例用 arXiv 搜尋服務取得候選文件，需要能連外網。
+- 原文用的 `text-davinci-003` 是舊模型，實際跑要換成你帳號可用的模型。
 
-This is a common use case with our customers, where you've implemented semantic search using embeddings (produced using a [bi-encoder](https://www.sbert.net/examples/applications/retrieve_rerank/README.html#retrieval-bi-encoder)) but the results are not as accurate as your use case requires. A possible cause is that there is some business rule you can use to rerank the documents such as how recent or how popular a document is. 
+這個 notebook 帶你用 cross-encoder 對搜尋結果重排序。
 
-However, often there are subtle domain-specific rules that help determine relevancy, and this is where a cross-encoder can be useful. Cross-encoders are more accurate than bi-encoders but they don't scale well, so using them to re-order a shortened list returned by semantic search is the ideal use case.
+這是客戶常見的使用情境：你已經用 embeddings（由 [bi-encoder](https://www.sbert.net/examples/applications/retrieve_rerank/README.html#retrieval-bi-encoder) 產生）做了語意搜尋，但結果不夠準，達不到你的需求。一個可能的原因是，你可以用一些商業規則來重排文件，例如文件有多新、多熱門。
 
-### Example
+不過很多時候，決定相關性的是一些細微、跟領域有關的規則，這時 cross-encoder 就派得上用場。Cross-encoder 比 bi-encoder 準，但擴展性不好，所以最適合拿來重新排序語意搜尋回傳的精簡清單。
 
-Consider a search task with D documents and Q queries.
+### 範例
 
-The brute force approach of computing every pairwise relevance is expensive; its cost scales as ```D * Q```. This is known as **cross-encoding**.
+假設搜尋任務有 D 份文件和 Q 個 query。
 
-A faster approach is **embeddings-based search**, in which an embedding is computed once for each document and query, and then reused multiple times to cheaply compute pairwise relevance. Because embeddings are only computed once, its cost scales as ```D + Q```. This is known as **bi-encoding**.
+暴力法是計算每一組配對的相關性，成本隨 ```D * Q``` 成長。這叫做 **cross-encoding**。
 
-Although embeddings-based search is faster, the quality can be worse. To get the best of both, one common approach is to use embeddings (or another bi-encoder) to cheaply identify top candidates, and then use GPT (or another cross-encoder) to expensively re-rank those top candidates. The cost of this hybrid approach scales as ```(D + Q) * cost of embedding + (N * Q) * cost of re-ranking```, where ```N``` is the number of candidates re-ranked.
+比較快的做法是 **embeddings-based search**：每份文件和每個 query 各算一次 embedding，之後重複使用來便宜地算配對相關性。因為 embedding 只算一次，成本隨 ```D + Q``` 成長。這叫做 **bi-encoding**。
 
-### Walkthrough
+Embeddings 搜尋比較快，但品質可能較差。要兩者兼得，常見做法是先用 embeddings（或其他 bi-encoder）便宜地找出前幾名候選，再用 GPT（或其他 cross-encoder）花比較多成本重排這些候選。這種混合做法的成本隨 ```(D + Q) * cost of embedding + (N * Q) * cost of re-ranking```, where ```N``` 成長，其中 N 是要重排的候選數。
 
-To illustrate this approach we'll use ```text-davinci-003``` with ```logprobs``` enabled to build a GPT-powered cross-encoder. Our GPT models have strong general language understanding, which when tuned with some few-shot examples can provide a simple and effective cross-encoding option.
+### 流程
 
-This notebook drew on this great [article](https://weaviate.io/blog/cross-encoders-as-reranker) by Weaviate, and this [excellent explanation](https://www.sbert.net/examples/applications/cross-encoder/README.html) of bi-encoders vs. cross-encoders from Sentence Transformers.
+為了示範這個做法，我們用 ```text-davinci-003``` with ```logprobs``` enabled 來做一個 GPT 驅動的 cross-encoder。GPT 模型有很強的通用語言理解能力，加上幾個 few-shot 範例調整後，就是簡單又有效的 cross-encoding 選項。
+
+這個 notebook 參考了 Weaviate 的這篇[好文章](https://weaviate.io/blog/cross-encoders-as-reranker)，以及 Sentence Transformers 對 bi-encoder 和 cross-encoder 的[精彩說明](https://www.sbert.net/examples/applications/cross-encoder/README.html)。
 
 ```python
 !pip install openai
@@ -56,9 +66,9 @@ client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key i
 OPENAI_MODEL = "gpt-4"
 ```
 
-## Search
+## 搜尋
 
-We'll use the arXiv search service for this example, but this step could be performed by any search service you have. The key item to consider is over-fetching slightly to capture all the potentially relevant documents, before re-sorting them.
+這個範例用 arXiv 搜尋服務，但這一步可以換成任何你有的搜尋服務。重點是稍微多抓一些，把所有可能相關的文件都納進來，再重新排序。
 
 
 ```python
@@ -128,15 +138,15 @@ for i, result in enumerate(result_list):
 
 ## Cross-encoder
 
-We'll create a cross-encoder using the ```Completions``` endpoint - the key factors to consider here are:
-- Make your examples domain-specific - the strength of cross-encoders comes when you tailor them to your domain.
-- There is a trade-off between how many potential examples to re-rank vs. processing speed. Consider batching and parallel processing cross-encoder requests to process them more quickly.
+我們用 ```Completions``` endpoint 建立 cross-encoder，關鍵考量有：
+- 讓範例貼近你的領域。Cross-encoder 的強項在於依你的領域客製化。
+- 重排的候選數量和處理速度之間要取捨。可以考慮把 cross-encoder 的請求做 batch 和平行處理來加快速度。
 
-The steps here are:
-- Build a prompt to assess relevance and provide few-shot examples to tune it to your domain.
-- Add a ```logit bias``` for the tokens for ``` Yes``` and ``` No``` to decrease the likelihood of any other tokens occurring.
-- Return the classification of yes/no as well as the ```logprobs```.
-- Rerank the results by the ```logprobs``` keyed on ``` Yes```.
+步驟如下：
+- 建一個評估相關性的 prompt，並提供 few-shot 範例讓它適應你的領域。
+- 加 ```logit bias``` for the tokens for ``` Yes``` and ``` No```，也就是對這兩個 token 加 bias，降低其他 token 出現的機率。
+- 回傳 yes/no 的分類結果以及 ```logprobs```。
+- Rerank the results by the ```logprobs``` keyed on ``` Yes```，也就是用 ``` Yes``` 的 logprobs 重排結果。
 
 ```python
 tokens = [" Yes", " No"]
@@ -409,23 +419,33 @@ reranked_df["document"][0]
     'In Search for Linear Relations in Sentence Embedding Spaces: We present an introductory investigation into continuous-space vector\nrepresentations of sentences. We acquire pairs of very similar sentences\ndiffering only by a small alterations (such as change of a noun, adding an\nadjective, noun or punctuation) from datasets for natural language inference\nusing a simple pattern method. We look into how such a small change within the\nsentence text affects its representation in the continuous space and how such\nalterations are reflected by some of the popular sentence embedding models. We\nfound that vector differences of some embeddings actually reflect small changes\nwithin a sentence.'
     ```
 
-## Conclusion
+## 結論
 
-We've shown how to create a tailored cross-encoder to rerank academic papers. This approach will work best where there are domain-specific nuances that can be used to pick the most relevant corpus for your users, and where some pre-filtering has taken place to limit the amount of data the cross-encoder will need to process. 
+我們示範了怎麼建立客製的 cross-encoder 來重排學術論文。這個方法在有領域細微差異可以用來挑出最相關文件、而且已經先做過預先篩選以限制 cross-encoder 要處理的資料量時，效果最好。
 
-A few typical use cases we've seen are:
-- Returning a list of 100 most relevant stock reports, then re-ordering into a top 5 or 10 based on the detailed context of a particular set of customer portfolios
-- Running after a classic rules-based search that gets the top 100 or 1000 most relevant results to prune it according to a specific user's context
+常見的使用情境有：
+- 回傳 100 份最相關的股票研究報告，再根據特定客戶投資組合的詳細背景，重排成前 5 或 10 名
+- 接在傳統規則式搜尋後面，從前 100 或 1000 個最相關的結果中，依特定使用者的情境做修剪
 
 
-### Taking this forward
+### 接下來
 
-Taking the few-shot approach, as we have here, can work well when the domain is general enough that a small number of examples will cover most reranking cases. However, as the differences between documents become more specific you may want to consider the ```Fine-tuning``` endpoint to make a more elaborate cross-encoder with a wider variety of examples.
+像這裡用的 few-shot 做法，在領域夠通用、少量範例就能涵蓋大部分重排情況時效果不錯。但文件之間的差異越來越細時，你可能要考慮用 ```Fine-tuning``` endpoint，用更多樣的範例做出更精細的 cross-encoder。
 
-There is also a latency impact of using ```text-davinci-003``` that you'll need to consider, with even our few examples above taking a couple seconds each - again, the ```Fine-tuning``` endpoint may help you here if you are able to get decent results from an ```ada``` or ```babbage``` fine-tuned model.
+使用 ```text-davinci-003``` that you'll need to consider, with even our few examples above taking a couple seconds each - again, the ```Fine-tuning``` endpoint may help 也有延遲問題要考慮，上面這幾個範例每個就要花幾秒。延遲的部分，```Fine-tuning``` endpoint may help you here if you are able to get decent results from an ```ada``` or ```babbage``` fine-tuned 模型，也就是小模型微調後效果夠用的話，就能降延遲。
 
-We've used the ```Completions``` endpoint from OpenAI to build our cross-encoder, but this area is well-served by the open-source community. [Here](https://huggingface.co/jeffwan/mmarco-mMiniLMv2-L12-H384-v1) is an example from HuggingFace, for example.
+我們用 OpenAI 的 ```Completions``` endpoint 建了 cross-encoder，不過開源社群在這塊也很有成果，例如 HuggingFace 上的[這個範例](https://huggingface.co/jeffwan/mmarco-mMiniLMv2-L12-H384-v1)。
 
-We hope you find this useful for tuning your search use cases, and look forward to seeing what you build.
+希望這對你調整搜尋應用有幫助，期待看到你做出來的東西。
 
-<!-- tutor:summary -->
+## 重點整理
+- Bi-encoder 便宜但粗，cross-encoder 準但貴，所以常見做法是先粗篩再精排。
+- 重排成本隨候選數 N 線性成長，所以要先把候選縮到合理大小。
+- 用 few-shot 加領域範例，GPT 就能當 cross-encoder 用。
+- `logit_bias` 限制輸出只有 Yes/No，logprobs 提供可排序的連續分數。
+- 差異越細越值得考慮 fine-tuning，也要顧延遲。
+
+## 練習
+1. 把 few-shot 範例換成你熟悉領域的 2 個例子，看排序結果有沒有變。
+2. 調整抓取的候選數量 N（例如 10 和 50），比較排序品質和執行時間。
+3. 把逐筆呼叫改成用 `concurrent.futures` 平行處理，量一下加速多少。

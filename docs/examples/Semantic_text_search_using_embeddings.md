@@ -1,19 +1,25 @@
 ---
-translated: false
+translated: true
 source: examples/Semantic_text_search_using_embeddings.ipynb
 ---
 
-# Semantic text search using embeddings
+# 用 embedding 做語意文字搜尋
 
 > 原文：[examples/Semantic_text_search_using_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Semantic_text_search_using_embeddings.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把搜尋查詢做成 embedding，再找出最相似的評論，就能用很有效率、成本很低的方式對所有評論做語意搜尋。資料集來自 [Get_embeddings_from_dataset](Get_embeddings_from_dataset.md) 那篇。
 
-## Semantic text search using embeddings
+## 學完你會
+- 用查詢和評論 embedding 的 cosine similarity 找出前 n 個最佳結果。
+- 用語意搜尋找出特定類型的評論，例如配送失敗的案例。
+- 了解資料變多時，可以用專門的演算法加速 embedding 搜尋。
 
-We can search through all our reviews semantically in a very efficient manner and at very low cost, by embedding our search query, and then finding the most similar reviews. The dataset is created in the [Get_embeddings_from_dataset Notebook](Get_embeddings_from_dataset.md).
+## 開跑前
+- 需要先跑完 Get_embeddings_from_dataset，產生帶 embedding 的資料集。
+- 需要 OpenAI API key，查詢也要取 embedding。
 
 ```python
 import pandas as pd
@@ -26,7 +32,7 @@ df = pd.read_csv(datafile_path)
 df["embedding"] = df.embedding.apply(literal_eval).apply(np.array)
 ```
 
-Here we compare the cosine similarity of the embeddings of the query and the documents, and show top_n best matches.
+這裡比較查詢與文件 embedding 的 cosine similarity，並顯示 top_n 個最佳比對結果。
 
 ```python
 from utils.embeddings_utils import get_embedding, cosine_similarity
@@ -79,7 +85,7 @@ results = search_reviews(df, "whole wheat pasta", n=3)
     Bland and vaguely gamy tasting, skip this one:  As far as prepared dinner kits go, "Barilla Whole Grain Mezze Penne with Tomato and Basil Sauce" just did not do it for me...and this is coming from a p
     ```
 
-We can search through these reviews easily. To speed up computation, we can use a special algorithm, aimed at faster search through embeddings.
+我們可以很輕鬆地搜尋這些評論。要加速運算，可以用專門為加快 embedding 搜尋設計的演算法。
 
 ```python
 results = search_reviews(df, "bad delivery", n=1)
@@ -91,7 +97,7 @@ results = search_reviews(df, "bad delivery", n=1)
     great product, poor delivery:  The coffee is excellent and I am a repeat buyer.  Problem this time was with the UPS delivery.  They left the box in front of my garage door in the middle of the drivewa
     ```
 
-As we can see, this can immediately deliver a lot of value. In this example we show being able to quickly find the examples of delivery failures.
+如你所見，這馬上就能帶來很多價值。這個範例裡我們能快速找出配送失敗的例子。
 
 ```python
 results = search_reviews(df, "spoilt", n=1)
@@ -115,4 +121,13 @@ results = search_reviews(df, "pet food", n=2)
     Great food!:  I wanted a food for a a dog with skin problems. His skin greatly improved with the switch, though he still itches some.  He loves the food. No recalls, American made with American ingred
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 語意搜尋就是把查詢和文件放到同一個向量空間，找距離最近的。
+- 查詢只需一次 embedding 呼叫，之後的比對在本機算就好，所以便宜。
+- 語意搜尋能找到字面不同但意思相近的內容，不靠關鍵字比對。
+- 資料量大時，用近似最近鄰之類的專門演算法可以加快搜尋。
+
+## 練習
+1. 把查詢換成別的描述（例如「口味太甜」），看前幾名評論是否符合。
+2. 調整 top_n，觀察排名後段結果的相關性怎麼下降。
+3. 對同一個查詢，比較用加速演算法和直接算 cosine similarity 的結果與速度。

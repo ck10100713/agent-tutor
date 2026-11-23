@@ -1,42 +1,52 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/typesense/Using_Typesense_for_embeddings_search.ipynb
 ---
 
-# Using Typesense for embeddings search
+# 用 Typesense 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/typesense/Using_Typesense_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/typesense/Using_Typesense_for_embeddings_search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇走一遍完整流程：載入已經 embed 好的資料、寫進 Typesense 這個向量搜尋引擎，再對標題和內容欄位做最近鄰搜尋。
+
+## 學完你會
+- 用 docker 在本機起一個 Typesense 服務，並用 Python client 連上
+- 建立開啟向量索引的 collection，並把 embedding 批次寫進去
+- 對 `title_vector`、`content_vector` 欄位做 nearest-neighbor 查詢
+
+## 開跑前
+- 本機要裝 Docker（或改用 Typesense Cloud，拿 hostname 和 API key 即可）
+- OpenAI API key，用來把查詢文字轉成 embedding
 
 
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
+這份 notebook 帶你走一個簡單的流程：下載資料、做 embedding，然後用向量資料庫建索引和搜尋。很多客戶想在安全的環境裡，用自己的資料存放和搜尋我們的 embedding，來支援 chatbot、主題建模等正式上線的應用，這就是常見的需求。
 
-### What is a Vector Database
+### 什麼是向量資料庫
 
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
+向量資料庫是專門用來儲存、管理和搜尋 embedding 向量的資料庫。近年 AI 在自然語言、影像辨識等非結構化資料上越來越有效，用 embedding 把文字、音訊、影片等非結構化資料編碼成向量，再交給機器學習模型使用，這種做法大量成長。向量資料庫就是企業用來落地並擴大這些應用的有效方案。
 
-### Why use a Vector Database
+### 為什麼要用向量資料庫
 
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
+向量資料庫能讓企業把我們在這個 repo 分享的許多 embedding 應用（例如問答、chatbot、推薦服務）放到安全、可擴充的環境裡。很多客戶在小規模時 embedding 效果很好，但效能和安全性卡住了上線。我們認為向量資料庫是解決這個問題的關鍵元件，這份指南會帶你走過基本流程：embed 文字資料、存進向量資料庫、拿來做語意搜尋。
 
 
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
+### Demo 流程
+流程如下：
+- **Setup**：匯入套件並設定需要的變數
+- **載入資料**：載入資料集，用 OpenAI embedding 處理
 - **Typesense**
-    - *Setup*: Set up the Typesense Python client. For more details go [here](https://typesense.org/docs/0.24.0/api/)
-    - *Index Data*: We'll create a collection and index it for both __titles__ and __content__.
-    - *Search Data*: Run a few example queries with various goals in mind.
+    - *Setup*：設定 Typesense Python client，更多細節看[這裡](https://typesense.org/docs/0.24.0/api/)
+    - *Index Data*：建立 collection，並對 __titles__ 和 __content__ 建索引
+    - *Search Data*：依不同目的跑幾個範例查詢
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這份 notebook，你應該對怎麼設定和使用向量資料庫有基本概念，之後可以往更複雜的、用到 embedding 的應用前進。
 
 ## Setup
 
-Import the required libraries and set the embedding model that we'd like to use.
+匯入需要的函式庫，並設定要用的 embedding 模型。
 
 ```python
 # We'll need to install the Typesense client
@@ -69,9 +79,9 @@ warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWa
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared previous to this session.
+這一節載入事先準備好、已經 embed 完的資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -160,19 +170,19 @@ article_df.info(show_counts=True)
 
 ## Typesense
 
-The next vector store we'll look at is [Typesense](https://typesense.org/), which is an open source, in-memory search engine, that you can either self-host or run on [Typesense Cloud](https://cloud.typesense.org).
+接下來看的向量庫是 [Typesense](https://typesense.org/)，它是開源的 in-memory 搜尋引擎，可以自己 host，也可以用 [Typesense Cloud](https://cloud.typesense.org)。
 
-Typesense focuses on performance by storing the entire index in RAM (with a backup on disk) and also focuses on providing an out-of-the-box developer experience by simplifying available options and setting good defaults. It also lets you combine attribute-based filtering together with vector queries.
+Typesense 重視效能，整個索引放在 RAM（磁碟有備份）；也重視開箱即用的開發體驗，簡化選項並提供好的預設值。它也讓你同時用屬性過濾和向量查詢。
 
-For this example, we will set up a local docker-based Typesense server, index our vectors in Typesense and then do some nearest-neighbor search queries. If you use Typesense Cloud, you can skip the docker setup part and just obtain the hostname and API keys from your cluster dashboard.
+這個範例會在本機用 docker 起 Typesense server，把向量建索引，然後跑一些 nearest-neighbor 搜尋。如果用 Typesense Cloud，可以跳過 docker 設定，直接從叢集 dashboard 拿 hostname 和 API key。
 
 ### Setup
 
-To run Typesense locally, you'll need [Docker](https://www.docker.com/). Following the instructions contained in the Typesense documentation [here](https://typesense.org/docs/guide/install-typesense.html#docker-compose), we created an example docker-compose.yml file in this repo saved at [`docker-compose.yml`](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/typesense/docker-compose.yml).
+要在本機跑 Typesense 需要 [Docker](https://www.docker.com/)。照 Typesense 文件[這裡](https://typesense.org/docs/guide/install-typesense.html#docker-compose)的說明，我們在 repo 裡放了一個範例 docker-compose.yml，路徑是 [`docker-compose.yml`](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/typesense/docker-compose.yml)。
 
-After starting Docker, you can start Typesense locally by navigating to the `examples/vector_databases/typesense/` directory and running `docker-compose up -d`.
+Docker 啟動後，切到 `examples/vector_databases/typesense/` 目錄執行 `docker-compose up -d`，就能在本機啟動 Typesense。
 
-The default API key is set to `xyz` in the Docker compose file, and the default Typesense port to `8108`.
+docker compose 檔裡預設 API key 是 `xyz`，預設 port 是 `8108`。
 
 ```python
 import typesense
@@ -189,9 +199,9 @@ typesense_client = \
         })
 ```
 
-### Index data
+### 建立索引
 
-To index vectors in Typesense, we'll first create a Collection (which is a collection of Documents) and turn on vector indexing for a particular field. You can even store multiple vector fields in a single document.
+要在 Typesense 裡索引向量，先建一個 Collection（Document 的集合），並對特定欄位開啟向量索引。同一份 document 裡也可以存多個向量欄位。
 
 ```python
 # Delete existing collections if they already exist
@@ -327,9 +337,9 @@ print(f'Collection has {collection["num_documents"]} documents')
     Collection has 25000 documents
     ```
 
-### Search Data
+### 搜尋資料
 
-Now that we've imported the vectors into Typesense, we can do a nearest neighbor search on the `title_vector` or `content_vector` field.
+向量匯入 Typesense 之後，就能對 `title_vector` 或 `content_vector` 欄位做最近鄰搜尋。
 
 ```python
 def query_typesense(query, field='title', top_k=20):
@@ -400,6 +410,16 @@ for i, hit in enumerate(query_results['results'][0]['hits']):
     10. William Wallace (Distance: 0.16464537382125854)
     ```
 
-Thanks for following along, you're now equipped to set up your own vector databases and use embeddings to do all kinds of cool things - enjoy! For more complex use cases please continue to work through other cookbook examples in this repo.
+謝謝你跟著做完，現在你已經能設定自己的向量資料庫，並用 embedding 做很多有趣的事。更複雜的用法請繼續看這個 repo 裡其他 cookbook 範例。
 
-<!-- tutor:summary -->
+## 重點整理
+- 向量資料庫專門存 embedding 並做相似度搜尋，是 embedding 應用走向正式環境的關鍵元件。
+- Typesense 是 in-memory 的開源搜尋引擎，索引放 RAM，查詢快。
+- 一個 document 可以有多個向量欄位，這篇分別對標題和內容建向量。
+- 向量查詢可以跟屬性過濾搭配使用。
+- 流程固定是：embed 資料、建 collection 並開向量索引、寫入、用查詢向量做最近鄰搜尋。
+
+## 練習
+1. 換一句查詢文字，分別對 `title_vector` 和 `content_vector` 搜尋，比較結果差異。
+2. 調整搜尋回傳的筆數（`k` 之類的參數），看結果數量怎麼變。
+3. 在 collection schema 加一個可過濾的欄位，查詢時同時用屬性過濾和向量搜尋。

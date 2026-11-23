@@ -1,47 +1,57 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/redis/redis-hybrid-query-examples.ipynb
 ---
 
-# Running hybrid VSS queries with Redis and OpenAI
+# 用 Redis 和 OpenAI 執行 hybrid VSS 查詢
 
 > 原文：[examples/vector_databases/redis/redis-hybrid-query-examples.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis/redis-hybrid-query-examples.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把 Redis 當向量資料庫，存 OpenAI embedding，並跑 hybrid 查詢：同時結合向量相似度搜尋（VSS）和 Redis 的全文（lexical）搜尋。資料是一份電商商品資料集。
+
+## 學完你會
+- 用 docker 啟動 Redis Stack，並用 redis-py 連線
+- 定義 RediSearch index schema，把 OpenAI embedding 寫進 HASH 文件
+- 對同一個 index 執行純向量查詢，以及向量加全文過濾的 hybrid 查詢
+
+## 開跑前
+- Docker（用來跑 redis-stack）
+- OpenAI API key，設成環境變數 `OPENAI_API_KEY`
 
 
-This notebook provides an introduction to using Redis as a vector database with OpenAI embeddings and running hybrid queries that combine VSS and lexical search using Redis Query and Search capability. Redis is a scalable, real-time database that can be used as a vector database when using the [RediSearch Module](https://oss.redislabs.com/redisearch/). The Redis Query and Search capability allows you to index and search for vectors in Redis. This notebook will show you how to use the Redis Query and Search to index and search for vectors created by using the OpenAI API and stored in Redis.
+這份 notebook 介紹怎麼把 Redis 當作向量資料庫來搭配 OpenAI embedding，並用 Redis Query and Search 的能力執行結合 VSS 和 lexical 搜尋的 hybrid 查詢。Redis 是可擴充的即時資料庫，搭配 [RediSearch Module](https://oss.redislabs.com/redisearch/) 就能當向量資料庫。Redis Query and Search 讓你可以在 Redis 裡對向量建索引和搜尋。這份 notebook 會示範怎麼用它，對用 OpenAI API 建立並存在 Redis 的向量做索引和搜尋。
 
-Hybrid queries combine vector similarity with traditional Redis Query and Search filtering capabilities on GEO, NUMERIC, TAG or TEXT data simplifying application code. A common example of a hybrid query in an e-commerce use case is to find items visually similar to a given query image limited to items available in a GEO location and within a price range.
+Hybrid 查詢把向量相似度和傳統 Redis Query and Search 對 GEO、NUMERIC、TAG 或 TEXT 資料的過濾能力結合起來，讓應用程式碼更簡單。電商情境常見的 hybrid 查詢例子，是找出跟某張查詢圖片外觀相似的商品，並限制在某個 GEO 位置有貨、價格也在某個範圍內。
 
-## Prerequisites
+## 前置需求
 
-Before we start this project, we need to set up the following:
+開始這個專案之前，需要先準備：
 
-* start a Redis database with RediSearch (redis-stack)
-* install libraries
+* 啟動有 RediSearch 的 Redis 資料庫（redis-stack）
+* 安裝函式庫
     * [Redis-py](https://github.com/redis/redis-py)
-* get your [OpenAI API key](https://beta.openai.com/account/api-keys)
+* 取得你的 [OpenAI API key](https://beta.openai.com/account/api-keys)
 
 ===========================================================
 
-### Start Redis
+### 啟動 Redis
 
-To keep this example simple, we will use the Redis Stack docker container which we can start as follows
+為了讓範例簡單，我們用 Redis Stack 的 docker container，啟動方式如下
 
 ```bash
 $ docker-compose up -d
 ```
 
-This also includes the [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) GUI for managing your Redis database which you can view at [http://localhost:8001](http://localhost:8001) once you start the docker container.
+它也包含用來管理 Redis 資料庫的 [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) GUI，docker container 啟動後可以在 [http://localhost:8001](http://localhost:8001) 看到。
 
-You're all set up and ready to go! Next, we import and create our client for communicating with the Redis database we just created.
+設定完成，可以開始了！接下來我們匯入套件，並建立 client 來跟剛建好的 Redis 資料庫溝通。
 
-## Install Requirements
+## 安裝需要的套件
 
-Redis-Py is the python client for communicating with Redis. We will use this to communicate with our Redis-stack database. 
+Redis-Py 是跟 Redis 溝通的 Python client，我們用它來跟 Redis-stack 資料庫溝通。 
 
 ```python
 ! pip install redis pandas openai
@@ -75,13 +85,13 @@ Redis-Py is the python client for communicating with Redis. We will use this to 
     ```
 
 ===========================================================
-## Prepare your OpenAI API key
+## 準備你的 OpenAI API key
 
-The `OpenAI API key` is used for vectorization of query data.
+`OpenAI API key` 用來把查詢資料向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+如果還沒有 OpenAI API key，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY` by using following command:
+拿到 key 之後，用下面的指令把它加到環境變數 `OPENAI_API_KEY`：
 
 ```python
 # Test that your OpenAI API key is correctly set as an environment variable
@@ -104,9 +114,9 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Load data
+## 載入資料
 
-In this section we'll load and clean an ecommerce dataset. We'll generate embeddings using OpenAI and use this data to create an index in Redis and then search for similar vectors.
+這一節載入並清理一份電商資料集。我們會用 OpenAI 產生 embedding，用這些資料在 Redis 建立 index，再搜尋相似的向量。
 
 ```python
 import pandas as pd
@@ -213,9 +223,9 @@ df["product_text"][0]
     'name turtle check men navy blue shirt category apparel subcategory topwear color navy blue gender men'
     ```
 
-## Connect to Redis
+## 連線到 Redis
 
-Now that we have our Redis database running, we can connect to it using the Redis-py client. We will use the default host and port for the Redis database which is `localhost:6379`.
+Redis 資料庫已經在跑了，現在可以用 Redis-py client 連線。我們使用 Redis 資料庫預設的 host 和 port，也就是 `localhost:6379`。
 
 
 
@@ -252,13 +262,13 @@ redis_client.ping()
     True
     ```
 
-## Creating a Search Index in Redis
+## 在 Redis 建立搜尋 Index
 
-The below cells will show how to specify and create a search index in Redis. We will:
+下面的 cell 示範怎麼指定並建立 Redis 的搜尋 index。步驟如下：
 
-1. Set some constants for defining our index like the distance metric and the index name
-2. Define the index schema with RediSearch fields
-3. Create the index
+1. 設定定義 index 用的一些常數，例如距離度量和 index 名稱
+2. 用 RediSearch 欄位定義 index schema
+3. 建立 index
 
 ```python
 # Constants
@@ -300,9 +310,9 @@ except:
 )
 ```
 
-## Generate OpenAI Embeddings and Load Documents into the Index
+## 產生 OpenAI Embedding 並把文件載入 Index
 
-Now that we have a search index, we can load documents into it. We will use the dataframe containing the styles dataset loaded previously. In Redis, either the HASH or JSON (if using RedisJSON in addition to RediSearch) data types can be used to store documents. We will use the HASH data type in this example. The cells below will show how to get OpenAI embeddings for the different products and load documents into the index.
+有了搜尋 index，就能把文件載入。我們用前面載入的 styles 資料集 dataframe。在 Redis 裡可以用 HASH 或 JSON（如果除了 RediSearch 還用了 RedisJSON）資料型態儲存文件，這個範例用 HASH。下面的 cell 示範怎麼取得各商品的 OpenAI embedding，並把文件載入 index。
 
 ```python
 # Use OpenAI get_embeddings batch requests to speed up embedding creation
@@ -363,9 +373,9 @@ print(f"Loaded {redis_client.info()['db0']['keys']} documents in Redis search in
     Wall time: 3.34 s
     ```
 
-## Simple Vector Search Queries with OpenAI Query Embeddings
+## 用 OpenAI 查詢 Embedding 做簡單向量搜尋
 
-Now that we have a search index and documents loaded into it, we can run search queries. Below we will provide a function that will run a search query and return the results. Using this function we run a few queries that will show how you can utilize Redis as a vector database.
+現在有搜尋 index，文件也載入了，就能執行搜尋查詢。下面提供一個函式，用來執行搜尋查詢並回傳結果。用這個函式跑幾個查詢，示範怎麼把 Redis 當向量資料庫使用。
 
 ```python
 def search_redis(
@@ -424,9 +434,9 @@ results = search_redis(redis_client, 'man blue jeans', k=10)
     9. Palm Tree Kids Boy Washed Blue Jeans (Score: 0.732)
     ```
 
-## Hybrid Queries with Redis
+## 用 Redis 做 Hybrid 查詢
 
-The previous examples showed how run vector search queries with RediSearch. In this section, we will show how to combine vector search with other RediSearch fields for hybrid search. In the example below, we will combine vector search with full text search.
+前面的範例示範了怎麼用 RediSearch 執行向量搜尋。這一節會示範怎麼把向量搜尋和其他 RediSearch 欄位結合成 hybrid 搜尋。下面的範例把向量搜尋和全文搜尋結合。
 
 ```python
 # improve search quality by adding hybrid query for "man blue jeans" in the product vector combined with a phrase search for "blue jeans"
@@ -572,4 +582,14 @@ results = search_redis(redis_client,
     5. Wrangler Women Stella Green Shirt (Score: 0.542)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Redis 搭配 RediSearch（redis-stack）就能當向量資料庫，同時處理向量和一般資料。
+- Hybrid 查詢是在向量相似度之外，再用 GEO、NUMERIC、TAG、TEXT 欄位過濾，邏輯放在資料庫端，應用程式碼更簡單。
+- 建 index 要先定義 schema（含向量欄位、距離度量），再把文件寫進去，這裡用 HASH 型態存。
+- 查詢文字也要用同一個 embedding 模型向量化，才能跟 index 裡的向量比較。
+- 純向量搜尋找「意思相近」，加上全文條件後能同時要求關鍵字符合。
+
+## 練習
+1. 換一句自己的查詢文字，跑簡單向量搜尋，看回傳的商品是否合理。
+2. 改變回傳筆數（例如 top 3 改成 top 10），觀察結果排名的變化。
+3. 把 hybrid 查詢的全文條件換成另一個關鍵字，比較有無該條件時結果有什麼不同。

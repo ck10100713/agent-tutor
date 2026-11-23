@@ -1,5 +1,5 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/deployment_manager/README.md
 ---
 
@@ -7,35 +7,42 @@ source: examples/agents_sdk/deployment_manager/README.md
 
 > 原文：[examples/agents_sdk/deployment_manager/README.md](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/deployment_manager/README.md)
 
-Run, inspect, and trace local Agents SDK demo apps from a browser-based deployment manager.
+在瀏覽器介面的 deployment manager 裡，執行、檢查並追蹤本機的 Agents SDK demo 應用。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+介紹一個本機的 control-plane 應用，用來執行並觀察 Agents SDK demo 專案。它能匯入專案、用 Docker 啟停應用，並把 trace 收回來顯示在 UI 上。
 
+## 學完你會
+- 啟動 deployment manager，匯入本機的 Agents SDK 專案並以 Docker container 部署
+- 知道一個應用要符合哪些條件（`pyproject.toml`、`main.py`、`PORT`、`/health`）才能被這個 manager 部署
+- 了解本機 trace 擷取怎麼運作：用 `add_trace_processor()` 多加一個本機目的地，不影響原本送到 OpenAI Platform 的 trace
 
-Local control-plane app for running and observing Agents SDK demo projects.
+## 開跑前
+需要安裝 `uv`、`npm`，用預設的 `local-docker` 目標時還要有 Docker。
 
-## Prerequisites
+本機的 control-plane 應用，用來執行並觀察 Agents SDK demo 專案。
+
+## 前置條件
 
 - `uv`
 - `npm`
-- Docker, when using the default `local-docker` target
+- Docker（使用預設的 `local-docker` 目標時）
 
-## Run
+## 執行
 
 ```bash
 make run
 ```
 
-Open:
+開啟：
 
 ```text
 http://127.0.0.1:8732
 ```
 
-Vite builds the React UI from `frontend/` into `dist/`, and the Flask backend
-serves `dist/` plus `/api/*`.
+Vite 會把 `frontend/` 裡的 React UI 建置到 `dist/`，Flask 後端則提供 `dist/` 和 `/api/*`。
 
-## Screenshots
+## 截圖
 
 ### Deployments
 
@@ -49,52 +56,43 @@ serves `dist/` plus `/api/*`.
 
 ![Traces](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/agents_sdk/deployment_manager/docs/screenshots/traces.png)
 
-## Scope
+## 範圍
 
-- Import a local Agents SDK project.
-- Inspect entrypoints, dependencies, env vars, and sandbox usage.
-- Create a local deployment record.
-- Start and stop the app/orchestrator as a labeled Docker container by default.
-- Generate or reuse an app-level Dockerfile for containerized deployment.
-- Show deployment logs, traces, app events, and Docker container activity.
-- Label sandbox containers with `agents-sdk.*` metadata so the manager can map a
-  Docker container back to its deployment and run.
+- 匯入本機的 Agents SDK 專案。
+- 檢查 entrypoint、相依套件、環境變數和 sandbox 的使用情況。
+- 建立本機的 deployment 記錄。
+- 預設以有標籤的 Docker container 啟動和停止應用或 orchestrator。
+- 產生或重用應用層級的 Dockerfile，做容器化部署。
+- 顯示 deployment 的 log、trace、應用事件和 Docker container 的活動。
+- 用 `agents-sdk.*` metadata 為 sandbox container 加標籤，讓 manager 能把 Docker container 對應回它的 deployment 和 run。
 
-For Docker deployments, the default target builds an app Dockerfile and runs the
-orchestrator with:
+對 Docker 部署來說，預設目標會建置應用的 Dockerfile，並用下面的方式執行 orchestrator：
 
 ```bash
 docker run -p 127.0.0.1:<app-port>:<app-port> -v /var/run/docker.sock:/var/run/docker.sock ...
 ```
 
-The Docker socket mount lets `SandboxAgent` create sandbox containers through Docker.
+掛載 Docker socket 是為了讓 `SandboxAgent` 能透過 Docker 建立 sandbox container。
 
-The manager sets `AGENTS_SDK_MANAGER`, `AGENTS_SDK_PROJECT`,
-`AGENTS_SDK_DEPLOYMENT_DATA_DIR`, and `AGENTS_SDK_MANAGER_TRACE_ENDPOINT` on the
-app process. Trace capture is posted back to the manager and stored in the
-manager-owned SQLite database.
+manager 會在應用 process 上設定 `AGENTS_SDK_MANAGER`、`AGENTS_SDK_PROJECT`、`AGENTS_SDK_DEPLOYMENT_DATA_DIR` 和 `AGENTS_SDK_MANAGER_TRACE_ENDPOINT`。擷取到的 trace 會回傳給 manager，存進 manager 自己的 SQLite 資料庫。
 
-## Deployable App Contract
+## 可部署應用的規範
 
-Apps deployed through this manager should have:
+透過這個 manager 部署的應用應該具備：
 
-- `pyproject.toml` with `openai-agents` in the dependencies.
-- `main.py` as the app entrypoint.
-- `PORT` support for local startup.
-- `uv run python main.py` starting the HTTP service when `PORT` is set.
-- A `/health` readiness endpoint.
+- `pyproject.toml`，且 dependencies 裡有 `openai-agents`。
+- 以 `main.py` 當應用 entrypoint。
+- 本機啟動時支援 `PORT`。
+- 設了 `PORT` 時，`uv run python main.py` 會啟動 HTTP 服務。
+- 一個 `/health` readiness endpoint。
 
-Keep CLI-only smoke behavior behind explicit arguments or the no-`PORT` path so
-the generated Dockerfile can start the service reliably.
+只能在 CLI 執行的 smoke 行為，要放在明確的參數後面或沒有 `PORT` 的路徑，這樣產生的 Dockerfile 才能穩定啟動服務。
 
 ## Tracing
 
-Tracing is captured locally through the manager's HTTP ingestion endpoint while
-the Agents SDK still streams traces to the OpenAI Platform through its default
-processor.
+trace 透過 manager 的 HTTP ingestion endpoint 在本機擷取，同時 Agents SDK 仍然透過預設的 processor 把 trace 串流到 OpenAI Platform。
 
-When the manager starts an app it adds `runtime/trace_capture` to `PYTHONPATH`
-and sets:
+manager 啟動應用時，會把 `runtime/trace_capture` 加進 `PYTHONPATH`，並設定：
 
 ```text
 AGENTS_SDK_MANAGER_TRACE_ENDPOINT=http://<manager-host>:8732/api/traces/ingest
@@ -102,31 +100,20 @@ AGENTS_SDK_DEPLOYMENT_ID=<deployment-id>
 AGENTS_SDK_PROJECT_ID=<project-id>
 ```
 
-For local-process deployments `<manager-host>` is `127.0.0.1`. For Docker
-deployments it is `host.docker.internal` so the container can reach the manager
-running on the host.
+本機 process 部署時，`<manager-host>` 是 `127.0.0.1`。Docker 部署時則是 `host.docker.internal`，讓 container 能連到跑在 host 上的 manager。
 
-The runtime package uses `sitecustomize.py` to install a lightweight Agents SDK
-trace processor inside the app process with `add_trace_processor()`. That adds a
-second local destination without replacing the SDK's default OpenAI Platform
-exporter. The local processor posts exported trace records to the manager:
+這個 runtime 套件用 `sitecustomize.py`，在應用 process 裡用 `add_trace_processor()` 安裝一個輕量的 Agents SDK trace processor。這會多加第二個本機目的地，而不會取代 SDK 預設的 OpenAI Platform exporter。本機 processor 會把匯出的 trace 記錄 post 給 manager：
 
 - `trace_start`
 - `trace_end`
 - `span_start`
 - `span_end`
 
-The manager stores traces in `state/traces.sqlite3`. The backend reads that
-SQLite store in `app/timeline.py`, groups records by `trace_id`, derives the run
-key from trace metadata (`expense_id`, `run_id`, or `session_id`), then falls
-back to `group_id` and finally the `trace_id`. The UI uses those reconstructed
-records for the Traces view, nested span list, event detail pane, trace deep
-links via `?trace_id=...`, and JSON export.
+manager 把 trace 存在 `state/traces.sqlite3`。後端在 `app/timeline.py` 讀取這個 SQLite 儲存，按 `trace_id` 把記錄分組，並從 trace metadata（`expense_id`、`run_id` 或 `session_id`）推導出 run key，找不到就退回用 `group_id`，最後才用 `trace_id`。UI 用這些重建出來的記錄來顯示 Traces 檢視、巢狀的 span 清單、事件詳細面板、透過 `?trace_id=...` 的 trace 深層連結，以及 JSON 匯出。
 
-This means local tracing keeps working without bind-mounting trace files into app
-containers and without fetching spans from the OpenAI Platform dashboard API.
+這代表本機 tracing 不需要把 trace 檔案 bind-mount 進應用 container，也不需要從 OpenAI Platform dashboard API 抓 span。
 
-## Make Targets
+## Make 目標
 
 ```bash
 make start
@@ -136,4 +123,13 @@ make deploy PROJECT_PATH=/path/to/agents-sdk-app APP_PORT=8421 TARGET=local-proc
 make stop
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- deployment manager 是本機 control-plane，負責匯入、部署、觀察 Agents SDK 專案。
+- 預設用帶標籤的 Docker container 跑應用，並掛載 Docker socket 讓 `SandboxAgent` 能建立 sandbox container。
+- 可部署的應用有固定契約：`openai-agents` 相依、`main.py`、`PORT`、`/health`。
+- tracing 靠 `add_trace_processor()` 多加本機 processor，trace 回傳給 manager 存進 SQLite，原本送往 OpenAI Platform 的 exporter 不受影響。
+
+## 練習
+1. 照前置條件啟動 manager，匯入一個符合契約的範例應用，確認 `/health` 有回應。
+2. 在自己的應用裡加上 `PORT` 的支援，並讓沒有 `PORT` 時走 CLI 的 smoke 路徑。
+3. 在應用裡跑一次 agent，到 Traces 檢視用 `?trace_id=...` 開啟那筆 trace，並匯出成 JSON 看裡面的 span 結構。

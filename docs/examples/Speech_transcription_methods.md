@@ -1,28 +1,39 @@
 ---
-translated: false
+translated: true
 source: examples/Speech_transcription_methods.ipynb
 ---
-
-# Comparing Speech-to-Text Methods with the OpenAI API
+# 用 OpenAI API 比較各種語音轉文字方法
 
 > 原文：[examples/Speech_transcription_methods.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Speech_transcription_methods.ipynb)
 
-Cookbook to compare speech-to-text methods and choose the right approach.
+比較各種語音轉文字（speech-to-text）方法，幫你挑出適合的做法。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 OpenAI API 實際跑四種語音轉文字的做法：整檔上傳、整檔上傳加串流、Realtime WebSocket、Agents SDK 的 VoicePipeline。每種都講適用情境、優缺點，並附可執行的程式。
 
-## Overview
+## 學完你會
 
-This notebook provides a clear, hands-on guide for beginners to quickly get started with Speech-to-Text (STT) using the OpenAI API. You'll explore multiple practical methods, their use cases, and considerations.
+- 用 `gpt-4o-transcribe` 轉錄一個音檔，並用 `stream=True` 讓結果邊產生邊顯示
+- 透過 WebSocket 連 Realtime API，送 pcm16 音訊並接收即時逐字稿
+- 用 Agents SDK 的 `VoicePipeline` 做即時轉錄，並依延遲、格式限制、實作難度選對方法
 
-By the end, you will be able to select and use the appropriate transcription method for your use cases.
+## 開跑前
 
-*Note:*
-- *This notebook uses WAV audio files for simplicity. It does **not** demonstrate real-time microphone streaming (such as from a web app or direct mic input).*
-- *This notebook uses WebSockets to connect to the Realtime API. Alternatively, you can use WebRTC, see the [OpenAI docs](https://platform.openai.com/docs/guides/realtime#connect-with-webrtc) for details.*
+- 需要 OpenAI API key，設成環境變數 `OPENAI_API_KEY`
+- 需要安裝相關套件（見下方安裝步驟），並準備 WAV 音檔
 
-### 📊 Quick-look
+## 概覽
+
+這份 notebook 帶你快速上手用 OpenAI API 做語音轉文字（STT）。你會看到幾種實用的方法、各自的使用情境和注意事項。
+
+讀完後，你可以依自己的情境選出合適的轉錄方法。
+
+*注意：*
+- *為了簡單，這裡用 WAV 音檔，**沒有**示範即時麥克風串流（例如從網頁應用程式或直接接麥克風）。*
+- *這裡用 WebSocket 連 Realtime API。你也可以用 WebRTC，細節看 [OpenAI docs](https://platform.openai.com/docs/guides/realtime#connect-with-webrtc)。*
+
+### 📊 快速對照
 | Mode                           | Latency to **first token** | Best for (real examples)                                     | Advantages | Key limitations                |
 |--------------------------------|---------------------------|--------------------------------------------------------------|-----------------------------------------------------------|-----------------------------------------------------------|
 | File upload + `stream=False` (blocking) | seconds  | Voicemail, meeting recordings | Simple to set up | • No partial results, users see nothing until file finishes <br>• Max 25 MB per request (you must chunk long audio) |
@@ -30,20 +41,21 @@ By the end, you will be able to select and use the appropriate transcription met
 | Realtime WebSocket             | subseconds | Live captions in webinars | True real-time; accepts a continuous audio stream | • Audio must be pcm16, g711_ulaw, or g711_alaw <br>• Session ≤ 30 min, reconnect & stitch <br>• You handle speaker-turn formatting to build the full transcript |
 | Agents SDK VoicePipeline       | subseconds | Internal help-desk assistant | Real-time streaming and easy to build agentic workflows | • Python-only beta <br>• API surface may change |
 
-## Installation (one‑time)
+## 安裝（只要做一次）
 
-To set up your environment, uncomment and run the following cell in a new Python environment:
+在新的 Python 環境裡，取消註解並執行下面這個 cell：
 
 ```python
 !pip install --upgrade -q openai openai-agents websockets sounddevice pyaudio nest_asyncio resampy httpx websocket-client
 ```
 
-This installs the necessary packages required to follow along with the notebook.
+這會裝好跟著做需要的套件。
 
-## Authentication
-Before proceeding, ensure you have set your OpenAI API key as an environment variable named OPENAI_API_KEY. You can typically set this in your terminal or notebook environment: `export OPENAI_API_KEY="your-api-key-here"`
+## 驗證
 
-Verify that your API key is set correctly by running the next cell.
+開始前，先確認你已經把 OpenAI API key 設成名為 OPENAI_API_KEY 的環境變數。通常在終端機或 notebook 環境設定：`export OPENAI_API_KEY="your-api-key-here"`
+
+跑下一個 cell 確認 API key 有設好。
 
 ```python
 # ─── Standard Library ──────────────────────────────────────────────────────────
@@ -88,33 +100,33 @@ print("✅ OpenAI client ready")
     ```
 
 ---
-## 1 · Speech-to-Text with Audio File
+## 1 · 用音檔做語音轉文字
 *model = gpt-4o-transcribe*
 
-### When to use
-* You have a completed audio file (up to 25 MB).The following input file types are supported: mp3, mp4, mpeg, mpga, m4a, wav, and webm.
-* Suitable for batch processing tasks like podcasts, call-center recordings, or voice memos.
-* Real-time feedback or partial results are not required.
+### 什麼時候用
+* 你手上有完整的音檔（最大 25 MB）。支援的輸入格式有 mp3、mp4、mpeg、mpga、m4a、wav、webm。
+* 適合批次處理，例如 podcast、客服錄音、語音備忘錄。
+* 不需要即時回饋或部分結果。
 
-### How it works
+### 運作方式
 
 
 ![STT Not Streaming Transcription flow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/speech-to-text-not-streaming.png)
 
-#### Benefits
+#### 優點
 
-- **Ease of use:** Single HTTP request – perfect for automation or backend scripts.  
-- **Accuracy:** Processes the entire audio in one go, improving context and transcription quality.  
-- **File support:** Handles WAV, MP3, MP4, M4A, FLAC, Ogg, and more.  
+- **好上手：** 一個 HTTP request 就好，很適合自動化或後端腳本。  
+- **準確：** 一次處理整段音訊，上下文完整，轉錄品質比較好。  
+- **支援多種檔案：** 能處理 WAV、MP3、MP4、M4A、FLAC、Ogg 等。  
 
-#### Limitations
+#### 限制
 
-- **No partial results:** You must wait until processing finishes before seeing any transcript.  
-- **Latency scales with duration:** Longer recordings mean longer wait times.  
-- **File-size cap:** Up to 25 MB (≈ 30 min at 16-kHz mono WAV).  
-- **Offline use only:** Not intended for real-time scenarios such as live captioning or conversational AI.  
+- **沒有部分結果：** 要等處理完才看得到逐字稿。  
+- **延遲隨長度增加：** 錄音越長，等越久。  
+- **檔案大小上限：** 最大 25 MB（約 30 分鐘的 16 kHz 單聲道 WAV）。  
+- **只適合離線：** 不適合即時字幕或對話式 AI 這類即時情境。  
 
-Let's first preview the audio file. I've downloaded the audio file from [here](https://pixabay.com/sound-effects/search/male-speech/).
+先預覽一下音檔。這個音檔是我從[這裡](https://pixabay.com/sound-effects/search/male-speech/)下載的。
 
 ```python
 AUDIO_PATH = Path('./data/sample_audio_files/lotsoftimes-78085.mp3')  # change me
@@ -126,7 +138,7 @@ else:
     print('⚠️ Provide a valid audio file')
 ```
 
-Now, we can call the STT endpoint to transcribe the audio.
+接著呼叫 STT endpoint 來轉錄音訊。
 
 ```python
 if AUDIO_PATH.exists():
@@ -149,23 +161,23 @@ if AUDIO_PATH.exists():
     And lots of times you need to give people more than one link at a time. A band could give their fans a couple new videos from a live concert, a behind-the-scenes photo gallery, an album to purchase, like these next few links.
     ```
 
-## 2 · Speech-to-Text with Audio File: Streaming
+## 2 · 用音檔做語音轉文字：串流
 *model = gpt-4o-transcribe*
-### When to use
-- You already have a fully recorded audio file.  
-- You need immediate transcription results (partial or final) as they arrive.  
-- Scenarios where partial feedback improves UX, e.g., uploading a long voice memo.
+### 什麼時候用
+- 你已經有完整錄好的音檔。  
+- 你想在結果（部分或最終）一產生就立刻拿到。  
+- 部分回饋能改善體驗的情境，例如上傳很長的語音備忘錄。
 
 ![STT Streaming Transcription flow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/speech-to-text-streaming.png)
 
-#### Benefits
-- **Real-time feel:** Users see transcription updates almost immediately.  
-- **Progress visibility:** Intermediate transcripts show ongoing progress.  
-- **Improved UX:** Instant feedback keeps users engaged.
+#### 優點
+- **有即時感：** 使用者幾乎馬上就看到轉錄更新。  
+- **看得到進度：** 中間的逐字稿顯示目前進度。  
+- **體驗更好：** 即時回饋讓使用者不會等到無聊。  
 
-#### Limitations
-- **Requires full audio file upfront:** Not suitable for live audio feeds.  
-- **Implementation overhead:** You must handle streaming logic and progress updates yourself.  
+#### 限制
+- **要先有完整音檔：** 不適合即時的音訊來源。  
+- **實作成本：** 串流邏輯和進度更新要自己處理。  
 
 ```python
 if AUDIO_PATH.exists():
@@ -200,25 +212,25 @@ for event in stream:
 ---
 ## 3 · Realtime Transcription API
 *model = gpt-4o-transcribe*
-### When to use
-* Live captioning for real-time scenarios (e.g., meetings, demos).
-* Need built-in voice-activity detection, noise suppression, or token-level log probabilities.
-* Comfortable handling WebSockets and real-time event streams.
+### 什麼時候用
+* 需要即時字幕的情境（例如會議、demo）。
+* 需要內建的語音活動偵測（VAD）、降噪，或 token 層級的 log probability。
+* 你能處理 WebSocket 和即時事件串流。
 
 
-### How it works
+### 運作方式
 
 ![Realtime Transcription flow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/realtime_api_transcription.png)
 
-#### Benefits
-- **Ultra-low latency:** Typically 300–800 ms, enabling near-instant transcription.  
-- **Dynamic updates:** Supports partial and final transcripts, enhancing the user experience.  
-- **Advanced features:** Built-in turn detection, noise reduction, and optional detailed log-probabilities.  
+#### 優點
+- **超低延遲：** 通常 300 到 800 ms，幾乎即時轉錄。  
+- **動態更新：** 支援部分與最終逐字稿，體驗更好。  
+- **進階功能：** 內建 turn detection、降噪，還可以選擇回傳詳細的 log probability。  
 
-#### Limitations
-- **Complex integration:** Requires managing WebSockets, Base64 encoding, and robust error handling.  
-- **Session constraints:** Limited to 30-minute sessions.  
-- **Restricted formats:** Accepts only raw PCM (no MP3 or Opus); For pcm16, input audio must be 16-bit PCM at a 24kHz sample rate, single channel (mono), and little-endian byte order.
+#### 限制
+- **整合複雜：** 要管理 WebSocket、Base64 編碼，並做好錯誤處理。  
+- **session 限制：** 每個 session 最長 30 分鐘。  
+- **格式受限：** 只接受原始 PCM（不能用 MP3 或 Opus）。pcm16 的輸入必須是 16-bit PCM、24kHz 取樣率、單聲道、little-endian。
 
 ```python
 TARGET_SR     = 24_000
@@ -342,27 +354,27 @@ transcript
     ```
 
 ---
-## 4 · Agents SDK Realtime Transcription
+## 4 · Agents SDK 即時轉錄
 *models = gpt-4o-transcribe, gpt-4o-mini*
-### When to use
-* Leveraging the OpenAI Agents SDK for real-time transcription and synthesis with minimal setup.
-* You want to integrate transcription directly into agent-driven workflows.
-* Prefer high-level management of audio input/output, WebSockets, and buffering.
+### 什麼時候用
+* 想用 OpenAI Agents SDK，以最少的設定做即時轉錄和語音合成。
+* 想把轉錄直接接進 agent 驅動的 workflow。
+* 想讓 SDK 高階地管理音訊輸入輸出、WebSocket 和 buffer。
 
 
-### How it works
+### 運作方式
 
 ![Agents Transcription flow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agents_sdk_transcription.png)
 
-**Benefits**
+**優點**
 
-- **Minimal boilerplate:** `VoicePipeline` handles resampling, VAD, buffering, token auth, and reconnects.  
-- **Seamless agent integration**: Enables direct interaction with GPT agents using real-time audio transcription.
+- **幾乎不用寫樣板程式：** `VoicePipeline` 幫你處理重新取樣、VAD、buffer、token 驗證和重連。  
+- **和 agent 無縫整合：** 可以用即時音訊轉錄直接跟 GPT agent 互動。
 
-**Limitations**
+**限制**
 
-- **Python-only beta:** not yet available in other languages; APIs may change.  
-- **Less control:** fine-tuning VAD thresholds or packet scheduling requires digging into SDK internals.  
+- **只有 Python 的 beta：** 其他語言還沒有，API 可能會變。  
+- **可控性較低：** 想調 VAD 門檻或封包排程，得去翻 SDK 內部。  
 
 ```python
 # ── 1 · agent that replies in French ---------------------------------------
@@ -450,27 +462,38 @@ await stream_audio(AUDIO_PATH)
     [Assistant]: comme ces quelques liens suivants.
     ```
 
-## Conclusion  
+## 結論  
 
-In this notebook you explored multiple ways to convert speech to text with the OpenAI API and the Agents SDK, ranging from simple file uploads to fully-interactive, real-time streaming. Each workflow shines in a different scenario, so pick the one that best matches your product’s needs.
+這份 notebook 帶你用 OpenAI API 和 Agents SDK 試了多種語音轉文字的做法，從簡單的檔案上傳到完整互動的即時串流。每種做法適合的情境不同，挑最符合你產品需求的那個。
 
-### Key takeaways
-- **Match the method to the use-case:**  
-  • Offline batch jobs → file-based transcription.  
-  • Near-real-time updates → HTTP-streaming.  
-  • Conversational, low-latency experiences → WebSocket or Agents SDK.  
-- **Weigh trade-offs:** latency, implementation effort, supported formats, and session limits all differ by approach.  
-- **Stay current:** the models and SDK continue to improve; new features ship regularly.
+### 重點
+- **依情境選方法：**  
+  • 離線批次工作 → 檔案轉錄。  
+  • 接近即時的更新 → HTTP 串流。  
+  • 對話式、低延遲的體驗 → WebSocket 或 Agents SDK。  
+- **權衡取捨：** 延遲、實作成本、支援格式和 session 限制，每種做法都不一樣。  
+- **保持更新：** 模型和 SDK 持續改進，新功能常常上線。
 
-### Next steps
-1. Try out the notebook!
-2. Integrate your chosen workflow into your application.
-3. Send us feedback! Community insights help drive the next round of model upgrades.  
+### 下一步
+1. 自己跑一遍 notebook。
+2. 把你選的 workflow 整合進你的應用程式。
+3. 回饋給我們！社群的意見會推動下一輪模型升級。  
 
-## References
-* Explore the [Transcriptions API docs](https://platform.openai.com/docs/api-reference/audio).
-* Read the [Realtime guide](https://platform.openai.com/docs/guides/realtime?use-case=transcription).
-* Explore the [Agents SDK reference](https://openai.github.io/openai-agents-python/).
-* Explore the [Agents SDK Voice Pipeline reference](https://openai.github.io/openai-agents-python/voice/)
+## 參考資料
+* 看 [Transcriptions API docs](https://platform.openai.com/docs/api-reference/audio)。
+* 讀 [Realtime guide](https://platform.openai.com/docs/guides/realtime?use-case=transcription)。
+* 看 [Agents SDK reference](https://openai.github.io/openai-agents-python/)。
+* 看 [Agents SDK Voice Pipeline reference](https://openai.github.io/openai-agents-python/voice/)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 四種方法的差別主要在延遲、是否需要完整音檔、實作複雜度。
+- 離線批次用整檔上傳最簡單，要有即時感但已有音檔就加 `stream=True`。
+- 真正的即時音訊串流要用 Realtime WebSocket，但要自己處理格式（pcm16）、session 30 分鐘上限和逐字稿拼接。
+- Agents SDK 的 `VoicePipeline` 把重取樣、VAD、重連都包起來，代價是目前只有 Python beta 且可控性較低。
+
+## 練習
+
+1. 換一個你自己的 WAV 音檔，跑第 1 節的轉錄，看看結果。
+2. 把整檔上傳改成 `stream=True`，印出每個 delta 事件的時間，感受第一個 token 出現的延遲跟第 1 節差多少。
+3. 在 Realtime WebSocket 的範例裡，調整 turn detection 或降噪的設定，比較逐字稿的切分有什麼不同。

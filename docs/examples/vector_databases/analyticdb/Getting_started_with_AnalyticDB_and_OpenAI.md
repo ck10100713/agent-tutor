@@ -1,63 +1,71 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/analyticdb/Getting_started_with_AnalyticDB_and_OpenAI.ipynb
 ---
 
-# Using AnalyticDB as a vector database for OpenAI embeddings
+# 用 AnalyticDB 當 OpenAI embeddings 的向量資料庫
 
 > 原文：[examples/vector_databases/analyticdb/Getting_started_with_AnalyticDB_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/analyticdb/Getting_started_with_AnalyticDB_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+一步一步帶你把 AnalyticDB 當成 OpenAI embeddings 的向量資料庫。用預先算好的 Wikipedia 文章 embedding，存進雲端的 AnalyticDB，再用查詢文字做最近鄰搜尋。
+
+## 學完你會
+- 用 psycopg2 連上 AnalyticDB，建立存放 title 和 content 向量的 relation 與向量索引
+- 載入預先算好的 embedding 資料並寫入資料庫
+- 把查詢文字轉成 embedding，並在 title 或 content 向量上搜尋最相近的文章
+
+## 開跑前
+需要 OpenAI API key（設成環境變數 `OPENAI_API_KEY`），以及一個 AnalyticDB 雲端實例，連線參數也要設好。
+
+這份 notebook 一步一步帶你把 AnalyticDB 當成 OpenAI embeddings 的向量資料庫。
+
+這份 notebook 呈現的是端到端流程：
+1. 使用 OpenAI API 預先算好的 embedding。
+2. 把 embedding 存進 AnalyticDB 的雲端實例。
+3. 用 OpenAI API 把原始文字問題轉成 embedding。
+4. 用 AnalyticDB 在建好的 collection 裡做最近鄰搜尋。
+
+### 什麼是 AnalyticDB
+
+[AnalyticDB](https://www.alibabacloud.com/help/en/analyticdb-for-postgresql/latest/product-introduction-overview) 是高效能的分散式向量資料庫。它完全相容 PostgreSQL 語法，用起來很輕鬆。AnalyticDB 是阿里雲託管的雲原生資料庫，有效能強的向量運算引擎。開箱即用，可以擴展到處理數十億個資料向量，功能豐富，包括索引演算法、結構化與非結構化資料功能、即時更新、距離度量、scalar filtering、time travel 搜尋等。同時具備完整的 OLAP 資料庫功能，並提供 SLA 承諾，可用於 production。
+
+### 部署選項
+
+- 使用 [AnalyticDB Cloud Vector Database](https://www.alibabacloud.com/help/zh/analyticdb-for-postgresql/latest/overview-2)。[點這裡](https://www.alibabacloud.com/product/hybriddb-postgresql)可以快速部署。
 
 
-This notebook guides you step by step on using AnalyticDB as a vector database for OpenAI embeddings.
+## 前置條件
 
-This notebook presents an end-to-end process of:
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in a cloud instance of AnalyticDB.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using AnalyticDB to perform the nearest neighbour search in the created collection.
+要做這個練習，需要先準備幾樣東西：
 
-### What is AnalyticDB
-
-[AnalyticDB](https://www.alibabacloud.com/help/en/analyticdb-for-postgresql/latest/product-introduction-overview) is a high-performance distributed vector database. Fully compatible with PostgreSQL syntax, you can effortlessly utilize it. AnalyticDB is Alibaba Cloud managed cloud-native database with strong-performed vector compute engine. Absolute out-of-box experience allow to scale into billions of data vectors processing with rich features including indexing algorithms, structured & non-structured data features, realtime update, distance metrics, scalar filtering, time travel searches etc. Also equipped with full OLAP database functionality and SLA commitment for production usage promise;
-
-### Deployment options
-
-- Using [AnalyticDB Cloud Vector Database](https://www.alibabacloud.com/help/zh/analyticdb-for-postgresql/latest/overview-2). [Click here](https://www.alibabacloud.com/product/hybriddb-postgresql) to fast deploy it.
-
-
-## Prerequisites
-
-For the purposes of this exercise we need to prepare a couple of things:
-
-1. AnalyticDB cloud server instance.
-2. The 'psycopg2' library to interact with the vector database. Any other postgresql client library is ok.
-3. An [OpenAI API key](https://beta.openai.com/account/api-keys).
+1. AnalyticDB 雲端 server 實例。
+2. 'psycopg2' 函式庫，用來跟向量資料庫互動。其他 postgresql client 函式庫也可以。
+3. 一組 [OpenAI API key](https://beta.openai.com/account/api-keys)。
 
 
 
-We might validate if the server was launched successfully by running a simple curl command:
+可以用簡單的 curl 指令確認 server 有沒有成功啟動：
 
 
-### Install requirements
+### 安裝需求套件
 
-This notebook obviously requires the `openai` and `psycopg2` packages, but there are also some other additional libraries we will use. The following command installs them all:
+這份 notebook 需要 `openai` 和 `psycopg2` 套件，另外還會用到一些其他函式庫。下面的指令會全部裝好：
 
 
 ```python
 ! pip install openai psycopg2 pandas wget
 ```
 
-### Prepare your OpenAI API key
+### 準備 OpenAI API key
 
-The OpenAI API key is used for vectorization of the documents and queries.
+OpenAI API key 用來把文件和查詢向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+如果還沒有 OpenAI API key，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY`.
+拿到 key 之後，請把它加到環境變數 `OPENAI_API_KEY`。
 
 ```python
 # Test that your OpenAI API key is correctly set as an environment variable
@@ -79,10 +87,10 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Connect to AnalyticDB
-First add it to your environment variables. or you can just change the "psycopg2.connect" parameters below
+## 連接 AnalyticDB
+先把連線參數加到環境變數，或者直接修改下面 "psycopg2.connect" 的參數。
 
-Connecting to a running instance of AnalyticDB server is easy with the official Python library:
+用官方 Python 函式庫連接執行中的 AnalyticDB server 很簡單：
 
 ```python
 import os
@@ -107,7 +115,7 @@ connection = psycopg2.connect(
 cursor = connection.cursor()
 ```
 
-We can test the connection by running any available method:
+可以執行任何可用的方法來測試連線：
 
 ```python
 
@@ -147,7 +155,7 @@ wget.download(embeddings_url)
     'vector_database_wikipedia_articles_embedded.zip'
     ```
 
-The downloaded file has to be then extracted:
+下載的檔案接著要解壓縮：
 
 ```python
 import zipfile
@@ -181,11 +189,11 @@ else:
     The file vector_database_wikipedia_articles_embedded.csv exists in the data directory.
     ```
 
-## Index data
+## 索引資料
 
-AnalyticDB stores data in __relation__ where each object is described by at least one vector. Our relation will be called **articles** and each object will be described by both **title** and **content** vectors. \
+AnalyticDB 把資料存在 __relation__ 裡，每個物件至少由一個向量描述。我們的 relation 叫做 **articles**，每個物件同時由 **title** 和 **content** 向量描述。\
 
-We will start with creating a relation and create a vector index on both **title** and **content**, and then we will fill it with our precomputed embeddings.
+我們先建立 relation，並對 **title** 和 **content** 都建立向量索引，再把預先算好的 embedding 填進去。
 
 ```python
 create_table_sql = '''
@@ -217,9 +225,9 @@ cursor.execute(create_indexes_sql)
 connection.commit()
 ```
 
-## Load data
+## 載入資料
 
-In this section we are going to load the data prepared previous to this session, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一段要載入在這次練習之前就準備好的資料，所以你不用花自己的額度重算 Wikipedia 文章的 embedding。
 
 ```python
 import io
@@ -265,9 +273,9 @@ print(f"Count:{result[0]}")
     Count:25000
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into Qdrant we will start querying the collection for the closest vectors. We may provide an additional parameter `vector_name` to switch from title to content based search. Since the precomputed embeddings were created with `text-embedding-3-small` OpenAI model we also have to use it during search.
+資料放進資料庫之後，就可以開始對 collection 查詢最接近的向量。我們可以提供額外的參數 `vector_name`，在以 title 搜尋和以 content 搜尋之間切換。因為預先算好的 embedding 是用 OpenAI 的 `text-embedding-3-small` 模型建立的，搜尋時也必須用同一個模型。
 
 
 ```python
@@ -361,4 +369,13 @@ for i, result in enumerate(query_results):
     20. July 27 (Score: 0.646)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- AnalyticDB 相容 PostgreSQL 語法，所以可以用一般的 PostgreSQL client（如 psycopg2）操作。
+- 每個物件可以有多個向量欄位（這裡是 title 和 content），各自建索引，搜尋時選要比對哪一個。
+- 查詢時的 embedding 模型要跟建資料時一致，這裡都是 `text-embedding-3-small`。
+- 用預先算好的 embedding 可以省掉重算的成本。
+
+## 練習
+1. 換幾個不同的查詢文字，比較 title 搜尋和 content 搜尋的結果差在哪。
+2. 調整搜尋回傳的筆數，看結果的相關性怎麼變化。
+3. 把查詢改用別的 embedding 模型，觀察搜尋結果為什麼會變得不準。

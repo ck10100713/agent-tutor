@@ -1,31 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_call_functions_with_chat_models.ipynb
 ---
 
-# How to call functions with chat models
+# 如何用 chat models 呼叫 function
 
 > 原文：[examples/How_to_call_functions_with_chat_models.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 Chat Completions API 搭配外部 function 擴充 GPT 模型的能力。先看模型怎麼產生 function 參數，再真的拿這些參數去執行，做出一個能回答資料庫問題的 agent。
+
+## 學完你會
+- 定義 `tools` 的 function 規格，讓模型產生符合規格的參數，並用 `tool_choice` 強制或禁止呼叫。
+- 處理 parallel function calling（一次回合呼叫多個 function）。
+- 實作完整的 function call 迴圈，讓模型產生 SQL 並對 SQLite 資料庫執行、回答問題。
+
+## 開跑前
+- 需要 OpenAI API key。
+- 後半段用 Chinook 範例 SQLite 資料庫，需要先下載。
+- SQL 生成在 production 有風險，範例僅供學習。
 
 
-This notebook covers how to use the Chat Completions API in combination with external functions to extend the capabilities of GPT models.
+這份 notebook 說明怎麼把 Chat Completions API 和外部 function 結合，來擴充 GPT 模型的能力。
 
-`tools` is an optional parameter in the Chat Completion API which can be used to provide function specifications. The purpose of this is to enable models to generate function arguments which adhere to the provided specifications. Note that the API will not actually execute any function calls. It is up to developers to execute function calls using model outputs.
+`tools` 是 Chat Completion API 的選用參數，可以用來提供 function 規格。目的是讓模型產生符合所提供規格的 function 參數。注意 API 實際上不會執行任何 function call，要由開發者用模型的輸出自己去執行。
 
-Within the `tools` parameter, if the `functions` parameter is provided then by default the model will decide when it is appropriate to use one of the functions. The API can be forced to use a specific function by setting the `tool_choice` parameter to `{"type": "function", "function": {"name": "my_function"}}`. The API can also be forced to not use any function by setting the `tool_choice` parameter to `"none"`. If a function is used, the output will contain `"finish_reason": "tool_calls"` in the response, as well as a `tool_calls` object that has the name of the function and the generated function arguments.
+在 `tools` 參數裡，如果有提供 `functions` 參數，模型預設會自己判斷什麼時候適合用其中一個 function。把 `tool_choice` 參數設成 `{"type": "function", "function": {"name": "my_function"}}`，可以強制 API 使用特定 function。把 `tool_choice` 設成 `"none"`，則可以強制 API 不使用任何 function。如果有用到 function，回應會包含 `"finish_reason": "tool_calls"`，以及一個 `tool_calls` 物件，裡面有 function 名稱和產生的 function 參數。
 
-### Overview
+### 概觀
 
-This notebook contains the following 2 sections:
+這份 notebook 有下面兩個部分：
 
-- **How to generate function arguments:** Specify a set of functions and use the API to generate function arguments.
-- **How to call functions with model generated arguments:** Close the loop by actually executing functions with model generated arguments.
+- **如何產生 function 參數：** 指定一組 function，用 API 產生 function 參數。
+- **如何用模型產生的參數呼叫 function：** 真的用模型產生的參數去執行 function，把流程串成完整迴圈。
 
-## How to generate function arguments
+## 如何產生 function 參數
 
 ```python
 !pip install scipy --quiet
@@ -45,9 +56,9 @@ GPT_MODEL = "gpt-5"
 client = OpenAI()
 ```
 
-### Utilities
+### 工具函式
 
-First let's define a few utilities for making calls to the Chat Completions API and for maintaining and keeping track of the conversation state.
+首先定義幾個工具函式，用來呼叫 Chat Completions API，並維護和追蹤對話狀態。
 
 ```python
 @retry(wait=wait_random_exponential(multiplier=1, max=40), stop=stop_after_attempt(3))
@@ -88,9 +99,9 @@ def pretty_print_conversation(messages):
             print(colored(f"function ({message['name']}): {message['content']}\n", role_to_color[message["role"]]))
 ```
 
-### Basic concepts
+### 基本概念
 
-Let's create some function specifications to interface with a hypothetical weather API. We'll pass these function specification to the Chat Completions API in order to generate function arguments that adhere to the specification.
+我們來建立一些 function 規格，用來對接一個假想的天氣 API。把這些 function 規格傳給 Chat Completions API，產生符合規格的 function 參數。
 
 ```python
 tools = [
@@ -145,7 +156,7 @@ tools = [
 ]
 ```
 
-If we prompt the model about the current weather, it will respond with some clarifying questions.
+如果我們問模型目前的天氣，它會回覆一些釐清問題。
 
 ```python
 messages = []
@@ -168,7 +179,7 @@ pretty_print_conversation(messages)
     assistant: Sure—what city and state (or country) should I check? Also, do you prefer Celsius or Fahrenheit?
     ```
 
-Once we provide the missing information, it will generate the appropriate function arguments for us.
+等我們提供缺少的資訊後，它就會替我們產生適當的 function 參數。
 
 ```python
 messages.append({"role": "user", "content": "I'm in Glasgow, Scotland."})
@@ -193,7 +204,7 @@ pretty_print_conversation(messages)
     assistant: [{'id': 'call_k2QgGc9GT9WjxD76GvR0Ot8q', 'function': {'arguments': '{"location": "Glasgow, Scotland", "format": "celsius"}', 'name': 'get_current_weather'}, 'type': 'function'}, {'id': 'call_RtnXV5t49lqbWwhvGoEPZ7KY', 'function': {'arguments': '{"location": "Glasgow, Scotland", "format": "celsius", "num_days": 1}', 'name': 'get_n_day_weather_forecast'}, 'type': 'function'}]
     ```
 
-By prompting it differently, we can get it to target the other function we've told it about.
+換個方式問，就能讓它去用我們告訴它的另一個 function。
 
 ```python
 messages = []
@@ -216,7 +227,7 @@ pretty_print_conversation(messages)
     assistant: How many days would you like the forecast for in Glasgow, Scotland? For example: 3, 5, 7, 10, or 14.
     ```
 
-Once again, the model is asking us for clarification because it doesn't have enough information yet. In this case it already knows the location for the forecast, but it needs to know how many days are required in the forecast.
+模型又一次向我們要求釐清，因為它的資訊還不夠。這次它已經知道預報的地點，但需要知道預報要幾天。
 
 ```python
 messages.append({"role": "user", "content": "5 days"})
@@ -241,9 +252,9 @@ pretty_print_conversation(messages)
     assistant: [{'id': 'call_lNzOVLrNSaSVjL3O3bN110af', 'function': {'arguments': '{"location":"Glasgow, Scotland","format":"celsius","num_days":5}', 'name': 'get_n_day_weather_forecast'}, 'type': 'function'}]
     ```
 
-#### Forcing the use of specific functions or no function
+#### 強制使用特定 function 或不使用 function
 
-We can force the model to use a specific function, for example get_n_day_weather_forecast by using the function_call argument. By doing so, we force the model to make assumptions about how to use it.
+我們可以用 function_call 參數強制模型使用特定的 function，例如 get_n_day_weather_forecast。這樣做會逼模型對怎麼使用它做出假設。
 
 ```python
 # in this cell we force the model to use get_n_day_weather_forecast
@@ -289,7 +300,7 @@ pretty_print_conversation(messages)
     assistant: [{'id': 'call_wv5mdjEQJnBPuSci3xw09Tom', 'function': {'arguments': '{"location":"Toronto, ON","format":"celsius"}', 'name': 'get_current_weather'}, 'type': 'function'}]
     ```
 
-We can also force the model to not use a function at all. By doing so we prevent it from producing a proper function call.
+我們也可以強制模型完全不使用 function。這樣會讓它無法產生正式的 function call。
 
 ```python
 messages = []
@@ -320,7 +331,7 @@ pretty_print_conversation(messages)
 
 ### Parallel Function Calling
 
-Newer models such as gpt-5, gpt-4.1 or gpt-4o can call multiple functions in one turn.
+較新的模型，例如 gpt-5、gpt-4.1 或 gpt-4o，可以在一個回合裡呼叫多個 function。
 
 ```python
 messages = []
@@ -341,15 +352,15 @@ assistant_message
      ChatCompletionMessageFunctionToolCall(id='call_YAnH0VRB3oqjqivcGj3Cd8YA', function=Function(arguments='{"location": "Glasgow, UK", "format": "celsius", "num_days": 4}', name='get_n_day_weather_forecast'), type='function')]
     ```
 
-## How to call functions with model generated arguments
+## 如何用模型產生的參數呼叫 function
 
-In our next example, we'll demonstrate how to execute functions whose inputs are model-generated, and use this to implement an agent that can answer questions for us about a database. For simplicity we'll use the [Chinook sample database](https://www.sqlitetutorial.net/sqlite-sample-database/).
+下一個範例會示範怎麼執行輸入由模型產生的 function，並用它實作一個能回答資料庫問題的 agent。為了簡單，我們用 [Chinook 範例資料庫](https://www.sqlitetutorial.net/sqlite-sample-database/)。
 
-*Note:* SQL generation can be high-risk in a production environment since models are not perfectly reliable at generating correct SQL.
+*注意：* 在 production 環境，SQL 生成可能風險很高，因為模型產生正確 SQL 的可靠度並不完美。
 
-### Specifying a function to execute SQL queries
+### 指定一個執行 SQL query 的 function
 
-First let's define some helpful utility functions to extract data from a SQLite database.
+首先定義一些好用的工具函式，從 SQLite 資料庫取出資料。
 
 ```python
 import sqlite3
@@ -392,7 +403,7 @@ def get_database_info(conn):
     return table_dicts
 ```
 
-Now we can use these utility functions to extract a representation of the database schema.
+現在我們可以用這些工具函式取出資料庫 schema 的表示。
 
 ```python
 database_schema_dict = get_database_info(conn)
@@ -404,7 +415,7 @@ database_schema_string = "\n".join(
 )
 ```
 
-As before, we'll define a function specification for the function we'd like the API to generate arguments for. Notice that we are inserting the database schema into the function specification. This will be important for the model to know about.
+跟之前一樣，我們為想讓 API 產生參數的 function 定義 function 規格。注意我們把資料庫 schema 放進 function 規格裡，這對模型了解資料庫很重要。
 
 ```python
 tools = [
@@ -433,9 +444,9 @@ tools = [
 ]
 ```
 
-### Executing SQL queries
+### 執行 SQL query
 
-Now let's implement the function that will actually execute queries against the database.
+現在來實作真正對資料庫執行 query 的 function。
 
 ```python
 def ask_database(conn, query):
@@ -447,13 +458,13 @@ def ask_database(conn, query):
     return results
 ```
 
-##### Steps to invoke a function call using Chat Completions API: 
+##### 用 Chat Completions API 觸發 function call 的步驟： 
 
-**Step 1**: Prompt the model with content that may result in model selecting a tool to use. The description of the tools such as a function name and signature is defined in the 'Tools' list and passed to the model in API call. If selected, the function name and parameters are included in the response.<br>
+**Step 1**：用可能讓模型選擇使用 tool 的內容去 prompt 模型。tool 的描述，像是 function 名稱和簽章，定義在 'Tools' 清單裡，並在 API 呼叫時傳給模型。如果模型選了 tool，回應裡就會包含 function 名稱和參數。<br>
   
-**Step 2**: Check programmatically if model wanted to call a function. If true, proceed to step 3. <br>  
-**Step 3**: Extract the function name and parameters from response, call the function with parameters. Append the result to messages. <br>    
-**Step 4**: Invoke the chat completions API with the message list to get the response. 
+**Step 2**：用程式檢查模型是否想呼叫 function。如果是，進到 step 3。 <br>  
+**Step 3**：從回應取出 function 名稱和參數，用這些參數呼叫 function，並把結果附加到 messages。 <br>    
+**Step 4**：用 message 清單呼叫 chat completions API 取得回應。 
 
 ```python
 # Step #1: Prompt with content that may result in function call. In this case the model can identify the information requested by the user is potentially available in the database schema passed to the model in Tools description. 
@@ -523,8 +534,18 @@ else:
     Result found in database: Greatest Hits
     ```
 
-## Next Steps
+## 下一步
 
-See our other [notebook](How_to_call_functions_for_knowledge_retrieval.md) that demonstrates how to use the Chat Completions API and functions for knowledge retrieval to interact conversationally with a knowledge base.
+看我們另一份 [notebook](How_to_call_functions_for_knowledge_retrieval.md)，示範怎麼用 Chat Completions API 和 function 做知識檢索，以對話方式和知識庫互動。
 
-<!-- tutor:summary -->
+## 重點整理
+- 模型不會執行 function，它只產生 function 名稱和參數，執行要由你的程式做。
+- `tool_choice` 可以讓模型自己決定、強制用某個 function，或完全不用。
+- 資訊不夠時模型會追問，而不是亂猜參數，除非你強制它呼叫。
+- 完整的 function call 是四步：給 tools、判斷是否呼叫、執行並把結果加回 messages、再呼叫一次 API。
+- 讓模型產生 SQL 時，把資料庫 schema 放進 function 描述，模型才寫得對，但 production 要小心風險。
+
+## 練習
+1. 在天氣範例的 function 規格加一個 `unit` 參數（celsius 或 fahrenheit），看模型怎麼追問或填值。
+2. 把 `tool_choice` 改成 `"none"` 和指定 function 各跑一次，比較回應的 `finish_reason`。
+3. 在 SQL 執行 function 加檢查，只允許 SELECT 語句，並用一個要求刪除資料的問題測試。

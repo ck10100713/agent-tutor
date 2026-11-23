@@ -1,102 +1,113 @@
 ---
-translated: false
+translated: true
 source: examples/Fine_tuning_direct_preference_optimization_guide.ipynb
 ---
-
-# Fine-Tuning Techniques - Choosing Between SFT, DPO, and RFT (With a Guide to DPO)
+# Fine-Tuning 技巧：在 SFT、DPO、RFT 之間做選擇（附 DPO 實作指南）
 
 > 原文：[examples/Fine_tuning_direct_preference_optimization_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Fine_tuning_direct_preference_optimization_guide.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
- 
-*This guide is for developers and ML practitioners who have some experience with OpenAIʼs APIs and wish to use their fine-tuned models for research or other appropriate uses. OpenAI’s services are not intended for the personalized treatment or diagnosis of any medical condition and are subject to our [applicable terms](https://openai.com/policies/).*
- 
-This guide discusses fine-tuning methods supported by OpenAI, specifically highlighting what each method is best for and not best for, to help you identify the most suitable technique for your use case. It then provides an in-depth look at one particular method — Direct Preference Optimization (DPO) — and provides links to existing guides for the other techniques.
- 
-**What is fine-tuning?** Fine-tuning is the process of continuing training on a smaller, domain-specific dataset to optimize a model for a specific task. There are two main reasons why we would typically fine-tune:
-1. Improve model performance on a specific task 
-2. Improve model efficiency (reduce the number of tokens needed, distill expertise into a smaller model, etc.)
- 
-Currently, the OpenAI platform supports four fine-tuning methods:
-- **Supervised fine-tuning (SFT):** this technique employs traditional supervised learning using input-output pairs to adjust model parameters. The training process adjusts model weights to minimize the difference between predicted and target outputs across the provided examples. The model will replicate features that it finds in provided pairs. 
-- **Vision fine-tuning:** this technique extends supervised fine-tuning to multimodal data by processing both text and image in a unified training framework. The training process adjusts model weights to minimize errors across text-image pairs and as a result improve the model's understanding of image inputs. 
-- **Direct preference optimization (DPO):** this technique uses pairwise comparisons (e.g., preferred and rejected example responses) to optimize a model to favor certain outputs over others. The model learns to replicate the preference patterns found in the provided comparison data. 
-- **Reinforcement fine-tuning (RFT):** this technique uses reinforcement learning with a reward signal (via a grader or reward model) to fine-tune the model for complex objectives. In RFT, the model generates outputs for given prompts during training, and each output is evaluated for quality. The model's parameters are then updated to maximize the reward, reinforcing behaviors that lead to better outcomes. This iterative feedback loop encourages the model to improve reasoning or decision-making strategies. 
+先比較 OpenAI 支援的幾種 fine-tuning 方法，各自適合和不適合什麼情境，再深入講其中一種：Direct Preference Optimization（DPO）。後面會用一個虛構品牌的客服助理當範例，從產生資料、跑 baseline 評測，到實際 fine-tune 跟驗證結果。
 
-To help you select the appropriate fine-tuning technique, the table below summarizes the scenarios each method is best suited for, as well as those for which it is not well suited:
+## 學完你會
+
+- 分得出 SFT、Vision fine-tuning、DPO、RFT 各自適合的任務，知道你的需求該選哪個。
+- 準備好 DPO 需要的成對偏好資料（chosen / rejected），並理解 beta 參數怎麼影響訓練。
+- 用 fine-tuning API 跑一個 DPO job，再用 evals API 比較 fine-tune 前後的分數。
+
+## 開跑前
+
+- 需要 OpenAI API key，fine-tuning 和 evals 都會產生費用。
+- 評測會透過 data logging 讀取 response，所以你的組織不能關掉 data logging（例如啟用 zdr 就不行）。
+
+*這份指南的對象是已經用過 OpenAI API 的開發者與 ML 工作者，fine-tune 出來的模型請用在研究或其他適當的用途。OpenAI 的服務不是用來做個人化的醫療處置或診斷，並受[適用條款](https://openai.com/policies/)規範。*
+
+這份指南先介紹 OpenAI 支援的 fine-tuning 方法，說明每種方法擅長和不擅長什麼，幫你挑出適合的技術。接著深入講 Direct Preference Optimization（DPO），其他技術則附上現成指南的連結。
+
+**什麼是 fine-tuning？** 就是拿比較小、屬於特定領域的資料集繼續訓練模型，讓它更適合某個任務。通常有兩個理由要 fine-tune：
+1. 提升模型在特定任務上的表現
+2. 提升模型效率（減少所需 token 數、把能力蒸餾到較小的模型等）
+
+目前 OpenAI 平台支援四種 fine-tuning 方法：
+- **Supervised fine-tuning（SFT）：** 用傳統監督式學習，拿輸入與輸出配對的資料調整模型參數。訓練過程會調整權重，讓預測輸出和目標輸出的差距在所有範例上降到最小。模型會複製它在配對資料裡找到的特徵。
+- **Vision fine-tuning：** 把監督式 fine-tuning 延伸到多模態資料，在同一個訓練框架裡同時處理文字和圖片。訓練會讓文字與圖片配對的誤差降到最小，結果就是模型對圖片輸入的理解變好。
+- **Direct preference optimization（DPO）：** 用成對比較的資料（例如偏好的回答和被拒絕的回答）來訓練模型，讓它傾向產生某些輸出。模型學到的是比較資料裡的偏好模式。
+- **Reinforcement fine-tuning（RFT）：** 用強化學習搭配 reward signal（透過 grader 或 reward model）來針對複雜目標 fine-tune。RFT 訓練時，模型會針對 prompt 產生輸出，每個輸出都會被評分。之後模型參數會往提高 reward 的方向更新，強化能帶來好結果的行為。這個迭代的回饋迴圈會促使模型改善推理或決策策略。
+
+下面的表整理了每種方法適合和不適合的情境，幫你選擇：
 
 | **Technique**                            | **Good For**                                                                                                                                                                                                                                                                                    | **Not Good For**                                                                                            |
 | ---------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
-| **Supervised fine-tuning (SFT)**         | Emphasizing knowledge already present in the model.<br>Customizing response structure or tone.<br>Generating content in a specific format.<br>Teaching complex instructions or correcting instruction-following failures.<br>Optimizing cost/latency (saving tokens from prompt or distilling). | Adding entirely new knowledge (consider RAG instead).<br>Tasks with subjective quality.                     |
-| **Vision fine-tuning**                   | Specialized visual recognition tasks (e.g., image classification).<br>Domain-specific image understanding.<br>Correcting failures in instruction following for complex prompts.                                                                               | Purely textual tasks.<br>Generalized visual tasks without specific context.<br>General image understanding. |
-| **Direct preference optimization (DPO)** | Aligning model outputs with subjective preferences (tone, politeness).<br>Refining outputs via human-rated feedback.<br>Achieving nuanced behavioral alignment.                                                                                                                                 | Learning completely new tasks.<br>Tasks without clear human preference signals.                             |
-| **Reinforcement fine-tuning (RFT)**      | Complex domain-specific tasks that require advanced reasoning.<br>Refining existing partial capabilities (fostering emergent behaviours).<br>Tasks with measurable feedback.<br>Scenarios with limited explicit labels where reward signals can be defined.                                                                     | Tasks where the model has no initial skill.<br>Tasks without clear feedback or measurable signals.          |
+| **Supervised fine-tuning (SFT)**         | 強化模型本來就有的知識。<br>客製回答的結構或語氣。<br>產生特定格式的內容。<br>教複雜的指令，或修正沒照指令做的問題。<br>最佳化成本與延遲（省下 prompt 的 token 或做蒸餾）。 | 加入全新的知識（考慮改用 RAG）。<br>品質很主觀的任務。                     |
+| **Vision fine-tuning**                   | 專門的視覺辨識任務（例如圖片分類）。<br>特定領域的圖片理解。<br>修正複雜 prompt 沒被照做的問題。                                                                               | 純文字任務。<br>沒有特定脈絡的一般視覺任務。<br>通用的圖片理解。 |
+| **Direct preference optimization (DPO)** | 讓模型輸出符合主觀偏好（語氣、禮貌程度）。<br>用人工評分的回饋來改善輸出。<br>做到細緻的行為對齊。                                                                                                                                 | 學習全新的任務。<br>沒有明確人類偏好訊號的任務。                             |
+| **Reinforcement fine-tuning (RFT)**      | 需要進階推理的複雜、特定領域任務。<br>強化模型已有的部分能力（促成 emergent behavior）。<br>有可量測回饋的任務。<br>標籤很少，但可以定義 reward signal 的情境。                                                                     | 模型一開始完全沒有相關能力的任務。<br>沒有明確回饋或可量測訊號的任務。          |
 
 
 
 
-Today, there are pre-existing Cookbooks for:  
+目前已經有現成的 Cookbook 涵蓋：
 
-- Supervised fine-tuning (SFT): (1) [How to fine-tune chat models](https://cookbook.openai.com/examples/how_to_finetune_chat_models) (2) [Leveraging model distillation to fine-tune a model](https://cookbook.openai.com/examples/leveraging_model_distillation_to_fine-tune_a_model)
-- Vision fine-tuning: [Vision fine-tuning on GPT-4o for visual question answering](https://cookbook.openai.com/examples/multimodal/vision_fine_tuning_on_gpt4o_for_visual_question_answering)
-- Reinforcement fine-tuning (RFT): (1) [Reinforcement fine-tuning (RFT)](https://cookbook.openai.com/examples/reinforcement_fine_tuning), (2) [Reinforcement fine-tuning for healthbench QA](https://cookbook.openai.com/examples/fine-tuned_qa/reinforcement_finetuning_healthbench)
+- Supervised fine-tuning（SFT）：(1) [How to fine-tune chat models](https://cookbook.openai.com/examples/how_to_finetune_chat_models) (2) [Leveraging model distillation to fine-tune a model](https://cookbook.openai.com/examples/leveraging_model_distillation_to_fine-tune_a_model)
+- Vision fine-tuning：[Vision fine-tuning on GPT-4o for visual question answering](https://cookbook.openai.com/examples/multimodal/vision_fine_tuning_on_gpt4o_for_visual_question_answering)
+- Reinforcement fine-tuning（RFT）：(1) [Reinforcement fine-tuning (RFT)](https://cookbook.openai.com/examples/reinforcement_fine_tuning)，(2) [Reinforcement fine-tuning for healthbench QA](https://cookbook.openai.com/examples/fine-tuned_qa/reinforcement_finetuning_healthbench)
 
-Direct preference optimization (DPO) will be covered in this guide.
+Direct preference optimization（DPO）就在這篇講。
 
-## **Guide to Direct Preference Optimization**
- 
-As mentioned above, [Direct Preference Optimization (DPO)](https://platform.openai.com/docs/guides/direct-preference-optimization) is an alignment technique for fine-tuning language models using pairwise preference data (e.g., ranked pairs of responses). DPO directly optimizes a model to favor certain outputs over others using explicit pairwise comparisons, typically from human preferences. This approach simplifies alignment and eliminates the need for a separate reward model or complex reinforcement learning procedures, making DPO a lightweight alternative to techniques such as Reinforcement Learning from Human Feedback (RLHF).
- 
-When should you use DPO? DPO excels in scenarios when response quality is subjective, cannot be measured objectively, or when nuanced criteria such as tone, style, appropriateness, or clarity matter - typically cases where multiple valid outputs exist. Example applications where DPO is particularly effective in aligning AI responses include: 
-- Enhancing Conversational AI Responses
-- Improving Code Generation Quality & Style
-- Ensuring Compliance with Legal, Ethical & Safety Standards 
-- Controlling Brand Voice, Professionalism, & Tone
-- Customizing Creative Outputs & User Experience
+## **DPO 指南**
 
-By fine-tuning on explicit pairs of preferred vs non‑preferred completions, DPO aligns model outputs to these nuanced preferences. The below table gives examples of pairwise preference data for a fictional AI assistant that represents an organization, where preferred responses are clear, professional, and aligned with brand standards.
- 
+前面說過，[Direct Preference Optimization（DPO）](https://platform.openai.com/docs/guides/direct-preference-optimization)是一種對齊技術，用成對的偏好資料（例如排好序的回答配對）來 fine-tune 語言模型。DPO 直接用明確的成對比較（通常來自人類偏好）來最佳化模型，讓它傾向產生某些輸出。這個做法簡化了對齊流程，不需要另外訓練 reward model，也不用複雜的強化學習程序，所以算是 Reinforcement Learning from Human Feedback（RLHF）之類技術的輕量替代方案。
+
+什麼時候該用 DPO？回答品質很主觀、無法客觀衡量，或是語氣、風格、適當性、清晰度這類細緻標準很重要的時候，DPO 特別適合，也就是同一個問題有多種合理回答的情況。DPO 特別有效的應用例子：
+- 改善對話式 AI 的回應
+- 提升程式碼生成的品質與風格
+- 確保符合法律、倫理與安全標準
+- 控制品牌語氣、專業度與口吻
+- 客製創意輸出與使用者體驗
+
+藉由在「偏好」與「不偏好」的 completion 配對上 fine-tune，DPO 讓模型輸出貼近這些細緻的偏好。下表是一個代表某組織的虛構 AI 助理的成對偏好資料範例，偏好的回答清楚、專業，也符合品牌標準。
+
 | **Example Question**                                           | **Chosen Response**                                                                                                                                                                   | **Rejected Response**                                       |
 |------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
 | **Q1:** *How do I review your product?*              | To submit a product review, please visit your account dashboard, select the product, and click ‘Write a review.’ Share your honest experience, rate key features, and submit when ready.        | Yo, just leave some quick stars or whatever, it’s chill!         |
 | **Q2:** *How do I review your product?*              | We welcome your feedback! In the ‘Reviews’ section on the product page, click ‘Leave a Review,’ rate it, and add your comments about what you liked or areas for improvement.                   | Just scribble something—doesn’t matter what, honestly.          |
 | **Q3:** *How to troubleshoot this particular error?* | To address the error ‘X101,’ first clear your cache, then verify your internet connection. If the issue remains, follow our step-by-step guide at [Support → Troubleshooting → Error X101]. | Just reboot it, I guess. If it doesn't work, you're on your own! |
- 
-In this guide, weʼll walk through how to apply DPO using the fine-tuning API. You will learn key steps to take in order to successfully run preference fine-tuning jobs for your use-cases.
- 
-Here’s what we’ll cover:
- 
-- **1. Recommended Workflow**
-- **2. Demonstration Scenario**
-- **3. Generating the Dataset**
-- **4. Benchmarking the Base Model**
+
+這份指南會一步步示範怎麼用 fine-tuning API 做 DPO，帶你走過成功跑起偏好 fine-tuning job 的關鍵步驟。
+
+內容大綱：
+
+- **1. 建議的流程**
+- **2. 示範情境**
+- **3. 產生資料集**
+- **4. 替 base model 做 benchmark**
 - **5. Fine-Tuning**
-- **6. Using your Fine-Tuned Model**
+- **6. 使用你 fine-tune 好的模型**
 
-## **1. Recommended Workflow**
- 
-OpenAI recommends the following workflow: 
-1. Performing Supervised Fine-Tuning (SFT) on a subset of your preferred responses. 
-2. Using the SFT fine-tuned model as the starting point, apply DPO using preference comparison data. 
- 
-Performing Supervised Fine-Tuning (SFT) before Direct Preference Optimization (DPO) enhances model alignment and overall performance by establishing a robust initial policy, ensuring the model already prefers correct responses. This reduces the magnitude of weight updates during DPO, stabilizing training and preventing overfitting by allowing DPO to efficiently refine subtle nuances. Consequently, the combined SFT-then-DPO workflow converges faster and yields higher-quality results.
+## **1. 建議的流程**
 
-In this guide, we'll focus exclusively on applying Direct Preference Optimization (DPO). However, depending on your use case, you may find performance gains from first performing Supervised Fine-Tuning (SFT). If so, you can follow the SFT guide linked above, save the resulting model ID, and use that as the starting point for your DPO job.
+OpenAI 建議這樣做：
+1. 先拿一部分偏好的回答做 Supervised Fine-Tuning（SFT）。
+2. 以 SFT fine-tune 出來的模型當起點，再用偏好比較資料做 DPO。
 
-## **2. Demonstration Scenario**
+DPO 之前先做 SFT，能建立穩固的初始 policy，讓模型本來就偏向正確的回答，對齊效果和整體表現都會更好。這樣 DPO 階段的權重更新幅度會比較小，訓練比較穩定，也比較不會 overfit，DPO 只要負責微調細節就好。所以先 SFT 再 DPO 的流程收斂比較快，結果品質也比較高。
 
-To make things concrete, let’s walk through fine-tuning a customer-facing AI assistant to follow a fictional brand’s voice and style. Imagine Good Vibes Corp, an organization that prides itself on a friendly, enthusiastic tone with a personal touch. 
- 
-They want their customer AI assistant to answer queries in a way that reflects these brand guidelines (e.g. an upbeat attitude, polite language, and a friendly sign-off), and prefer those responses over more generic or curt answers. This is a good scenario for DPO: there’s no objectively correct answer format, but there is a preferred style.
- 
-DPO will help the model learn from comparisons which style is preferred. We'll outline the steps to: (1) generate a synthetic preference dataset of prompts with paired responses (one in the desired brand voice and one not). (2) Evaluate base model performance using the OpenAI evals API. (3) Prepare and upload the data in the required JSONL format for preference fine-tuning. (4) Fine-tune the model with DPO using the OpenAI fine-tuning API. (5) Evaluate the fine-tuned model using the OpenAI evals API to show how the brand-style preference improved.
+這篇只專注在 DPO。不過依你的情境，先做 SFT 可能會有額外的效能提升。如果要這樣做，可以照上面連結的 SFT 指南跑，存下產生的 model ID，再拿它當 DPO job 的起點。
 
-We are going to synthesize a dataset for this demonstration. First, let’s create a seed bank of questions to generate more variations from.
+## **2. 示範情境**
 
-Let’s get started!
+為了讓內容具體一點，我們來 fine-tune 一個面向客戶的 AI 助理，讓它遵循一個虛構品牌的語氣和風格。假設有一家 Good Vibes Corp，很重視友善、熱情又有人情味的口吻。
+
+他們希望客服 AI 回答問題時能反映這些品牌準則（例如正向的態度、有禮貌的用語、友善的結尾問候），而且偏好這樣的回答，勝過比較籠統或生硬的答案。這很適合用 DPO：回答格式沒有客觀的正解，但有偏好的風格。
+
+DPO 會從比較資料中學到哪種風格比較受偏好。步驟如下：(1) 產生一份合成的偏好資料集，每個 prompt 配一組回答（一個符合品牌語氣，一個不符合）。(2) 用 OpenAI evals API 評估 base model 的表現。(3) 把資料整理成偏好 fine-tuning 要求的 JSONL 格式並上傳。(4) 用 OpenAI fine-tuning API 做 DPO fine-tune。(5) 再用 evals API 評估 fine-tune 後的模型，看品牌風格偏好改善了多少。
+
+這個示範的資料集是合成的。先建一個問題種子庫，之後從裡面衍生更多變化。
+
+開始吧！
 
 ```python
 ! pip install openai nest-asyncio --quiet
@@ -117,11 +128,11 @@ PROMPT_SEED_POOL = [
 ]
 ```
 
-## **3. Generating the Dataset**
+## **3. 產生資料集**
 
-Next, we’ll define functions to take each prompt from our seed bank and generate related questions. We’ll create a dataset of preference pairs by first generating these prompt variations, then producing both a preferred and a rejected response for every prompt. 
+接著定義幾個函式，從種子庫取出每個 prompt，產生相關的問題。我們會先產生 prompt 的各種變化，再替每個 prompt 產生一個偏好的回答和一個被拒絕的回答，組成偏好配對的資料集。
 
-This dataset is synthetic and serves to illustrate the mechanics of Direct Preference Optimization — when developing your own application you should collect or curate a high-quality, preference dataset. Note: the volume of data required for DPO depends on the use case; generally more is better (thousands to tens of thousands), and for preference pairs the ordering logic should be consistent (e.g. if A > B and B > C, then A > C).
+這份資料是合成的，只是用來說明 Direct Preference Optimization 的運作方式。做自己的應用時，你應該蒐集或整理高品質的偏好資料集。注意：DPO 需要的資料量依情境而定，一般來說越多越好（數千到數萬筆），而且偏好配對的排序邏輯要一致（例如 A > B 且 B > C，那就要 A > C）。
 
 ```python
 import asyncio
@@ -221,7 +232,7 @@ async def _generate_preference_pair(
         }
 ```
 
-Now, using these defined functions we'll build our dataset by generating friendly versus blunt response pairs. The friendly responses reflect the brand's desired communication style. We'll do this asynchronously for efficiency, creating a dataset suited for Direct Preference Optimization.
+現在用上面定義的函式，產生友善與生硬的回答配對來建資料集。友善的回答代表品牌想要的溝通風格。為了效率，我們用非同步的方式執行，做出適合 Direct Preference Optimization 的資料集。
 
 ```python
 import math
@@ -273,9 +284,9 @@ print(f"Dataset ready with {len(pairs)} pairs.")
     Dataset ready with 500 pairs.
     ```
 
-## **4. Benchmarking the Base Model**
+## **4. 替 base model 做 benchmark**
 
-Below, we split our dataset into training, validation, and testing sets. We also show a sample from the training dataset, which demonstrates a clear difference between the preferred (friendly, on-brand) and non-preferred (blunt, neutral) responses for that input pair.
+下面把資料集切成 training、validation、testing 三份，並秀出一筆 training 資料，可以清楚看到同一個輸入配對裡，偏好的回答（友善、符合品牌）和不偏好的回答（生硬、中性）差在哪。
 
 ```python
 # set dataset sizes
@@ -304,9 +315,9 @@ train_pairs[0]
        'content': 'Provide your order number for delivery status.'}]}
     ```
 
-To assess the model's performance prior to fine-tuning, we'll use an automated grader (LLM-as-a-Judge) to score each response for friendliness and empathy. The grader will assign a score from 0 to 4 for each answer, allowing us to compute a mean baseline score for the base model. 
+為了評估 fine-tune 之前的表現，我們用自動 grader（LLM-as-a-Judge）替每個回答的友善度和同理心打分數。grader 對每個答案給 0 到 4 分，這樣就能算出 base model 的平均 baseline 分數。
 
-To do this, we first generate responses for the base model on the test set, then use the OpenAI evals API to create and run an evaluation with an automated grader. 
+做法是先讓 base model 對測試集產生回答，再用 OpenAI evals API 建立並執行一個搭配自動 grader 的評測。
 
 ```python
 async def generate_responses(
@@ -349,7 +360,7 @@ testset = [
 responses = await generate_responses(testset, model=base_model)
 ```
 
-Next, we'll use the OpenAI evals API to create & run an evaluation with an automated grader, starting by defining the rubric for the LLM-as-a-Judge. Note: we will access responses via data logging, so in order for this to work, you'll need to be in an org where data logging isn't disabled (through zdr, etc.). If you aren't sure if this is the case for you, go to https://platform.openai.com/logs?api=responses and see if you can see the responses you just generated.
+接下來用 OpenAI evals API 建立並執行評測，第一步是定義 LLM-as-a-Judge 的評分標準（rubric）。注意：我們會透過 data logging 讀取 response，所以你的組織不能關閉 data logging（例如透過 zdr）。如果不確定，可以到 https://platform.openai.com/logs?api=responses 看看能不能看到剛剛產生的 response。
 
 ```python
 JUDGE_SYSTEM = """
@@ -436,14 +447,14 @@ print("Average score:", sum(base_scores) / len(base_scores))
 
 ## **5. Fine-Tuning**
 
-With a baseline established, we can now fine-tune the model using the training set and DPO. This process will teach the model to prefer responses that align with our desired style, based on the preference pairs we created earlier.
+有了 baseline，就可以用 training set 和 DPO 來 fine-tune 模型了。這個過程會根據前面做好的偏好配對，教模型偏好符合我們想要風格的回答。
 
-Note: **beta (β)** is a unique fine-tuning hyperparameter for Direct Preference Optimization (DPO). It’s a floating-point number ranging between 0 and 2, controlling the balance between preserving a model’s existing behavior and adapting to new, preference-aligned responses.
-- High β (close to 2): makes the model more conservative, strongly favoring previous behavior. The fine-tuned model will show minimal deviations from its original style or characteristics, emphasizing consistency and avoiding abrupt changes.
-- Moderate β (around 1): balances between adherence to prior behavior and adaptation to new preferences. Recommended as a sensible starting point for most practical scenarios.
-- Low β (close to 0): encourages aggressive adaptation, causing the model to prioritize newly provided preferences more prominently. This might result in significant stylistic shifts and greater alignment with explicit preferences but could lead to unexpected or overly specialized outputs.
+注意：**beta (β)** 是 DPO 專有的 fine-tuning 超參數，是介於 0 到 2 之間的浮點數，控制「保留模型原有行為」和「適應新的偏好回答」之間的平衡。
+- 高 β（接近 2）：模型比較保守，強烈偏向原本的行為。fine-tune 後的模型和原本的風格或特性差異很小，重視一致性，避免突然的改變。
+- 中等 β（約 1）：在維持原有行為和適應新偏好之間取得平衡。大部分實務情境建議從這個值開始。
+- 低 β（接近 0）：鼓勵積極適應，模型會更重視新提供的偏好。可能帶來明顯的風格轉變，也更貼近明確的偏好，但也可能出現意料之外或過度特化的輸出。
 
-Technically, beta scales the difference in log-probabilities in the DPO loss; a larger β causes the sigmoid-based loss function to saturate with smaller probability differences, yielding smaller weight updates (thus preserving old behavior). It is recommended to experiment systematically with the β value to achieve optimal results tailored to your specific use-case and desired trade-offs between stability and adaptation.
+技術上，beta 會縮放 DPO loss 裡 log-probability 的差值。β 越大，以 sigmoid 為基礎的 loss function 在機率差很小時就會飽和，權重更新就比較小（也就保留了舊行為）。建議系統性地試不同的 β 值，找出符合你情境、在穩定與適應之間取捨最好的設定。
 
 ```python
 import io
@@ -484,9 +495,9 @@ print(f"Fine-tuning job created: job_id = {ft.id}")
     Fine-tuning job created: job_id = ftjob-5QPmA36QezFRGoXjuvIAPuAQ
     ```
 
-## **6. Using your Fine-Tuned Model**
+## **6. 使用你 fine-tune 好的模型**
 
-Once fine-tuning is complete, we'll evaluate the DPO-tuned model on the same test set. By comparing the mean scores before and after fine-tuning, as well as reviewing example outputs, we can see how the model's alignment with our preferences has improved.
+fine-tuning 完成後，我們會在同一份測試集上評估 DPO 模型。比較 fine-tune 前後的平均分數，再看幾個範例輸出，就能看出模型和我們的偏好對齊得更好了多少。
 
 ```python
 # generate responses
@@ -541,4 +552,16 @@ print(f"DPO-tuned model reply \n {post_data[idx].sample.output[0].content}")
      Hi! I’d be happy to help with that. If your package hasn’t shipped yet, there’s a good chance we can upgrade your delivery speed. Could you please provide me with your order number? I’ll check the status and let you know the available options for faster delivery.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- fine-tuning 方法要看任務選：SFT 適合固定格式與語氣，DPO 適合主觀偏好，RFT 適合有可量測回饋的複雜推理，Vision fine-tuning 適合特定視覺任務。
+- DPO 用「chosen vs rejected」成對資料訓練，不需要另外的 reward model，比 RLHF 輕量。
+- 偏好資料的排序邏輯要一致，量一般來說越多越好。
+- beta 控制「保留原行為」和「學新偏好」的取捨，從 1 左右開始，再系統性調整。
+- 先 SFT 再 DPO 通常更穩定、收斂更快，評估則用 LLM-as-a-Judge 比較前後平均分數。
+
+## 練習
+
+1. 把這篇範例裡的 grader rubric 改成評分「專業度」而不是「友善度」，重跑 base model 的評測，看分數怎麼變。
+2. 把 DPO job 的 beta 分別設成 0.1 和 2，各跑一次，比較 fine-tune 後的測試集平均分數和範例輸出的風格差異。
+3. 改寫資料產生函式，讓 rejected 回答不只是生硬，還加入偏長又囉唆的版本，重新建資料集再 fine-tune，看模型學到的偏好有沒有變。

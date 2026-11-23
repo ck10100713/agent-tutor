@@ -1,28 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/Optimize_Prompts.ipynb
 ---
-
 # Optimize Prompts
 
 > 原文：[examples/Optimize_Prompts.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Optimize_Prompts.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Agents SDK 搭配 Evals，做出一個早期版本的 prompt 優化系統。多個專職 agent 平行檢查 prompt 的矛盾、格式不明、和 few-shot 範例不一致的問題，再由 rewriter agent 改寫。最後用三個範例看實際效果。
+
+## 學完你會
+
+- 用 Pydantic 定義 agent 之間傳遞的結構化輸入輸出（Issues、MessagesOutput 等）
+- 用 `Agent` class 寫出範圍明確的 checker 與 rewriter agent，並理解寫 instructions 的幾項最佳實務
+- 用 `optimize_prompt_parallel` 平行跑 checker、再有條件地跑 rewriter，並用 golden examples 搭配 Evals 選模型、調 instructions
+
+## 開跑前
+
+- 安裝 `openai` 和 `openai-agents` 兩個 Python 套件
+- 設好環境變數 `OPENAI_API_KEY`
 
 
-Crafting effective prompts is a critical skill when working with AI models. Even experienced users can inadvertently introduce contradictions, ambiguities, or inconsistencies that lead to suboptimal results. The system demonstrated here helps identify and fix common issues, resulting in more reliable and effective prompts.
+寫出有效的 prompt 是用 AI 模型的關鍵技能。就算是有經驗的使用者，也可能不小心寫出矛盾、模糊或不一致的內容，導致結果不理想。這裡示範的系統能找出並修正常見問題，讓 prompt 更可靠、更有效。
 
-The optimization process uses a multi-agent approach with specialized AI agents collaborating to analyze and rewrite prompts. The system automatically identifies and addresses several types of common issues:
+這個優化流程採用 multi-agent 的做法，由各有專長的 AI agent 合作分析和改寫 prompt。系統會自動找出並處理幾類常見問題：
 
-- **Contradictions** in the prompt instructions
-- Missing or unclear **format specifications**
-- **Inconsistencies** between the prompt and few-shot examples
+- prompt 指示之間的**矛盾**
+- 缺少或不清楚的**格式規範**
+- prompt 和 few-shot 範例之間的**不一致**
 
 ---
 
-**Objective**: This cookbook demonstrates best practices for using Agents SDK together with Evals to build an early version of OpenAI's prompt optimization system. You can optimize your prompt using this code or use the optimizer [in our playground!](https://platform.openai.com/playground/prompts)
+**目標**：這篇示範用 Agents SDK 搭配 Evals 的最佳實務，做出 OpenAI prompt 優化系統的早期版本。你可以用這份程式碼優化 prompt，也可以直接用 [playground 裡的優化器](https://platform.openai.com/playground/prompts)！
 
 
 
@@ -34,36 +46,36 @@ The optimization process uses a multi-agent approach with specialized AI agents 
 Ask ChatGPT
 
 
-**Cookbook Structure**  
-This notebook follows this structure:
+**內容結構**  
+這份 notebook 的結構如下：
 
-- [Step 1. System Overview](#1-system-overview) - Learn how the prompt optimization system works  
-- [Step 2. Data Models](#2-data-models) - Understand the data structures used by the system
-- [Step 3. Defining the Agents](#3-defining-the-agents) - Look at agents that analyze and improve prompts
-- [Step 4. Evaluations](#4-using-evaluations-to-arrive-at-these-agents) - Use Evals to verify our agent model choice and instructions
-- [Step 5. Run Optimization Workflow](#4-run-optimization-workflow) - See how the workflow hands off the prompts
-- [Step 6. Examples](#5-examples) - Explore real-world examples of prompt optimization
+- [Step 1. System Overview](#1-system-overview) - 了解 prompt 優化系統怎麼運作  
+- [Step 2. Data Models](#2-data-models) - 了解系統用的資料結構
+- [Step 3. Defining the Agents](#3-defining-the-agents) - 看分析並改進 prompt 的 agent
+- [Step 4. Evaluations](#4-using-evaluations-to-arrive-at-these-agents) - 用 Evals 驗證我們選的 agent 模型和 instructions
+- [Step 5. Run Optimization Workflow](#4-run-optimization-workflow) - 看 workflow 怎麼傳遞 prompt
+- [Step 6. Examples](#5-examples) - 看 prompt 優化的實際範例
 
-**Prerequisites**
-- The `openai` Python package 
-- The `openai-agents` package
-- An OpenAI API key set as `OPENAI_API_KEY` in your environment variables
+**前置條件**
+- `openai` Python 套件 
+- `openai-agents` 套件
+- 在環境變數設好 OpenAI API key `OPENAI_API_KEY`
 
-## 1. System Overview
+## 1. 系統概覽
 
-The prompt optimization system uses a collaborative multi-agent approach to analyze and improve prompts. Each agent specializes in either detecting or rewriting a specific type of issue:
+Prompt 優化系統採用協作式的 multi-agent 做法來分析並改進 prompt。每個 agent 專門負責偵測或改寫一種問題：
 
-1. **Dev-Contradiction-Checker**: Scans the prompt for logical contradictions or impossible instructions, like "only use positive numbers" and "include negative examples" in the same prompt.
+1. **Dev-Contradiction-Checker**：掃描 prompt 裡的邏輯矛盾或不可能達成的指示，例如同一個 prompt 裡同時說「只能用正數」和「要包含負數範例」。
 
-2. **Format-Checker**: Identifies when a prompt expects structured output (like JSON, CSV, or Markdown) but fails to clearly specify the exact format requirements. This agent ensures that all necessary fields, data types, and formatting rules are explicitly defined.
+2. **Format-Checker**：找出 prompt 期待結構化輸出（像 JSON、CSV 或 Markdown），卻沒清楚說明確切格式的情況。這個 agent 確保所有必要欄位、資料型別和格式規則都有明確定義。
 
-3. **Few-Shot-Consistency-Checker**: Examines example conversations to ensure that the assistant's responses actually follow the rules specified in the prompt. This catches mismatches between what the prompt requires and what the examples demonstrate.
+3. **Few-Shot-Consistency-Checker**：檢查範例對話，確認 assistant 的回應確實遵守 prompt 裡訂的規則。這能抓出 prompt 的要求跟範例實際示範不符的地方。
 
-4. **Dev-Rewriter**: After issues are identified, this agent rewrites the prompt to resolve contradictions and clarify format specifications while preserving the original intent.
+4. **Dev-Rewriter**：問題找出來之後，這個 agent 改寫 prompt，解決矛盾、釐清格式規範，同時保留原本的意圖。
 
-5. **Few-Shot-Rewriter**: Updates inconsistent example responses to align with the rules in the prompt, ensuring all examples properly comply with the new developer prompt.
+5. **Few-Shot-Rewriter**：把不一致的範例回應更新成符合 prompt 的規則，確保所有範例都符合新的 developer prompt。
 
-By working together, these agents can systematically identify and fix issues in prompts.
+這些 agent 合作，就能有系統地找出並修正 prompt 的問題。
 
 ```python
 # Import required modules
@@ -91,18 +103,18 @@ set_default_openai_client(_get_openai_client())
 
 ## 2. Data Models
 
-To facilitate structured communication between agents, the system uses Pydantic models to define the expected format for inputs and outputs. These Pydantic models help validate data and ensure consistency throughout the workflow.
+為了讓 agent 之間能做結構化的溝通，系統用 Pydantic model 定義輸入與輸出的預期格式。這些 Pydantic model 幫忙驗證資料，確保整個 workflow 一致。
 
-The data models include:
+資料模型包含：
 
-1. **Role** - An enumeration for message roles (user/assistant)
-2. **ChatMessage** - Represents a single message in a conversation
-3. **Issues** - Base model for reporting detected issues
-4. **FewShotIssues** - Extended model that adds rewrite suggestions for example messages
-5. **MessagesOutput** - Contains optimized conversation messages
-6. **DevRewriteOutput** - Contains the improved developer prompt
+1. **Role** - 訊息角色的 enum（user/assistant）
+2. **ChatMessage** - 代表對話中的一則訊息
+3. **Issues** - 回報偵測到問題的基底 model
+4. **FewShotIssues** - 擴充的 model，加上對範例訊息的改寫建議
+5. **MessagesOutput** - 包含優化後的對話訊息
+6. **DevRewriteOutput** - 包含改進後的 developer prompt
 
-Using Pydantic allows the system to validate that all data conforms to the expected format at each step of the process.
+用 Pydantic，系統就能在流程的每一步驗證資料符合預期格式。
 
 ```python
 class Role(str, Enum):
@@ -144,23 +156,23 @@ class DevRewriteOutput(BaseModel):
     new_developer_message: str
 ```
 
-## 3. Defining the Agents
+## 3. 定義 Agents
 
-In this section, we create specialized AI agents using the `Agent` class from the `openai-agents` package. Looking at these agent definitions reveals several best practices for creating effective AI instructions:
+這一節用 `openai-agents` 套件的 `Agent` class 建立專職的 AI agent。看這些 agent 的定義，可以學到幾項寫出有效 AI instructions 的最佳實務：
 
-### Best Practices in Agent Instructions
+### Agent Instructions 的最佳實務
 
-1. **Clear Scope Definition**: Each agent has a narrowly defined purpose with explicit boundaries. For example, the contradiction checker focuses only on "genuine self-contradictions" and explicitly states that "overlaps or redundancies are not contradictions."
+1. **明確的範圍定義**：每個 agent 的目的都很窄，邊界明確。例如 contradiction checker 只專注在「真正的自我矛盾」，並明說「重疊或冗餘不算矛盾」。
 
-2. **Step-by-Step Process**: Instructions provide a clear methodology, like how the format checker first categorizes the task before analyzing format requirements.
+2. **逐步的流程**：instructions 提供清楚的方法，例如 format checker 會先替任務分類，再分析格式要求。
 
-3. **Explicit Definitions**: Key terms are defined precisely to avoid ambiguity. The few-shot consistency checker includes a detailed "Compliance Rubric" explaining exactly what constitutes compliance.
+3. **明確的定義**：關鍵術語都精確定義，避免歧義。few-shot consistency checker 有一份詳細的 “Compliance Rubric”，明確說明什麼才算符合。
 
-4. **Boundary Setting**: Instructions specify what the agent should NOT do. The few-shot checker explicitly lists what's "Out-of-scope" to prevent over-flagging issues.
+4. **設定界線**：instructions 說明 agent 不該做什麼。few-shot checker 明確列出 “Out-of-scope” 的項目，避免過度標記問題。
 
-5. **Structured Output Requirements**: Each agent has a strictly defined output format with examples, ensuring consistency in the optimization pipeline.
+5. **結構化的輸出要求**：每個 agent 都有嚴格定義的輸出格式並附範例，確保優化 pipeline 的一致性。
 
-These principles create reliable, focused agents that work effectively together in the optimization system. Below we see the complete agent definitions with their detailed instructions.
+這些原則造就可靠、專注、能在優化系統裡有效合作的 agent。下面是完整的 agent 定義和詳細的 instructions。
 
 ````python
 dev_contradiction_checker = Agent(
@@ -355,9 +367,9 @@ fewshot_rewriter = Agent(
 )
 ````
 
-## 4. Using Evaluations to Arrive at These Agents
+## 4. 用 Evaluations 得出這些 Agent
 
-Let's see how we used OpenAI Evals to tune agent instructions and pick the correct model to use. In order to do so we constructed a set of golden examples: each one contains original messages (developer message + user/assistant message) and the changes our optimization workflow should make. Here are two example of golden pairs that we used:
+來看我們怎麼用 OpenAI Evals 調整 agent 的 instructions 並挑選正確的模型。為此我們建立了一組 golden examples：每一組都包含原始訊息（developer message 加 user/assistant 訊息），以及我們的優化 workflow 應該做的修改。下面是我們用的兩組 golden pair 範例：
 
 ```
 [
@@ -440,15 +452,15 @@ Let's see how we used OpenAI Evals to tune agent instructions and pick the corre
 ]
 ```
 
-From these 20 hand labelled golden outputs which cover a range of contradiction issues, few shot issues, format issues, no issues, or a combination of issues, we built a python string check grader to verify two things: whether an issue was detected for each golden pair and whether the detected issue matched the expected one. From this signal, we tuned the agent instructions and which model to use to maximize our accuracy across this evaluation. We landed on the 4.1 model as a balance between accuracy, cost, and speed. The specific prompts we used also follow the 4.1 prompting guide. As you can see, we achieve the correct labels on all 20 golden outputs: identifying the right issues and avoiding false positives. 
+這 20 組人工標註的 golden output 涵蓋各種情況：矛盾問題、few shot 問題、格式問題、沒有問題，或多種問題並存。我們據此建了一個 python string check grader，驗證兩件事：每組 golden pair 有沒有偵測到問題，以及偵測到的問題是否符合預期。靠這個訊號，我們調整 agent 的 instructions 和使用的模型，讓這個評測的準確率最大化。最後我們選了 4.1 模型，在準確率、成本和速度之間取得平衡。我們用的 prompt 也遵循 4.1 prompting guide。如你所見，20 組 golden output 的標籤全部正確：找對問題，也沒有誤判。 
 
 ![Accuracy for the golden set](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/optimizepromptfig1.png)
 
 ![Evaluation for the golden set](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/optimizepromptfig2.png)
 
-## 5. Run Optimization Workflow
+## 5. 執行優化 Workflow
 
-Let's dive into how the optimization system actually works end to end. The core workflow consists of multiple runs of the agents in parallel to efficiently process and optimize prompts.
+來看優化系統從頭到尾實際怎麼運作。核心 workflow 會多次平行執行 agent，有效率地處理並優化 prompt。
 
 ```python
 def _normalize_messages(messages: List[Any]) -> List[Dict[str, str]]:
@@ -525,32 +537,32 @@ async def optimize_prompt_parallel(
 
 ![Trace for the workflow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/optimizepromptfig3.png)
 
-### Understanding the Optimization Workflow
+### 了解優化 Workflow
 
-The `optimize_prompt_parallel` function implements a workflow to maximize efficiency through parallelization:
+`optimize_prompt_parallel` function 實作的 workflow 靠平行化來提高效率：
 
-1. **Parallel Issue Detection**: The first phase runs all checker agents simultaneously:
-   - `dev_contradiction_checker` searches for logical contradictions in the prompt
-   - `format_checker` looks for unclear format specifications
-   - `fewshot_consistency_checker` (if examples exist) checks for mismatches between the prompt and examples
+1. **平行偵測問題**：第一階段同時執行所有 checker agent：
+   - `dev_contradiction_checker` 找 prompt 裡的邏輯矛盾
+   - `format_checker` 找不清楚的格式規範
+   - `fewshot_consistency_checker`（有範例時）檢查 prompt 和範例是否不一致
 
-After the parallel checking phase, the workflow handles dependencies carefully:
+平行檢查之後，workflow 會小心處理相依關係：
 
-2. **Prompt Rewriting (Conditional)**: The `dev_rewriter` agent only runs if contradiction or format issues were detected. This agent depends on the outputs from:
-   - `dev_contradiction_checker` (the `cd_issues` variable)
-   - `format_checker` (the `fi_issues` variable)
+2. **改寫 Prompt（有條件）**：只有偵測到矛盾或格式問題時，才會執行 `dev_rewriter` agent。這個 agent 依賴下面的輸出：
+   - `dev_contradiction_checker`（`cd_issues` 變數）
+   - `format_checker`（`fi_issues` 變數）
 
-3. **Example Rewriting (Conditional)**: The `fewshot_rewriter` agent only runs if example inconsistencies were detected. This agent depends on:
-   - The rewritten prompt (must be done after prompt rewriting)
-   - The original messages
-   - The few-shot issues (the `fs_issues` variable)
+3. **改寫範例（有條件）**：只有偵測到範例不一致時，才會執行 `fewshot_rewriter` agent。這個 agent 依賴：
+   - 改寫後的 prompt（必須在改寫 prompt 之後做）
+   - 原始訊息
+   - few-shot 問題（`fs_issues` 變數）
 
 
-## 6. Examples
+## 6. 範例
 
-Let's see the optimization system in action with some practical examples.
+用幾個實際範例看優化系統運作。
 
-### Example 1: Fixing Contradictions
+### 範例 1：修正矛盾
 
 ````python
 async def example_contradiction():
@@ -641,9 +653,9 @@ await example_contradiction()
     ... (省略 5 行)
     ```
 
-This demonstrates how the system can detect and resolve critical contradictions that could lead to inconsistent outputs or confusion for the model. 
+這示範系統怎麼偵測並解決關鍵矛盾，這些矛盾可能讓輸出不一致，或讓模型困惑。 
 
-### Example 2: Fixing Inconsistencies Between Prompt and Few-Shot Examples
+### 範例 2：修正 Prompt 與 Few-Shot 範例之間的不一致
 
 
 ```python
@@ -703,9 +715,9 @@ await example_fewshot_fix()
     Assistant: {"city":"London","population":9541000}
     ```
 
-This is particularly important because few-shot examples have a strong influence on how models respond. If examples don't follow the stated rules, the model may learn to ignore those rules in favor of mimicking the examples. By ensuring consistency between the prompt instructions and examples, the optimization system creates a more reliable prompt.
+這點特別重要，因為 few-shot 範例對模型的回應影響很大。如果範例不遵守所述規則，模型可能學會忽略規則、改去模仿範例。確保 prompt 指示和範例一致，優化系統就能做出更可靠的 prompt。
 
-### Example 3: Clarifying Formats in a Longer Prompt
+### 範例 3：釐清較長 Prompt 裡的格式
 
 ```python
 async def example_format_issue():
@@ -793,6 +805,18 @@ await example_format_issue()
     ... (省略 6 行)
     ````
 
-This example highlights how the format checker identifies and resolves ambiguous format specifications. The prompt requested a Markdown output and the optimization flow significantly improved these format specifications.
+這個範例突顯 format checker 怎麼找出並解決含糊的格式規範。原本的 prompt 要求輸出 Markdown，優化流程大幅改進了這些格式規範。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Prompt 常見的三類問題是指示矛盾、格式規範不明、和 few-shot 範例不一致，各用一個專職 agent 檢查。
+- 檢查可以平行跑，改寫有相依關係，所以只在偵測到問題時才依序執行 rewriter。
+- 好的 agent instructions 範圍窄、有步驟、術語有定義、寫明不該做什麼、輸出格式嚴格。
+- Few-shot 範例影響力很大，和規則不一致時，模型會去模仿範例而不是遵守規則。
+- 用 golden examples 搭配 Evals，可以量化地選模型和調 instructions。
+
+## 練習
+
+1. 在範例 1 的 prompt 裡再加一條跟原本衝突的指示，執行後看 contradiction checker 有沒有抓到。
+2. 在範例 2 的 few-shot 範例裡故意改一個回應讓它違反規則，確認 few-shot checker 找得出來，且 rewriter 能修正。
+3. 把 `optimize_prompt_parallel` 裡其中一個 checker 的模型換成別的，用你自己準備的幾組 golden pair 比較偵測結果有沒有變。

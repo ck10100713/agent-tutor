@@ -1,72 +1,81 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_github.md
 ---
 
-# GPT Actions library - GitHub
+# GPT Actions 範例庫：GitHub
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_github.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_github.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你把 GPT Action 接到 GitHub，做一個 Pull Request 審查助理。它會抓 PR 的 diff，針對品質和安全給建議，你確認後再自動以留言貼回 PR。
 
+## 學完你會
+- 建立 fine-grained GitHub Personal Access Token，並設好需要的權限。
+- 用 OpenAPI schema 定義「GET PR diff」和「POST 留言到 PR」兩個 action。
+- 在 GPT 設定 Bearer 驗證，並用 owner、repo、PR 編號做測試。
 
+## 開跑前
+- 需要一個有 open pull request 的 GitHub repo。
+- 需要 GitHub Personal Access Token；如果 repo 屬於 SSO 組織，token 可能還需要組織核准。
+- 需要能建立 Custom GPT 的 ChatGPT 帳號。
 
-## Introduction
+## 簡介
 
-This page provides instructions for developers connecting a GPT Action to GitHub. Before proceeding, familiarize yourself with the following resources:
+這一頁是給開發者的指南，說明怎麼把 GPT Action 接到 GitHub。開始之前，先看過這些資料：
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This GPT Action helps developers evaluate the quality and security of a GitHub Pull Request diff. It provides feedback and suggestions for each domain, allowing developers to modify or accept the feedback before automatically submitting it as a comment on the Pull Request.
+這個 GPT Action 幫開發者評估 GitHub Pull Request diff 的品質和安全性。它針對每個面向提供回饋和建議，讓開發者可以修改或接受回饋，再自動以留言的方式送到 Pull Request 上。
 
-## Value & Example Business Use Cases
+## 價值與商業使用情境
 
-### **Value**:
-Users can leverage ChatGPT's natural language capabilities to assist with GitHub Pull Request reviews.
+### **價值**：
+使用者可以利用 ChatGPT 的自然語言能力輔助 GitHub Pull Request 審查。
 
-- **For developers**: Analyze code changes and perform high-quality reviews with instant feedback on proposed modifications.
-- **For organizations**: Ensure diffs adhere to best practices and coding standards, or automatically propose refactored alternatives (additional API requests may be required to define best practices).
-- **Overall**: Boost productivity and ensure higher-quality, more secure code with this AI-powered Code Review assistant.
+- **對開發者**：分析程式碼變更，即時得到對修改的回饋，做出高品質的 review。
+- **對組織**：確保 diff 符合最佳實務和程式碼規範，或自動提出重構的替代方案（要定義最佳實務可能需要額外的 API 請求）。
+- **整體**：這個 AI 驅動的 Code Review 助理能提升生產力，並確保程式碼品質更高、更安全。
 
-### **Example Use Cases**:
-- A reviewer seeks feedback on the quality and security of a proposed code change.
-- An organization encourages adherence to best practices and standards automatically during code review.
+### **使用情境範例**：
+- Reviewer 想知道一個程式碼變更的品質和安全性。
+- 組織希望在 code review 時自動落實最佳實務和標準。
 
-## Demonstration Video:
+## 示範影片：
 [![Watch the video](https://img.youtube.com/vi/bcjybCh-x-Q/0.jpg)](https://www.youtube.com/watch?v=bcjybCh-x-Q)
 
-## Application Information
+## 應用程式資訊
 
-### **Key Links**
-Before starting, explore these resources:
+### **重要連結**
+開始之前，先看看這些資源：
 - [GitHub](https://github.com)
 - [GitHub API Documentation](https://docs.github.com/en/rest/pulls?apiVersion=2022-11-28)
 
-### **Prerequisites**
-Ensure you have a repository with an open pull request.
+### **前置需求**
+確定你有一個有 open pull request 的 repository。
 
-## Application Setup
+## 應用程式設定
 
-### **Select a Pull Request**
-1. Navigate to a repository, e.g., [example PR](https://github.com/microsoft/vscode/pull/229241).
-   - Note the owner (e.g., "microsoft"), repository name (e.g., "vscode"), and PR number (e.g., "229241").
-   - If the repository owner is an SSO organization, your token may need [approval](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/managing-requests-for-personal-access-tokens-in-your-organization#managing-fine-grained-personal-access-token-requests).
-2. Review [how to perform a high-quality code review](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/getting-started/best-practices-for-pull-requests).
+### **選一個 Pull Request**
+1. 進到某個 repository，例如[範例 PR](https://github.com/microsoft/vscode/pull/229241)。
+   - 記下 owner（例如 "microsoft"）、repository 名稱（例如 "vscode"）和 PR 編號（例如 "229241"）。
+   - 如果 repository 的 owner 是 SSO 組織，你的 token 可能需要[核准](https://docs.github.com/en/organizations/managing-programmatic-access-to-your-organization/managing-requests-for-personal-access-tokens-in-your-organization#managing-fine-grained-personal-access-token-requests)。
+2. 看一下[怎麼做高品質的 code review](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/getting-started/best-practices-for-pull-requests)。
 
-### **Generate a "Fine Grained" GitHub Personal Access Token**
-1. Log in to GitHub and go to **Settings**.
-2. Navigate to **Developer settings** > **Fine Grained Personal access tokens**.
-3. Click **Generate new token**, name it, set an expiration date, and select the necessary scopes (e.g., `read:content`, `read&write:pull_requests`).
-4. Copy and securely store the token.
+### **產生 "Fine Grained" GitHub Personal Access Token**
+1. 登入 GitHub，進到 **Settings**。
+2. 前往 **Developer settings** > **Fine Grained Personal access tokens**。
+3. 點 **Generate new token**，取名字、設到期日，並選必要的 scope（例如 `read:content`、`read&write:pull_requests`）。
+4. 複製 token 並安全保存。
 
-## ChatGPT Steps
+## ChatGPT 的步驟
 
 ### **Custom GPT Instructions**
 
-Once you've created a Custom GPT, copy the following into the Instructions panel:
+建好 Custom GPT 之後，把下面內容複製到 Instructions 欄位：
 
 ```
 # **Context:** You support software developers by providing detailed information about their pull request diff content from repositories hosted on GitHub. You help them understand the quality, security and completeness implications of the pull request by providing concise feedback about the code changes based on known best practices. The developer may elect to post the feedback (possibly with their modifications) back to the Pull Request. Assume the developer is familiar with software development.
@@ -84,9 +93,9 @@ Once you've created a Custom GPT, copy the following into the Instructions panel
 
 ### OpenAPI Schema
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 欄位。有疑問的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) 了解這一步的細節。
 
-Below is an example of what connecting to GitHub to GET the Pull Request Diff and POST the Feedback to the Pull Request might look like.
+下面是連到 GitHub 做 GET Pull Request Diff 和 POST Pull Request 回饋的範例。
 
 ```javascript
 openapi: 3.1.0
@@ -194,37 +203,46 @@ paths:
           description: Pull request not found.
 ```
 
-## Authentication Instructions
+## 驗證設定
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面說明怎麼對這個第三方應用程式設定驗證。有疑問的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) 了解這一步的細節。
 
-### In ChatGPT (refer to Step 2 in the Getting Started Example)
+### 在 ChatGPT 裡（參考 Getting Started Example 的 Step 2）
 
-In ChatGPT, click on "Authentication" and choose **"Bearer"**. Enter in the information below. Ensure your token has the permissions described in Application setup, above.
+在 ChatGPT 點 "Authentication"，選 **"Bearer"**，填入下面資訊。確定你的 token 有上面應用程式設定中說明的權限。
 
 - Authentication Type: API Key
 - Auth Type: Bearer
 - API Key 
   <personal_access_token>
 
-### Test the GPT
+### 測試 GPT
 
-You are now ready to test out the GPT. You can enter a simple prompt like "Can you review my pull request? owner: <org_name>, repo: <repo_name>, pull request number: <PR_Number>" and expect to see the following:
+現在可以測試這個 GPT 了。你可以輸入簡單的 prompt，例如 "Can you review my pull request? owner: <org_name>, repo: <repo_name>, pull request number: <PR_Number>"，預期會看到：
 
 ![landing_page.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/landing_page.png)
 
-1. A summary of changes in the referenced pull request(PR).
+1. 所引用 pull request（PR）的變更摘要。
 
 ![First Interaction](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/first_interaction.png)
 
-2. Quality and Security feedback and suggestions to incorporate in the next iteration of the PR.
+2. 品質和安全的回饋，以及下一版 PR 可以採納的建議。
 
 ![First Feedback](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/first_feedback.png)
 
-3. An option to iterate on the feedback or accept it and have the GPT post it directly to the PR as a comment from you. 
+3. 可以選擇繼續調整回饋，或接受它，讓 GPT 直接以你的名義把它當留言貼到 PR 上。 
 
 ![First Interaction](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/final_result.png)
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想要我們優先處理的整合嗎？我們的整合有錯誤嗎？到我們的 github 開 PR 或 issue，我們會去看。*
 
-<!-- tutor:summary -->
+## 重點整理
+- GPT Action 的核心是三件事：Instructions 定義行為、OpenAPI schema 定義能呼叫的 API、Authentication 提供憑證。
+- 這個範例只需要兩個 API：取得 PR diff、對 PR 貼留言。
+- Fine-grained token 只給必要權限，比較安全。
+- 流程設計成讓人先確認回饋再送出，避免 GPT 直接對外發言。
+
+## 練習
+1. 在 Instructions 裡加一條規則，要求回饋一定要分成「品質」和「安全」兩個段落。
+2. 修改 token 權限，拿掉 `read&write:pull_requests` 的寫入權限，測試 GPT 貼留言時會出什麼錯。
+3. 在 OpenAPI schema 加一個 GET 操作，取得 PR 的檔案清單，並在 Instructions 說明何時使用。

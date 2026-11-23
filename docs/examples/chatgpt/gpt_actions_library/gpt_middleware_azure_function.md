@@ -1,78 +1,91 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.ipynb
 ---
-
 # GPT Actions library (Middleware) - Azure Functions
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+教你在 Azure Portal 建一個有 OAuth 保護的 Azure Function，當作 GPT Action 跟其他應用程式之間的 middleware。內容包含建立 Function App、設定 Entra 驗證、用 Postman 測試，最後接上 Custom GPT。
+
+## 學完你會
+
+- 在 Azure Portal 建出 HTTP trigger 的 Azure Function，並用 Easy Auth 加上 Microsoft 登入
+- 取得並整理 `CLIENT_ID`、`TENANT_ID`、`SCOPE`、secret，用 Postman 的 Authorization Code 流程測通
+- 把 Function 的 OpenAPI spec 貼進 GPT Actions，設定 OAuth 並補上 callback URI
+
+## 開跑前
+
+- 需要 Azure Portal 帳號，且有權限建立 Azure Function App 和 Entra App Registration
+- 部分步驟需要 Azure 管理員做 Grant Admin Consent
+- 測試用 Postman
 
 
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building middleware to connect a GPT Action to a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這一頁是給開發者看的，教你做 middleware，把 GPT Action 接到特定應用程式。開始之前，先看過下面這些：
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to build an **Azure Function**, MSFT's cloud-based function builder. This documentation helps a user set up an OAuth-protected Azure Function to connect to a GPT Action, and to a sample application. 
+這個 GPT Action 概述怎麼建 **Azure Function**，也就是 Microsoft 雲端的 function 建置服務。這份文件帶你設定一個有 OAuth 保護的 Azure Function，連到 GPT Action，也連到一個範例應用程式。
 
-### Value + Example Business Use Cases
+### 價值與業務情境
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to Azure Function. This can in a few ways:
+**價值**：使用者可以用 ChatGPT 的自然語言能力直接連到 Azure Function，有幾種好處：
 
-- 100k character limit in GPT Actions: users can use the middleware to pre-process the text response from an API. For example, you can use OpenAI’s API in the middleware to summarize the text before sending it back to ChatGPT.
-- Typically for actions, users are relying on the SaaS API to return text. You can convert the response for the vendor API into easily digestible text, and it can handle different data types such as structured and unstructured data.
-- It can return files instead of just text. This can be useful to surface CSV files for Data Analysis, or bring back an PDF file and ChatGPT will treat it like an upload. 
+- GPT Actions 有 10 萬字元限制：可以用 middleware 先處理 API 回傳的文字。例如在 middleware 裡呼叫 OpenAI API 先做摘要，再回傳給 ChatGPT。
+- 一般 action 都靠 SaaS API 回傳文字。你可以把廠商 API 的回應轉成容易消化的文字，結構化和非結構化資料都能處理。
+- 可以回傳檔案，不只是文字。例如把 CSV 檔拿出來做資料分析，或帶回 PDF 檔，ChatGPT 會把它當成上傳的檔案處理。
 
 
-**Example Use Cases**: 
-- A user needs to look up files in Sharepoint, but needs a middleware app between ChatGPT and Sharepoint
-- A user has built several steps in a row in an Azure function, and needs to be able to kick off that process using ChatGPT
+**範例情境**：
+- 使用者要查 Sharepoint 的檔案，但 ChatGPT 跟 Sharepoint 之間需要一個 middleware app
+- 使用者在 Azure function 裡串了好幾個步驟，想用 ChatGPT 觸發整個流程
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 重要連結
 
-Check out these links from the application before you get started:
+開始前先看這些連結：
 - Application Website: https://learn.microsoft.com/en-us/azure/azure-functions/
 - Application API Documentation: https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference/
 
-### Application Prerequisites
+### 前置條件
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Azure Portal with access to create Azure Function Apps and Azure Entra App Registrations
+開始前，先在你的環境準備好：
+- 有 Azure Portal，並有權限建立 Azure Function App 和 Azure Entra App Registration
 
-## Application Setup
+## 應用程式設定
 
-### Installing the app
+### 安裝 app
 
-You can read more about languages and deployment options for Azure Functions on the left hand side of the documentation [here](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp). 
+左邊的文件目錄有 Azure Functions 支援的語言和部署方式，可以看[這裡](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp)。 
 
-#### Option 1: Use VSCode
+#### 選項 1：用 VSCode
 
-See Microsoft’s documentation [here](https://learn.microsoft.com/en-us/azure/azure-functions/functions-develop-vs-code?tabs=node-v4,python-v2,isolated-process\&pivots=programming-language-javascript) for how to deploy using VSCode. If you have familiarity with this approach, feel free to use it. 
-
-
-#### Option 2: Directly in Azure Portal
-
-See the documentation [here](https://learn.microsoft.com/en-us/azure/azure-functions/functions-create-function-app-portal?pivots=programming-language-javascript) for how to deploy using the Azure portal. We’ll walk through an example here step by step.
+用 VSCode 部署的方式見 Microsoft 的[文件](https://learn.microsoft.com/en-us/azure/azure-functions/functions-develop-vs-code?tabs=node-v4,python-v2,isolated-process\&pivots=programming-language-javascript)。熟悉這種方式的話可以直接用。 
 
 
-##### Part 1: Create Function
+#### 選項 2：直接用 Azure Portal
+
+用 Azure portal 部署的方式見[這份文件](https://learn.microsoft.com/en-us/azure/azure-functions/functions-create-function-app-portal?pivots=programming-language-javascript)。這裡一步一步帶你做一遍。
+
+
+##### 第 1 部分：建立 Function
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/create_function_app.png)
 
-1. Create an [Azure Function app](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp). I used the following settings but you can use anything you are comfortable with. Note that not every language / operating system allows for editing the functions in the console directly - the combination I chose below does. For my walkthrough, I left everything as default and made the selections below. The below settings work out of the box for the SharePoint Node.js solutions [here](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc) and [here](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text). 
+1. 建立 [Azure Function app](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp)。我用下面的設定，你可以用自己習慣的。注意不是每個語言 / 作業系統都能直接在 console 編輯 function，我選的組合可以。我其他都用預設值，只做了下面的選擇。這組設定可以直接用在 SharePoint Node.js 方案，見[這裡](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc)和[這裡](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text)。 
 
    1. Basics
 
-      1. _Do you want to deploy code or container image?:_  **Code**
+      1. _Do you want to deploy code or container image?:_  **Code**
 
       2. _Runtime stack:_ **Node.js**
 
@@ -82,65 +95,65 @@ See the documentation [here](https://learn.microsoft.com/en-us/azure/azure-funct
 
       1. _Enable public access_: **on (need this on to connect to the GPT)**
 
-2. After completing the above, you’ll land on the “Deployments” page. Once the deployment completes (which should only take a few minutes) click on **“Go to Resource”** to go back to the Function App
+2. 做完後會到 “Deployments” 頁面。部署完成（幾分鐘而已）後，點 **“Go to Resource”** 回到 Function App
 
-  > You may get an error the first time you attempt this, click create again and it will likely work. 
+  > 第一次可能會出錯，再按一次 create 通常就會成功。 
 
-##### Part 2: Set up Auth
+##### 第 2 部分：設定驗證
 
-3. On the left-hand side menu of the Azure Function App, click on **Authentication** under the **Settings** menu. 
+3. 在 Azure Function App 左邊選單，點 **Settings** 底下的 **Authentication**。 
 
    1. Add identity provider
 
-   2. Select **Microsoft** as identity provider. 
+   2. identity provider 選 **Microsoft**。 
 
-   3. **Workforce** as tenant type
+   3. tenant type 選 **Workforce**
 
-   4. **Create a new application.** The instructions are fairly similar if you are using an existing application, but it is easier to create a new application as it will have the callback URLs and the API exposed automatically using “Easy Auth”. You can read more about that [**here**](https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization).
+   4. **Create a new application。**用現有的 application 步驟也差不多，但新建比較簡單，因為它會透過 “Easy Auth” 自動設好 callback URL 並開放 API。詳情見[這裡](https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization)。
 
-   5. Leave all the other settings on this page as the default, but feel free to change based on your internal guidelines.
+   5. 這頁其他設定維持預設，也可以依你們內部規範調整。
 
-   6. On the **permissions** tab, click **Add Permission** and add **Files.Read.All** and **Sites.ReadAll**, then **Add.** This allows this application to read files which is important in order to use the Microsoft Graph Search API. If you are not using this for the SharePoint solution [here](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc) and [here](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text) you can skip this.
+   6. 在 **permissions** 分頁，點 **Add Permission**，加入 **Files.Read.All** 和 **Sites.ReadAll**，再按 **Add。**這讓 application 能讀檔案，使用 Microsoft Graph Search API 時需要。如果你不是做 SharePoint 方案（見[這裡](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc)和[這裡](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text)），可以跳過。
 
-4. Once it is created, **click on the enterprise application you just created** (so, leave the Function App page and land on the Enterprise Application that you just spun up)**.** We are now going to give it one more permission, to execute the Azure Function by impersonating the user logging into the application. See [here](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-provider-aad?tabs=workforce-tenant) for more details.
+4. 建好後，**點進剛建立的 enterprise application**（也就是離開 Function App 頁面，進到剛建的 Enterprise Application）**。**接著要再給它一個權限，讓它能模擬登入應用程式的使用者來執行 Azure Function。詳情見[這裡](https://learn.microsoft.com/en-us/azure/app-service/configure-authentication-provider-aad?tabs=workforce-tenant)。
 
-   1. On the main page, click “**View API Permissions”**
+   1. 在主頁點 “**View API Permissions”**
 
-   2. Search for **Microsoft Azure App Service** in the **APIs my organization uses** and find **user\_impersonation** 
+   2. 在 **APIs my organization uses** 搜尋 **Microsoft Azure App Service**，找到 **user\_impersonation** 
 
-   3. Add it, then you’ll need an Admin on Azure Portal to **Grant Admin Consent.**
+   3. 加入後，需要 Azure Portal 的 Admin 來 **Grant Admin Consent。**
 
-5) **Within that enterprise application**, Click on **“Expose an API”** on the left hand menu under **Manage,** then copy the **scope** that was created using the **Copy to Clipboard** button. The scope should look like “api://\<insert-uuid>/user\_impersonation”. **Save this for later as** `SCOPE`**.**
+5) **在那個 enterprise application 裡**，點左邊 **Manage** 底下的 **“Expose an API”**，用 **Copy to Clipboard** 按鈕複製建好的 **scope**。scope 長得像 “api://\<insert-uuid>/user\_impersonation”。**存起來之後當作** `SCOPE`**。**
 
-6) Click on **“Authentication”** on the left hand menu under **Manage**
+6) 點左邊 **Manage** 底下的 **“Authentication”**
 
-   1. Under the **Web** section, you’ll notice one callback URI was added automatically. Add the Postman redirect URI (<https://oauth.pstmn.io/v1/callback>) for testing.
+   1. 在 **Web** 區塊會看到已自動加入一個 callback URI。再加上測試用的 Postman redirect URI (<https://oauth.pstmn.io/v1/callback>)。
 
-7) On the left-hand side, go to **Overview**. Copy the **application (client) ID** and the **directory (tenant) ID** and **save for later as** `CLIENT_ID` **and** `TENANT_ID`**.**
+7) 左邊選 **Overview**。複製 **application (client) ID** 和 **directory (tenant) ID**，**存起來當作** `CLIENT_ID` **和** `TENANT_ID`**。**
 
-##### Part 3: Set up Test Function
+##### 第 3 部分：建立測試 Function
 
-8. Leave the page by going home and then back to your **Function App.**
+8. 回首頁，再回到你的 **Function App。**
 
-9. Click on **Create Function.** For this example, I’m going to develop it in the portal, but you can also use VSCode or another IDE.
+9. 點 **Create Function。**這個範例我直接在 portal 開發，你也可以用 VSCode 或其他 IDE。
 
-   1. Choose **HTTP trigger**
+   1. 選 **HTTP trigger**
 
-   2. For **Authorization Level,** you can choose any key type you want.
+   2. **Authorization Level** 可以選任何 key 類型。
 
-      1. Note this may error out the first time, but it is likely the Function did create, do a refresh of the page to check.
+      1. 注意第一次可能會報錯，但 Function 多半已經建好了，重新整理頁面確認。
 
-10. Click on the function you just created (You may need to click refresh to see it). Click on **Get Function URL** and save it to test in Postman. You will also use this when creating the OpenAPI spec later when you put it into the GPT. 
+10. 點進剛建好的 function（可能要按 refresh 才看得到）。點 **Get Function URL** 並存起來，用 Postman 測試。之後貼進 GPT 時，建立 OpenAPI spec 也會用到。 
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/get_function_url.png)
 
-11. Go back to the function app and click on **Configuration.** Show the value for the `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` variable, copy it (click advanced edit to copy it), and **save it for later.**  
+11. 回到 function app，點 **Configuration。**顯示 `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET` 這個變數的值，複製起來（點 advanced edit 才能複製），**存起來備用。**  
 
-At this point, you should have a test function created, and you should have saved a **client id, tenant id, secret, scope, and function URL**. You are now ready to test out the authentication in Postman
+到這裡，你應該有一個測試 function，並存好 **client id、tenant id、secret、scope 和 function URL**。可以用 Postman 測試驗證了
 
-##### Part 4: Test Authentication in Postman
+##### 第 4 部分：用 Postman 測試驗證
 
-12. Try to hit endpoint you created in Postman using those OAuth settings:
+12. 用下面的 OAuth 設定，在 Postman 打剛建的 endpoint：
 
     1. **Grant Type:** Authorization Code
 
@@ -148,47 +161,47 @@ At this point, you should have a test function created, and you should have save
 
     3. **Auth Token URL**: https://login.microsoftonline.com/`TENANT_ID`/oauth2/v2.0/token
 
-    4. **Client ID:** `CLIENT_ID` from step 7 above
+    4. **Client ID:** 上面步驟 7 的 `CLIENT_ID`
 
-    5. **Client secret:** `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET `from step 11 above
+    5. **Client secret:** 上面步驟 11 的 `MICROSOFT_PROVIDER_AUTHENTICATION_SECRET `
 
-    6. **Scope**: `SCOPE` from step 5 above
+    6. **Scope**: 上面步驟 5 的 `SCOPE`
 
     7. **Client credentials**: Send client credentials in body
 
-13. You will need to click **Get New Access Token**, and then hit the endpoint you saved in step 10 above. If it was successful, you should get this response: `”This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.”`
+13. 要先點 **Get New Access Token**，再打步驟 10 存的 endpoint。成功的話，會得到這個回應：`”This HTTP triggered function executed successfully. Pass a name in the query string or in the request body for a personalized response.”`
 
-##### Part 5: Set up your Application on an Azure Function
+##### 第 5 部分：在 Azure Function 設定你的應用程式
 
-This should be done separately and is specific to your app. See the [SharePoint Cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc) for an example of that. 
+這要另外做，內容依你的 app 而定。範例見 [SharePoint Cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc)。 
 
-##### Part 6: Set up ChatGPT
+##### 第 6 部分：設定 ChatGPT
 
-14. Generate an OpenAPI spec for your endpoint. 
+14. 幫你的 endpoint 產生 OpenAPI spec。 
 
-15. Paste that into the Actions section of a GPT, and choose OAuth as the authentication type. Fill out the OAuth settings the same way you did for Postman above. 
+15. 貼進 GPT 的 Actions 區塊，authentication type 選 OAuth。OAuth 設定跟上面 Postman 一樣。 
 
-16. Once you save the action, you will see a callback URI at the bottom of the GPT configuration. Copy that URL, then go **back to your Function App in the Azure Portal**.
+16. 儲存 action 後，會在 GPT 設定的最下面看到 callback URI。複製那個 URL，然後**回到 Azure Portal 的 Function App**。
 
-17. Click on **Authentication** under **Settings**, then click on your Entra application.
+17. 點 **Settings** 底下的 **Authentication**，再點你的 Entra application。
 
-18. Once you are there, then click **Authentication** under the **Manage** section.
+18. 進去後，點 **Manage** 區塊的 **Authentication**。
 
-19. Add a new Redirect URI under the **Web** section of that page, and paste in the Callback URI you got from step 16, then click Save. 
+19. 在那頁的 **Web** 區塊新增一個 Redirect URI，貼上步驟 16 拿到的 Callback URI，然後 Save。 
 
-20. Test out the GPT and it should work as expected.
+20. 測試 GPT，應該會正常運作。
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-*This is application specific. See [SharePoint Cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc) for an example*
+*這部分依應用程式而定。範例見 [SharePoint Cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc)*
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 後，把下面的文字複製到 Actions 面板。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
-Below is an example of what connecting to this Middleware might look like. You'll need to insert your application's & function's information in this section. 
+下面是連到這個 Middleware 的範例。你要在這裡填入自己應用程式和 function 的資訊。 
 
 ```python
 openapi: 3.1.0
@@ -208,34 +221,44 @@ paths:
 {the rest of this is specific to your application}
 ```
 
-## Authentication Instructions
+## 驗證說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面是這個第三方應用程式的驗證設定。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
-### Pre-Action Steps
+### Action 前置步驟
 
-Before you set up authentication in ChatGPT, please take the following steps in the application.
+在 ChatGPT 設定驗證之前，先在應用程式做下面的步驟。
 
-*Follow steps 2 & 4 above to setting up authentication*
+*照上面的步驟 2 和 4 設定驗證*
+### 在 ChatGPT 設定
 
-### In ChatGPT
+在 ChatGPT 點 "Authentication"，選 **"OAuth"**，填入下面的資訊。 
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+- **Client ID**: *見上面步驟 12*
+- **Client Secret**: *同上*
+- **Authorization URL**: *同上*
+- **Token URL**: *同上*
+- **Scope**: *同上*
+- **Token**: *同上*
 
-- **Client ID**: *see step 12 above*
-- **Client Secret**: *ditto*
-- **Authorization URL**: *ditto*
-- **Token URL**: *ditto*
-- **Scope**: *ditto*
-- **Token**: *ditto*
+### Action 後續步驟
 
-### Post-Action Steps
+ChatGPT 的驗證設好後，照下面在應用程式做完最後設定。 
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+*測試方式見上面*
 
-*See above for testing out this application*
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想優先支援的整合嗎？我們的整合有錯嗎？歡迎到 github 開 PR 或 issue，我們會看。*
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Azure Function 當 middleware，可以繞過 GPT Actions 10 萬字元的限制，先摘要再回傳，也能回傳檔案。
+- Easy Auth 會自動設好 callback URL 並開放 API，所以新建 application 比用現有的省事。
+- Function 要能被 GPT 呼叫，需要 `user_impersonation` 權限加上 Admin Consent，並且開啟 public access。
+- 有兩個地方要設 redirect URI：Postman 測試用的，和 ChatGPT 儲存 action 後給的 callback URI。
+
+## 練習
+
+1. 照步驟 12 到 13 在 Postman 設好 OAuth，確認拿到預設的成功訊息。
+2. 把 function 的回傳內容改成你自己的文字，重新用 Postman 打一次確認。
+3. 為你的 function 寫 OpenAPI spec 貼進 GPT Actions，並把 ChatGPT 給的 callback URI 加到 Entra 的 Web Redirect URI，實際讓 GPT 呼叫一次。

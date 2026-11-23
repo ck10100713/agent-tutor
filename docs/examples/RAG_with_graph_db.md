@@ -1,57 +1,66 @@
 ---
-translated: false
+translated: true
 source: examples/RAG_with_graph_db.ipynb
 ---
-
-# RAG with a Graph database
+# 用 Graph Database 做 RAG
 
 > 原文：[examples/RAG_with_graph_db.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/RAG_with_graph_db.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把 LLM 搭配圖資料庫 [Neo4j](https://neo4j.com/) 做 Retrieval Augmented Generation (RAG)，用 Amazon 商品資料做一個商品推薦 chatbot。從建 vector index、用 LLM 抽 entity、產生 Cypher 查詢，一路做到 Langchain agent 和純程式碼兩種版本。
+
+## 學完你會
+- 把 JSON 資料匯入 Neo4j，並對各類屬性建立 vector index。
+- 用 LLM 從使用者 prompt 抽出 entity，再用 template 產生 Cypher 查詢，比直接讓 LLM 寫 Cypher 穩。
+- 比較 Langchain agent 和純程式碼兩種做法，知道什麼情況選哪個。
+
+## 開跑前
+- 需要 OpenAI API key。
+- 需要一個 Neo4j 資料庫可以連線（含 GDS 的 cosine similarity 函式）。
 
 
 
-This notebook shows how to use LLMs in combination with [Neo4j](https://neo4j.com/), a graph database, to perform Retrieval Augmented Generation (RAG).
+這個 notebook 示範怎麼把 LLM 搭配圖資料庫 [Neo4j](https://neo4j.com/) 使用，做 Retrieval Augmented Generation (RAG)。
 
-### Why use RAG?
+### 為什麼用 RAG？
 
-If you want to use LLMs to generate answers based on your own content or knowledge base, instead of providing large context when prompting the model, you can fetch the relevant information in a database and use this information to generate a response. 
+如果你想讓 LLM 根據自己的內容或知識庫產生答案，與其在 prompt 裡塞很大的 context，不如去資料庫撈出相關資訊，再用這些資訊產生回應。 
 
-This allows you to:
-- Reduce hallucinations
-- Provide relevant, up to date information to your users
-- Leverage your own content/knowledge base
+這樣可以：
+- 減少 hallucination
+- 提供使用者相關且最新的資訊
+- 善用你自己的內容或知識庫
 
-### Why use a graph database?
+### 為什麼用圖資料庫？
 
-If you have data where relationships between data points are important and you might want to leverage that, then it might be worth considering graph databases instead of traditional relational databases.
+如果你的資料裡，資料點之間的關係很重要、而且你想利用這些關係，那就值得考慮圖資料庫，而不是傳統的關聯式資料庫。
 
-Graph databases are good to address the following:
-- Navigating deep hierarchies
-- Finding hidden connections between items
-- Discovering relationships between items
+圖資料庫擅長處理：
+- 走訪很深的階層結構
+- 找出項目之間隱藏的關聯
+- 發現項目之間的關係
 
-### Use cases 
+### 使用情境 
 
-Graph databases are particularly relevant for recommendation systems, network relationships or analysing correlation between data points.  
+圖資料庫特別適合推薦系統、網路關係，或分析資料點之間的相關性。  
 
-Example use cases for RAG with graph databases include:
-- Recommendation chatbot
-- AI-augmented CRM 
-- Tool to analyse customer behavior with natural language
+用圖資料庫做 RAG 的例子包括：
+- 推薦 chatbot
+- AI 強化的 CRM 
+- 用自然語言分析客戶行為的工具
 
-Depending on your use case, you can assess whether using a graph database makes sense. 
+你可以依自己的情境評估用圖資料庫是否合理。 
 
-In this notebook, we will build a **product recommendation chatbot**, with a graph database that contains Amazon products data.
+這個 notebook 會做一個**商品推薦 chatbot**，圖資料庫裡放的是 Amazon 商品資料。
 
 
-## Setup
+## 環境設定
 
-We will start by installing and importing the relevant libraries.  
+先安裝並匯入需要的套件。  
 
-Make sure you have your OpenAI account set up and you have your OpenAI API key handy. 
+請確認你已經有 OpenAI 帳號，並準備好 OpenAI API key。 
 
 ```python
 # Optional: run to install the libraries locally if you haven't already 
@@ -79,13 +88,13 @@ load_dotenv()
 # print(os.environ["OPENAI_API_KEY"])
 ```
 
-## Dataset
+## 資料集
 
-We will use a dataset that was created from a relational database and converted to a json format, creating relationships between entities with the completions API.
+我們用的資料集是從關聯式資料庫轉成 json 格式，並用 completions API 建立 entity 之間的關係。
 
-We will then load this data into the graph db to be able to query it.
+接著把資料載入圖資料庫，才能查詢。
 
-### Loading dataset
+### 載入資料集
 
 ```python
 # Loading a json dataset from a file
@@ -139,7 +148,7 @@ df.head()
     4             1650         2125.98
     ```
 
-### Connecting to db
+### 連到資料庫
 
 ```python
 # DB credentials
@@ -158,7 +167,7 @@ graph = Neo4jGraph(
 )
 ```
 
-### Importing data
+### 匯入資料
 
 ```python
 def sanitize(text):
@@ -184,13 +193,13 @@ for obj in jsonData:
     graph.query(query)
 ```
 
-## Querying the database
+## 查詢資料庫
 
-### Creating vector indexes
+### 建立 vector index
 
-In order to efficiently search our database for terms closely related to user queries, we need to use embeddings. To do this, we will create vector indexes on each type of property.
+為了有效率地在資料庫裡找出跟使用者 query 相近的詞，需要用到 embedding。做法是對每一種屬性建立 vector index。
 
-We will be using the OpenAIEmbeddings Langchain utility. It's important to note that Langchain adds a pre-processing step, so the embeddings will slightly differ from those generated directly with the OpenAI embeddings API.
+我們用 Langchain 的 OpenAIEmbeddings 工具。要注意 Langchain 會加一個前處理步驟，所以產生的 embedding 會跟直接用 OpenAI embeddings API 的結果略有不同。
 
 ```python
 from langchain.vectorstores.neo4j_vector import Neo4jVector
@@ -230,9 +239,9 @@ for t in entities_list:
     embed_entities(t)
 ```
 
-### Querying the database directly
+### 直接查詢資料庫
 
-Using `GraphCypherQAChain`, we can generate queries against the database using Natural Language.
+用 `GraphCypherQAChain`，可以用自然語言產生對資料庫的查詢。
 
 ```python
 from langchain.chains import GraphCypherQAChain
@@ -269,15 +278,15 @@ Help me find curtains
     "I'm sorry, but I don't have any information to help you find curtains."
     ```
 
-### Extracting entities from the prompt
+### 從 prompt 抽出 entity
 
-However, there is little added value here compared to just writing the Cypher queries ourselves, and it is prone to error.
+不過這樣跟自己寫 Cypher 查詢比起來沒有多少附加價值，而且容易出錯。
 
-Indeed, asking an LLM to generate a Cypher query directly might result in the wrong parameters being used, whether it's the entity type or the relationship type, as is the case above.
+讓 LLM 直接產生 Cypher 查詢，可能會用錯參數，不管是 entity 型別還是 relationship 型別，上面的結果就是這樣。
 
-We will instead use LLMs to decide what to search for, and then generate the corresponding Cypher queries using templates.
+所以我們改成用 LLM 決定要搜尋什麼，再用 template 產生對應的 Cypher 查詢。
 
-For this purpose, we will instruct our model to find relevant entities in the user prompt that can be used to query our database.
+為此，我們指示模型從使用者 prompt 裡找出可以拿來查資料庫的相關 entity。
 
 ```python
 entity_types = {
@@ -407,11 +416,11 @@ for q in example_queries:
     }
     ```
 
-### Generating queries
+### 產生查詢
 
-Now that we know what to look for, we can generate the corresponding Cypher queries to query our database. 
+知道要找什麼之後，就能產生對應的 Cypher 查詢去查資料庫。 
 
-However, the entities extracted might not be an exact match with the data we have, so we will use the GDS cosine similarity function to return products that have relationships with entities similar to what the user is asking.
+不過抽出來的 entity 不一定跟資料完全吻合，所以我們用 GDS 的 cosine similarity 函式，回傳跟使用者要找的 entity 相似的 entity 所關聯的商品。
 
 ```python
 def create_embedding(text):
@@ -495,15 +504,15 @@ for r in result:
     Womens Satin Semi-Stitched Lehenga Choli (2763742)
     ```
 
-### Finding similar items 
+### 找相似商品 
 
-We can then leverage the graph db to find similar products based on common characteristics.
+接著可以利用圖資料庫，根據共同特徵找出相似的商品。
 
-This is where the use of a graph db really comes into play.
+這就是圖資料庫真正派上用場的地方。
 
-For example, we can look for products that are the same category and have another characteristic in common, or find products that have relationships to the same entities. 
+例如可以找同類別、又有另一個共同特徵的商品，或是跟相同 entity 有關聯的商品。 
 
-This criteria is arbitrary and completely depends on what is the most relevant in relation to your use case.
+這個條件是任意的，完全看你的使用情境裡什麼最相關。
 
 ```python
 # Adjust the relationships_threshold to return products that have more or less relationships in common
@@ -612,15 +621,15 @@ for product_id in product_ids:
     ... (省略 5 行)
     ```
 
-## Final result
+## 最終結果
 
-Now that we have all the pieces working, we will stitch everything together. 
+所有零件都能運作之後，把它們串起來。
 
-We can also add a fallback option to do a product name/title similarity search if we can't find relevant entities in the user prompt.
+我們也可以加一個 fallback：如果在使用者 prompt 裡找不到相關 entity，就改做商品名稱/標題的相似度搜尋。
 
-We will explore 2 options, one with a Langchain agent for a conversational experience, and one that is more deterministic based on code only. 
+這裡會探索兩種做法，一種用 Langchain agent 做對話式體驗，另一種完全靠程式碼、結果比較確定。 
 
-Depending on your use case, you might choose one or the other option and tailor it to your needs. 
+依你的使用情境選擇其中一種，再依需求調整。 
 
 ```python
 def query_db(params):
@@ -667,11 +676,11 @@ print(similarity_search(prompt_similarity))
     [{'id': 1925202, 'name': 'Blackout Curtain'}, {'id': 1706369, 'name': '100% Blackout Curtains'}, {'id': 1922352, 'name': 'Embroidered Leaf Pattern Semi Sheer Curtains'}, {'id': 2243426, 'name': 'Unicorn Curtains'}]
     ```
 
-### Building a Langchain agent
+### 建立 Langchain agent
 
-We will create a Langchain agent to handle conversations and probing the user for more context.
+我們建一個 Langchain agent 來處理對話，並向使用者追問更多 context。
 
-We need to define exactly how the agent should behave, and give it access to our query and similarity search tools.
+要明確定義 agent 的行為，並讓它能用我們的查詢和相似度搜尋 tool。
 
 ```python
 from langchain.agents import Tool, AgentExecutor, LLMSingleActionAgent, AgentOutputParser
@@ -927,13 +936,13 @@ agent_interaction(prompt3)
     > Finished chain.
     ```
 
-### Building a code-only experience
+### 建立純程式碼版本
 
-As our experiments show, using an agent for this type of task might not be the best option.
+從實驗結果看，這類任務用 agent 可能不是最好的選擇。
 
-Indeed, the agent seems to retrieve results from the tools, but comes up with made-up responses. 
+agent 似乎有從 tool 取得結果，但回答卻是自己編的。
 
-For this specific use case, if the conversational aspect is less relevant, we can actually create a function that will call our previously-defined tasks and provide an answer.
+對這個情境來說，如果對話性沒那麼重要，我們可以寫一個函式，去呼叫前面定義好的各個工作，再給出答案。
 
 ```python
 import logging
@@ -1030,25 +1039,34 @@ answer(prompt4)
      {'id': 2516354, 'name': 'Suitcase Music Box'}]
     ```
 
-## Conclusion
+## 結論
 
-### User experience
+### 使用者體驗
 
-When the primary objective is to extract specific information from our database, Large Language Models (LLMs) can significantly enhance our querying capabilities.
+如果主要目標是從資料庫取出特定資訊，大型語言模型 (LLM) 可以大幅強化查詢能力。
 
-However, it's crucial to base much of this process on robust code logic to ensure a foolproof user experience.
+不過整個流程的大部分，要建立在穩固的程式邏輯上，才能保證使用者體驗萬無一失。
 
-For crafting a genuinely conversational chatbot, further exploration in prompt engineering is necessary, possibly incorporating few-shot examples. This approach helps mitigate the risk of generating inaccurate or misleading information and ensures more precise responses.
+要做出真正會聊天的 chatbot，需要在 prompt engineering 上多下功夫，可能還要加入 few-shot 範例。這樣能降低產生不正確或誤導資訊的風險，讓回答更精準。
 
-Ultimately, the design choice depends on the desired user experience. For instance, if the aim is to create a visual recommendation system, the importance of a conversational interface is less relevant.
+最終的設計選擇取決於想要的使用者體驗。例如目標是做視覺化的推薦系統，對話介面就沒那麼重要。
 
-### Working with a knowledge graph 
+### 使用 knowledge graph 
 
-Retrieving content from a knowledge graph adds complexity but can be useful if you want to leverage connections between items. 
+從 knowledge graph 取內容會增加複雜度，但如果你想善用項目之間的連結，就很有用。 
 
-The querying part of this notebook would work on a relational database as well, the knowledge graph comes in handy when we want to couple the results with similar items that the graph is surfacing. 
+這個 notebook 的查詢部分在關聯式資料庫上也能做，knowledge graph 的好處是，可以把查詢結果跟圖找出來的相似項目結合。 
 
-Considering the added complexity, make sure using a knowledge graph is the best option for your use case.
-If it is the case, feel free to refine what this cookbook presents to match your needs and perform even better!
+考慮到多出來的複雜度，先確認 knowledge graph 真的是你的情境的最佳選擇。
+如果是，歡迎調整這份 cookbook 的內容來符合你的需求，做得更好！
 
-<!-- tutor:summary -->
+## 重點整理
+- RAG 是先從資料庫撈相關資訊再讓模型回答，可以減少 hallucination、用上自己的資料。
+- 圖資料庫適合關係很重要的資料，例如推薦系統。
+- 直接讓 LLM 產生 Cypher 容易用錯 entity 或 relationship 型別，用 LLM 抽 entity 加上 template 查詢更可靠。
+- 這個任務下 agent 可能編造回答，純程式碼流程更穩，要不要對話式看使用體驗需求。
+
+## 練習
+1. 換一個使用者 prompt，看抽 entity 的步驟抽出什麼，再看對應的 Cypher 查詢結果。
+2. 調整找相似商品的條件（例如改成同類別加另一個共同屬性），比較推薦結果。
+3. 把純程式碼版本的 fallback 邏輯改掉，例如抽不到 entity 時改用不同的相似度搜尋，觀察輸出的變化。

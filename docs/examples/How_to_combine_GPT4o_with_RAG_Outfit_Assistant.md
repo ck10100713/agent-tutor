@@ -1,35 +1,45 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.ipynb
 ---
-
-# How to combine GPT4o mini with RAG to create a clothing matchmaker app
+# 結合 GPT-4o mini 和 RAG 做一個服裝搭配 app
 
 > 原文：[examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.ipynb)
 
+## 這篇在做什麼
+
+這篇做一個服裝搭配 app：先用 GPT-4o mini 看衣服圖片，抽出顏色、風格和類型，再用 embedding 加 cosine similarity 的 RAG 去資料庫找搭得起來的單品。最後再讓模型回頭檢查建議是否真的合適，當作 guardrail。
+
+## 學完你會
+
+- 用 embedding 模型為商品資料建立向量，並平行化處理，寫出自己的 cosine similarity 檢索函式（支援 threshold 和 top_k）
+- 用 `gpt-4o-mini` 分析圖片，靠輸出格式規範、清楚指令和 one-shot 範例，穩定拿到 JSON 結果
+- 把圖片分析結果接到資料集過濾與 RAG 檢索，並用 yes/no 的二次檢查過濾掉不搭的建議
+
+## 開跑前
+
+- OpenAI API key
+- 資料夾裡的 `sample_styles.csv` 和範例圖片（`data/sample_clothes/`）
+- embedding 會花一點點費用：約 1K 筆資料大約 $0.001，完整 44K 筆約 $0.07。也可以改載入預先算好的 embedding 跳過這步
+
+歡迎來到服裝搭配 app 的 Jupyter Notebook！這個專案示範 GPT-4o mini 模型分析服裝圖片、抽出顏色、風格和類型等關鍵特徵的能力。我們 app 的核心就是 OpenAI 開發的這個進階圖像分析模型，它讓我們能準確辨識輸入服裝的特性。
+
+GPT-4o mini 是一個小型模型，結合了自然語言處理和圖像辨識，能理解文字與視覺輸入並據此回應，而且延遲低。
+
+在 GPT-4o mini 的能力之上，我們用自訂的比對演算法和 RAG 技術，在知識庫中搜尋能搭配已辨識特徵的單品。這個演算法會考慮顏色相容性和風格一致性等因素，給使用者合適的推薦。透過這份 notebook，我們想展示這些技術在建立服裝推薦系統上的實際應用。
+
+GPT-4o mini 加 RAG（Retrieval-Augmented Generation）的組合有幾個好處：
+
+1. **Contextual Understanding（情境理解）**：GPT-4o mini 能分析輸入圖片並理解情境，例如圖中的物件、場景和活動。這讓它在各個領域，不論是室內設計、烹飪或教育，都能給出更準確、更相關的建議或資訊
+2. **豐富的知識庫**：RAG 把 GPT-4 的生成能力和檢索元件結合，檢索元件能存取跨領域的大量資料。這代表系統可以根據廣泛的知識提供建議或洞察，從歷史事實到科學概念都有
+3. **客製化**：這個做法很容易針對各種應用中的特定使用者需求或偏好做客製。不管是依使用者的藝術品味調整建議，或依學生的學習程度提供教育內容，系統都能調整成提供個人化的體驗
+
+整體來說，GPT-4o mini 加 RAG 的做法，結合生成式和檢索式 AI 的優點，為各種時尚相關應用提供快速、強大又彈性的解法。
 
 
-<!-- tutor:goals -->
+### 環境設定
 
-
-Welcome to the Clothing Matchmaker App Jupyter Notebook! This project demonstrates the power of the GPT-4o mini model in analyzing images of clothing items and extracting key features such as color, style, and type. The core of our app relies on this advanced image analysis model developed by OpenAI, which enables us to accurately identify the characteristics of the input clothing item.
-
-GPT-4o mini is a small model that combines natural language processing with image recognition, allowing it to understand and generate responses based on both text and visual inputs with low latency.
-
-Building on the capabilities of the GPT-4o mini model, we employ a custom matching algorithm and the RAG technique to search our knowledge base for items that complement the identified features. This algorithm takes into account factors like color compatibility and style coherence to provide users with suitable recommendations. Through this notebook, we aim to showcase the practical application of these technologies in creating a clothing recommendation system.
-
-Using the combination of GPT-4o mini + RAG (Retrieval-Augmented Generation) offers several advantages:
-
-1. **Contextual Understanding**: GPT-4o mini can analyze input images and understand the context, such as the objects, scenes, and activities depicted. This allows for more accurate and relevant suggestions or information across various domains, whether it's interior design, cooking, or education.
-2. **Rich Knowledge Base**: RAG combines the generative capabilities of GPT-4 with a retrieval component that accesses a large corpus of information across different fields. This means the system can provide suggestions or insights based on a wide range of knowledge, from historical facts to scientific concepts.
-3. **Customization**: The approach allows for easy customization to cater to specific user needs or preferences in various applications. Whether it's tailoring suggestions to a user's taste in art or providing educational content based on a student's learning level, the system can be adapted to deliver personalized experiences.
-
-Overall, the GPT-4o mini + RAG approach offers a fast, powerful, and flexible solution for various fashion-related applications, leveraging the strengths of both generative and retrieval-based AI techniques.
-
-
-### Environment Setup
-
-First we will install the necessary dependencies, then import the libraries and write some utility functions that we will use later on. 
+先安裝需要的套件，接著 import 函式庫，並寫一些之後會用到的 utility function。
 
 ```python
 %pip install openai --quiet
@@ -61,8 +71,8 @@ EMBEDDING_MODEL = "text-embedding-3-large"
 EMBEDDING_COST_PER_1K_TOKENS = 0.00013
 ```
 
-### Creating the Embeddings
-We will now set up the knowledge base by choosing a database and generating embeddings for it. I am using the `sample_styles.csv` file for this in the data folder. This is a sample of a bigger dataset that contains `~44K` items. This step can also be replaced by using an out-of-the-box vector database. For example, you can follow one of [these cookbooks](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases) to set up your vector database.
+### 建立 Embedding
+現在要選一個資料庫並為它產生 embedding，來建立知識庫。這裡用 data 資料夾裡的 `sample_styles.csv`，它是一個含 `~44K` 筆資料的較大資料集的樣本。這一步也可以換成使用現成的 vector database，例如照著[這些 cookbook](https://github.com/openai/openai-cookbook/tree/main/examples/vector_databases) 之一來建立你的 vector database。
 
 ```python
 styles_filepath = "data/sample_clothes/sample_styles.csv"
@@ -71,7 +81,7 @@ print(styles_df.head())
 print("Opened dataset successfully. Dataset has {} items of clothing.".format(len(styles_df)))
 ```
 
-Now we will generate embeddings for the entire dataset. We can parallelize the execution of these embeddings to ensure that the script scales up for larger datasets. With this logic, the time to create embeddings for the full `44K` entry dataset decreases from ~4h to ~2-3min. 
+現在對整個資料集產生 embedding。我們可以平行化這些 embedding 的執行，讓腳本能擴展到更大的資料集。用這個邏輯，替完整的 `44K` 筆資料建立 embedding 的時間，從約 4 小時降到約 2 到 3 分鐘。
 
 ```python
 ## Batch Embedding Logic
@@ -144,10 +154,10 @@ def generate_embeddings(df, column_name):
     print("Embeddings created successfully.")
 ```
 
-#### Two options for creating the embeddings: 
-The next line will **create the embeddings** for the sample clothes dataset. This will take around 0.02s to process and another ~30s to write the results to a local .csv file. The process is using our `text_embedding_3_large` model which is priced at `$0.00013/1K` tokens. Given that the dataset has around `1K` entries, the following operation will cost approximately `$0.001`. If you decide to work with the entire dataset of `44K` entries, this operation will take 2-3min to process and it will cost approximately `$0.07`.
+#### 建立 embedding 的兩種選擇：
+下一行會替範例服裝資料集**建立 embedding**。處理約需 0.02 秒，另外再花約 30 秒把結果寫入本機 .csv 檔。這個流程用我們的 `text_embedding_3_large` 模型，價格是 `$0.00013/1K` token。資料集約有 `1K` 筆，下面的操作大約花 `$0.001`。如果你決定使用完整的 `44K` 筆資料集，這個操作要 2 到 3 分鐘處理，大約花 `$0.07`。
 
-**If you would not like to proceed with creating your own embeddings**, we will use a dataset of pre-computed embeddings. You can skip this cell and uncomment the code in the following cell to proceed with loading the pre-computed vectors. This operation takes ~1min to load all the data in memory.
+**如果你不想自己建立 embedding**，我們會用一個預先算好 embedding 的資料集。你可以跳過這個 cell，並取消下一個 cell 的註解來載入預先算好的向量。這個操作約需 1 分鐘把所有資料載入記憶體。
 
 ```python
 generate_embeddings(styles_df, 'productDisplayName')
@@ -166,17 +176,17 @@ print(styles_df.head())
 print("Opened dataset successfully. Dataset has {} items of clothing along with their embeddings.".format(len(styles_df)))
 ```
 
-### Building the Matching Algorithm
+### 建立比對演算法
 
-In this section, we'll develop a cosine similarity retrieval algorithm to find similar items in our dataframe. We'll utilize our custom cosine similarity function for this purpose. While the `sklearn` library offers a built-in cosine similarity function, recent updates to its SDK have led to compatibility issues, prompting us to implement our own standard cosine similarity calculation.
+這一節要開發 cosine similarity 檢索演算法，在 dataframe 裡找相似的商品。我們會用自己寫的 cosine similarity function。`sklearn` 雖然有內建的 cosine similarity function，但它 SDK 最近的更新造成相容性問題，所以我們自己實作標準的 cosine similarity 計算。
 
-If you already have a vector database set up, you can skip this step. Most standard databases come with their own search functions, which simplify the subsequent steps outlined in this guide. However, we aim to demonstrate that the matching algorithm can be tailored to meet specific requirements, such as a particular threshold or a specified number of matches returned.
+如果你已經設好 vector database，可以跳過這一步。大多數標準資料庫都有自己的搜尋函式，能簡化後續步驟。不過我們想示範的是，比對演算法可以依特定需求客製，例如特定的 threshold 或回傳指定數量的比對結果。
 
-The `find_similar_items` function accepts four parameters:
-- `embedding`: The embedding for which we want to find a match.
-- `embeddings`: A list of embeddings to search through for the best matches.
-- `threshold` (optional): This parameter specifies the minimum similarity score for a match to be considered valid. A higher threshold results in closer (better) matches, while a lower threshold allows for more items to be returned, though they may not be as closely matched to the initial `embedding`.
-- `top_k` (optional): This parameter determines the number of items to return that exceed the given threshold. These will be the top-scoring matches for the provided `embedding`.
+`find_similar_items` 函式接受四個參數：
+- `embedding`：我們想找比對結果的那個 embedding
+- `embeddings`：要從中搜尋最佳比對的 embedding 清單
+- `threshold`（選填）：指定比對要被視為有效所需的最低相似度分數。threshold 越高，結果越接近（越好）；越低則能回傳更多商品，但可能和原本的 `embedding` 沒那麼相近
+- `top_k`（選填）：決定要回傳多少個超過 threshold 的商品，這些會是和給定 `embedding` 分數最高的比對結果
 
 ```python
 def cosine_similarity_manual(vec1, vec2):
@@ -228,24 +238,24 @@ def find_matching_items_with_rag(df_items, item_descs):
    return similar_items
 ```
 
-### Analysis Module
+### 分析模組
 
-In this module, we leverage `gpt-4o-mini` to analyze input images and extract important features like detailed descriptions, styles, and types. The analysis is performed through a straightforward API call, where we provide the URL of the image for analysis and request the model to identify relevant features.
+這個模組用 `gpt-4o-mini` 分析輸入圖片，抽出詳細描述、風格和類型等重要特徵。分析透過一個簡單的 API 呼叫完成：我們提供要分析的圖片 URL，並請模型找出相關特徵。
 
-To ensure the model returns accurate results, we use specific techniques in our prompt:
+為了讓模型回傳準確的結果，我們在 prompt 裡用了幾個特定技巧：
 
-1. **Output Format Specification**: We instruct the model to return a JSON block with a predefined structure, consisting of:
-   - `items` (str[]): A list of strings, each representing a concise title for an item of clothing, including style, color, and gender. These titles closely resemble the `productDisplayName` property in our original database.
-   - `category` (str): The category that best represents the given item. The model selects from a list of all unique `articleTypes` present in the original styles dataframe.
-   - `gender` (str): A label indicating the gender the item is intended for. The model chooses from the options `[Men, Women, Boys, Girls, Unisex]`.
+1. **指定輸出格式**：我們指示模型回傳一個結構預先定義好的 JSON 區塊，包含：
+   - `items`（str[]）：字串清單，每個字串是一件服裝的簡短標題，包含風格、顏色和性別。這些標題很接近我們原始資料庫裡的 `productDisplayName` 屬性
+   - `category`（str）：最能代表該商品的類別。模型從原始 styles dataframe 裡所有不重複的 `articleTypes` 清單中選擇
+   - `gender`（str）：標示商品適用性別的標籤。模型從 `[Men, Women, Boys, Girls, Unisex]` 選項中選擇
 
-2. **Clear and Concise Instructions**: 
-   - We provide clear instructions on what the item titles should include and what the output format should be. The output should be in JSON format, but without the `json` tag that the model response normally contains.
+2. **清楚簡潔的指示**：
+   - 我們清楚說明商品標題該包含什麼，以及輸出格式是什麼。輸出要是 JSON 格式，但不要有模型回應通常會帶的 `json` 標記
 
-3. **One Shot Example**: 
-   - To further clarify the expected output, we provide the model with an example input description and a corresponding example output. Although this may increase the number of tokens used (and thus the cost of the call), it helps to guide the model and results in better overall performance.
+3. **One Shot 範例**：
+   - 為了進一步說明預期的輸出，我們給模型一個範例輸入描述和對應的範例輸出。這可能會增加用掉的 token 數（也就增加呼叫成本），但能引導模型，整體表現更好
 
-By following this structured approach, we aim to obtain precise and useful information from the `gpt-4o-mini` model for further analysis and integration into our database.
+透過這個結構化的做法，我們希望從 `gpt-4o-mini` 模型取得精確、有用的資訊，供後續分析和整合進我們的資料庫。
 
 ````python
 def analyze_image(image_base64, subcategories):
@@ -284,17 +294,17 @@ def analyze_image(image_base64, subcategories):
     return features
 ````
 
-### Testing the Prompt with Sample Images
+### 用範例圖片測試 Prompt
 
-To evaluate the effectiveness of our prompt, let's load and test it with a selection of images from our dataset. We'll use images from the `"data/sample_clothes/sample_images"` folder, ensuring a variety of styles, genders, and types. Here are the chosen samples:
+為了評估 prompt 的效果，我們從資料集中載入並測試幾張圖片。我們用 `"data/sample_clothes/sample_images"` 資料夾裡的圖片，確保有多樣的風格、性別和類型。選的範例如下：
 
-- `2133.jpg`: Men's shirt
-- `7143.jpg`: Women's shirt
-- `4226.jpg`: Casual men's printed t-shirt
+- `2133.jpg`：男士襯衫
+- `7143.jpg`：女士襯衫
+- `4226.jpg`：休閒男士印花 T 恤
 
-By testing the prompt with these diverse images, we can assess its ability to accurately analyze and extract relevant features from different types of clothing items and accessories.
+用這些多樣的圖片測試 prompt，就能評估它從不同服裝和配件中準確分析並抽出相關特徵的能力。
 
-We need a utility function to encode the .jpg images in base64
+我們需要一個 utility function，把 .jpg 圖片編碼成 base64
 
 ```python
 import base64
@@ -328,17 +338,17 @@ display(Image(filename=reference_image))
 print(image_analysis)
 ```
 
-Next, we process the output from the image analysis and use it to filter and display matching items from our dataset. Here's a breakdown of the code:
+接著，我們處理圖片分析的輸出，用它來過濾並顯示資料集中比對到的商品。程式碼說明如下：
 
-1. **Extracting Image Analysis Results**: We extract the item descriptions, category, and gender from the `image_analysis` dictionary.
+1. **擷取圖片分析結果**：我們從 `image_analysis` dictionary 取出商品描述、類別和性別
 
-2. **Filtering the Dataset**: We filter the `styles_df` DataFrame to include only items that match the gender from the image analysis (or are unisex) and exclude items of the same category as the analyzed image.
+2. **過濾資料集**：我們過濾 `styles_df` DataFrame，只保留符合圖片分析性別（或 unisex）的商品，並排除與被分析圖片同類別的商品
 
-3. **Finding Matching Items**: We use the `find_matching_items_with_rag` function to find items in the filtered dataset that match the descriptions extracted from the analyzed image.
+3. **尋找比對商品**：我們用 `find_matching_items_with_rag` 函式，在過濾後的資料集中找出符合圖片分析所抽出描述的商品
 
-4. **Displaying Matching Items**: We create an HTML string to display images of the matching items. We construct the image paths using the item IDs and append each image to the HTML string. Finally, we use `display(HTML(html))` to render the images in the notebook.
+4. **顯示比對商品**：我們建立一個 HTML 字串來顯示比對商品的圖片。用商品 ID 組出圖片路徑，並把每張圖片附加到 HTML 字串。最後用 `display(HTML(html))` 在 notebook 裡渲染圖片
 
-This cell effectively demonstrates how to use the results of image analysis to filter a dataset and visually display items that match the analyzed image's characteristics.
+這個 cell 有效示範了怎麼用圖片分析的結果過濾資料集，並視覺化顯示符合被分析圖片特徵的商品。
 
 ```python
 # Extract the relevant features from the analysis
@@ -374,20 +384,20 @@ display(HTML(html))
 
 ### Guardrails
 
-In the context of using Large Language Models (LLMs) like GPT-4o mini, "guardrails" refer to mechanisms or checks put in place to ensure that the model's output remains within desired parameters or boundaries. These guardrails are crucial for maintaining the quality and relevance of the model's responses, especially when dealing with complex or nuanced tasks.
+在使用 GPT-4o mini 這類大型語言模型（LLM）的情境中，「guardrails」是指為了確保模型輸出維持在期望的參數或範圍內而設置的機制或檢查。這些 guardrail 對維持模型回應的品質和相關性很重要，尤其是處理複雜或微妙的任務時。
 
-Guardrails are useful for several reasons:
+guardrail 有用的原因有幾個：
 
-1. **Accuracy**: They help ensure that the model's output is accurate and relevant to the input provided.
-2. **Consistency**: They maintain consistency in the model's responses, especially when dealing with similar or related inputs.
-3. **Safety**: They prevent the model from generating harmful, offensive, or inappropriate content.
-4. **Contextual Relevance**: They ensure that the model's output is contextually relevant to the specific task or domain it is being used for.
+1. **準確性**：幫助確保模型輸出對輸入準確且相關
+2. **一致性**：維持模型回應的一致性，尤其是處理相似或相關的輸入時
+3. **安全性**：防止模型產生有害、冒犯或不適當的內容
+4. **情境相關性**：確保模型的輸出和它所用在的特定任務或領域相關
 
-In our case, we are using GPT-4o mini to analyze fashion images and suggest items that would complement an original outfit. To implement guardrails, we can **refine results**: After obtaining initial suggestions from GPT-4o mini, we can send the original image and the suggested items back to the model. We can then ask GPT-4o mini to evaluate whether each suggested item would indeed be a good fit for the original outfit.
+在我們的案例中，我們用 GPT-4o mini 分析時尚圖片，並建議能搭配原本穿搭的單品。要實作 guardrail，我們可以**精煉結果**：從 GPT-4o mini 拿到初步建議後，把原始圖片和建議的單品送回給模型，請 GPT-4o mini 評估每個建議的單品是不是真的適合原本的穿搭。
 
-This gives the model the ability to self-correct and adjust its own output based on feedback or additional information. By implementing these guardrails and enabling self-correction, we can enhance the reliability and usefulness of the model's output in the context of fashion analysis and recommendation.
+這讓模型能根據回饋或額外資訊，自我修正並調整自己的輸出。透過實作這些 guardrail 並啟用自我修正，我們可以在時尚分析和推薦的情境中，提升模型輸出的可靠性和實用性。
 
-To facilitate this, we write a prompt that asks the LLM for a simple "yes" or "no" answer to the question of whether the suggested items match the original outfit or not. This binary response helps streamline the refinement process and ensures clear and actionable feedback from the model.
+為了做到這點，我們寫了一個 prompt，請 LLM 對「建議的單品是否搭配原本穿搭」這個問題只回答簡單的「yes」或「no」。這種二元回應能簡化精煉流程，並確保從模型得到清楚、可執行的回饋。
 
 ````python
 def check_match(reference_image_base64, suggested_image_base64):
@@ -431,7 +441,7 @@ def check_match(reference_image_base64, suggested_image_base64):
     return features
 ````
 
-Finally, let's determine which of the items identified above truly complement the outfit.
+最後，來判斷上面找到的單品中，哪些真的能搭配這套穿搭。
 
 ```python
 # Select the unique paths for the generated images
@@ -451,20 +461,32 @@ for path in paths:
         print(match["reason"])
 ```
 
-We can observe that the initial list of potential items has been further refined, resulting in a more curated selection that aligns well with the outfit. Additionally, the model provides explanations for why each item is considered a good match, offering valuable insights into the decision-making process.
+可以看到，最初的潛在單品清單被進一步精煉，得到一個更精選、和穿搭很搭的結果。此外，模型還解釋為什麼每個單品被認為是好搭配，讓我們看到它的決策過程。
 
-### Conclusion
+### 結論
 
-In this Jupyter Notebook, we explored the application of GPT-4o mini and other machine learning techniques to the domain of fashion. We demonstrated how to analyze images of clothing items, extract relevant features, and use this information to find matching items that complement an original outfit. Through the implementation of guardrails and self-correction mechanisms, we refined the model's suggestions to ensure they are accurate and contextually relevant.
+在這份 Jupyter Notebook 裡，我們探索了 GPT-4o mini 和其他機器學習技術在時尚領域的應用。我們示範了如何分析服裝圖片、抽出相關特徵，並用這些資訊找出能搭配原本穿搭的單品。透過實作 guardrail 和自我修正機制，我們精煉了模型的建議，確保它們準確且符合情境。
 
-This approach has several practical uses in the real world, including:
+這個做法在真實世界有幾個實際用途，包括：
 
-1. **Personalized Shopping Assistants**: Retailers can use this technology to offer personalized outfit recommendations to customers, enhancing the shopping experience and increasing customer satisfaction.
-2. **Virtual Wardrobe Applications**: Users can upload images of their own clothing items to create a virtual wardrobe and receive suggestions for new items that match their existing pieces.
-3. **Fashion Design and Styling**: Fashion designers and stylists can use this tool to experiment with different combinations and styles, streamlining the creative process.
+1. **個人化購物助理**：零售商可以用這項技術為顧客提供個人化的穿搭推薦，提升購物體驗和顧客滿意度
+2. **虛擬衣櫥應用**：使用者可以上傳自己衣服的圖片來建立虛擬衣櫥，並收到能搭配現有單品的新品建議
+3. **時尚設計與造型**：時尚設計師和造型師可以用這個工具嘗試不同的組合和風格，簡化創作流程
 
-However, one of the considerations to keep in mind is **cost**. The use of LLMs and image analysis models can incur costs, especially if used extensively. It's important to consider the cost-effectiveness of implementing these technologies. `gpt-4o-mini` is priced at `$0.01` per 1000 tokens. This adds up to `$0.00255` for one 256px x 256px image.
+不過要注意的一點是**成本**。使用 LLM 和圖像分析模型可能產生費用，尤其是大量使用的時候。評估導入這些技術的成本效益很重要。`gpt-4o-mini` 的價格是每 1000 個 token `$0.01`，一張 256px x 256px 的圖片加起來是 `$0.00255`。
 
-Overall, this notebook serves as a foundation for further exploration and development in the intersection of fashion and AI, opening doors to more personalized and intelligent fashion recommendation systems.
+整體來說，這份 notebook 是在時尚和 AI 交會處進一步探索與開發的基礎，為更個人化、更聰明的時尚推薦系統打開大門。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- RAG 的流程是先把資料變成 embedding，再用相似度檢索找出相關項目，這篇是用圖片分析的結果當查詢
+- 檢索演算法可以自己寫，用 threshold 控制品質、`top_k` 控制數量，已有 vector database 的話就直接用它內建的搜尋
+- 要讓模型穩定輸出 JSON，靠的是指定結構、清楚的指示和一個 one-shot 範例，代價是多一點 token
+- guardrail 的做法之一是把初步結果送回模型做 yes/no 二次檢查，讓它自我修正
+- 圖片分析會按 token 計費，大量使用前要先估成本
+
+## 練習
+
+1. 把 `find_similar_items` 的 `threshold` 和 `top_k` 調高或調低，觀察回傳的搭配商品數量與品質怎麼變。
+2. 換一張不在範例裡的服裝圖片，用 base64 編碼後丟給圖片分析的 prompt，確認回傳的 `items`、`category`、`gender` 格式正確，並看看過濾和檢索後的結果。
+3. 修改 guardrail 的 prompt，讓模型除了 yes/no 之外，也輸出一句不搭的原因，並只保留 yes 的單品，比較精煉前後的清單差異。

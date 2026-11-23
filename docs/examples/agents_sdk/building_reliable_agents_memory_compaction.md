@@ -1,75 +1,87 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/building_reliable_agents_memory_compaction.ipynb
 ---
-
-# Building Reliable Agents with Memory and Compaction
+# 用 Memory 和 Compaction 打造可靠的 Agent
 
 > 原文：[examples/agents_sdk/building_reliable_agents_memory_compaction.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/building_reliable_agents_memory_compaction.ipynb)
 
-Cookbook for building evidence review agent that uses compaction and memory from Agents SDK.
+這份 cookbook 用 Agents SDK 的 compaction 和 memory，做一個證據審查 agent。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 OpenAI Agents SDK 做一個合規調查用的證據審查 agent，資料是合成的。先從最簡單的 sandbox agent 開始，再加上 compaction 和 memory 兩個可靠性機制，最後產出一份可供人工審閱的 memo。
 
+## 學完你會
 
-This Cookbook shows how to build an evidence review agent for a synthetic compliance investigation using the OpenAI Agents SDK.
+- 用 `Manifest` 建立 sandbox 工作區，並用 `SandboxAgent` 搭配 `Filesystem()` 和 `Shell()` 讓 agent 讀檔、寫 memo
+- 用 `Compaction()`、`StaticCompactionPolicy` 或強制 checkpoint 讓長時間的對話不被 context window 撐爆
+- 用 `Memory()` 只存「工作流程的經驗」，並判斷什麼該進 memory、什麼該留在 memo
 
-You will start with a simple sandbox agent, then add two reliability primitives:
+## 開跑前
 
-- **Compaction** lets you support long-running conversations despite finite context windows by carrying forward the state needed for later turns while reducing context size.
-- **Memory** lets future sandbox-agent runs reuse workflow lessons from prior runs without replaying every previous turn.
+- Python 3.10 以上，安裝 `openai-agents`
+- 環境變數 `OPENAI_API_KEY`
+- 本機要是 Unix-like 環境（`UnixLocalSandboxClient` 需要）
+- `RUN_AGENT` 預設是 `False`，不會呼叫模型；要真的跑才設 `RUN_AGENT = True`
 
-The reliability pattern is straightforward: compaction helps the current run continue, memory helps later runs start with useful workflow guidance, and the generated memo remains the human-reviewed source of truth for the investigation.
+這份 Cookbook 示範怎麼用 OpenAI Agents SDK，為一個合成的合規調查建立證據審查 agent。
 
-References:
+你會先從簡單的 sandbox agent 開始，再加上兩個可靠性機制：
+
+- **Compaction**：在 context window 有限的前提下支援長時間對話，把後續回合需要的狀態帶下去，同時縮小 context。
+- **Memory**：讓之後的 sandbox agent 執行可以重用先前的工作流程經驗，不用把每一輪舊對話重播一遍。
+
+這個可靠性模式很直接：compaction 讓當前這次執行能繼續，memory 讓後面的執行一開始就有有用的流程指引，而產出的 memo 仍是由人審閱、作為調查依據的唯一來源。
+
+參考資料：
 
 - [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
 - [Agents SDK sessions](https://openai.github.io/openai-agents-python/sessions/)
 - [Agents SDK sandboxing](https://openai.github.io/openai-agents-python/ref/sandbox/)
 
-## Use Case: Evidence Review Agent for a Compliance Investigation
+## 使用情境：合規調查的證據審查 Agent
 
-A compliance team is investigating whether a vendor exception followed internal policy. The evidence arrives as a small set of files: policy language, exception notes, audit observations, approval records, and remediation plans.
+合規團隊在調查某個廠商例外是否符合內部政策。證據是一小批檔案：政策條文、例外說明、稽核觀察、核准紀錄和改善計畫。
 
-The agent's job is not to become the investigation record. Its job is to help a reviewer move through the evidence, keep track of what changed, and write a concise memo that separates supported findings from open questions.
+這個 agent 的工作不是變成調查紀錄本身，而是幫審查人員走過這些證據、追蹤哪裡有變動，並寫出一份簡潔的 memo，把有證據支持的發現和未解問題分開。
 
-This makes the example useful for memory and compaction because the investigation has three traits that show up in real work:
+這個例子很適合講 memory 和 compaction，因為這類調查有三個真實工作中常見的特徵：
 
-- **The record changes over time.** Later documents may narrow or supersede an earlier assumption.
-- **The conversation can become long-running.** A reviewer may ask follow-up questions, request revisions, and return to the same work later.
-- **The final artifact needs provenance.** The memo should cite evidence and preserve uncertainty instead of flattening the review into a confident but unsupported conclusion.
+- **紀錄會隨時間變動。** 後來的文件可能縮小或取代先前的假設。
+- **對話可能變得很長。** 審查人員可能追問、要求修改，之後再回來接著做。
+- **最終產出需要來源依據。** memo 要引用證據、保留不確定性，不能把審查壓扁成一個信心滿滿但沒有依據的結論。
 
-## Where This Pattern Applies
+## 這個模式適用在哪
 
-Although this notebook uses a compliance review, the same pattern applies anywhere knowledge workers review evolving context and produce a human-auditable artifact.
+雖然這份 notebook 用合規審查當例子，但只要是知識工作者在審視不斷變化的資訊、並產出可供人稽核的成果，同樣的模式都適用。
 
-Good fits include:
+適合的情境包括：
 
-- Customer support teams applying new policy updates to open escalations.
-- Security teams reviewing incident evidence and writing incident summaries.
-- Finance teams reconciling exceptions across policies, approvals, and audit notes.
-- Product teams updating competitive positioning after new launches or model releases.
-- Legal or procurement teams reviewing contracts, emails, and approval histories.
-- M&A teams absorbing new business rules, operating procedures, and diligence notes.
+- 客服團隊把新的政策更新套用到進行中的升級案件。
+- 資安團隊審查事件證據並撰寫事件摘要。
+- 財務團隊對照政策、核准和稽核紀錄來核對例外。
+- 產品團隊在新產品或新模型發布後更新競品定位。
+- 法務或採購團隊審閱合約、email 和核准歷程。
+- 併購團隊吸收新的業務規則、作業程序和盡職調查筆記。
 
-In each case, compaction keeps the active review viable as context grows, memory carries reusable workflow lessons forward, and the final artifact remains the reviewed output.
+每個情境裡，compaction 讓進行中的審查在 context 變大時還能繼續，memory 把可重用的流程經驗帶下去，最終產出仍是經過審閱的成果。
 
-## What You'll Build
+## 你會做出什麼
 
-The use case is a compliance evidence review. A team receives policy documents, exception notes, audit findings, approvals, and remediation plans over time. The agent helps review the evidence, preserve uncertainty, and produce a concise memo with citations.
+情境是合規證據審查。團隊會陸續收到政策文件、例外說明、稽核發現、核准紀錄和改善計畫。agent 協助審查證據、保留不確定性，並產出附引用的簡潔 memo。
 
-You will build:
+你會建立：
 
-1. A synthetic evidence workspace with a folder structure, manifest, and output directory.
-2. A simple `SandboxAgent` that can inspect files and write a memo.
-3. A compaction checkpoint for long-running work.
-4. SDK memory generation for reusable workflow lessons.
-5. A combined run that uses sandbox tools, compaction, memory, and generated artifacts together.
+1. 一個合成的證據工作區，有資料夾結構、manifest 和輸出目錄。
+2. 一個簡單的 `SandboxAgent`，能檢視檔案並寫 memo。
+3. 給長時間工作用的 compaction checkpoint。
+4. 用 SDK memory 產生可重用的流程經驗。
+5. 一次把 sandbox 工具、compaction、memory 和產出檔案全部串起來的執行。
 
-You can inspect the notebook without making model calls because `RUN_AGENT` defaults to `False`. Set `RUN_AGENT = True` only when you want to execute the live sandbox workflow.
+`RUN_AGENT` 預設為 `False`，所以不用呼叫模型也能看這份 notebook。只有想執行真正的 sandbox 流程時才設成 `True`。
 
-### Table of Contents
+### 目錄
 
 - [Use Case](#use-case-evidence-review-agent-for-a-compliance-investigation)
 - [Where This Pattern Applies](#where-this-pattern-applies)
@@ -85,16 +97,16 @@ You can inspect the notebook without making model calls because `RUN_AGENT` defa
 - [Step 4: Run With Both Compaction and Memory](#step-4-run-with-both-compaction-and-memory)
 - [Inspect Generated Artifacts](#inspect-generated-artifacts)
 
-## Prerequisites
+## 前置需求
 
-To run the live agent workflow, you need:
+要跑真正的 agent 流程，你需要：
 
-- Python 3.10 or later.
-- The `openai-agents` package.
-- An OpenAI API key available as `OPENAI_API_KEY`.
-- A local Unix-like environment for `UnixLocalSandboxClient`. The notebook uses synthetic files created from the sandbox `Manifest`, so no external dataset is required.
+- Python 3.10 以上。
+- `openai-agents` 套件。
+- 環境變數 `OPENAI_API_KEY` 裡有 OpenAI API key。
+- 本機是 Unix-like 環境，給 `UnixLocalSandboxClient` 用。這份 notebook 用 sandbox `Manifest` 建立的合成檔案，所以不需要外部資料集。
 
-The notebook is safe to inspect without credentials because `RUN_AGENT` defaults to `False`. Set `RUN_AGENT = True` only when you want to execute the model-backed sandbox run.
+沒有憑證也可以安全地看這份 notebook，因為 `RUN_AGENT` 預設是 `False`。只有想執行由模型驅動的 sandbox 流程時才設成 `True`。
 
 
 ```python
@@ -102,11 +114,11 @@ The notebook is safe to inspect without credentials because `RUN_AGENT` defaults
 %pip install --upgrade openai-agents
 ```
 
-## Setup
+## 設定
 
-The notebook writes all synthetic files under `examples/agents_sdk/.tmp/evidence_review_memory_compaction/`. It does not require external data.
+這份 notebook 把所有合成檔案寫在 `examples/agents_sdk/.tmp/evidence_review_memory_compaction/` 底下，不需要外部資料。
 
-By default, tracing is disabled because some organizations use Zero Data Retention (ZDR), where trace ingestion may be blocked. For synthetic data or non-ZDR environments, you can set `ENABLE_TRACING = True` to inspect traces while developing.
+預設會關掉 tracing，因為有些組織使用 Zero Data Retention (ZDR)，trace 上傳可能被擋。如果是合成資料或非 ZDR 環境，開發時可以設 `ENABLE_TRACING = True` 來看 trace。
 
 ```python
 from __future__ import annotations
@@ -140,64 +152,64 @@ print({
 })
 ```
 
-## Using Agents SDK in This Notebook
+## 在這份 Notebook 裡使用 Agents SDK
 
-A **sandbox agent** is an Agents SDK agent that runs with a controlled workspace. In this notebook, that workspace contains synthetic evidence files, a `manifest.csv`, an output folder, and SDK-generated memory files.
+**sandbox agent** 是在受控工作區裡執行的 Agents SDK agent。這份 notebook 的工作區包含合成證據檔、`manifest.csv`、輸出資料夾，以及 SDK 產生的 memory 檔。
 
-The sandbox gives the agent a bounded place to inspect files and write artifacts. Instead of pasting every document into the prompt, the application creates a workspace and lets the agent use capabilities such as:
+sandbox 給 agent 一個有邊界的地方檢視檔案、寫產出。應用程式不用把每份文件貼進 prompt，而是建立工作區，讓 agent 用這些 capability：
 
-- `Filesystem()` to read and write workspace files.
-- `Shell()` to list files, inspect documents, and search across batches.
-- `Compaction()` to support long-running reviews when the active context grows.
-- `Memory()` to store reusable workflow lessons for future sandbox-agent runs.
+- `Filesystem()`：讀寫工作區檔案。
+- `Shell()`：列出檔案、檢視文件、跨批次搜尋。
+- `Compaction()`：在 context 變大時支援長時間審查。
+- `Memory()`：儲存可重用的流程經驗，給未來的 sandbox agent 執行用。
 
-The memo remains the human-reviewed artifact. Tools help the agent work, compaction helps it continue, memory helps future runs improve, and generated artifacts hold the reviewable output.
+memo 仍是由人審閱的成果。工具幫 agent 做事，compaction 讓它能繼續，memory 讓未來的執行更好，產出檔案則存放可供審閱的結果。
 
-## Memory vs. Compaction
+## Memory 和 Compaction 的差別
 
-A useful way to separate the concepts is to ask what each one is allowed to carry forward.
+分辨這兩個概念的好方法，是問它們各自「可以往後帶什麼」。
 
-| Question | Compaction | Memory |
+| 問題 | Compaction | Memory |
 |---|---|---|
-| What does it help with? | Continuing one long-running run when context grows. | Improving future runs with reusable workflow lessons. |
-| What does it summarize? | The active conversation and working state. | Patterns, preferences, and process lessons worth reusing. |
-| Should it store investigation conclusions? | No. It can preserve working state, but the memo is the reviewed artifact. | No. Store workflow lessons, not case-specific facts. |
-| When is it useful? | Mid-review, especially before later batches or follow-up turns. | Across repeated reviews of similar evidence workflows. |
+| 它幫什麼忙？ | 在 context 變大時，讓單次長時間執行繼續下去。 | 用可重用的流程經驗改善未來的執行。 |
+| 它摘要什麼？ | 當前的對話和工作狀態。 | 值得重用的模式、偏好和流程經驗。 |
+| 該存調查結論嗎？ | 不該。可以保留工作狀態，但 memo 才是審閱過的成果。 | 不該。存流程經驗，不存個案事實。 |
+| 什麼時候有用？ | 審查中途，尤其是在後面的批次或追問之前。 | 在重複審查類似證據流程時跨次使用。 |
 
-For this notebook, the compliance memo is the source of truth for the investigation output. Memory is intentionally scoped to reviewer preferences and workflow habits, such as using the manifest first, preserving uncertainty, and keeping superseded assumptions visible.
+這份 notebook 裡，合規 memo 是調查成果的依據。memory 刻意只限定在審查人員的偏好和工作習慣，例如先看 manifest、保留不確定性、讓被取代的假設仍然看得到。
 
-## Folder Structure and Manifest
+## 資料夾結構與 Manifest
 
-The agent works from a small file workspace. The folder structure is simple on purpose: evidence files are grouped by batch, generated outputs go under `outputs/`, and the manifest gives the agent a compact map of the available documents.
+agent 在一個小型檔案工作區裡工作。資料夾結構刻意做得簡單：證據檔按批次分組，產出放在 `outputs/`，manifest 則給 agent 一份精簡的文件地圖。
 
-### The Manifest Feature
+### Manifest 功能
 
-In the Agents SDK, a `Manifest` is the fresh-session workspace contract for a sandbox agent. It describes the files, directories, mounts, environment, users, groups, and related workspace configuration that should exist when a new sandbox session starts.
+在 Agents SDK 裡，`Manifest` 是 sandbox agent 全新 session 的工作區契約。它描述新 sandbox session 啟動時應該存在的檔案、目錄、mount、環境變數、使用者、群組和相關工作區設定。
 
-The local SDK implementation defines these core fields:
+本機 SDK 實作定義了這些核心欄位：
 
-| Manifest field | What it controls | How to use it in this Cookbook |
+| Manifest 欄位 | 控制什麼 | 在這份 Cookbook 怎麼用 |
 |---|---|---|
-| `root` | Workspace root path. Defaults to `/workspace`. | Keep the default unless a sandbox provider expects a different root. |
-| `entries` | Files, directories, local files, local directories, repos, or mounts to materialize. | Put `README.md`, `manifest.csv`, input documents, and `outputs/` here. |
-| `environment` | Environment variables available when the sandbox starts. | Use only for non-secret runtime configuration. Keep credentials out of prompts and committed notebooks. |
-| `users` / `groups` | Sandbox-local OS accounts and groups for providers that support them. | Usually unnecessary for a Cookbook, useful for production isolation. |
-| `extra_path_grants` | Additional path grants, especially useful for Unix-local workflows. | Use sparingly when a sandbox needs scoped read/write access to host paths. |
-| `remote_mount_command_allowlist` | Commands allowed against remote mounts. | Keep narrow when mounting external storage or data rooms. |
+| `root` | 工作區根路徑，預設 `/workspace`。 | 除非 sandbox provider 要求不同的根目錄，否則維持預設。 |
+| `entries` | 要實體化的檔案、目錄、本機檔案、本機目錄、repo 或 mount。 | 把 `README.md`、`manifest.csv`、輸入文件和 `outputs/` 放這裡。 |
+| `environment` | sandbox 啟動時可用的環境變數。 | 只放非機密的 runtime 設定。憑證不要放進 prompt 或 commit 進 notebook。 |
+| `users` / `groups` | sandbox 內部的 OS 帳號與群組，限支援的 provider。 | Cookbook 通常用不到，production 做隔離時有用。 |
+| `extra_path_grants` | 額外的路徑授權，特別適合 Unix-local 流程。 | sandbox 需要對 host 路徑有限定範圍的讀寫權限時，少量使用。 |
+| `remote_mount_command_allowlist` | 允許對遠端 mount 執行的指令。 | 掛載外部儲存或資料室時，範圍要窄。 |
 
-Manifest entry paths should be workspace-relative. Avoid absolute paths and `..` escapes so the same agent can move between Unix-local, Docker, and hosted sandbox providers.
+Manifest entry 的路徑要用相對於工作區的路徑。避免絕對路徑和 `..` 跳脫，這樣同一個 agent 才能在 Unix-local、Docker 和託管 sandbox provider 之間搬移。
 
 
-### Folder and Manifest Best Practices
+### 資料夾與 Manifest 最佳實務
 
-- Put source documents, manifests, helper files, and output directories in the `Manifest` instead of pasting large content into the prompt.
-- Put longer task instructions in workspace files such as `README.md`, `task.md`, or `AGENTS.md`; keep agent instructions focused on behavior and boundaries.
-- Use stable document IDs and a machine-readable manifest file so generated memos can cite sources and reviewers can inspect the path back to evidence.
-- Let `Memory()` manage its own memory artifacts. By default, sandbox memory uses `memories/` and `sessions/` under the workspace.
-- Keep generated artifacts under `outputs/` so the application can inspect, copy, validate, or archive them after the run.
-- Keep mount scopes narrow. If you mount a data room, mount only what the agent should read or write.
-- Treat secrets as runtime configuration injected by your application or sandbox provider, not as prompt text or committed manifest content.
-- Prefer a small synthetic `File(...)` or `Dir(...)` entry for a tutorial, then switch to `LocalDir`, `GitRepo`, or storage mounts for production-sized datasets.
+- 把來源文件、manifest、輔助檔和輸出目錄放進 `Manifest`，不要把大量內容貼進 prompt。
+- 較長的任務說明放在工作區檔案裡，例如 `README.md`、`task.md` 或 `AGENTS.md`；agent 的 instructions 只講行為和界線。
+- 用穩定的文件 ID 和機器可讀的 manifest 檔，讓產出的 memo 能引用來源，審查人員也能順著路徑回到證據。
+- 讓 `Memory()` 自己管理 memory 檔案。預設情況下，sandbox memory 使用工作區底下的 `memories/` 和 `sessions/`。
+- 產出檔放在 `outputs/`，這樣應用程式在執行後可以檢查、複製、驗證或封存。
+- mount 的範圍要窄。如果掛載資料室，只掛 agent 該讀或該寫的部分。
+- 機密當成由應用程式或 sandbox provider 注入的 runtime 設定，不要放在 prompt 文字或 commit 的 manifest 內容裡。
+- 教學用先拿小型合成的 `File(...)` 或 `Dir(...)` entry，production 規模的資料集再換成 `LocalDir`、`GitRepo` 或儲存空間 mount。
 
 
 ```python
@@ -219,15 +231,15 @@ WORKSPACE_TREE = """
 print(WORKSPACE_TREE)
 ```
 
-## Prepare a Small Evidence Workspace
+## 準備一個小型證據工作區
 
-A `Manifest` describes the starting files in a fresh sandbox workspace. For this tutorial, the workspace includes:
+`Manifest` 描述全新 sandbox 工作區的起始檔案。這份教學的工作區包含：
 
-- a `manifest.csv` listing documents by batch and document ID,
-- three small document batches,
-- an output directory for the review memo.
+- 一份 `manifest.csv`，按批次和文件 ID 列出文件，
+- 三個小型文件批次，
+- 一個放審查 memo 的輸出目錄。
 
-The only memory primitive we attach later is the SDK's `Memory()` capability. Investigation findings stay in the generated reviewer memo, where they can be cited and inspected.
+之後唯一會掛上的 memory 機制是 SDK 的 `Memory()` capability。調查發現留在產生的審查 memo 裡，在那裡才能被引用和檢查。
 
 
 ```python
@@ -307,15 +319,15 @@ manifest = build_evidence_manifest()
 print(f"Workspace entries: {len(manifest.entries)}")
 ```
 
-## Step 1: Start With a Simple Agent Configuration
+## Step 1：從簡單的 Agent 設定開始
 
-First, build the agent without memory or compaction. The goal is to make the baseline behavior clear before adding primitives.
+先建立一個沒有 memory、沒有 compaction 的 agent，在加其他機制前把基準行為弄清楚。
 
-One subtle point: `SandboxAgent` defaults can include built-in capabilities. To keep this baseline explicit, pass the exact capability list you want. Here we include only the workspace tools the agent needs to inspect files and write an artifact: `Filesystem()` and `Shell()`. We intentionally do **not** attach `Compaction()` or `Memory()` yet.
+有個細節要注意：`SandboxAgent` 的預設值可能包含內建 capability。為了讓這個基準明確，直接傳入你要的完整 capability 清單。這裡只放 agent 檢視檔案和寫產出所需的工作區工具：`Filesystem()` 和 `Shell()`。我們刻意**不**掛 `Compaction()` 或 `Memory()`。
 
-- `Filesystem()` gives the sandbox agent file-oriented workspace access so it can read staged evidence and write the memo artifact. In the [Sandbox Agents guide](https://developers.openai.com/api/docs/guides/agents/sandboxes#give-the-agent-capabilities), capabilities are described as the way to attach sandbox-native behavior and tools to a `SandboxAgent`
-- `Shell()` lets the agent inspect the workspace with terminal commands such as listing files, opening evidence documents, and searching for terms across batches. The Sandbox Agents guide notes that `Shell()` is one of the default capabilities, and the [Shell tool guide](https://developers.openai.com/api/docs/guides/tools-shell) explains that shell gives models a terminal environment for hosted or local execution.
-- For this baseline, these two capabilities are enough: `Filesystem()` handles workspace reads and writes, while `Shell()` handles deterministic inspection and search. Memory and compaction are added only after the baseline harness is clear.
+- `Filesystem()` 讓 sandbox agent 能存取檔案型的工作區，讀取已放好的證據並寫出 memo。在 [Sandbox Agents guide](https://developers.openai.com/api/docs/guides/agents/sandboxes#give-the-agent-capabilities) 裡，capability 是把 sandbox 原生的行為和工具掛到 `SandboxAgent` 的方式
+- `Shell()` 讓 agent 用終端機指令檢視工作區，例如列出檔案、打開證據文件、跨批次搜尋關鍵字。Sandbox Agents guide 提到 `Shell()` 是預設 capability 之一，[Shell tool guide](https://developers.openai.com/api/docs/guides/tools-shell) 則說明 shell 讓模型有一個終端環境，可以託管或本機執行。
+- 這個基準版本用這兩個就夠了：`Filesystem()` 負責工作區讀寫，`Shell()` 負責可預期的檢視和搜尋。等基準流程弄清楚之後，才加 memory 和 compaction。
 
 
 ```python
@@ -441,21 +453,21 @@ else:
     print("RUN_AGENT is False. Baseline agent is configured but not executed.")
 ```
 
-## Step 2: Add Compaction
+## Step 2：加上 Compaction
 
-Compaction is for long-running work. As a conversation grows, compaction reduces context size while preserving the state needed for later turns. There are three useful ways to think about it:
+Compaction 是給長時間工作用的。對話變長時，compaction 縮小 context，同時保留後續回合需要的狀態。有三種好用的思考方式：
 
-1. **Automatic compaction with `Compaction()`**: attach the capability and let the SDK compact when context pressure requires it.
-2. **Threshold-based compaction with `StaticCompactionPolicy`**: set an explicit threshold for environments where you want more predictable context-size behavior.
-3. **Forced checkpoint compaction with `OpenAIResponsesCompactionSession.run_compaction({"force": True})`**: compact at an application-defined phase boundary, such as after a major review phase and before the next evidence batch.
+1. **用 `Compaction()` 自動 compaction**：掛上 capability，context 有壓力時讓 SDK 自己壓縮。
+2. **用 `StaticCompactionPolicy` 做門檻式 compaction**：明確設定門檻，適合想要更可預期的 context 大小行為的環境。
+3. **用 `OpenAIResponsesCompactionSession.run_compaction({"force": True})` 強制 checkpoint compaction**：在應用程式定義的階段邊界壓縮，例如一個主要審查階段結束後、下一批證據開始前。
 
-This notebook uses a forced checkpoint because the synthetic dataset is intentionally small. In production, automatic compaction is often the simplest starting point, and threshold-based compaction is useful when you want a tighter operational policy.
+這份 notebook 用強制 checkpoint，因為合成資料集刻意做得很小。在 production，自動 compaction 通常是最簡單的起點，想要更嚴格的營運策略時，門檻式 compaction 就很有用。
 
-> **Best practices**
+> **最佳實務**
 >
-> - Compact at meaningful workflow boundaries, not after every turn.
-> - Preserve enough working state for the next phase to make sense.
-> - Keep cited facts in generated artifacts, not only in compacted conversation state.
+> - 在有意義的工作流程邊界做 compaction，不要每一回合都做。
+> - 保留足夠的工作狀態，讓下一階段講得通。
+> - 被引用的事實要放在產出檔裡，不要只留在壓縮後的對話狀態。
 
 ```python
 from agents.sandbox.capabilities import Compaction, StaticCompactionPolicy
@@ -492,13 +504,13 @@ print({
 })
 ```
 
-### How Compaction Gets Triggered
+### Compaction 怎麼被觸發
 
-With the `Compaction()` capability, server-side compaction is eligible to run when the active context grows large enough. That is the current default behavior: attach the capability and let the SDK manage context pressure.
+有 `Compaction()` capability 時，當前 context 夠大就會有資格觸發 server-side compaction。這是目前的預設行為：掛上 capability，讓 SDK 管理 context 壓力。
 
-For small tutorials, automatic compaction can be hard to see because the run may never get close to the model context limit. A lower `StaticCompactionPolicy` can help, but it still depends on the rendered context crossing the threshold.
+小型教學裡自動 compaction 很難看到，因為執行可能根本沒接近模型的 context 上限。調低 `StaticCompactionPolicy` 有幫助，但仍然取決於實際渲染出來的 context 有沒有超過門檻。
 
-For a small evidence set, a forced checkpoint is the clearest operational pattern. The `OpenAIResponsesCompactionSession` wrapper stores session history and lets the application call `run_compaction({"force": True})` at a phase boundary. That makes compaction visible without inflating the evidence set.
+證據量少的時候，強制 checkpoint 是最清楚的操作模式。`OpenAIResponsesCompactionSession` 這個包裝會儲存 session 歷史，讓應用程式在階段邊界呼叫 `run_compaction({"force": True})`。這樣不用灌大證據量，就能看到 compaction 發生。
 
 
 ```python
@@ -525,27 +537,27 @@ async def force_compaction_checkpoint(session: OpenAIResponsesCompactionSession)
 print("Compaction session helper defined. The final run uses it to show an explicit phase checkpoint.")
 ```
 
-## Step 3: Attach Memory
+## Step 3：掛上 Memory
 
-Memory is for reuse across runs. In this example, memory should capture **workflow lessons**, not investigation facts.
+Memory 是給跨次執行重用的。這個範例裡，memory 要記的是**流程經驗**，不是調查事實。
 
-Good memory candidates include:
+適合進 memory 的例子：
 
-- Use the manifest first when reviewing a file-based evidence workspace.
-- Preserve uncertainty in the memo instead of guessing.
-- Keep earlier assumptions visible when later evidence narrows them.
+- 審查檔案型證據工作區時，先看 manifest。
+- 在 memo 裡保留不確定性，不要用猜的。
+- 後來的證據縮小了早先的假設時，讓早先的假設仍然看得到。
 
-Bad memory candidates include:
+不適合進 memory 的例子：
 
 - "Northwind Logistics violated policy."
 - "ACME's Finance Ops process is deficient."
-- Any case-specific conclusion that belongs in the memo.
+- 任何屬於 memo 的個案結論。
 
-> **Best practices**
+> **最佳實務**
 >
-> - Use memory for stable process lessons and user preferences.
-> - Keep case-specific facts in reviewed artifacts such as the memo.
-> - Inspect generated memory before relying on it in future runs.
+> - memory 用來存穩定的流程經驗和使用者偏好。
+> - 個案事實放在經審閱的產出，例如 memo。
+> - 在之後的執行依賴生成的 memory 之前，先檢查它。
 
 ```python
 from agents.sandbox import MemoryGenerateConfig
@@ -586,16 +598,16 @@ memory_agent = build_memory_agent()
 print([type(capability).__name__ for capability in memory_agent.capabilities])
 ```
 
-## Step 4: Run With Both Compaction and Memory
+## Step 4：同時用 Compaction 和 Memory 執行
 
-Now combine the pieces:
+現在把各部分組起來：
 
-- `Filesystem()` and `Shell()` let the agent navigate the evidence workspace.
-- `Compaction()` keeps the active review viable as context grows.
-- `Memory()` captures reusable workflow lessons after the run.
-- The final memo remains the investigation artifact.
+- `Filesystem()` 和 `Shell()` 讓 agent 在證據工作區裡移動。
+- `Compaction()` 在 context 變大時讓進行中的審查能繼續。
+- `Memory()` 在執行後記下可重用的流程經驗。
+- 最終的 memo 仍是調查成果。
 
-The task below asks the agent to review the synthetic evidence, write a memo, then read the memo back to verify it preserved the required structure and uncertainty.
+下面的任務要求 agent 審查合成證據、寫 memo，再把 memo 讀回來，確認它保留了要求的結構和不確定性。
 
 ```python
 FINAL_REVIEW_TASK = """
@@ -687,17 +699,17 @@ if not RUN_AGENT:
     print(EXAMPLE_OUTPUT)
 ```
 
-## Inspect Generated Artifacts
+## 檢視產生的檔案
 
-The final agent response is useful, but the reliability pattern becomes clearer when you inspect the files the sandbox run produced. This section makes the normally hidden state visible:
+agent 最終的回覆有用，但看過 sandbox 執行產生的檔案，可靠性模式會更清楚。這一節把平常看不到的狀態攤開來：
 
-- the reviewer-facing memo in `outputs/compliance_review_memo.md`,
-- generated SDK memory files such as `memories/MEMORY.md` and `memories/memory_summary.md`,
-- the workspace files produced by the run, including the session log.
+- 給審查人員看的 memo：`outputs/compliance_review_memo.md`，
+- SDK 產生的 memory 檔，例如 `memories/MEMORY.md` 和 `memories/memory_summary.md`，
+- 這次執行產生的工作區檔案，包括 session log。
 
-The generated memory artifact is not the compliance memo and should not be treated as investigation truth. It is reusable workflow memory. The `Task Group` heading is the memory system's own grouping label, and the memory generator is steered with `MemoryGenerateConfig.extra_prompt` so it stores workflow lessons rather than ACME-specific findings.
+產生的 memory 檔不是合規 memo，也不該被當成調查事實。它是可重用的流程 memory。`Task Group` 標題是 memory 系統自己的分組標籤，而 memory generator 用 `MemoryGenerateConfig.extra_prompt` 引導，讓它存流程經驗，而不是 ACME 的特定發現。
 
-If `RUN_AGENT = False`, this section displays the expected output shape instead of live sandbox artifacts.
+如果 `RUN_AGENT = False`，這一節會顯示預期的輸出形狀，而不是真實的 sandbox 產出。
 
 
 ````python
@@ -756,22 +768,34 @@ else:
     print("\nNo memo was captured. Set RUN_AGENT = True and rerun the final workflow.")
 ````
 
-**Common Pitfall**
+**常見陷阱**
 
-Do not treat `Memory()` as an unreviewed fact database.
+不要把 `Memory()` 當成沒人審閱的事實資料庫。
 
-Memory should help the next run remember how to work. It should not become a shadow compliance record. If a conclusion matters, write it into a reviewed artifact with citations.
+Memory 應該幫下一次執行記得「怎麼做事」，不該變成一份影子合規紀錄。如果某個結論重要，就把它連同引用寫進經過審閱的產出。
 
-## Conclusion
+## 結論
 
-You now have the building blocks for a reliable long-running agent workflow:
+你現在有了可靠的長時間 agent 流程的基本元件：
 
-- A sandbox workspace for controlled file access.
-- A manifest that helps the agent route across documents.
-- Compaction for finite context windows.
-- Memory for reusable workflow lessons.
-- A generated memo as the reviewed investigation artifact.
+- 受控檔案存取的 sandbox 工作區。
+- 幫 agent 在文件間導航的 manifest。
+- 應付有限 context window 的 compaction。
+- 可重用流程經驗的 memory。
+- 作為審閱後調查成果的 memo。
 
-The main design choice is separation of responsibility: context helps the agent work, memory helps future agents work better, and reviewed artifacts hold the facts that people will rely on.
+核心的設計選擇是分工：context 幫 agent 做事，memory 幫未來的 agent 做得更好，而人會倚賴的事實放在經審閱的產出裡。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Compaction 解決單次長對話的 context 太大，Memory 解決跨次執行的經驗重用，兩者用途不同。
+- Memory 只存流程經驗和偏好，個案結論一律寫進有引用的 memo。
+- `Manifest` 是 sandbox 工作區的契約，檔案、目錄、mount 都在這裡宣告，不要塞進 prompt。
+- Compaction 最好在有意義的階段邊界做，不是每回合都壓。
+- 明確傳入 capability 清單，才能清楚看出基準行為，再一個一個疊上 compaction 和 memory。
+
+## 練習
+
+1. 把 `RUN_AGENT` 改成 `True`（需要 `OPENAI_API_KEY`），跑完後打開 `outputs/compliance_review_memo.md` 和 `memories/MEMORY.md`，確認 memo 有引用證據、memory 裡沒有個案結論。
+2. 在強制 checkpoint 的 `run_compaction({"force": True})` 之前和之後，各印一次 session 的歷史長度，比較差異。
+3. 改用 `StaticCompactionPolicy` 設一個很低的門檻取代強制 checkpoint，看看是否真的有觸發 compaction，並想想為什麼小資料集不容易觸發。

@@ -1,58 +1,72 @@
 ---
-translated: false
+translated: true
 source: examples/migrating_from_whisper_to_gpt_transcribe.ipynb
 ---
-
 # Migrate from Whisper to GPT-Transcribe and GPT-Live-Transcribe
 
 > 原文：[examples/migrating_from_whisper_to_gpt_transcribe.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/migrating_from_whisper_to_gpt_transcribe.ipynb)
 
-Migrate existing Whisper integrations to GPT-Transcribe and GPT-Live-Transcribe with before-and-after examples for file, streaming, and Realtime transcription.
+用前後對照的範例，把現有的 Whisper 整合遷移到 GPT-Transcribe 和 GPT-Live-Transcribe，涵蓋檔案、串流和 Realtime 轉寫。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+說明怎麼把原本用 `whisper-1` 或 `gpt-realtime-whisper` 的轉寫程式，換成新的 `gpt-transcribe` 和 `gpt-live-transcribe`。每個情境都有 Before 和 After 的程式碼，並列出要注意的地方。
+
+## 學完你會
+
+- 依情境（錄好的檔案、即時字幕、手動 commit 的 Realtime turn）選對模型和遷移路徑。
+- 把 `language` 改成 `languages` 陣列，並用 `prompt` 和 `keywords` 提供上下文。
+- 處理新模型的 JSON 輸出、串流事件和 `languages: []` 這種偵測語言結果。
+
+## 開跑前
+
+- Python 3.11 以上，並安裝 OpenAI Python SDK。
+- 設好 `OPENAI_API_KEY` 環境變數。
+- 準備一個錄好的檔案 `meeting.wav`，或把 `audio_path` 改成你自己的檔案。
+- 帳號要能使用範例裡的轉寫模型。
 
 
 ## Overview
 
-OpenAI’s new transcription models give existing Whisper users two focused upgrade paths. GPT-Transcribe (`gpt-transcribe`) is designed for accurate transcription of completed audio via uploaded files. GPT-Live-Transcribe (`gpt-live-transcribe`) is designed for low-latency, continuously streaming transcription.
+OpenAI 新的轉寫模型給現有 Whisper 使用者兩條專注的升級路徑。GPT-Transcribe（`gpt-transcribe`）設計用來準確轉寫已完成的音訊，也就是上傳的檔案。GPT-Live-Transcribe（`gpt-live-transcribe`）則是為低延遲、持續串流的轉寫設計。
 
-At a high level, the API endpoints are the same. File requests continue to use POST /v1/audio/transcriptions. Realtime integrations continue to configure a transcription session and handle transcription events. What’s different are the supported request fields, the output formats, and contextual/multilingual hints.
+整體來說，API endpoint 沒變。檔案請求繼續用 POST /v1/audio/transcriptions。Realtime 整合繼續設定 transcription session 並處理轉寫事件。不同的是支援的請求欄位、輸出格式，以及上下文和多語言的 hint。
 
-### What stays the same
+### 不變的部分
 
-- File transcription uses the existing Audio API transcription endpoint.
-- Realtime transcription uses the existing Realtime transcription session, WebSocket or WebRTC transport, and transcription events.
-- Applications still provide audio, receive transcription text, and handle API or connection errors.
+- 檔案轉寫繼續用現有的 Audio API transcription endpoint。
+- Realtime 轉寫繼續用現有的 Realtime transcription session、WebSocket 或 WebRTC 傳輸，以及轉寫事件。
+- 應用還是提供音訊、接收轉寫文字，並處理 API 或連線錯誤。
 
-### What changes
+### 會變的部分
 
-- Use `gpt-transcribe` for completed files, streamed file transcripts, or committed Realtime turns.
-- Use `gpt-live-transcribe` for continuously streaming, low-latency live transcription.
-- Replace the legacy `language` hint with the new-model `languages` array.
-- Use `prompt` for free-form context and `keywords` for literal terms expected in the audio.
-- Handle detected-language output for GPT-Transcribe, including an empty languages array.
+- 已完成的檔案、串流的檔案逐字稿、或是 commit 過的 Realtime turn，用 `gpt-transcribe`。
+- 持續串流、低延遲的即時轉寫，用 `gpt-live-transcribe`。
+- 把舊的 `language` hint 換成新模型的 `languages` 陣列。
+- 用 `prompt` 放自由格式的上下文，用 `keywords` 放音訊中預期會出現的字面詞彙。
+- GPT-Transcribe 會輸出偵測到的語言，要處理，包括空的 languages 陣列。
 
-## 1. Choose your migration path
+## 1. 選擇你的遷移路徑
 
-- Recorded meetings, calls, or uploaded audio: migrate `whisper-1` to `gpt-transcribe` on POST /v1/audio/transcriptions.
-- Live captions or continuously arriving microphone audio: migrate `gpt-realtime-whisper` to `gpt-live-transcribe` in a Realtime transcription session.
-- Higher-accuracy transcription after a manually committed audio turn: use `gpt-transcribe` in a Realtime transcription session over WebSocket.
-Treat live audio and streaming output as separate decisions. A completed file can produce streamed transcript events, and a Realtime session can wait for an audio turn to be committed before producing deltas.
+- 錄好的會議、通話或上傳的音訊：在 POST /v1/audio/transcriptions 上，把 `whisper-1` 遷移到 `gpt-transcribe`。
+- 即時字幕或持續進來的麥克風音訊：在 Realtime transcription session 裡，把 `gpt-realtime-whisper` 遷移到 `gpt-live-transcribe`。
+- 手動 commit 音訊 turn 之後要更高準確度的轉寫：在 WebSocket 的 Realtime transcription session 裡用 `gpt-transcribe`。
+即時音訊和串流輸出是兩個獨立的決定。已完成的檔案可以產生串流的逐字稿事件，Realtime session 也可以等音訊 turn 被 commit 之後才產生 delta。
 
-## 2. Migrate recorded audio
+## 2. 遷移錄好的音訊
 
-The smallest file migration preserves the endpoint, SDK call, and file upload. Replace the model identifier, then consume the JSON transcription response.
+最小的檔案遷移會保留 endpoint、SDK 呼叫和檔案上傳。把 model 識別名稱換掉，然後處理 JSON 轉寫回應。
 
 
-### Prerequisites
+### 前置需求
 
-- Python 3.11 or later.
-- The OpenAI Python SDK: `python -m pip install --upgrade openai`.
-- An `OPENAI_API_KEY` environment variable.
-- A completed recording named `meeting.wav`, or update `audio_path` to point to your own file.
-- Access to the transcription models used in the example.
+- Python 3.11 或更新版本。
+- OpenAI Python SDK：`python -m pip install --upgrade openai`。
+- 一個 `OPENAI_API_KEY` 環境變數。
+- 一個錄好的檔案 `meeting.wav`，或把 `audio_path` 改成指向你自己的檔案。
+- 有權限使用範例中的轉寫模型。
 
-File examples make live API requests. Realtime examples construct the session payloads. Use WebSocket or WebRTC for `gpt-live-transcribe`, and use WebSocket for committed-turn `gpt-transcribe`.
+檔案範例會發出真實的 API 請求。Realtime 範例只是組出 session payload。`gpt-live-transcribe` 用 WebSocket 或 WebRTC，commit-turn 的 `gpt-transcribe` 用 WebSocket。
 
 
 ```python
@@ -65,7 +79,7 @@ client = OpenAI()
 audio_path = Path("meeting.wav")
 ```
 
-**Before — Whisper file transcription**
+**Before：Whisper 檔案轉寫**
 
 
 ```python
@@ -78,7 +92,7 @@ with audio_path.open("rb") as audio:
 print(before.text)
 ```
 
-**After — GPT-Transcribe**
+**After：GPT-Transcribe**
 
 
 ```python
@@ -92,16 +106,16 @@ with audio_path.open("rb") as audio:
 print(after.text)
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Note that the new model returns JSON. If the existing application requests `text`, `verbose_json`, `srt`, or `vtt`, do not assume the same response_format remains valid. Keep Whisper for those formats or explicitly build and test the downstream conversion your application requires.
+- 注意新模型回傳 JSON。如果現有應用要求 `text`、`verbose_json`、`srt` 或 `vtt`，不要假設同樣的 response_format 還有效。這些格式請繼續用 Whisper，或是明確建立並測試你的應用需要的下游轉換。
 
-## 3. Update language hints and domain context
+## 3. 更新語言 hint 和領域上下文
 
-Legacy Whisper integrations commonly send a single `language` value and place domain vocabulary in a free-form prompt. The new models accept multiple expected input languages and separate structured keyword hints from the general prompt.
+舊的 Whisper 整合通常只送單一個 `language` 值，並把領域詞彙放在自由格式的 prompt 裡。新模型可以接受多個預期輸入語言，也把結構化的 keyword hint 和一般 prompt 分開。
 
 
-**Before — single-language Whisper request**
+**Before：單一語言的 Whisper 請求**
 
 
 ```python
@@ -120,7 +134,7 @@ with open("meeting.wav", "rb") as audio:
 print(result.text)
 ```
 
-**After — multilingual GPT-Transcribe request**
+**After：多語言的 GPT-Transcribe 請求**
 
 
 ```python
@@ -142,20 +156,20 @@ with open("meeting.wav", "rb") as audio:
 print(result.text)
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Use `prompt` to describe the recording’s topic or setting.
-- Use `keywords` for literal product names, medication names, account identifiers, or other domain-specific terms that may actually be spoken.
-- Use `languages` to indicate expected spoken languages.
-- Do not send both `language` and `languages`.
-- Validate keyword input before making the request: each keyword must be a single-line literal and must not include `<`, `>`, a carriage return, or a line feed. Invalid keyword input rejects the whole request or session update.
+- 用 `prompt` 描述錄音的主題或場景。
+- 用 `keywords` 放字面上的產品名稱、藥品名稱、帳號識別碼，或其他實際可能被說出來的領域詞彙。
+- 用 `languages` 表示預期會出現的口說語言。
+- 不要同時送 `language` 和 `languages`。
+- 發請求前先驗證 keyword 輸入：每個 keyword 必須是單行的字面值，且不能包含 `<`、`>`、carriage return 或 line feed。不合法的 keyword 輸入會讓整個請求或 session update 被拒絕。
 
-## 4. Stream the transcription of a completed file
+## 4. 串流已完成檔案的轉寫
 
-Streaming applies to the transcription output, not the audio input. The application first supplies a completed recording; the API then streams text as it transcribes that recording.
+串流指的是轉寫輸出，不是音訊輸入。應用先提供一個錄好的檔案，API 再邊轉寫邊串流出文字。
 
 
-**Before — blocking Whisper file request**
+**Before：會 block 的 Whisper 檔案請求**
 
 
 ```python
@@ -170,7 +184,7 @@ print(before.text)
 # whisper-1 does not provide transcript.text.delta events.
 ```
 
-**After — streamed GPT-Transcribe file request**
+**After：串流的 GPT-Transcribe 檔案請求**
 
 
 ```python
@@ -188,17 +202,17 @@ with audio_path.open("rb") as audio:
             print("\nFinal:", event.text)
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Use transcription events to distinguish in-progress from completed transcripts. Update your transcript or progress UI with `transcript.text.delta` events, then use `transcript.text.done` to mark the transcript as final.
-- Do not label file streaming as live audio capture: the file must already exist.
+- 用轉寫事件區分進行中和已完成的逐字稿。收到 `transcript.text.delta` 事件就更新你的逐字稿或進度 UI，再用 `transcript.text.done` 把逐字稿標為最終版。
+- 不要把檔案串流說成即時音訊擷取：檔案必須已經存在。
 
-## 5. Migrate continuous live transcription
+## 5. 遷移持續的即時轉寫
 
-For a live captioning workflow, preserve the Realtime connection and transcription-session architecture. Change the transcription model and update the model-specific configuration.
+即時字幕的流程要保留 Realtime 連線和 transcription-session 的架構。改轉寫模型，並更新模型專屬的設定。
 
 
-**Before — GPT-Realtime-Whisper**
+**Before：GPT-Realtime-Whisper**
 
 
 ```python
@@ -225,7 +239,7 @@ legacy_realtime_session = json.loads(
 print(json.dumps(legacy_realtime_session, indent=2))
 ```
 
-**After — GPT-Live-Transcribe**
+**After：GPT-Live-Transcribe**
 
 
 ```python
@@ -255,19 +269,19 @@ live_transcription_session = json.loads(
 print(json.dumps(live_transcription_session, indent=2))
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Continue handling `conversation.item.input_audio_transcription.delta` and `conversation.item.input_audio_transcription.completed`.
-- Preserve the existing item_id-based reconciliation logic.
-- Use the model’s `delay` setting to trade off faster partial transcripts against a more accurate final transcript.
-- Preserve the existing WebSocket or WebRTC transport; Realtime transcription supports both.
+- 繼續處理 `conversation.item.input_audio_transcription.delta` 和 `conversation.item.input_audio_transcription.completed`。
+- 保留現有以 item_id 為基礎的對帳邏輯。
+- 用模型的 `delay` 設定，在更快的 partial 逐字稿和更準確的最終逐字稿之間取捨。
+- 保留現有的 WebSocket 或 WebRTC 傳輸，Realtime 轉寫兩種都支援。
 
-## 6. Use GPT-Transcribe in a committed-turn Realtime session
+## 6. 在 committed-turn 的 Realtime session 使用 GPT-Transcribe
 
-GPT-Transcribe is not limited to uploaded files. Use it as the input transcription model in a Realtime session over WebSocket when your application needs higher-accuracy transcription after a manually committed audio turn.
+GPT-Transcribe 不只能用在上傳的檔案。如果你的應用需要在手動 commit 音訊 turn 之後有更高準確度的轉寫，可以在 WebSocket 的 Realtime session 裡，把它當作輸入轉寫模型。
 
 
-**Before — legacy live-transcription session**
+**Before：舊的即時轉寫 session**
 
 
 ```python
@@ -293,7 +307,7 @@ legacy_live_session = json.loads(
 print(json.dumps(legacy_live_session, indent=2))
 ```
 
-**After — committed-turn GPT-Transcribe session**
+**After：committed-turn 的 GPT-Transcribe session**
 
 
 ```python
@@ -322,16 +336,16 @@ committed_turn_session = json.loads(
 print(json.dumps(committed_turn_session, indent=2))
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Append audio to the input buffer, then send `input_audio_buffer.commit`. Transcription happens per committed chunk of audio, not continuous live captioning. GPT-Transcribe may emit transcript delta events before the completed event for that chunk.
+- 先把音訊 append 到 input buffer，再送 `input_audio_buffer.commit`。轉寫是對每個 commit 的音訊區塊進行，不是持續的即時字幕。GPT-Transcribe 可能會在該區塊的 completed 事件之前，先送出逐字稿的 delta 事件。
 
-## 7. Update response and event handling
+## 7. 更新回應和事件處理
 
-GPT-Transcribe can include detected input languages in completed file and Realtime results. These are predictions returned by the model, not a restatement of the caller’s language hints.
+GPT-Transcribe 可以在完成的檔案結果和 Realtime 結果裡，附上偵測到的輸入語言。這些是模型回傳的預測，不是把呼叫者給的語言 hint 再講一遍。
 
 
-**Before — transcript without language predictions**
+**Before：沒有語言預測的逐字稿**
 
 
 ```python
@@ -346,7 +360,7 @@ legacy_transcription_response = json.loads(
 print(json.dumps(legacy_transcription_response, indent=2))
 ```
 
-**After — GPT-Transcribe detected-language response**
+**After：GPT-Transcribe 偵測語言的回應**
 
 
 ```python
@@ -370,61 +384,73 @@ language_codes = [
 print("Detected languages:", language_codes)
 ```
 
-**Do’s and don’ts**
+**該做與不該做**
 
-- Handle `languages: []` as a valid result when the model cannot make a reliable prediction.
-- Do not infer that no one spoke, that the request failed, or that a synthetic `unknown` language was returned. GPT-Live-Transcribe does not return detected-language predictions in its initial contract.
-- For Realtime, inspect `conversation.item.input_audio_transcription.completed`; GPT-Transcribe may attach the same language metadata to that event.
+- 把 `languages: []` 當成合法結果處理，這代表模型無法做出可靠的預測。
+- 不要推論成沒人說話、請求失敗，或是回傳了一個合成的 `unknown` 語言。GPT-Live-Transcribe 在初版 contract 裡不會回傳偵測語言的預測。
+- Realtime 要檢查 `conversation.item.input_audio_transcription.completed`，GPT-Transcribe 可能會把同樣的語言 metadata 附在這個事件上。
 
-## 8. Check compatibility before switching
+## 8. 切換前先檢查相容性
 
-Some existing transcription features do not have a drop-in replacement in `gpt-transcribe` or `gpt-live-transcribe`.
+有些現有的轉寫功能，在 `gpt-transcribe` 或 `gpt-live-transcribe` 裡沒有直接可替換的對應。
 
-- Subtitles: retain `whisper-1` if the integration depends on native SRT or VTT output.
-- Timestamps: retain a model and response format that explicitly support word or segment timestamps.
-- Translation: retain `/v1/audio/translations` with a supported translation model if the application translates audio into English.
-- Speaker diarization: use `gpt-4o-transcribe-diarize` on `/v1/audio/transcriptions` with `response_format: "diarized_json"` when your application requires speaker labels. Set `chunking_strategy: "auto"` for recordings longer than 30 seconds. This model is not supported in the Realtime API.
+- 字幕：如果整合依賴原生 SRT 或 VTT 輸出，保留 `whisper-1`。
+- 時間戳：保留明確支援 word 或 segment 時間戳的模型和 response format。
+- 翻譯：如果應用要把音訊翻成英文，保留 `/v1/audio/translations` 搭配支援翻譯的模型。
+- 說話者分離（diarization）：如果應用需要說話者標籤，在 `/v1/audio/transcriptions` 用 `gpt-4o-transcribe-diarize`，並設 `response_format: "diarized_json"`。超過 30 秒的錄音要設 `chunking_strategy: "auto"`。這個模型不支援 Realtime API。
 
-## 9. Evaluate before and after
+## 9. 切換前後做評估
 
-Use the same representative audio clips across both models. Compare the baseline, a direct model-only replacement, and a version that adds the new context fields. This isolates improvements from the model itself versus improvements caused by prompt, keywords, or language hints.
+兩個模型都用同一批有代表性的音訊片段。比較三者：baseline、直接只換模型的版本，以及加上新上下文欄位的版本。這樣能分清楚進步是來自模型本身，還是來自 prompt、keywords 或語言 hint。
 
-### Evaluate transcription quality
+### 評估轉寫品質
 
-- Overall word error rate on representative recordings.
-- Exact-match accuracy for names, product names, medication names, account identifiers, numbers, and email addresses.
-- Performance with accents, background noise, telephony audio, and short utterances.
-- Accuracy during language switching and mixed-language speech.
-- Keyword hallucination: confirm the transcript does not insert hinted words that were not actually spoken.
-- Completeness of the final transcript and any expected language metadata.
+- 在有代表性的錄音上的整體 word error rate。
+- 名字、產品名稱、藥品名稱、帳號識別碼、數字和 email 地址的完全比對準確率。
+- 口音、背景噪音、電話音訊和短句的表現。
+- 切換語言和混合語言說話時的準確度。
+- Keyword 幻覺：確認逐字稿沒有插入實際沒被說出來的 hint 詞。
+- 最終逐字稿的完整度，以及預期的語言 metadata。
 
-### Evaluate streaming and operational behavior
+### 評估串流和營運行為
 
-- Time to first transcript delta, reported separately for file streaming and live audio.
-- Time from an explicit committed turn to the final transcript.
-- Median and tail latency, including p95 or the team’s existing service-level threshold.
-- How frequently partial transcript text changes before completion.
-- Event ordering and item_id reconciliation across overlapping turns.
-- Reconnect, retry, empty-audio, and interrupted-session behavior.
-- Actual request pricing and production rate limits from the released source of truth.
+- 到第一個逐字稿 delta 的時間，檔案串流和即時音訊要分開報告。
+- 從明確 commit turn 到最終逐字稿的時間。
+- 延遲的中位數和尾端，包括 p95 或團隊現有的 service-level 門檻。
+- partial 逐字稿文字在完成前變動的頻率。
+- 重疊 turn 之間的事件順序和 item_id 對帳。
+- 重連、重試、空音訊和 session 中斷時的行為。
+- 實際的請求價格和 production rate limit，以正式發布的資料為準。
 
-## Common migration errors
+## 常見的遷移錯誤
 
-- Treating `gpt-transcribe` as incompatible with Realtime solely because it is optimized for completed audio.
-- Describing GPT-Transcribe as unable to stream because processing begins after a commit.
-- Assuming streamed file output means the endpoint accepts an ongoing microphone stream.
-- Sending both legacy `language` and new-model `languages`.
-- Expecting subtitle formats, timestamps, speaker labels, or detected-language output from a model that does not support them.
-- Treating an empty detected-language array as an API error.
-- Forcing keywords into the transcript instead of treating them as hints.
-- Assuming every Realtime model supports the same voice activity detection and latency controls.
+- 只因為 `gpt-transcribe` 針對已完成音訊優化，就把它當成跟 Realtime 不相容。
+- 因為處理要在 commit 之後才開始，就說 GPT-Transcribe 無法串流。
+- 以為檔案的串流輸出代表 endpoint 能接受持續的麥克風串流。
+- 同時送舊的 `language` 和新模型的 `languages`。
+- 對不支援的模型，期待它有字幕格式、時間戳、說話者標籤或偵測語言的輸出。
+- 把空的偵測語言陣列當成 API 錯誤。
+- 把 keywords 強塞進逐字稿，而不是把它們當作 hint。
+- 以為每個 Realtime 模型都支援同樣的 voice activity detection 和延遲控制。
 
 
-## Related resources
+## 相關資源
 
 - [Speech to text](https://developers.openai.com/api/docs/guides/speech-to-text)
 - [Realtime transcription](https://developers.openai.com/api/docs/guides/realtime-transcription)
 - [GPT-4o Transcribe Diarize](https://developers.openai.com/api/docs/models/gpt-4o-transcribe-diarize)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 遷移要先分情境：錄好的檔案用 `gpt-transcribe`，持續即時字幕用 `gpt-live-transcribe`，手動 commit 的 turn 用 Realtime 裡的 `gpt-transcribe`。
+- 「串流輸出」和「即時音訊輸入」是兩件事，檔案也能串流輸出逐字稿。
+- 語言和上下文的欄位變了：`language` 換成 `languages`，領域詞彙拆到 `keywords`，而且 `language` 跟 `languages` 不能一起送。
+- 新模型不是全能替代品，字幕、時間戳、翻譯、diarization 要看情況保留舊模型或換別的模型。
+- 遷移完要用同一批音訊做前後比較，才分得出進步來自模型還是來自新增的 hint。
+
+## 練習
+
+1. 把 Section 2 的 Whisper 檔案轉寫改成 `gpt-transcribe`，確認回應格式是 JSON，再檢查你的程式有沒有仰賴 `text` 或 `srt` 格式。
+2. 在 Section 3 的請求裡，把單一 `language` 改成 `languages` 陣列，並加入兩三個 `keywords`，用一份有專有名詞的錄音比較前後差異。
+3. 照 Section 7 的做法，在處理 completed 事件的程式裡，加上對 `languages: []` 的處理分支，並用一段幾乎沒有人聲的音訊測試。

@@ -1,20 +1,27 @@
 ---
-translated: false
+translated: true
 source: articles/related_resources.md
 ---
-
-# Related resources from around the web
+# 網路上的相關資源
 
 > 原文：[articles/related_resources.md](https://github.com/openai/openai-cookbook/blob/main/articles/related_resources.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這是一份社群整理的資源清單，收了各種幫你改善 GPT 輸出的工具、指南、影片課程和論文。拿來當查資料的起點，不需要跑任何程式。
+
+## 學完你會
+
+- 知道有哪些 prompting 函式庫和 LLMOps 平台可以選（LangChain、LlamaIndex、OpenAI Evals 等）
+- 找到入門 prompt engineering 的指南和影片課程
+- 認得幾篇改善 reasoning 的經典論文（Chain-of-Thought、ReAct、Tree of Thoughts 等）
 
 
-People are writing great tools and papers for improving outputs from GPT. Here are some cool ones we've seen:
+大家寫了很多很棒的工具和論文，用來改善 GPT 的輸出。下面是我們看到的一些不錯的資源：
 
-## Prompting libraries & tools (in alphabetical order)
+## Prompting 函式庫和工具（依字母排序）
 
 - [Arthur Shield](https://www.arthur.ai/get-started): A paid product for detecting toxicity, hallucination, prompt injection, etc.
 - [Baserun](https://baserun.ai/): A paid product for testing, debugging, and monitoring LLM-based apps
@@ -43,7 +50,7 @@ People are writing great tools and papers for improving outputs from GPT. Here a
 - [Weights & Biases](https://wandb.ai/site/solutions/llmops): A paid product for tracking model training and prompt engineering experiments.
 - [YiVal](https://github.com/YiVal/YiVal): An open-source GenAI-Ops tool for tuning and evaluating prompts, retrieval configurations, and model parameters using customizable datasets, evaluation methods, and evolution strategies.
 
-## Prompting guides
+## Prompting 指南
 
 - [Brex's Prompt Engineering Guide](https://github.com/brexhq/prompt-engineering): Brex's introduction to language models and prompt engineering.
 - [learnprompting.org](https://learnprompting.org/): An introductory course to prompt engineering.
@@ -52,7 +59,7 @@ People are writing great tools and papers for improving outputs from GPT. Here a
 - [promptingguide.ai](https://www.promptingguide.ai/): A prompt engineering guide that demonstrates many techniques.
 - [Xavi Amatriain's Prompt Engineering 101 Introduction to Prompt Engineering](https://amatriain.net/blog/PromptEngineering) and [202 Advanced Prompt Engineering](https://amatriain.net/blog/prompt201): A basic but opinionated introduction to prompt engineering and a follow up collection with many advanced methods starting with CoT.
 
-## Video courses
+## 影片課程
 
 - [Andrew Ng's DeepLearning.AI](https://www.deeplearning.ai/short-courses/chatgpt-prompt-engineering-for-developers/): A short course on prompt engineering for developers.
 - [Andrej Karpathy's Let's build GPT](https://www.youtube.com/watch?v=kCc8FmEb1nY): A detailed dive into the machine learning underlying GPT.
@@ -60,19 +67,31 @@ People are writing great tools and papers for improving outputs from GPT. Here a
 - [Scrimba course about Assistants API](https://scrimba.com/learn/openaiassistants): A 30-minute interactive course about the Assistants API.
 - [LinkedIn course: Introduction to Prompt Engineering: How to talk to the AIs](https://www.linkedin.com/learning/prompt-engineering-how-to-talk-to-the-ais/talking-to-the-ais?u=0): Short video introduction to prompt engineering
 
-## Papers on advanced prompting to improve reasoning
+## 改善 reasoning 的進階 prompting 論文
 
-- [Chain-of-Thought Prompting Elicits Reasoning in Large Language Models (2022)](https://arxiv.org/abs/2201.11903): Using few-shot prompts to ask models to think step by step improves their reasoning. PaLM's score on math word problems (GSM8K) rises from 18% to 57%.
-- [Self-Consistency Improves Chain of Thought Reasoning in Language Models (2022)](https://arxiv.org/abs/2203.11171): Taking votes from multiple outputs improves accuracy even more. Voting across 40 outputs raises PaLM's score on math word problems further, from 57% to 74%, and `code-davinci-002`'s from 60% to 78%.
-- [Tree of Thoughts: Deliberate Problem Solving with Large Language Models (2023)](https://arxiv.org/abs/2305.10601): Searching over trees of step by step reasoning helps even more than voting over chains of thought. It lifts `GPT-4`'s scores on creative writing and crosswords.
-- [Language Models are Zero-Shot Reasoners (2022)](https://arxiv.org/abs/2205.11916): Telling instruction-following models to think step by step improves their reasoning. It lifts `text-davinci-002`'s score on math word problems (GSM8K) from 13% to 41%.
-- [Large Language Models Are Human-Level Prompt Engineers (2023)](https://arxiv.org/abs/2211.01910): Automated searching over possible prompts found a prompt that lifts scores on math word problems (GSM8K) to 43%, 2 percentage points above the human-written prompt in Language Models are Zero-Shot Reasoners.
-- [Reprompting: Automated Chain-of-Thought Prompt Inference Through Gibbs Sampling (2023)](https://arxiv.org/abs/2305.09993): Automated searching over possible chain-of-thought prompts improved ChatGPT's scores on a few benchmarks by 0–20 percentage points.
-- [Faithful Reasoning Using Large Language Models (2022)](https://arxiv.org/abs/2208.14271): Reasoning can be improved by a system that combines: chains of thought generated by alternative selection and inference prompts, a halter model that chooses when to halt selection-inference loops, a value function to search over multiple reasoning paths, and sentence labels that help avoid hallucination.
-- [STaR: Bootstrapping Reasoning With Reasoning (2022)](https://arxiv.org/abs/2203.14465): Chain of thought reasoning can be baked into models via fine-tuning. For tasks with an answer key, example chains of thoughts can be generated by language models.
-- [ReAct: Synergizing Reasoning and Acting in Language Models (2023)](https://arxiv.org/abs/2210.03629): For tasks with tools or an environment, chain of thought works better if you prescriptively alternate between **Re**asoning steps (thinking about what to do) and **Act**ing (getting information from a tool or environment).
-- [Reflexion: an autonomous agent with dynamic memory and self-reflection (2023)](https://arxiv.org/abs/2303.11366): Retrying tasks with memory of prior failures improves subsequent performance.
-- [Demonstrate-Search-Predict: Composing retrieval and language models for knowledge-intensive NLP (2023)](https://arxiv.org/abs/2212.14024): Models augmented with knowledge via a "retrieve-then-read" can be improved with multi-hop chains of searches.
-- [Improving Factuality and Reasoning in Language Models through Multiagent Debate (2023)](https://arxiv.org/abs/2305.14325): Generating debates between a few ChatGPT agents over a few rounds improves scores on various benchmarks. Math word problem scores rise from 77% to 85%.
+- [Chain-of-Thought Prompting Elicits Reasoning in Large Language Models (2022)](https://arxiv.org/abs/2201.11903): 用 few-shot prompt 要求模型一步一步思考，可以改善它的 reasoning。PaLM 在數學應用題（GSM8K）的分數從 18% 升到 57%。
+- [Self-Consistency Improves Chain of Thought Reasoning in Language Models (2022)](https://arxiv.org/abs/2203.11171): 對多個輸出投票，準確度會再提高。對 40 個輸出投票，PaLM 在數學應用題的分數從 57% 再升到 74%，`code-davinci-002` 從 60% 升到 78%。
+- [Tree of Thoughts: Deliberate Problem Solving with Large Language Models (2023)](https://arxiv.org/abs/2305.10601): 在一步一步推理的樹狀結構上搜尋，比對多條 chain of thought 投票更有幫助。它提升了 `GPT-4` 在創意寫作和填字遊戲上的分數。
+- [Language Models are Zero-Shot Reasoners (2022)](https://arxiv.org/abs/2205.11916): 叫會遵循指令的模型一步一步思考，可以改善它的 reasoning。`text-davinci-002` 在數學應用題（GSM8K）的分數從 13% 升到 41%。
+- [Large Language Models Are Human-Level Prompt Engineers (2023)](https://arxiv.org/abs/2211.01910): 自動在可能的 prompt 裡搜尋，找到一個能把數學應用題（GSM8K）分數提升到 43% 的 prompt，比 Language Models are Zero-Shot Reasoners 裡人寫的 prompt 高 2 個百分點。
+- [Reprompting: Automated Chain-of-Thought Prompt Inference Through Gibbs Sampling (2023)](https://arxiv.org/abs/2305.09993): 自動搜尋可能的 chain-of-thought prompt，讓 ChatGPT 在幾個 benchmark 的分數提升 0 到 20 個百分點。
+- [Faithful Reasoning Using Large Language Models (2022)](https://arxiv.org/abs/2208.14271): 結合下列幾項的系統可以改善 reasoning：由「選擇」和「推論」兩種 prompt 交替產生的 chain of thought、決定何時停止選擇推論迴圈的 halter 模型、用來在多條推理路徑上搜尋的 value function，以及幫助避免 hallucination 的句子標籤。
+- [STaR: Bootstrapping Reasoning With Reasoning (2022)](https://arxiv.org/abs/2203.14465): chain of thought 推理可以透過 fine-tuning 內建進模型。對有標準答案的任務，範例的 chain of thought 可以由語言模型自己產生。
+- [ReAct: Synergizing Reasoning and Acting in Language Models (2023)](https://arxiv.org/abs/2210.03629): 對有 tool 或環境的任務，如果有規則地交替進行 **Re**asoning（想接下來要做什麼）和 **Act**ing（從 tool 或環境取得資訊），chain of thought 效果更好。
+- [Reflexion: an autonomous agent with dynamic memory and self-reflection (2023)](https://arxiv.org/abs/2303.11366): 帶著先前失敗的記憶重試任務，後續表現會變好。
+- [Demonstrate-Search-Predict: Composing retrieval and language models for knowledge-intensive NLP (2023)](https://arxiv.org/abs/2212.14024): 用「retrieve-then-read」補充知識的模型，可以靠多跳（multi-hop）的搜尋鏈進一步改善。
+- [Improving Factuality and Reasoning in Language Models through Multiagent Debate (2023)](https://arxiv.org/abs/2305.14325): 讓幾個 ChatGPT agent 進行幾輪辯論，可以提升各種 benchmark 的分數。數學應用題的分數從 77% 升到 85%。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 想改善 GPT 輸出，除了自己調 prompt，也有一整批函式庫（LangChain、LlamaIndex、Guidance 等）可以用。
+- 要上線的話，eval 和 observability 平台（OpenAI Evals、Baserun、Portkey 等）能幫你測試、除錯、監控。
+- 讓模型「一步一步想」是最基本的 reasoning 改善手法，再搭配投票（self-consistency）或搜尋（Tree of Thoughts）效果更好。
+- 有 tool 的情境可以參考 ReAct，把思考和行動交替進行；失敗重試可以參考 Reflexion 的記憶機制。
+- 這份清單有些內容日期較早（例如 2022、2023 年的論文和指南），用之前先確認是否還適用。
+
+## 練習
+
+1. 從清單挑一個你沒用過的函式庫（例如 LiteLLM），照它的 README 跑一個最小的 API 呼叫。
+2. 拿一題數學應用題，分別用一般 prompt 和加上「think step by step」的 prompt 問同一個模型，比較答案。
+3. 對同一題用較高 temperature 取樣 5 次，自己寫幾行程式做多數決，實作簡化版的 self-consistency。

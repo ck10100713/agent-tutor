@@ -1,42 +1,55 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/zilliz/Filtered_search_with_Zilliz_and_OpenAI.ipynb
 ---
 
-# Filtered Search with Zilliz and OpenAI
+# 用 Zilliz 和 OpenAI 做帶過濾條件的搜尋
 
 > 原文：[examples/vector_databases/zilliz/Filtered_search_with_Zilliz_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/zilliz/Filtered_search_with_Zilliz_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-### Finding your next movie
+用 OpenAI 幫電影簡介產生 embedding，存進 Zilliz，再用語意搜尋找出相關電影。這篇的重點是在搜尋時加上 metadata 過濾條件，縮小結果範圍。資料來自 HuggingFace 的 netflix-shows 資料集，約 8 千多部。
 
-In this notebook we will be going over generating embeddings of movie descriptions with OpenAI and using those embeddings within Zilliz to find relevant movies. To narrow our search results and try something new, we are going to be using filtering to do metadata searches. The dataset in this example is sourced from HuggingFace datasets, and contains a little over 8 thousand movie entries.
+## 學完你會
 
-Lets begin by first downloading the required libraries for this notebook:
-- `openai` is used for communicating with the OpenAI embedding service
-- `pymilvus` is used for communicating with the Zilliz server
-- `datasets` is used for downloading the dataset
-- `tqdm` is used for the progress bars
+- 把電影簡介批次轉成 embedding，連同 title、type、release_year、rating 一起寫進 Zilliz
+- 設定 collection、索引參數和搜尋參數
+- 用「描述文字加過濾表達式」的組合查詢，只在符合條件的電影裡找相似的
+
+## 開跑前
+
+- 一個 Zilliz 帳號跟資料庫（照[這裡](https://zilliz.com/doc/quick_start)設定）
+- OpenAI API key
+
+### 找下一部想看的電影
+
+這份 notebook 會用 OpenAI 產生電影簡介的 embedding，再用這些 embedding 在 Zilliz 裡找相關電影。為了縮小搜尋範圍，我們用過濾條件做 metadata 搜尋。資料集來自 HuggingFace datasets，有 8 千多筆電影資料。
+
+先安裝這份 notebook 需要的套件：
+- `openai` 用來呼叫 OpenAI 的 embedding 服務
+- `pymilvus` 用來跟 Zilliz 伺服器溝通
+- `datasets` 用來下載資料集
+- `tqdm` 用來顯示進度條
 
 
 ```python
 ! pip install openai pymilvus datasets tqdm
 ```
 
-To get Zilliz up and running take a look [here](https://zilliz.com/doc/quick_start). With your account and database set up, proceed to set the following values:
-- URI: The URI your database is running on
-- USER: Your database username
-- PASSWORD: Your database password
-- COLLECTION_NAME: What to name the collection within Zilliz
-- DIMENSION: The dimension of the embeddings
-- OPENAI_ENGINE: Which embedding model to use
-- openai.api_key: Your OpenAI account key
-- INDEX_PARAM: The index settings to use for the collection
-- QUERY_PARAM: The search parameters to use
-- BATCH_SIZE: How many texts to embed and insert at once
+要啟動 Zilliz 可以看[這裡](https://zilliz.com/doc/quick_start)。帳號跟資料庫都設好之後，設定下面這些值：
+- URI：資料庫運行的 URI
+- USER：資料庫使用者名稱
+- PASSWORD：資料庫密碼
+- COLLECTION_NAME：在 Zilliz 裡 collection 的名字
+- DIMENSION：embedding 的維度
+- OPENAI_ENGINE：要用哪個 embedding 模型
+- openai.api_key：你的 OpenAI 帳號 key
+- INDEX_PARAM：collection 用的索引設定
+- QUERY_PARAM：搜尋參數
+- BATCH_SIZE：一次要 embed 並寫入多少筆文字
 
 ```python
 import openai
@@ -96,8 +109,8 @@ collection.create_index(field_name="embedding", index_params=INDEX_PARAM)
 collection.load()
 ```
 
-## Dataset
-With Zilliz up and running we can begin grabbing our data. `Hugging Face Datasets` is a hub that holds many different user datasets, and for this example we are using HuggingLearners's netflix-shows dataset. This dataset contains movies and their metadata pairs for over 8 thousand movies. We are going to embed each description and store it within Zilliz along with its title, type, release_year and rating.
+## 資料集
+Zilliz 準備好之後就可以抓資料了。`Hugging Face Datasets` 是一個收了很多使用者資料集的 hub，這個範例用 HuggingLearners 的 netflix-shows 資料集，裡面有 8 千多部電影和它們的 metadata。我們會把每部的簡介 embed，連同 title、type、release_year 和 rating 一起存進 Zilliz。
 
 ```python
 import datasets
@@ -114,8 +127,8 @@ dataset = datasets.load_dataset('hugginglearners/netflix-shows', split='train')
     Found cached dataset csv (/Users/filiphaltmayer/.cache/huggingface/datasets/hugginglearners___csv/hugginglearners--netflix-shows-03475319fc65a05a/0.0.0/6b34fb8fcf56f7c8ba51dc895bfa2bfbe43546f190a60fcf74bb5e8afdcc2317)
     ```
 
-## Insert the Data
-Now that we have our data on our machine we can begin embedding it and inserting it into Zilliz. The embedding function takes in text and returns the embeddings in a list format. 
+## 寫入資料
+資料都在本機之後，就可以 embed 並寫進 Zilliz。embedding 函式吃文字，回傳 list 格式的 embedding。
 
 ```python
 # Simple function that converts the texts to embeddings
@@ -127,7 +140,7 @@ def embed(texts):
     return [x['embedding'] for x in embeddings['data']]
 ```
 
-This next step does the actual inserting. We iterate through all the entries and create batches that we insert once we hit our set batch size. After the loop is over we insert the last remaining batch if it exists. 
+下一步才是真正的寫入。我們走過所有資料，湊滿設定的 batch size 就寫入一批，迴圈結束後如果還有剩的就再寫一批。
 
 ```python
 from tqdm import tqdm
@@ -165,8 +178,8 @@ if len(data[0]) != 0:
     100%|██████████| 8807/8807 [00:54<00:00, 162.59it/s]
     ```
 
-## Query the Database
-With our data safely inserted into Zilliz, we can now perform a query. The query takes in a tuple of the movie description you are searching for and the filter to use. More info about the filter can be found [here](https://milvus.io/docs/boolean.md). The search first prints out your description and filter expression. After that for each result we print the score, title, type, release year, rating and description of the result movies. 
+## 查詢資料庫
+資料都安全寫進 Zilliz 後就可以查詢了。查詢吃一個 tuple，包含你要找的電影描述和要用的過濾條件。過濾語法的更多說明在[這裡](https://milvus.io/docs/boolean.md)。搜尋時會先印出你的描述和過濾表達式，接著每筆結果會印出分數、title、type、release year、rating 和簡介。
 
 ```python
 import textwrap
@@ -219,4 +232,15 @@ query(my_query)
     George, raise the roof in this sequel to the 1999 blockbuster.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 向量搜尋回答「語意上像不像」，metadata 過濾回答「符不符合硬條件」，兩個合用才能找到真正想要的結果。
+- 過濾是寫在搜尋請求裡的表達式，用來限定候選範圍，所以描述和條件要一起設計。
+- 批次 embed 加批次寫入比逐筆處理有效率，記得迴圈結束後把最後一批殘留的寫完。
+- 索引參數跟搜尋參數會影響速度與召回率，要跟資料量搭配。
+
+## 練習
+
+1. 換一個電影描述，保持同樣的過濾條件，看結果有沒有被條件限制住。
+2. 修改過濾表達式，例如換成不同的 release_year 範圍或 rating，比較結果。
+3. 把 BATCH_SIZE 調大或調小，觀察寫入速度的差異，並想想為什麼最後要再補寫一批。

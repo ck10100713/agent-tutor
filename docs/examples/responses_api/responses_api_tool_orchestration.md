@@ -1,24 +1,38 @@
 ---
-translated: false
+translated: true
 source: examples/responses_api/responses_api_tool_orchestration.ipynb
 ---
 
-# Multi-Tool Orchestration with RAG approach using OpenAI's Responses API
+# 用 Responses API 搭配 RAG 做多工具調度
 
 > 原文：[examples/responses_api/responses_api_tool_orchestration.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/responses_api/responses_api_tool_orchestration.ipynb)
 
-Cookbook to route queries across tools with RAG using the Responses API.
+用 Responses API 搭配 RAG，把查詢路由到不同的工具。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-### Multi-Tool Orchestration with RAG approach using OpenAI's Responses API
+把醫療推理資料集存進 Pinecone 向量資料庫，再用 Responses API 同時掛上 web search 內建工具和自訂的 Pinecone 搜尋 function。模型會依問題自己選工具，最後把工具結果餵回去產生答案。
+
+## 學完你會
+
+- 把資料集做成 embedding，建立 Pinecone index 並批次 upsert
+- 用查詢 embedding 做相似度搜尋，把結果當 context 交給 Responses API 生成答案
+- 同時定義 web search 與 function tool，並處理 tool call 的往返流程，甚至讓模型依指示依序串接多個工具
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`
+- 需要 Pinecone 帳號與 API key（外部服務）
+- 資料集來自 Hugging Face，embedding 與模型呼叫會產生費用
 
 
-This cookbook guides you through building dynamic, multi-tool workflows using OpenAI's Responses API. It demonstrates how to implement a Retrieval-Augmented Generation (RAG) approach that intelligently routes user queries to the appropriate in-built or external tools. Whether your query calls for general knowledge or requires accessing specific internal context from a vector database (like Pinecone), this guide shows you how to integrate function calls, web searches in-built tool, and leverage document retrieval to generate accurate, context-aware responses.
+### 用 Responses API 搭配 RAG 做多工具調度
 
-For a practical example of performing RAG on PDFs using the Responses API's file search feature, refer to [this](https://cookbook.openai.com/examples/file_search_responses) notebook.
+這份 cookbook 帶你用 OpenAI 的 Responses API 建立動態的多工具 workflow。它示範怎麼實作 Retrieval-Augmented Generation (RAG)，把使用者的查詢聰明地路由到合適的內建或外部工具。查詢如果是一般知識，或需要從向量資料庫（像 Pinecone）取內部 context，這篇都會說明怎麼整合 function call、web search 內建工具，並用文件檢索產生準確、有脈絡的回答。
 
-This example showcases the flexibility of the Responses API, illustrating that beyond the internal `file_search` tool—which connects to an internal vector store—there is also the capability to easily connect to external vector databases. This allows for the implementation of a RAG approach in conjunction with hosted tooling, providing a versatile solution for various retrieval and generation tasks.
+想看用 Responses API 的 file search 功能對 PDF 做 RAG 的實例，請參考[這份](https://cookbook.openai.com/examples/file_search_responses) notebook。
+
+這個例子展現 Responses API 的彈性：除了連到內部向量庫的 `file_search` 工具，也能輕鬆接外部向量資料庫。這讓你可以把 RAG 跟 hosted 工具搭配使用，應付各種檢索與生成任務。
 
 ```python
 #%pip install datasets tqdm pandas pinecone openai --quiet
@@ -56,7 +70,7 @@ from pinecone import ServerlessSpec
       from .autonotebook import tqdm as notebook_tqdm
     ```
 
-In this example we use a sample medical reasoning dataset from Hugging Face. We convert the dataset into a Pandas DataFrame and merge the “Question” and “Response” columns into a single string. This merged text is used for embedding and later stored as metadata.
+這個例子用 Hugging Face 的醫療推理資料集範例。我們把資料集轉成 Pandas DataFrame，並把「Question」和「Response」欄位合併成單一字串。合併後的文字會用來做 embedding，之後也會存成 metadata。
 
 ```python
 # Load the dataset (ensure you're logged in with huggingface-cli if needed)
@@ -126,8 +140,8 @@ ds_dataframe
     ... (省略 13 行)
     ```
 
-### Create a Pinecone Index Based on the Dataset
-Use the dataset itself to determine the embedding dimensionality. For example, compute one embedding from the merged column and then create the index accordingly.
+### 依資料集建立 Pinecone Index
+用資料集本身決定 embedding 的維度。例如先對合併後的欄位算出一個 embedding，再依此建立 index。
 
 ```python
 MODEL = "text-embedding-3-small"  # Replace with your production embedding model if needed
@@ -184,9 +198,9 @@ print("Index stats:", index.describe_index_stats())
      'vector_type': 'dense'}
     ```
 
-#### Upsert the Dataset into Pinecone index
+#### 把資料集 upsert 進 Pinecone index
 
-Process the dataset in batches, generate embeddings for each merged text, prepare metadata (including separate Question and Answer fields), and upsert each batch into the index. You may also update metadata for specific entries if needed.
+分批處理資料集：對每筆合併後的文字產生 embedding、準備 metadata（包含獨立的 Question 與 Answer 欄位），再把每個批次 upsert 進 index。需要的話也可以更新特定項目的 metadata。
 
 ```python
 batch_size = 32
@@ -220,9 +234,9 @@ for i in tqdm(range(0, len(ds_dataframe['merged']), batch_size), desc="Upserting
 
 ![Pinecone Image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/responses_pinecone_rag.png)
 
-### Query the Pinecone Index
+### 查詢 Pinecone Index
 
-Create a natural language query, compute its embedding, and perform a similarity search on the Pinecone index. The returned results include metadata that provides context for generating answers.
+建立一個自然語言查詢，算出它的 embedding，在 Pinecone index 上做相似度搜尋。回傳結果的 metadata 提供生成答案所需的脈絡。
 
 ```python
 def query_pinecone_index(client, index, model, query_text):
@@ -303,9 +317,9 @@ query_pinecone_index(client, index, MODEL, query)
     ... (省略 118 行)
     ```
 
-### Generate a Response Using the Retrieved Context
+### 用檢索到的 context 生成回答
 
-Select the best matching result from your query results and use the OpenAI Responses API to generate a final answer by combining the retrieved context with the original question.
+從查詢結果挑出最符合的一筆，用 OpenAI Responses API 把檢索到的 context 和原本的問題結合，生成最終答案。
 
 ```python
 # Retrieve and concatenate top 3 match contexts.
@@ -338,13 +352,13 @@ print(response.output_text)
     The recommended treatment is the immediate administration of thiamine, typically given intravenously or intramuscularly, to prevent progression to more severe neurological damage or Korsakoff syndrome.
     ```
 
-### Orchestrate Multi-Tool Calls
+### 調度多個工具呼叫
 
-Now, we'll define the built-in function available through the Responses API, including the ability to invoke the external Vector Store - Pinecone as an example.
+接著我們定義 Responses API 可用的內建功能，並以 Pinecone 為例加入呼叫外部向量庫的能力。
 
-*Web Search Preview Tool*: Enables the model to perform live web searches and preview the results. This is ideal for retrieving real-time or up-to-date information from the internet.
+*Web Search Preview 工具*：讓模型做即時的網路搜尋並預覽結果，適合取得即時或最新的網路資訊。
 
-*Pinecone Search Tool*: Allows the model to query a vector database using semantic search. This is especially useful for retrieving relevant documents—such as medical literature or other domain-specific content—that have been stored in a vectorized format.
+*Pinecone Search 工具*：讓模型用語意搜尋查詢向量資料庫，特別適合取得已向量化儲存的相關文件，例如醫學文獻或其他特定領域內容。
 
 ```python
 # Tools definition: The list of tools includes:
@@ -509,15 +523,15 @@ for item in queries:
     ... (省略 21 行)
     ```
 
-As shown above, depending on the query, appropriate tool is invoked in order to determine the optimal response.
+如上所示，模型會依查詢呼叫合適的工具，以得出最佳回答。
 
-For instance, in the third example, when the model calls `PineconeSearchDocuments`, the code passes the current query to `query_pinecone_index` and returns the best match as context. For general or non-health questions, or when the user explicitly asks for an internet search, the code calls `web_search_call`. For other questions, the model may answer without a tool.
+舉例來說，在第三個例子中，模型呼叫 `PineconeSearchDocuments` 時，程式會把目前的查詢傳給 `query_pinecone_index`，並回傳最符合的結果當 context。遇到一般或非健康相關的問題，或使用者明確要求上網搜尋時，程式會呼叫 `web_search_call`。其他問題，模型可能不用工具就直接回答。
 
-Finally, the tool call and its output are appended to the conversation, and the final answer is generated by the Responses API.
+最後，工具呼叫和它的輸出會被附加到對話中，再由 Responses API 生成最終回答。
 
-### Multi-tool orchestration flow
+### 多工具調度流程
 
-Now let us try to modify the input query and the system instructions to the responses API in order to follow a tool calling sequence and generate the output. 
+接著我們修改輸入的查詢和給 Responses API 的 system instructions，讓它依照工具呼叫的順序執行並產生輸出。
 
 ```python
 # Process one query as an example to understand the tool calls and function calls as part of the response output
@@ -679,10 +693,22 @@ print(response_2.output_text)
     ```
 
 
-Here, we used OpenAI's Responses API to implement Retrieval-Augmented Generation (RAG) with multiple tools. The model selects a tool based on the query: built-in web search can handle general questions, while function calls can retrieve internal medical context from a vector database such as Pinecone. We also combined multiple tool calls in sequence to generate a final response from the instructions provided to the Responses API.
+這裡我們用 OpenAI 的 Responses API 搭配多個工具實作了 RAG。模型會依查詢選擇工具：內建的 web search 處理一般問題，function call 則能從 Pinecone 這類向量資料庫取回內部醫療 context。我們也依 Responses API 的 instructions 把多個工具呼叫依序串起來，產生最終回答。
 
-As you continue to experiment and build upon these concepts, consider exploring additional resources and examples to further enhance your understanding and applications
+接下來你可以繼續實驗並延伸這些概念，也可以多看其他資源和範例，加深理解並應用在自己的專案上。
 
-Happy coding! 
+祝寫程式愉快！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Responses API 能同時掛內建工具（web search）和自訂 function，由模型依問題決定用哪個。
+- 外部向量資料庫（如 Pinecone）可以包成 function tool，接進 RAG 流程。
+- 要建 index 前先確定 embedding 的維度，再批次 upsert，metadata 順便存原始 Question 與 Answer。
+- tool call 與其輸出要附加回對話，模型才能產生最後答案。
+- 靠 instructions 可以規定工具的呼叫順序，做出多步驟的串接。
+
+## 練習
+
+1. 換一個問題，分別試一般常識、醫療問題和「請上網搜尋」，觀察模型選了哪個工具。
+2. 把查詢 Pinecone 時的 `top_k` 改成 3，把三筆結果都當 context 傳給 Responses API，比較答案有沒有變好。
+3. 修改 system instructions，要求模型一定先查 Pinecone、再用 web search 補充，檢查 tool call 的順序是否照辦。

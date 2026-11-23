@@ -1,40 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/redis/redisjson/redisjson.ipynb
 ---
 
-# Redis vectors as JSON with OpenAI
+# 用 OpenAI 把 Redis 向量存成 JSON
 
 > 原文：[examples/vector_databases/redis/redisjson/redisjson.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis/redisjson/redisjson.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這本 notebook 延伸其他 Redis 搭配 OpenAI 的 cookbook 範例，示範怎麼把向量搭配 JSON 使用，詳見 [Storing Vectors in JSON](https://redis.io/docs/stack/search/reference/vectors/#storing-vectors-in-json)。
+流程是替幾則新聞摘要做 embedding，以 JSON 物件存進 Redis，再做語意搜尋和混合搜尋。
 
-This notebook expands on the other Redis OpenAI-cookbook examples with examples of how to use JSON with vectors.
-[Storing Vectors in JSON](https://redis.io/docs/stack/search/reference/vectors/#storing-vectors-in-json)
+## 學完你會
+- 用 FT.CREATE 建立可搜尋向量欄位的索引，並把資料以 Redis JSON 物件載入。
+- 用 KNN 做向量相似度搜尋，找出相似的文章。
+- 結合全文檢索和向量搜尋做混合搜尋。
 
-## Prerequisites
-* Redis instance with the Redis Search and Redis JSON modules
-* Redis-py client lib
+## 開跑前
+- 需要一個有 Redis Search 和 Redis JSON 模組的 Redis instance（範例用 Docker 啟動 Redis Stack）。
+- 需要 redis-py client 函式庫和 OpenAI API key。
+
+## 前置條件
+* 有 Redis Search 和 Redis JSON 模組的 Redis instance
+* Redis-py client 函式庫
 * OpenAI API key
 
-## Installation
-Install Python modules necessary for the examples.
+## 安裝
+安裝範例需要的 Python 模組。
 
 ```python
 ! pip install redis openai python-dotenv openai[datalib]
 ```
 
 ## OpenAI API Key
-Create a .env file and add your OpenAI key to it
+建立 .env 檔，把你的 OpenAI key 加進去
 
 ```python
 OPENAI_API_KEY=your_key
 ```
 
-## Create Text Vectors
-Create embeddings (array of floats) of the news excerpts below.
+## 建立文字向量
+替下面的新聞摘要建立 embedding（浮點數陣列）。
 
 ```python
 import openai
@@ -82,7 +90,7 @@ doc_2 = {"content": text_2, "vector": get_vector(text_2)}
 doc_3 = {"content": text_3, "vector": get_vector(text_3)}
 ```
 
-## Start the Redis Stack Docker container
+## 啟動 Redis Stack Docker container
 
 ```python
 ! docker compose up -d
@@ -104,7 +112,7 @@ doc_3 = {"content": text_3, "vector": get_vector(text_3)}
     [?25h
     ```
 
-## Connect Redis client
+## 連接 Redis client
 
 ```python
 from redis import from_url
@@ -120,7 +128,7 @@ client.ping()
     True
     ```
 
-## Create Index
+## 建立索引
 [FT.CREATE](https://redis.io/commands/ft.create/)
 
 ```python
@@ -149,7 +157,7 @@ client.ft('idx').create_index(schema, definition=idx_def)
     b'OK'
     ```
 
-## Load Data into Redis as JSON objects
+## 把資料以 JSON 物件載入 Redis
 [Redis JSON](https://redis.io/docs/stack/json/)
 
 ```python
@@ -164,8 +172,8 @@ client.json().set('doc:3', '$', doc_3)
     True
     ```
 
-# Semantic Search
-Given a sports-related article, search Redis via Vector Similarity Search (VSS) for similar articles.  
+# 語意搜尋
+給一篇運動相關的文章，透過向量相似度搜尋 (VSS) 在 Redis 中搜尋相似文章。  
 [KNN Search](https://redis.io/docs/stack/search/reference/vectors/#knn-search)
 
 ```python
@@ -222,8 +230,8 @@ for doc in results.docs:
     The new tool has been compared to the Smart Tags feature from Microsoft by some users. It was widely criticised by net users and later dropped by Microsoft after concerns over trademark use were raised. Smart Tags allowed Microsoft to link any word on a web page to another site chosen by the company. Google said none of the companies which received AutoLinks had paid for the service. Some users said AutoLink would only be fair if websites had to sign up to allow the feature to work on their pages or if they received revenue for any "click through" to a commercial site. Cory Doctorow, European outreach coordinator for digital civil liberties group Electronic Fronter Foundation, said that Google should not be penalised for its market dominance. "Of course Google should be allowed to direct people to whatever proxies it chooses. "But as an end user I would want to know - 'Can I choose to use this service?, 'How much is Google being paid?', 'Can I substitute my own companies for the ones chosen by Google?'." Mr Doctorow said the only objection would be if users were forced into using AutoLink or "tricked into using the service".
     ```
 
-## Hybrid Search
-Use a combination of full text search and VSS to find a matching article.  For this scenario, we filter on a full text search of the term 'recession' and then find the KNN articles.  In this case, business-related.  Reminder document #1 was about a recession in Japan.
+## 混合搜尋
+結合全文檢索和 VSS 來找出符合的文章。這個情境是先用全文檢索篩選出含有「recession」這個詞的文件，再找 KNN 文章，結果是跟商業相關的文章。提醒一下，第 1 篇文件講的是日本的經濟衰退。
 [Hybrid Queries](https://redis.io/docs/stack/search/reference/vectors/#hybrid-queries)
 
 ```python
@@ -261,4 +269,13 @@ for doc in results.docs:
     The government was keen to play down the worrying implications of the data. "I maintain the view that Japan's economy remains in a minor adjustment phase in an upward climb, and we will monitor developments carefully," said economy minister Heizo Takenaka. But in the face of the strengthening yen making exports less competitive and indications of weakening economic conditions ahead, observers were less sanguine. "It's painting a picture of a recovery... much patchier than previously thought," said Paul Sheard, economist at Lehman Brothers in Tokyo. Improvements in the job market apparently have yet to feed through to domestic demand, with private consumption up just 0.2% in the third quarter.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Redis 可以把 embedding 直接存在 JSON 文件的欄位裡，不必另外拆成獨立結構。
+- 向量搜尋要先用 FT.CREATE 定義索引和向量欄位，再載入資料。
+- KNN 搜尋找語意最相近的文件，不靠關鍵字重疊。
+- 混合搜尋先用全文條件縮小範圍，再在結果裡做向量比對，兼顧精確和語意。
+
+## 練習
+1. 在 notebook 的新聞摘要裡多加一則你自己寫的文章，重新載入並搜尋。
+2. 改 KNN 的 K 值，觀察回傳的文章數量和相似度排序。
+3. 把混合搜尋的全文關鍵字從「recession」換成別的詞，看結果怎麼變。

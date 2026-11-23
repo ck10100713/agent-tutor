@@ -1,39 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_box.ipynb
 ---
 
-# GPT Actions library - Box
+# GPT Actions 範例庫：Box
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_box.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_box.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你把 ChatGPT 接到 Box.com 帳號。Custom GPT 用兩個 action：一個直接呼叫 Box API 查資料，另一個是 Azure Function，負責把 Box 的回應整理成 ChatGPT 能下載、讀取檔案內容的格式。
 
+## 學完你會
+- 在 Box 建立 OAuth 2.0 的 custom app，並把 Client ID、Secret 和 redirect URI 跟 ChatGPT 對起來
+- 在 Custom GPT 裡貼上 instructions 和 OpenAPI schema，設定 Box API action
+- 部署 Azure Function 當 middleware，讓 GPT 讀得到檔案內容，不只是檔案的 metadata
 
+## 開跑前
+- Box developer 帳號，以及一個 OAuth 2.0 的 custom app
+- Azure Portal 權限，要能建立 Function App 和 Entra App Registration
+- 能建立 Custom GPT 和 Actions 的 ChatGPT 帳號
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這頁是給開發者的教學，說明怎麼為特定應用程式做 GPT Action。開始之前，請先看過下面這些資料：
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This guide explains how to connect ChatGPT to a Box.com account. The GPT uses two actions to pull data from Box. It interacts with the Box API directly but requires middleware, such as an Azure Function, to format the response so ChatGPT can download and read the file contents. The Azure Function action is transparent to the end user, so the user does not need to call it explicitly. 
+這份指南說明怎麼把 ChatGPT 連到 Box.com 帳號。這個 GPT 用兩個 action 從 Box 拉資料。它直接跟 Box API 互動，但需要像 Azure Function 這樣的 middleware 來整理回應格式，ChatGPT 才能下載並讀取檔案內容。Azure Function 這個 action 對使用者是透明的，使用者不用明確去呼叫它。
 
-- Action 1: Box API action - Leverages the Box API to query data from Box 
-- Action 2: Azure Function - Formats the response from Box, enabling ChatGPT to download the file directly from Box
+- Action 1：Box API action，用 Box API 查詢 Box 裡的資料
+- Action 2：Azure Function，整理 Box 的回應，讓 ChatGPT 可以直接從 Box 下載檔案
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境
 
-Existing Box customers can leverage these guidelines to query details about files, contents of files and any metadata related. This enables OpenAI-powered analysis of any content stored in Box such as visualizing data sets and creating summaries across multiple folders and files. This GPT can access folders, files and business process data such as metadata in Box. Additionally, Box admins can use this GPT action for visibility into audit trails and health checks.
+現有的 Box 客戶可以照這些指引，查詢檔案細節、檔案內容和相關 metadata。這樣就能用 OpenAI 分析 Box 裡的任何內容，例如把資料集視覺化、跨多個資料夾和檔案做摘要。這個 GPT 可以存取資料夾、檔案，以及 Box 裡 metadata 這類業務流程資料。另外，Box 管理員也能用這個 GPT action 查看稽核紀錄和健康檢查。
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 重要連結
 
-Check out these links from Box and Azure before you get started:
+開始之前，先看看 Box 和 Azure 的這些連結：
 
 **Box Action**
 - Application Website: https://app.box.com 
@@ -46,17 +55,17 @@ Check out these links from Box and Azure before you get started:
 - Application API Documentation: https://learn.microsoft.com/en-us/azure/azure-functions/functions-reference/
  
 
-### Application Prerequisites
+### 應用程式前置條件
 
-Before you get started, make sure you go through the following steps in your Box environment:
-- This requires a Box developer account to get started : https://developer.box.com/
-- Follow the Box Developer site to create a custom app with OAuth 2.0 authentication type  : https://developer.box.com/guides/getting-started/first-application/  
-- Navigate to **Configuration** tab for the following values
-    - OAuth 2.0 Credentials (**Client ID** / **Client Secret**) You will need both of these values for the ChatGPT configuration
-    - OAuth 2.0 **Redirect URIs** : You will fill this value in from ChatGPT action configuration below
-    - Application scopes (**Read all files and folders in Box**, **Manage Enterprise properties**) 
+開始之前，要先在 Box 環境完成下面這些步驟：
+- 需要 Box developer 帳號才能開始：https://developer.box.com/
+- 照 Box Developer 網站的說明，建立 OAuth 2.0 驗證類型的 custom app：https://developer.box.com/guides/getting-started/first-application/  
+- 到 **Configuration** 分頁取得下面這些值
+    - OAuth 2.0 憑證（**Client ID** / **Client Secret**），這兩個值都要填進 ChatGPT 的設定
+    - OAuth 2.0 **Redirect URIs**：這個值要等 ChatGPT action 設定好之後再回來填
+    - Application scopes（**Read all files and folders in Box**、**Manage Enterprise properties**） 
 
-You will want to keep this window open, the Redirct URIs needs to be filled in from the gpt configuration.
+這個視窗先不要關，Redirect URIs 要從 GPT 的設定複製過來填。
 
 
 
@@ -65,18 +74,18 @@ You will want to keep this window open, the Redirct URIs needs to be filled in f
 </br>
 
 
-### Middleware information : required for Action 2
+### Middleware 資訊：Action 2 需要
 
-Make sure you go through the following steps in your Azure environment:
-- Azure Portal with access to create Azure Function Apps and Azure Entra App Registrations
-- There is a detailed section in this guide related to deploying and designing the function required to wrap the response from Box in order to view the contents of the file. Without the function the GPT will only be able to query data about the file and not the contents. Be sure to read this section after creating the first action.
+在 Azure 環境要先完成這些：
+- 有權限建立 Azure Function App 和 Azure Entra App Registration 的 Azure Portal
+- 這份指南後面有一個詳細的段落，講怎麼部署和設計這個 function，用來包裝 Box 的回應，才看得到檔案內容。沒有這個 function，GPT 只能查檔案的資料，看不到內容。建完第一個 action 之後，記得讀那個段落。
 
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有疑問的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 **context** 
@@ -96,9 +105,9 @@ Provide insights to files and suggest patterns for users, gives example queries 
 When a user wants to compare files retrieve the file for the user with out asking
 ```
 
-### Action 1 : Box API Action
+### Action 1：Box API Action
 
-Once you've created a Custom GPT, you will need to create 2 actions. Copy the text below in the 1st Actions panel, this will be for the Box action. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，需要建立 2 個 action。把下面的文字複製到第 1 個 Actions 面板，這個是 Box action。有疑問的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 {
@@ -617,34 +626,34 @@ Once you've created a Custom GPT, you will need to create 2 actions. Copy the te
 }
 ```
 
-**Note : this schema above does not contain all possible API endpoints, be sure to edit the schema to produce the appropriate actions from [Box Developer documentation](https://developer.box.com)**
+**注意：上面的 schema 沒有包含所有可能的 API endpoint，記得照 [Box Developer documentation](https://developer.box.com) 修改 schema，產生你需要的 action。**
 
-## Authentication Instructions
+## 驗證設定
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面是跟這個第三方應用程式設定驗證的步驟。有疑問的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose OAuth 
+在 ChatGPT 點 "Authentication"，選 OAuth 
 
 
 <br> ![gptactions_box_gptauth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_box_gptauth.png)
 
-**OAuth Connection**
+**OAuth 連線**
 
-- Client ID - value from Box custom app you created earlier
-- Client Secret - value from Box custom app you created earlier 
-- Authorization URL - : https://account.box.com/api/oauth2/authorize?response_type=code&client_id=[client ID from above]&redirect_uri=[use a placeholder like chat.openai.com/aip//oauth/callback for now, you’ll update this later when you create the Action in ChatGPT]
-- Token URL : https:api.box.com/oauth2/token
+- Client ID：前面建立的 Box custom app 的值
+- Client Secret：前面建立的 Box custom app 的值 
+- Authorization URL：https://account.box.com/api/oauth2/authorize?response_type=code&client_id=[client ID from above]&redirect_uri=[use a placeholder like chat.openai.com/aip//oauth/callback for now, you’ll update this later when you create the Action in ChatGPT]
+- Token URL：https:api.box.com/oauth2/token
 </br>
 </br>
-You need to save the configuration and navigate back to the gpt Configuration tab to copy the Callback URL, edit the configuration for the Box action Authorization URL and format the URL as https://account.box.com/api/oauth2/authorize?response_type=code&client_id=[client_ID]&redirect_uri=[callBack URL]
+你要先儲存設定，再回到 GPT 的 Configuration 分頁複製 Callback URL，然後編輯 Box action 的 Authorization URL，格式改成 https://account.box.com/api/oauth2/authorize?response_type=code&client_id=[client_ID]&redirect_uri=[callBack URL]
 
-### Post-Action Steps
+### Action 設定後的步驟
 
-Update the Box.com custom application
+更新 Box.com 的 custom application
 </br>
-- Copy the CallBack URL from the gpt and add a OAuth 2.0 Redirect URIs in Box.com
+- 從 GPT 複製 CallBack URL，到 Box.com 加上一筆 OAuth 2.0 Redirect URIs
 </br>
 </br>
 ![gpt_actions_box_boxconfig1.png.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_box_boxconfig1.png)
@@ -652,17 +661,17 @@ Update the Box.com custom application
 </br>
 
 
-### Action 2 : Azure Function
+### Action 2：Azure Function
 
-Now that we have the GPT created and authenticating against Box.com, we can create the azure function to handle the response formatting enabling the GPT to download the files from Box. 
+現在 GPT 已經建好，也能對 Box.com 做驗證了，接下來可以建立 Azure Function 來處理回應格式，讓 GPT 能從 Box 下載檔案。 
 
-Follow this [Azure Cookbook Guide](https://cookbook.openai.com/examples/azure/functions) for further details deploying an Azure function. Below you will find sample code to add to the function. 
+部署 Azure Function 的細節，請看這份 [Azure Cookbook Guide](https://cookbook.openai.com/examples/azure/functions)。下面是要加進 function 的範例程式碼。 
 
-This code is meant to be directional - while it should work out of the box, it is designed to be customized to your need.</br>
+這段程式碼只是示意用，雖然應該可以直接跑，但設計上是讓你依需求客製化。</br>
 
 </br>
 
-**Data flow**
+**資料流程**
 
 ![gpt_actions_box_azureflow.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_box_azuredataflow.png)
 
@@ -670,7 +679,7 @@ This code is meant to be directional - while it should work out of the box, it i
 
 
 
-Now that you have the azure function created, add the sample code below:
+Azure function 建好之後，加入下面的範例程式碼：
 
 function_app.py
 
@@ -781,14 +790,24 @@ requests
 pyjwt
 ```
 
-Make sure to follow the rest of the Azure guide for post authentication steps and ChatGPT configuration : [Azure Cookbook Guide](https://cookbook.openai.com/examples/azure/functions)
+記得照 Azure 指南做完剩下的驗證後步驟和 ChatGPT 設定：[Azure Cookbook Guide](https://cookbook.openai.com/examples/azure/functions)
 
-### FAQ & Troubleshooting
+### FAQ 與疑難排解
 
-- *Schema calls the wrong project or dataset:* If ChatGPT calls the wrong project or dataset, consider updating your instructions to make it more explicit either (a) which project / dataset should be called or (b) to require the user provide those exact details before it runs the query
-- Box can return a large set of data in the event stream which can cause errors, 
+- *Schema 呼叫到錯的 project 或 dataset：* 如果 ChatGPT 呼叫到錯的 project 或 dataset，可以修改 instructions，寫得更明確：(a) 該呼叫哪個 project / dataset，或 (b) 要求使用者在執行查詢前先提供這些確切資訊
+- Box 可能在 event stream 裡回傳大量資料，這會造成錯誤。 
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有沒有哪些整合你希望我們優先做？我們的整合有錯誤嗎？歡迎到我們的 github 提 PR 或 issue，我們會處理。*
 
 
-<!-- tutor:summary -->
+## 重點整理
+- 這個整合由兩個 action 組成：Box API action 查資料，Azure Function 負責讓檔案內容可被下載讀取
+- 沒有 middleware 的話，GPT 只能查到檔案的 metadata，讀不到內容
+- OAuth 設定要在 ChatGPT 和 Box 之間來回一趟：先用暫時的 redirect URI，儲存後再把正式的 Callback URL 填回兩邊
+- 範例 schema 只涵蓋部分 endpoint，要依需求照 Box 文件擴充
+- GPT 呼叫錯的 project 或 dataset 時，改 instructions 讓範圍更明確
+
+## 練習
+1. 在 Custom GPT 的 instructions 裡，加一句限制，讓 GPT 只在指定的 Box 資料夾下查詢。
+2. 在 Box action 的 schema 裡，照 Box 文件新增一個 endpoint（例如取得資料夾內容的 endpoint），然後在 GPT 裡測試它會不會用到。
+3. 修改 `function_app.py`，讓它在檔案太大時回傳明確的錯誤訊息，而不是整份送出去。

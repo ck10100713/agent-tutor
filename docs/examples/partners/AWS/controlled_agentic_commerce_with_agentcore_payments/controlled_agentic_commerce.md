@@ -1,58 +1,70 @@
 ---
-translated: false
+translated: true
 source: examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.ipynb
 ---
-
-# Controlled Agentic Commerce with AgentCore Payments
+# 用 AgentCore Payments 做受控的 Agentic Commerce
 
 > 原文：[examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.ipynb)
 
-Build a controlled agentic-commerce workflow with the OpenAI Agents SDK, x402, application-owned payment authority, deterministic validation, and an optional gated Amazon Bedrock AgentCore Payments testnet path.
+用 OpenAI Agents SDK、x402、由應用程式掌握的付款權限、確定性驗證，再加上一條可選的、有層層開關的 Amazon Bedrock AgentCore Payments testnet 路徑，做出一個受控的 agentic commerce workflow。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇教你讓 agent 去買付費的 API 資料，但付款的決定權一直留在你的應用程式手上。模型只能提出「我想抓這個 URL」，商家、金額、用途、人工核准都由程式碼檢查。範例先用本機模擬跑一遍，再接上 AWS testnet 的 AgentCore Payments。
+
+## 學完你會
+
+- 看懂 x402 的 HTTP `402 Payment Required` 流程：商家回報價格，應用程式檢查後才取得付款證明再重試。
+- 寫出只給 agent 一個 `x402_fetch` tool 的設計，request ID、approval、spending policy 全由應用程式提供，模型碰不到。
+- 用 output validator 比對模型回傳的摘要跟應用程式自己記錄的 receipt，擋掉偽造的收據。
+
+## 開跑前
+
+- Python 3.11 到 3.13 和 `uv`。
+- 本機模擬部分不需要 AWS 憑證，也不會真的轉帳。
+- 要跑 AWS testnet 路徑，需要 AWS 帳號、已預先佈建好的 AgentCore Payments 資源、Bedrock 上的模型，以及五個明確的開關環境變數（見後文）。
+
+AI agent 常常需要外部服務的資訊才能完成任務。採購 agent 可能要拿供應商去比對制裁名單資料庫、取得最新的風險報告，或用付費的搜尋 API。這些服務每次請求都收費時，應用程式就需要明確的規則：agent 可以請求買什麼、誰來核准花這筆錢。
+
+Agentic commerce 指的是這樣的 workflow：agent 可以請求付費資源，但付款的權限仍然在應用程式手上。Amazon Bedrock AgentCore Payments 提供有額度限制的付款 session 基礎設施，OpenAI Agents SDK 則讓模型能請求應用程式定義的 tool。付款發生之前，應用程式會先檢查商家、用途、金額和核准。
+
+這本 notebook 用一個供應商研究的例子來說明整個流程，包含 AgentCore Payments 的流程、x402 的付款交換、應用程式自己掌握的花費控制，以及收據驗證。同樣的付款控制先用本機模擬示範，再接到 AWS testnet 上的 AgentCore Payments。
 
 
-AI agents often need information from external services to complete a task. A procurement agent might check a supplier against a sanctions database, retrieve a current risk report, or use a paid search API. When those services charge for each request, the application needs clear rules for which purchases the agent can request and who approves the spending.
+## 為什麼 agent 需要使用付費服務
 
-Agentic commerce describes workflows in which an agent can request a paid resource while application code retains authority over payment. Amazon Bedrock AgentCore Payments provides infrastructure for bounded payment sessions, and the OpenAI Agents SDK lets a model request an application-defined tool. The application checks the merchant, purpose, amount, and approval before a payment can occur.
+假設有個採購 agent 在審查一家虛構的供應商 Northstar Components。agent 手上有基本的供應商資料，但要先從付費 API 拿到最新的風險報告，才能替人工審核者整理潛在的疑慮。
 
-This notebook explains that workflow through a supplier research example. It covers the AgentCore Payments flow, the x402 payment exchange, application-owned spending controls, and receipt verification. The same payment controls are first illustrated with a local simulation and then connected to AgentCore Payments on the AWS testnet.
+應用程式會核准這個資料提供者、定義供應商研究的用途，並設定報告的最高價格，同時記錄這次請求對應的人工核准。模型判斷這份報告有用時，就會用供應商報告的 URL 和核准過的用途去呼叫 `x402_fetch` tool。
 
-
-## Why agents need access to paid services
-
-Consider a procurement agent reviewing a fictional supplier named Northstar Components. The agent has basic supplier information, but it needs a current risk report from a paid API before it can summarize potential concerns for a human reviewer.
-
-The application approves that data provider, defines a supplier research purpose, and sets a maximum price for the report. It also records the human approval associated with the request. When the model decides that the report is useful, it requests the `x402_fetch` tool with the supplier report URL and the approved purpose.
-
-The merchant returns an HTTP `402 Payment Required` challenge describing its payment terms. The application checks those terms against the approved merchant, amount, network, expiry, and budget. If the request passes, the application obtains a bounded payment proof, retrieves the report, and records a receipt and audit history. The agent then prepares its answer from the report and receipt evidence returned by the tool.
+商家會回傳 HTTP `402 Payment Required` 的 challenge，說明它的付款條件。應用程式拿這些條件去比對已核准的商家、金額、網路、到期時間和預算。檢查通過後，應用程式取得有額度限制的付款證明、取回報告，並記錄收據和稽核歷程。接著 agent 根據 tool 回傳的報告和收據證據準備答案。
 
 
-## Architecture and payment authority
+## 架構與付款權限
 
-The system separates four responsibilities:
+整個系統分成四個角色：
 
-1. **The AI agent** identifies when a paid service could help complete the user's request and calls the application-defined tool.
-2. **The application** checks the merchant, purchase purpose, amount, approval, and spending limit before recording the receipt and audit history.
-3. **AgentCore Payments** generates a payment proof within the limits of an approved payment session.
-4. **The paid API** checks the payment proof and returns the requested content.
+1. **AI agent**：判斷付費服務什麼時候能幫上忙，然後呼叫應用程式定義的 tool。
+2. **應用程式**：檢查商家、購買用途、金額、核准和花費上限，然後記錄收據和稽核歷程。
+3. **AgentCore Payments**：在已核准的付款 session 額度內產生付款證明。
+4. **付費 API**：驗證付款證明，回傳請求的內容。
 
-The local example simulates the AgentCore Payments step. The connected AWS workflow uses AgentCore Payments to generate the bounded proof.
+本機範例會模擬 AgentCore Payments 這一步。接上 AWS 之後，就由 AgentCore Payments 產生有額度限制的證明。
 
-The application is the boundary between the model and the payment infrastructure. The model receives the resource URL and research purpose, while approval records, spending limits, payment credentials, and audit state remain outside its control.
+應用程式是模型和付款基礎設施之間的邊界。模型只拿得到資源 URL 和研究用途，核准紀錄、花費上限、付款憑證和稽核狀態都不在它的控制範圍內。
 
 ![An agent requests a paid supplier report through application controls and AgentCore Payments](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partners/AWS/controlled-agentic-commerce-overview.png)
 
-*The application controls approval and spending, while AgentCore Payments provides a bounded payment session for the connected AWS workflow.*
+*核准和花費由應用程式控制，接上 AWS 後，AgentCore Payments 提供有額度限制的付款 session。*
 
 
-## 1. Setting up the supplier research example
+## 1. 設定供應商研究範例
 
-The example requires Python 3.11 through 3.13 and `uv`. Follow the repository-root Jupyter command in `README.md` so the notebook can load its package and display the architecture diagrams.
+範例需要 Python 3.11 到 3.13 和 `uv`。照 `README.md` 裡 repository 根目錄的 Jupyter 指令啟動，notebook 才能載入它的 package 並顯示架構圖。
 
-The first part uses a scripted model, a simulated merchant, and a synthetic payment proof. This setup lets you inspect the same request, approval, receipt, and audit sequence without configuring AWS credentials or transferring funds. The final section shows where a real Amazon Bedrock model and AgentCore Payments testnet resources enter the workflow.
+前半段用的是腳本化的模型、模擬的商家和合成的付款證明。這樣你不用設定 AWS 憑證、也不用轉任何資金，就能看到同樣的 請求、核准、收據、稽核順序。最後一節會說明真正的 Amazon Bedrock 模型和 AgentCore Payments testnet 資源是在 workflow 的哪個位置加進來。
 
-The following cell locates the example package and makes its application, merchant, and policy modules available to the notebook.
+下面這個 cell 會找到範例的 package，讓 notebook 能使用它的 application、merchant 和 policy 模組。
 
 
 ```python
@@ -76,11 +88,11 @@ sys.path.insert(0, str(ROOT / "src"))
 print(f"Example root: {ROOT}")
 ```
 
-## 2. Defining supplier requests and spending limits
+## 2. 定義供應商請求與花費上限
 
-The application needs to establish its payment rules before the model can request a tool. In this example, the supplier report costs 0.25 synthetic USDC. The application also defines the approved merchant, the permitted research purpose, a maximum amount for this purchase, and the total budget available to the agent run.
+模型能請求 tool 之前，應用程式要先把付款規則定好。這個例子裡，供應商報告要 0.25 合成 USDC。應用程式還定義了核准的商家、允許的研究用途、這次購買的最高金額，以及這次 agent 執行可以用的總預算。
 
-`ApprovalGrant` ties the purchase to a particular request ID and resource URL. Its expiry limits how long that authorization remains valid. The model never supplies or changes these values; they are provided by application code when the tool is created.
+`ApprovalGrant` 把購買綁定在特定的 request ID 和資源 URL 上，它的到期時間限制這份授權有效多久。這些值模型不會提供也不能改，是在建立 tool 時由應用程式碼給定的。
 
 
 ```python
@@ -114,13 +126,13 @@ approval = ApprovalGrant(
 }
 ```
 
-## 3. Defining an agent tool for approved purchases
+## 3. 定義用於核准購買的 agent tool
 
-The `x402_fetch` function is the only payment-related tool available to the agent. The model can provide a resource URL and a business purpose, but the application supplies the request ID, idempotency key, spending policy, and approval grant.
+`x402_fetch` 函式是 agent 唯一能用的跟付款有關的 tool。模型可以給資源 URL 和商業用途，但 request ID、idempotency key、花費政策和核准授權都由應用程式提供。
 
-Before starting a purchase, the tool consumes a one-use capability. That check prevents a model from issuing multiple economic requests during the same agent run. `application.purchase` then validates the merchant and payment challenge before producing a receipt.
+開始購買之前，tool 會先消耗一次性的 capability。這個檢查防止模型在同一次 agent 執行中發出多個花錢的請求。接著 `application.purchase` 會先驗證商家和付款 challenge，才產生收據。
 
-`AgentPurchaseEvidence` returns only the report and receipt fields the model needs to prepare its answer. Wallet material, payment proof headers, and the complete application audit trail are kept out of the model context.
+`AgentPurchaseEvidence` 只回傳模型準備答案需要的報告和收據欄位。錢包資料、付款證明 header 和完整的應用程式稽核紀錄都不會進入模型的 context。
 
 
 ```python
@@ -187,17 +199,17 @@ agent = Agent(
 {"agent": agent.name, "tools": [tool.name for tool in agent.tools]}
 ```
 
-## 4. Running the x402 payment workflow
+## 4. 執行 x402 付款 workflow
 
-x402 uses the HTTP `402 Payment Required` response to communicate the terms of a paid request. When the application first requests the supplier report, the merchant returns a challenge with the amount, asset, network, recipient, and expiry.
+x402 用 HTTP `402 Payment Required` 回應來傳達付費請求的條件。應用程式第一次請求供應商報告時，商家會回傳一個 challenge，裡面有金額、資產、網路、收款方和到期時間。
 
-The application checks those terms against its approved policy. If the merchant, price, request purpose, and human approval are valid, AgentCore Payments creates one bounded proof in the connected AWS workflow. The local example uses a synthetic proof to demonstrate the same sequence. The application retries the request with the proof, and the merchant returns the supplier report with HTTP `200`.
+應用程式拿這些條件去比對已核准的政策。如果商家、價格、請求用途和人工核准都有效，在接上 AWS 的 workflow 裡，AgentCore Payments 就會建立一個有額度限制的證明。本機範例用合成證明來示範同樣的順序。應用程式帶著證明重試請求，商家就用 HTTP `200` 回傳供應商報告。
 
 ![The x402 request sequence between the agent, application, merchant, and AgentCore Payments](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partners/AWS/controlled-agentic-commerce-x402-sequence.png)
 
-*The merchant's 402 response supplies payment terms. Application approval occurs before a payment proof is requested.*
+*商家的 402 回應提供付款條件，要先經過應用程式核准，才會去要付款證明。*
 
-`Runner.run` executes the Agents SDK loop. The scripted model requests `x402_fetch` on its first turn and prepares a typed supplier summary after the tool returns. The application checks that summary against the purchase it actually recorded.
+`Runner.run` 執行 Agents SDK 的 loop。腳本化的模型在第一輪請求 `x402_fetch`，tool 回傳後再產出有型別的供應商摘要。應用程式會拿這份摘要去比對它實際記錄下來的購買。
 
 
 ```python
@@ -232,13 +244,13 @@ run = SupplierResearchRun(output=result.final_output, purchase=purchase)
 }
 ```
 
-### Using the Responses API directly
+### 直接使用 Responses API
 
-The OpenAI Agents SDK coordinates the tool loop in the previous example, but the payment workflow does not require that orchestration layer. The Responses API can expose `x402_fetch` as a function, return the model's proposed arguments, and accept a `function_call_output` after the application handles the purchase.
+上一個範例由 OpenAI Agents SDK 協調 tool loop，但這個付款 workflow 並不一定需要這層 orchestration。Responses API 可以把 `x402_fetch` 當成 function 暴露出來、回傳模型提議的參數，並在應用程式處理完購買後接收 `function_call_output`。
 
-The application still checks the merchant, purpose, approval, and spending limit before making a payment. AgentCore Payments remains responsible for generating the bounded proof in the connected AWS workflow. The example below uses the same simulated merchant and payment processor as the local walkthrough.
+應用程式在付款前仍然要檢查商家、用途、核准和花費上限。接上 AWS 的 workflow 裡，產生有額度限制證明的還是 AgentCore Payments。下面的範例用的是跟本機流程一樣的模擬商家和付款處理器。
 
-This alternative calls a real Bedrock-hosted GPT-5.6 Sol model, so it runs only when `ALLOW_PAID_INFERENCE=1` and valid AWS credentials are configured. It does not enable a live payment or transfer funds.
+這個替代做法會呼叫真正由 Bedrock 代管的 GPT-5.6 Sol 模型，所以只有在 `ALLOW_PAID_INFERENCE=1` 且設好有效的 AWS 憑證時才會執行。它不會啟用真實付款，也不會轉移資金。
 
 
 ```python
@@ -381,11 +393,11 @@ if os.environ.get("ALLOW_PAID_INFERENCE") == "1":
 responses_result
 ```
 
-## 5. Verifying the supplier report, receipt, and audit history
+## 5. 驗證供應商報告、收據和稽核歷程
 
-The model returns a structured supplier summary, but a valid schema only establishes that the response has the expected shape. The application still needs to check whether the reported receipt, amount, currency, and supplier details match the completed tool request.
+模型回傳結構化的供應商摘要，但 schema 有效只代表回應的形狀符合預期。應用程式還要檢查回報的收據、金額、幣別和供應商資料，是不是跟已完成的 tool 請求相符。
 
-The first cell compares the agent's proposed result with the application-owned receipt. The second cell shows the audit sequence from the initial resource request through authorization, payment proof creation, the merchant retry, and returned content.
+第一個 cell 把 agent 提出的結果拿去跟應用程式自己持有的收據比對。第二個 cell 顯示稽核順序，從最初的資源請求，到授權、產生付款證明、商家重試，最後回傳內容。
 
 
 ```python
@@ -414,11 +426,11 @@ receipt = run.purchase.receipt.model_dump(mode="json")
 ]
 ```
 
-## 6. Checking rejected purchases and fabricated receipts
+## 6. 檢查被拒絕的購買與偽造的收據
 
-A useful payment example should show what happens when its controls reject a request. The first check submits another supplier report request without the required human approval. The application can inspect the merchant's challenge, but it must reject the purchase before creating another payment proof or charge.
+好的付款範例也該展示控制機制拒絕請求時會怎樣。第一個檢查是在沒有必要人工核准的情況下，再送出一次供應商報告請求。應用程式可以檢視商家的 challenge，但必須在建立另一個付款證明或扣款之前就拒絕這次購買。
 
-The existing synthetic charge count should remain unchanged after the request is denied.
+請求被拒後，既有的合成扣款次數應該維持不變。
 
 
 ```python
@@ -445,9 +457,9 @@ else:
 blocked_result
 ```
 
-The second check changes the receipt identifier in an otherwise valid supplier summary. The output validator compares that response with the purchase observed by the application and rejects the mismatch.
+第二個檢查是把一份原本有效的供應商摘要裡的收據編號改掉。output validator 會拿這份回應去比對應用程式觀察到的購買，發現不一致就拒絕。
 
-These two checks cover separate boundaries: authorization before payment and evidence verification after the model responds.
+這兩個檢查涵蓋不同的邊界：付款前的授權，以及模型回應後的證據驗證。
 
 
 ```python
@@ -470,24 +482,24 @@ else:
 negative_result
 ```
 
-## 7. Connecting AgentCore Payments to the AWS testnet
+## 7. 把 AgentCore Payments 接到 AWS testnet
 
-The connected supplier research workflow uses a Bedrock-hosted OpenAI model, AgentCore Payments, and an approved x402 merchant on Base Sepolia. The application keeps the same merchant policy, spending approval, request identity, and receipt checks demonstrated in the local simulation. AgentCore Payments creates a short-lived session with its own maximum spending limit.
+接上 AWS 的供應商研究 workflow 用的是 Bedrock 代管的 OpenAI 模型、AgentCore Payments，以及 Base Sepolia 上已核准的 x402 商家。應用程式沿用本機模擬裡示範過的同一套商家政策、花費核准、request 身分和收據檢查。AgentCore Payments 會建立一個短時效的 session，並有自己的最高花費上限。
 
 ![Local supplier research and an AWS testnet request share the same application approval and spending controls](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partners/AWS/controlled-agentic-commerce-local-and-testnet.png)
 
-*The local simulation and AWS testnet workflow share the same application controls. AgentCore Payments provides bounded payment sessions in the connected environment.*
+*本機模擬和 AWS testnet workflow 共用同樣的應用程式控制。在接上 AWS 的環境裡，AgentCore Payments 提供有額度限制的付款 session。*
 
-Before enabling the AWS path, an operator provisions the payment manager, connector, instrument, and exact-wallet signing permission outside the notebook. Model inference, session administration, and payment execution use separate responsibilities. `README.md` describes the setup, supported configuration, below-budget denial check, and cleanup procedure.
+啟用 AWS 路徑之前，operator 要在 notebook 之外先佈建好 payment manager、connector、instrument，以及針對確切錢包的簽署權限。模型推論、session 管理和付款執行各自是不同的職責。`README.md` 說明了設定方式、支援的組態、低於預算的拒絕檢查，以及清理步驟。
 
-AgentCore Runtime is not used by this notebook. The notebook process remains the application runtime, and all live payment gates are disabled unless an operator explicitly enables them.
+這本 notebook 沒有用到 AgentCore Runtime。notebook 的 process 就是應用程式的 runtime，除非 operator 明確開啟，所有真實付款的開關都是關著的。
 
 
-### Checking testnet readiness before network calls
+### 呼叫網路之前先檢查 testnet 就緒狀態
 
-The readiness check inspects local configuration without contacting AWS, the model, the merchant, or the wallet. It confirms that the required payment opt-ins are present, AWS roles are separated, the session budget is finite, and no payment session is recorded in the local state file.
+就緒檢查只看本機設定，不會連到 AWS、模型、商家或錢包。它會確認必要的付款 opt-in 都在、AWS role 有分開、session 預算是有限的，而且本機狀態檔裡沒有記錄任何付款 session。
 
-The check also rejects proxy settings that are incompatible with the merchant connection's DNS and TLS protections. With the default configuration, the expected result is `NOT_READY` because live payment gates are disabled.
+它也會拒絕跟商家連線的 DNS 和 TLS 保護不相容的 proxy 設定。用預設設定時，預期結果是 `NOT_READY`，因為真實付款的開關是關的。
 
 
 ```python
@@ -500,11 +512,10 @@ agentcore_readiness = readiness_report()
 agentcore_readiness
 ```
 
-### Inspecting the payment instrument and network
+### 檢視付款 instrument 和網路
+明確啟用 `ALLOW_AGENTCORE_READ_ONLY=1` 後，應用程式可以檢視已設定的付款 instrument，而不用建立付款 session。instrument 必須是 `ACTIVE`、使用 `ETHEREUM` 錢包網路，並回報確切的 `BASE_SEPOLIA` 和 `USDC` 餘額範圍。
 
-When `ALLOW_AGENTCORE_READ_ONLY=1` is explicitly enabled, the application can inspect the configured payment instrument without creating a payment session. The instrument must be `ACTIVE`, use the `ETHEREUM` wallet network, and report the exact `BASE_SEPOLIA` and `USDC` balance scope.
-
-A missing gate returns `SKIPPED`. A network or asset mismatch returns `NOT_READY`. These checks do not expose a balance amount, generate a payment proof, contact the merchant, or transfer value.
+缺少開關時回傳 `SKIPPED`，網路或資產不符則回傳 `NOT_READY`。這些檢查不會暴露餘額數字、不會產生付款證明、不會連商家，也不會轉移任何價值。
 
 
 ```python
@@ -516,15 +527,15 @@ agentcore_infrastructure = inspect_payment_instrument()
 agentcore_infrastructure
 ```
 
-### Running one approved testnet transaction
+### 執行一次核准的 testnet 交易
 
-An operator can enable the managed testnet run only after checking the approved merchant, recipient, asset, amount, wallet, and short-lived session configuration. The workflow requires all five explicit gates: `RUN_AGENTCORE_E2E`, `ALLOW_AGENTCORE_SESSION_ADMIN`, `ALLOW_PAID_INFERENCE`, `ALLOW_AGENTCORE_TESTNET`, and `APPROVE_AGENTCORE_TESTNET_PURCHASE`.
+operator 要先確認核准的商家、收款方、資產、金額、錢包和短時效 session 設定，才能啟用受管理的 testnet 執行。這個 workflow 需要五個明確的開關全部打開：`RUN_AGENTCORE_E2E`、`ALLOW_AGENTCORE_SESSION_ADMIN`、`ALLOW_PAID_INFERENCE`、`ALLOW_AGENTCORE_TESTNET` 和 `APPROVE_AGENTCORE_TESTNET_PURCHASE`。
 
-The combined execution path checks those gates again before starting model inference or payment activity. It creates one bounded session, sends the agent's request through the application policy, requests an AgentCore payment proof, and retries the approved merchant once.
+合併的執行路徑在開始模型推論或付款動作之前，會再檢查一次這些開關。它建立一個有額度限制的 session，讓 agent 的請求經過應用程式政策，要求 AgentCore 產生付款證明，並對已核准的商家重試一次。
 
-Session creation is serialized. If local session persistence fails, the application attempts compensating cleanup. A successful or failed managed run also attempts to delete the session in `finally`. If cleanup fails, the operator must follow the recovery procedure in `README.md` before starting another run.
+session 的建立是序列化的。如果本機 session 持久化失敗，應用程式會嘗試補償性的清理。受管理的執行不管成功或失敗，也都會在 `finally` 裡嘗試刪除 session。如果清理失敗，operator 要先照 `README.md` 的復原程序處理，才能開始下一次執行。
 
-With the default notebook configuration, the cell returns `SKIPPED` and performs no live operation.
+用 notebook 的預設設定時，這個 cell 回傳 `SKIPPED`，不會做任何真實操作。
 
 
 ```python
@@ -541,11 +552,11 @@ if agentcore_e2e_result["result"] not in {"PASSED", "SKIPPED"}:
 agentcore_e2e_result
 ```
 
-### Interpreting payment and settlement evidence
+### 解讀付款與結算證據
 
-The managed result records whether the model completed its tool call, AgentCore Payments produced the payment proof, the merchant returned HTTP `200`, and the temporary session was deleted. The application hashes the original HTTP response bytes and keeps provider credentials, payment headers, and internal identifiers out of the report.
+受管理的結果會記錄：模型是否完成它的 tool call、AgentCore Payments 是否產生付款證明、商家是否回傳 HTTP `200`，以及暫時的 session 是否已刪除。應用程式會對原始 HTTP 回應的 bytes 做 hash，並且讓供應商憑證、付款 header 和內部識別碼不出現在報告裡。
 
-Merchant acceptance establishes that the paid request completed. Independent settlement and transaction finality require separate evidence. The example therefore reports `settlement_verified=false`.
+商家接受代表付費請求完成了，但獨立的結算和交易終局性需要另外的證據。所以這個範例回報 `settlement_verified=false`。
 
 
 ```python
@@ -571,21 +582,21 @@ if agentcore_e2e_result["result"] == "PASSED":
 }
 ```
 
-### Optional CloudWatch lifecycle evidence
+### 選用：CloudWatch 生命週期證據
 
-This public notebook does not include a CloudWatch screenshot. For a reviewed live run, configure AgentCore Payments log delivery before the run and use CloudWatch only as sanitized lifecycle evidence. Do not share account IDs, request IDs, wallet data, payment identifiers, or proof headers.
+這本公開的 notebook 沒有附 CloudWatch 截圖。如果是經過審查的真實執行，要在執行前先設定 AgentCore Payments 的 log 傳送，並且只把 CloudWatch 當作經過清理的生命週期證據。不要分享帳號 ID、request ID、錢包資料、付款識別碼或證明 header。
 
-Lifecycle events can help confirm session creation, payment processing, and session deletion. They do not independently establish the payment amount, blockchain settlement, transaction finality, or production readiness.
-
-
-## Applying the payment workflow to other services
-
-The same structure can support other paid data sources, including premium search, sanctions screening, market data, or supplier verification. Each integration should define its approved merchants, permitted purposes, maximum amount, approval requirements, and session duration before the agent can request a purchase.
-
-The model chooses when a paid tool might help complete the user's task. Application code determines whether that request is authorized, records the resulting transaction evidence, and checks the model's final response against the actual tool result. AgentCore Payments provides an additional spending boundary when the workflow is connected to an approved AWS testnet session.
+生命週期事件可以幫忙確認 session 建立、付款處理和 session 刪除。它們沒辦法單獨證明付款金額、區塊鏈結算、交易終局性或可上線的程度。
 
 
-## References
+## 把付款 workflow 套用到其他服務
+
+同樣的結構可以用在其他付費資料來源，包括進階搜尋、制裁名單篩查、市場資料或供應商驗證。每個整合都要先定義好核准的商家、允許的用途、最高金額、核准要求和 session 時長，agent 才能請求購買。
+
+模型決定付費 tool 什麼時候可能幫得上忙。應用程式碼決定這個請求有沒有被授權、記錄最後的交易證據，並拿模型的最終回應去比對實際的 tool 結果。當 workflow 接上已核准的 AWS testnet session 時，AgentCore Payments 再多提供一道花費邊界。
+
+
+## 參考資料
 
 - [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)
 - [Use OpenAI models through Amazon Bedrock](https://developers.openai.com/api/docs/guides/amazon-bedrock)
@@ -596,4 +607,16 @@ The model chooses when a paid tool might help complete the user's task. Applicat
 - [Separate payment IAM roles](https://docs.aws.amazon.com/bedrock-agentcore/latest/devguide/payments-iam-roles.html)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 付款權限留在應用程式，模型只能提議「抓哪個 URL、為了什麼用途」，金額、商家、核准、預算都由程式碼檢查。
+- x402 用 HTTP `402` 讓商家公開價格條件，應用程式驗證條件後才去取付款證明並重試。
+- schema 合法不等於內容正確，要用 output validator 拿模型的回應去比對應用程式自己記錄的 receipt。
+- 授權檢查（付款前）和證據驗證（回應後）是兩道不同的防線，兩邊都要測被拒絕的情況。
+- 真實付款路徑預設全部關閉，要多個明確的開關才會啟動，而且商家接受不等於結算完成。
+
+## 練習
+
+1. 把供應商報告的價格或 `ApprovalGrant` 的最高金額改掉，讓價格超過上限，觀察應用程式在哪一步拒絕。
+2. 在第 6 節的偽造收據檢查裡，改成竄改金額或幣別而不是收據編號，確認 output validator 一樣能擋下來。
+3. 修改 `x402_fetch` 的 tool 設計，讓它多接受一個模型提供的參數（例如 `max_price`），然後想想為什麼這會破壞「應用程式掌握付款權限」，並把它改回由應用程式決定。

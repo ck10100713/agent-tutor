@@ -1,62 +1,73 @@
 ---
-translated: false
+translated: true
 source: examples/codex/code_modernization.md
 ---
 
-# Modernizing your Codebase with Codex
+# 用 Codex 現代化你的 Codebase
 
 > 原文：[examples/codex/code_modernization.md](https://github.com/openai/openai-cookbook/blob/main/examples/codex/code_modernization.md)
 
-Cookbook to modernize legacy codebases using the OpenAI Codex CLI.
+這份 cookbook 教你用 OpenAI Codex CLI 現代化舊的 codebase。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 Codex CLI 把一個 COBOL 投資組合系統，經過五個階段現代化。核心是一份叫 ExecPlan 的設計文件，agent 照著它一步步做：選 pilot、盤點、設計、實作、再複製到其他系統。每個階段都要 Codex 產出文件和測試，讓整個過程可讀、可稽核、可重複。
 
+## 學完你會
+
+- 設定 AGENTS.md 和 PLANS.md，讓 Codex 知道這個 repo 怎麼做規劃
+- 用 prompt 讓 Codex 產出 pilot 的 ExecPlan、overview、design、validation 文件，以及 OpenAPI spec
+- 寫 parity test，把新舊系統並排跑，證明輸出一致
+
+## 開跑前
+
+- 安裝 OpenAI Codex CLI
+- 一個你想現代化的 legacy repo。範例用的是 COBOL 的[投資組合系統](https://github.com/sentientsergio/COBOL-Legacy-Benchmark-Suite/)，也可以換成別的 stack
 
 ## Introduction
 
-Codex is trained to read and reason about large, complex codebases, plan work alongside engineers, and produce high-quality changes. Code modernization has quickly become one of its most common and valuable uses. In this setup, engineers focus on architecture and business rules while Codex handles the heavy lifting: translating legacy patterns, proposing safe refactors, and keeping documentation and tests in sync as the system evolves.
+Codex 被訓練成能讀懂、推理大型複雜的 codebase，跟工程師一起規劃工作，並產出高品質的修改。Code modernization 已經快速變成它最常見也最有價值的用途之一。在這個做法裡，工程師專注在架構和商業規則，Codex 負責繁重的工作：翻譯舊的寫法、提出安全的 refactor，並在系統演進時讓文件和測試保持同步。
 
-This cookbook shows how to use **OpenAI's Codex CLI** to modernize a legacy repository in a way that is:
+這份 cookbook 示範怎麼用 **OpenAI 的 Codex CLI** 現代化 legacy repository，讓整個過程：
 
-* Understandable to new engineers
-* Auditable for architects and risk teams
-* Repeatable as a pattern across other systems
+* 新進工程師看得懂
+* 架構師和風險團隊可以稽核
+* 能當成模式重複套用到其他系統
 
-We’ll use a COBOL-based [investment portfolio system](https://github.com/sentientsergio/COBOL-Legacy-Benchmark-Suite/) as the running example and choose a single pilot flow to focus on. You can substitute any legacy stack (eg. Java monolith, PL/SQL) where you have legacy programs, orchestration (jobs, schedulers, scripts), or shared data sources.
+我們用一個 COBOL 的[投資組合系統](https://github.com/sentientsergio/COBOL-Legacy-Benchmark-Suite/)當作範例，並選一個 pilot flow 專心做。你可以換成任何 legacy stack（例如 Java monolith、PL/SQL），只要你有 legacy 程式、排程編排（jobs、scheduler、scripts）或共用資料來源。
 
 ---
 
-## High Level Overview
+## 高階概覽
 
-We’ve broken it down into 5 different phases that revolve around an executive plan (ExecPlan in short), which is a design document that the agent can follow to deliver the system change.
+我們分成 5 個階段，圍繞一份 executive plan（簡稱 ExecPlan）進行，它是一份 agent 可以照著執行、完成系統變更的設計文件。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/code-modernization-phases.png" alt="Code Modernization Phases" width="700"/>
 
-We will create 4 types of documents for the pilot flow we choose:
+針對選好的 pilot flow，我們會產出 4 種文件：
 
-* **pilot_execplan.md** - ExecPlan that orchestrates the pilot that answers: what’s in scope, why it matters, what steps we’ll take, and how we’ll know we’re done.
-* **pilot_overview.md** - Which legacy programs (COBOL in our example), orchestration jobs (JCL here), and data sources are involved, how data flows between them, and what the business flow actually does.
-* **pilot_design.md** - Target shape of the system: the service/module that will own this flow, the new data model, and the public APIs or batch entry points.
-* **pilot_validation.md** - Defines how we’ll prove parity: key scenarios, shared input datasets, how to run legacy vs modern side-by-side, and what “matching outputs” means in practice.
+* **pilot_execplan.md**：統籌整個 pilot 的 ExecPlan，回答範圍是什麼、為什麼重要、要做哪些步驟，以及怎麼知道做完了。
+* **pilot_overview.md**：涉及哪些 legacy 程式（範例是 COBOL）、編排 job（這裡是 JCL）和資料來源，資料怎麼在它們之間流動，以及這個業務流程實際在做什麼。
+* **pilot_design.md**：系統的目標樣貌，包含負責這個流程的 service/module、新的資料模型，以及公開 API 或 batch 進入點。
+* **pilot_validation.md**：定義怎麼證明行為一致，包含關鍵情境、共用的輸入資料集、怎麼新舊並排執行，以及「輸出一致」在實務上的意思。
 
-These 4 files help lay out what code is being changed, what the new system should look like, and exactly how to check that behavior hasn’t regressed.
+這 4 個檔案能說清楚改了哪些程式、新系統該長什麼樣子，以及怎麼精確檢查行為沒有退步。
 
 ---
 
-## Phase 0 - Set up AGENTS and PLANS
+## Phase 0：設定 AGENTS 和 PLANS
 
-**Goal**: Give Codex a lightweight contract for how planning works in this repo, without overwhelming people with process.
+**目標**：給 Codex 一份輕量的約定，說明這個 repo 怎麼做規劃，又不讓大家被流程壓垮。
 
-We’re taking inspiration from the [Using PLANS.md for multi-hour problem solving](https://cookbook.openai.com/articles/codex_exec_plans) cookbook to create an AGENTS.md and PLANS.md file that will be placed in a .agent folder.
+我們參考 [Using PLANS.md for multi-hour problem solving](https://cookbook.openai.com/articles/codex_exec_plans) 這份 cookbook，建立 AGENTS.md 和 PLANS.md，放在 .agent 資料夾。
 
-* AGENTS.md: If you haven’t created an AGENTS.md for your repository yet, I suggest using the /init command. Once generated, reference the add a section in your AGENTS.md to instruct the agent to reference the PLANS.md. 
-* PLANS.md: Use the example provided in the cookbook as a starting point
+* AGENTS.md：如果你的 repo 還沒有 AGENTS.md，建議用 /init 指令產生。產生後，在 AGENTS.md 加一段，指示 agent 參考 PLANS.md。
+* PLANS.md：以 cookbook 裡的範例當起點。
 
-These explain what an ExecPlan is, when to create or update one, where it lives, and what sections every plan must have.
+這些檔案說明什麼是 ExecPlan、什麼時候要建立或更新、放在哪裡，以及每份 plan 一定要有哪些段落。
 
-### Where Codex CLI helps
-If you want Codex to tighten AGENTS or PLANS for your specific repo, you can run:
+### Codex CLI 能幫上忙的地方
+如果你想讓 Codex 針對你的 repo 收緊 AGENTS 或 PLANS，可以執行：
 
 ```md
 Please read the directory structure and refine .agent/AGENTS.md and .agent/PLANS.md so they are a clear, opinionated standard for how we plan COBOL modernization work here. Keep the ExecPlan skeleton but add one or two concrete examples.
@@ -64,14 +75,14 @@ Please read the directory structure and refine .agent/AGENTS.md and .agent/PLANS
 
 ---
 
-## Phase 1 - Pick a pilot and create the first ExecPlan
+## Phase 1：選 pilot，建立第一份 ExecPlan
 
-**Goal**: Align on one realistic but bounded pilot flow and capture the plan for Phase 1 in a single ExecPlan file.
+**目標**：對齊一個真實但範圍有限的 pilot flow，並把 Phase 1 的計畫寫進同一份 ExecPlan 檔案。
 
-**Key artifact**: pilot_execplan.md
+**關鍵產出**：pilot_execplan.md
 
-### 1.1 Choose pilot flow
-If you don’t have a flow in mind to pilot with, you can ask Codex to propose. Example prompt from the repository root:
+### 1.1 選 pilot flow
+如果你還沒想好要 pilot 哪個流程，可以請 Codex 提案。在 repository 根目錄用這個 prompt：
 
 ```md
 Look through this repository and propose one or two candidate pilot flows for modernization that are realistic but bounded.
@@ -82,11 +93,11 @@ For each candidate, list:
 - End with a clear recommendation for which flow we should use as the first pilot
 ```
 
-In this case, we’ll choose a reporting flow as the pilot.
+這裡我們選報表流程當 pilot。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pilot-candidate.png" alt="Pilot Candidate Flow" width="700"/>
 
-### 1.2 Ask Codex to create the pilot ExecPlan
+### 1.2 請 Codex 建立 pilot ExecPlan
 
 ```md
 Create pilot_execplan.md following .agent/PLANS.md. Scope it to the daily reporting flow. The plan should cover four outcomes for this one flow:
@@ -97,23 +108,23 @@ Create pilot_execplan.md following .agent/PLANS.md. Scope it to the daily report
 Use the ExecPlan skeleton and fill it in with concrete references to the actual COBOL and JCL files.
 ```
 
-This plan is now your “home base” for all pilot work. 
+這份 plan 現在就是所有 pilot 工作的「大本營」。
 
 ---
 
-## Phase 2 - Inventory and discovery
+## Phase 2：盤點與探索
 
-**Goal**: Capture what the pilot flow actually does today: programs, jobs, data flows, and business rules. Engineers can reason about the change without reading every line of legacy code.
+**目標**：記錄 pilot flow 現在實際在做什麼：程式、job、資料流和業務規則。讓工程師不用讀完每一行 legacy 程式，也能討論該怎麼改。
 
-**Key artifact**: pilot_reporting_overview.md
+**關鍵產出**：pilot_reporting_overview.md
 
-**Where engineers can focus**:
+**工程師可以專注的地方**：
 
-* Confirm which jobs truly run in production
-* Fill in gaps Codex cannot infer from code (SLAs, operational context, owners)
-* Sanity check diagrams and descriptions
+* 確認哪些 job 真的在正式環境執行
+* 補上 Codex 從程式碼推不出來的資訊（SLA、營運背景、負責人）
+* 檢查圖表和描述有沒有問題
 
-### 2.1 Ask Codex to draft the overview
+### 2.1 請 Codex 起草 overview
 ```md
 Create or update pilot_reporting_overview.md with two top-level sections: “Inventory for the pilot” and “Modernization Technical Report for the pilot”.
 Use pilot_execplan.md to identify the pilot flow.
@@ -131,15 +142,15 @@ In the modernization technical report section, describe:
 4. Known technical risks such as date handling, rounding, special error codes, or tricky conditions
 ```
 
-This document will be helpful for engineers to understand the shape and behavior of the pilot without reading all the code.
+這份文件能幫工程師不用讀完所有程式，就了解 pilot 的樣貌和行為。
 
-Example of the flow diagram in pilot_reporting_overview.md
+pilot_reporting_overview.md 裡的流程圖範例
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pilot-flow-diagram.png" alt="Pilot Flow Diagram" width="700"/>
 
-### 2.2 Update the ExecPlan
+### 2.2 更新 ExecPlan
 
-Once the overview exists, ask Codex to keep the plan aligned
+overview 產生後，請 Codex 讓計畫保持同步
 
 ```md
 Update pilot_execplan.md to reflect the new pilot_reporting_overview.md file.
@@ -148,28 +159,28 @@ Update pilot_execplan.md to reflect the new pilot_reporting_overview.md file.
 - Keep the ExecPlan readable for someone new to the repo.
 ```
 
-At the end of Phase 2, you’ll have a single pilot overview doc that plays the role of both system inventory report and modernization technical report.
+Phase 2 結束時，你會有一份 pilot overview 文件，同時扮演系統盤點報告和現代化技術報告。
 
 ---
 
-## Phase 3 - Design, spec, and validation plan
+## Phase 3：設計、規格與驗證計畫
 
-**Goal**
+**目標**
 
-* Decide what the modern version of the pilot flow should look like 
-* Describe the target service and data model
-* Define how to prove parity through tests and parallel runs. 
+* 決定 pilot flow 的現代版本該長什麼樣子
+* 描述目標 service 和資料模型
+* 定義怎麼用測試和並行執行證明結果一致
 
-By the end of this phase, we’ll have decided what we’re building and how we’ll prove it works.
+這個階段結束時，我們會決定要做什麼，以及怎麼證明它可行。
 
-**Key artifacts**
+**關鍵產出**
 
 * pilot_reporting_design.md
 * pilot_reporting_validation.md
 * modern/openapi/pilot.yaml
 * modern/tests/pilot_parity_test.py
 
-### 3.1 Target design document
+### 3.1 目標設計文件
 
 ```md
 Based on pilot_reporting_overview.md, draft pilot_reporting_design.md with these sections:
@@ -190,9 +201,9 @@ Based on pilot_reporting_overview.md, draft pilot_reporting_design.md with these
 - A pointer to modern/openapi/pilot.yaml where the full schema will live.
 ```
 
-### 3.2 API specification
+### 3.2 API 規格
 
-We capture the pilot flow’s external behavior in an OpenAPI file so the modern system has a clear, language-agnostic contract. This spec becomes the anchor for implementation, test generation, and future integrations, and it gives Codex something concrete to scaffold code and tests from.
+我們把 pilot flow 對外的行為寫進 OpenAPI 檔，讓現代系統有一份清楚、與語言無關的契約。這份 spec 會成為實作、產生測試和未來整合的依據，也讓 Codex 有具體的東西可以據以產生程式碼和測試。
 
 ```md
 Using pilot_reporting_design.md, draft an OpenAPI file at modern/openapi/pilot.yaml that describes the external API for this pilot. Include:
@@ -201,11 +212,11 @@ Using pilot_reporting_design.md, draft an OpenAPI file at modern/openapi/pilot.y
 - Field types and constraints, aligning with the target data model
 ```
 
-Example output:
+輸出範例：
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pilot-yaml.png" alt="Pilot Yaml" width="700"/>
 
-### 3.3 Validation and test plan
+### 3.3 驗證與測試計畫
 
 ```md
 Create or update pilot_reporting_validation.md with three sections:
@@ -224,7 +235,7 @@ Create or update pilot_reporting_validation.md with three sections:
 - What needs to be filled in once the modern implementation exists.
 ```
 
-Then ask Codex to scaffold the tests:
+接著請 Codex 產生測試的骨架：
 
 ```md
 Using pilot_reporting_validation.md, create an initial test file at modern/tests/pilot_parity_test.py.
@@ -232,7 +243,7 @@ Using pilot_reporting_validation.md, create an initial test file at modern/tests
 Include placeholder assertions and comments that reference the scenarios in the test plan, but do not assume the modern implementation is present yet.
 ```
 
-### 3.4 Update the ExecPlan
+### 3.4 更新 ExecPlan
 
 ```md
 Update pilot_execplan.md so that Plan of work, Concrete steps, and Validation and acceptance explicitly reference:
@@ -243,21 +254,21 @@ Update pilot_execplan.md so that Plan of work, Concrete steps, and Validation an
 5. modern/tests/pilot_parity_test.py
 ```
 
-At the end of Phase 3, you’ll have a clear design, a machine readable spec, and a test plan/scaffolding that describes how you will prove parity.
+Phase 3 結束時，你會有清楚的設計、機器可讀的 spec，以及說明怎麼證明結果一致的測試計畫和骨架。
 
 ---
 
-## Phase 4 - Implement and compare
+## Phase 4：實作與比對
 
-**Goal:** Implement the modern pilot, run it in parallel with the COBOL version, and show that outputs match for the planned scenarios.
+**目標：** 實作現代版的 pilot，跟 COBOL 版本並行執行，並證明預定情境下輸出一致。
 
-**Key artifacts**
+**關鍵產出**
 
-* Code under modern/<stack>/pilot (for example modern/java/pilot)
-* Completed tests in modern/tests/pilot_parity_test.py
-* Updated sections in pilot_reporting_validation.md that describe the actual parallel run steps
+* modern/<stack>/pilot 底下的程式碼（例如 modern/java/pilot）
+* modern/tests/pilot_parity_test.py 裡完成的測試
+* pilot_reporting_validation.md 裡更新的段落，描述實際並行執行的步驟
 
-### 4.1 Generate a first draft of the modern code
+### 4.1 產生現代程式碼的初稿
 
 ```md
 Using pilot_reporting_design.md and the COBOL programs listed in pilot_reporting_overview.md, generate initial implementation code under modern/<stack>/pilot that:
@@ -267,9 +278,9 @@ Using pilot_reporting_design.md and the COBOL programs listed in pilot_reporting
 - Treat this as a first draft for engineers to review.
 ```
 
-You can run this several times, focusing on different modules.
+可以重複執行幾次，每次專注在不同模組。
 
-### 4.2 Wire up the parity tests
+### 4.2 接上 parity test
 
 ```md
 Extend modern/tests/pilot_parity_test.py so that it:
@@ -278,9 +289,9 @@ Extend modern/tests/pilot_parity_test.py so that it:
 - Compares the outputs according to the “Parity and comparison strategy” in pilot_reporting_validation.md.
 ```
 
-### 4.3 Document the parallel run steps
+### 4.3 記錄並行執行的步驟
 
-Rather than a separate parallel_run_pilot.md, reuse the validation doc:
+不另外寫 parallel_run_pilot.md，直接沿用 validation 文件：
 
 ```md
 Update the Parity and comparison strategy section in pilot_reporting_validation.md so that it includes a clear, ordered list of commands to:
@@ -291,21 +302,21 @@ Update the Parity and comparison strategy section in pilot_reporting_validation.
 - Include precise paths for outputs and a short description of what success looks like
 ```
 
-### 4.4 (If needed) Use Codex for iterative fixes
+### 4.4（需要時）用 Codex 反覆修正
 
-As tests fail or behavior differs, work in short loops:
+測試失敗或行為不同時，用短迴圈處理：
 
 ```md
 Here is a failing test from modern/tests/pilot_parity_test.py and the relevant COBOL and modern code. Explain why the outputs differ and propose the smallest change to the modern implementation that will align it with the COBOL behavior. Show the updated code and any test adjustments.
 ```
 
-Each time you complete a meaningful chunk of work, ask Codex to update the ExecPlan:
+每完成一個有意義的段落，請 Codex 更新 ExecPlan：
 
 ```md
 Update pilot_execplan.md so that Progress, Decision log, and Outcomes reflect the latest code, tests, and validation results for the pilot.
 ```
 
-You’ll see that the ExecPlan “progress” and “outcomes” section will be updated with something along the lines of:
+你會看到 ExecPlan 的「progress」和「outcomes」段落被更新成類似這樣：
 
 ```md
 Progress  
@@ -323,16 +334,16 @@ Outcomes
 
 ---
 
-## Phase 5 - Turn the pilot into a scalable motion
+## Phase 5：把 pilot 變成可擴展的做法
 
-**Goal:** Provide reusable templates for other flows and a short guide to using Codex in this repo.
+**目標：** 提供可重複使用的範本給其他流程，並寫一份簡短的指南說明在這個 repo 怎麼用 Codex。
 
-**Key artifacts**
+**關鍵產出**
 
 * template_modernization_execplan.md
 * how_to_use_codex_for_cobol_modernization.md
 
-### 6.1 Template ExecPlan
+### 6.1 ExecPlan 範本
 
 ```md
 Look at the pilot files we created:
@@ -347,7 +358,7 @@ Create template_modernization_execplan.md that a team can copy when modernizing 
 3. Assume a similar pattern: overview doc, design doc, validation doc, OpenAPI spec, and tests.
 ```
 
-### 6.2 How-to guide
+### 6.2 How-to 指南
 
 ```md
 Using the same pilot files, write how_to_use_codex_for_cobol_modernization.md that:
@@ -357,19 +368,31 @@ Using the same pilot files, write how_to_use_codex_for_cobol_modernization.md th
 
 ---
 
-## Wrap up
+## 收尾
 
-If you follow the steps in this cookbook for any pilot, you should end up with a folder layout that looks roughly like this: ExecPlan, three pilot docs, an OpenAPI spec, a pilot module, and a parity test. You can further organize the markdown files in additional pilot and template subfolders for more structure.
+不管 pilot 是哪個，照這份 cookbook 的步驟做，最後的資料夾結構大致會像這樣：ExecPlan、三份 pilot 文件、一份 OpenAPI spec、一個 pilot 模組和一個 parity test。你也可以把 markdown 檔再分到 pilot 和 template 子資料夾，結構更清楚。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pilot-folder-structure.png" alt="Pilot Folder Structure" width="700"/>
 
-You’ll notice that there isn’t a runnable entry point in modern/python/pilot yet since the modules (models.py, repositories.py, services.py) are first‑draft building blocks to start. You have two options if you want to experiment locally, you can
+你會發現 modern/python/pilot 裡還沒有可以執行的進入點，因為這些模組（models.py、repositories.py、services.py）只是初稿的積木。想在本機試的話有兩個選擇：
 
-* Use an interactive shell or small script
-* Create your own runner (e.g. modern/python/pilot/main.py) that wires the repositories and services together
+* 用互動式 shell 或小 script
+* 自己寫 runner（例如 modern/python/pilot/main.py），把 repository 和 service 接起來
 
-While this cookbook uses a COBOL pilot flow as the running example, the same pattern shows up in very different kinds of refactors. For example, one customer used Codex to migrate a large monorepo by feeding it hundreds of Jira tickets, having Codex flag higher-risk work, surface cross-cutting dependencies, and draft the code changes, with a separate validator reviewing and merging.
+這份 cookbook 用 COBOL pilot flow 當範例，但同樣的模式也出現在很不一樣的 refactor 裡。例如有客戶用 Codex 遷移一個大型 monorepo，把數百張 Jira ticket 餵給它，讓 Codex 標出風險較高的工作、找出跨模組的相依，並起草程式碼修改，再由另一個 validator 審核和合併。
 
-Modernizing COBOL repositories is just one popular case, but the same approach applies to any legacy stack or large-scale migration: turn “modernize our codebase” into a series of small, testable steps (an ExecPlan, a handful of docs, and a parity-first implementation). Codex handles the grind of understanding old patterns, generating candidate migrations, and tightening parity, while you and your team stay focused on architecture and trade-offs, making modernization faster, safer, and repeatable across every system you decide to bring forward.
+現代化 COBOL repository 只是其中一個常見的案例，同樣的做法適用於任何 legacy stack 或大規模遷移：把「現代化我們的 codebase」拆成一連串小而可測試的步驟（一份 ExecPlan、幾份文件，加上以 parity 為優先的實作）。Codex 負責處理理解舊寫法、產生候選的遷移方案和收緊 parity 這些繁瑣工作，你和團隊則專注在架構和取捨，讓每個要升級的系統都能更快、更安全、可重複地現代化。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 把「現代化」拆成五個階段，用 ExecPlan 當單一的計畫文件，讓 agent 有地方對齊進度。
+- 先選一個範圍有限的 pilot，在小範圍驗證做法，再抽成範本複製到其他系統。
+- 文件分工：overview 說現狀、design 說目標、validation 說怎麼證明，各自獨立好審查。
+- 以 parity 為優先：先有 OpenAPI spec 和 parity test，再實作，新舊並行跑證明輸出一致。
+- 人負責架構和取捨，Codex 負責讀舊程式、產生候選程式和文件，每個階段結束都要更新 ExecPlan。
+
+## 練習
+
+1. 對你自己的某個 repo 執行 `/init` 產生 AGENTS.md，再加一段指示 agent 參考 PLANS.md，看 Codex 之後的行為有什麼變化。
+2. 用 Phase 1.1 的 prompt 請 Codex 為你的 repo 提出 pilot 候選，挑一個，並照 1.2 產生 pilot ExecPlan。
+3. 照 Phase 3 為這個 pilot 產生 OpenAPI spec 和 parity test 骨架，故意讓一個測試失敗，用 4.4 的短迴圈請 Codex 修正，並更新 ExecPlan 的 progress。

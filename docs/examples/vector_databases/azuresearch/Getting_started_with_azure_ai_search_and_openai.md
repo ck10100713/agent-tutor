@@ -1,24 +1,32 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/azuresearch/Getting_started_with_azure_ai_search_and_openai.ipynb
 ---
 
-# Azure AI Search as a vector database for OpenAI embeddings
+# 用 Azure AI Search 當 OpenAI embedding 的 vector database
 
 > 原文：[examples/vector_databases/azuresearch/Getting_started_with_azure_ai_search_and_openai.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/azuresearch/Getting_started_with_azure_ai_search_and_openai.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範把 Azure AI Search 當成 vector database，存放 OpenAI 的 embedding，並對 Wikipedia 文章做搜尋。從建 index、上傳資料，一路做到向量搜尋、混合搜尋和語意重排。
 
+## 學完你會
+- 用 Azure AI Search 的 Python SDK 建立同時支援 vector search 和 semantic ranker 的 index
+- 把帶有預先算好 embedding 的 DataFrame 批次上傳到 index
+- 分別跑出向量搜尋、混合搜尋（hybrid）和帶重排的混合搜尋
 
+## 開跑前
+- 一個 Azure AI Search Service
+- OpenAI API key 或 Azure OpenAI 憑證
 
-This notebook provides step-by-step instructions on using Azure AI Search (f.k.a Azure Cognitive Search) as a vector database with OpenAI embeddings. Azure AI Search is a cloud search service that gives developers infrastructure, APIs, and tools for building a rich search experience over private, heterogeneous content in web, mobile, and enterprise applications.
+這個 notebook 一步步說明怎麼把 Azure AI Search（舊名 Azure Cognitive Search）當成 vector database 搭配 OpenAI embedding 使用。Azure AI Search 是雲端搜尋服務，提供基礎設施、API 和工具，讓開發者針對網頁、行動和企業應用裡的私有、異質內容建立豐富的搜尋體驗。
 
-## Prerequistites:
-For the purposes of this exercise you must have the following:
+## 前置條件：
+要做這個練習，你需要：
 - [Azure AI Search Service](https://learn.microsoft.com/azure/search/)
-- [OpenAI Key](https://platform.openai.com/account/api-keys) or [Azure OpenAI credentials](https://learn.microsoft.com/azure/cognitive-services/openai/)
+- [OpenAI Key](https://platform.openai.com/account/api-keys) 或 [Azure OpenAI 憑證](https://learn.microsoft.com/azure/cognitive-services/openai/)
 
 ```python
 ! pip install wget
@@ -27,7 +35,7 @@ For the purposes of this exercise you must have the following:
 ! pip install openai
 ```
 
-## Import required libraries
+## 匯入需要的函式庫
 
 ```python
 import json  
@@ -64,9 +72,9 @@ from azure.search.documents.indexes.models import (
 )
 ```
 
-## Configure OpenAI settings
+## 設定 OpenAI
 
-This section guides you through setting up authentication for Azure OpenAI, allowing you to securely interact with the service using either Azure Active Directory (AAD) or an API key. Before proceeding, ensure you have your Azure OpenAI endpoint and credentials ready. For detailed instructions on setting up AAD with Azure OpenAI, refer to the [official documentation](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity).
+這一段說明怎麼設定 Azure OpenAI 的驗證，可以用 Azure Active Directory (AAD) 或 API key 安全地使用服務。開始前請先備好 Azure OpenAI 的 endpoint 和憑證。AAD 的設定細節請看[官方文件](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity)。
 
 
 ```python
@@ -98,8 +106,9 @@ else:
     )
 ```
 
-## Configure Azure AI Search Vector Store settings
-This section explains how to set up the Azure AI Search client for integrating with the Vector Store feature. You can locate your Azure AI Search service details in the Azure Portal or programmatically via the [Search Management SDK](https://learn.microsoft.com/rest/api/searchmanagement/).
+## 設定 Azure AI Search 的 Vector Store
+
+這一段說明怎麼設定 Azure AI Search client 來使用 Vector Store 功能。你可以在 Azure Portal 找到 Azure AI Search 服務的資訊，或用 [Search Management SDK](https://learn.microsoft.com/rest/api/searchmanagement/) 以程式取得。
 
 
 ```python
@@ -124,7 +133,7 @@ search_client = SearchClient(
 )
 ```
 
-## Load data
+## 載入資料
 
 
 ```python
@@ -187,8 +196,8 @@ article_df.head()
     4  [0.021524671465158463, 0.018522677943110466, -...         4
     ```
 
-##  Create an index
-This code snippet demonstrates how to define and create a search index using the `SearchIndexClient` from the Azure AI Search Python SDK. The index incorporates both vector search and semantic ranker capabilities. For more details, visit our documentation on how to [Create a Vector Index](https://learn.microsoft.com/azure/search/vector-search-how-to-create-index?.tabs=config-2023-11-01%2Crest-2023-11-01%2Cpush%2Cportal-check-index)
+##  建立 index
+這段程式示範怎麼用 Azure AI Search Python SDK 的 `SearchIndexClient` 定義並建立搜尋 index。這個 index 同時具備 vector search 和 semantic ranker 能力。更多細節請看文件：[建立 Vector Index](https://learn.microsoft.com/azure/search/vector-search-how-to-create-index?.tabs=config-2023-11-01%2Crest-2023-11-01%2Cpush%2Cportal-check-index)
 
 ```python
 # Initialize the SearchIndexClient
@@ -272,9 +281,9 @@ print(f"{result.name} created")
     azure-ai-search-openai-cookbook-demo created
     ```
 
-## Uploading Data to Azure AI Search Index
+## 上傳資料到 Azure AI Search index
 
-The following code snippet outlines the process of uploading a batch of documents—specifically, Wikipedia articles with pre-computed embeddings—from a pandas DataFrame to an Azure AI Search index. For a detailed guide on data import strategies and best practices, refer to  [Data Import in Azure AI Search](https://learn.microsoft.com/azure/search/search-what-is-data-import).
+下面的程式說明怎麼把一批文件（也就是已經算好 embedding 的 Wikipedia 文章）從 pandas DataFrame 上傳到 Azure AI Search index。資料匯入策略與 best practice 的詳細說明請看 [Data Import in Azure AI Search](https://learn.microsoft.com/azure/search/search-what-is-data-import)。
 
 
 ```python
@@ -312,7 +321,7 @@ print(f"Uploaded {len(documents)} documents in total")
     Uploaded 25000 documents in total
     ```
 
-If your dataset didn't already contain pre-computed embeddings, you can create embeddings by using the below function using the `openai` python library. You'll also notice the same function and model are being used to generate query embeddings for performing vector searches.
+如果你的資料集沒有預先算好的 embedding，可以用下面這個函式搭配 `openai` Python 函式庫來產生。你也會看到，做向量搜尋時，query embedding 也是用同一個函式和同一個模型產生。
 
 ```python
 # Example function to generate document embedding
@@ -338,7 +347,7 @@ print("Content vector generated")
     Content vector generated
     ```
 
-## Perform a vector similarity search
+## 執行向量相似度搜尋
 
 ```python
 # Pure Vector Search
@@ -375,10 +384,10 @@ for result in results:
     URL: https://simple.wikipedia.org/wiki/Expressionism
     ```
 
-## Perform a Hybrid Search
-Hybrid search combines the capabilities of traditional keyword-based search with vector-based similarity search to provide more relevant and contextual results. This approach is particularly useful when dealing with complex queries that benefit from understanding the semantic meaning behind the text.
+## 執行混合搜尋 (Hybrid Search)
+混合搜尋結合傳統關鍵字搜尋與向量相似度搜尋，能提供更相關、更貼近上下文的結果。遇到需要理解語意的複雜查詢時特別有用。
 
-The provided code snippet demonstrates how to execute a hybrid search query:
+下面的程式示範怎麼執行混合搜尋：
 
 ```python
 # Hybrid Search
@@ -416,8 +425,8 @@ for result in results:
     URL: https://simple.wikipedia.org/wiki/Scottish
     ```
 
-## Perform a Hybrid Search with Reranking (powered by Bing)
-[Semantic ranker](https://learn.microsoft.com/azure/search/semantic-search-overview) measurably improves search relevance by using language understanding to rerank search results. Additionally, you can get extractive captions, answers, and highlights. 
+## 執行混合搜尋並重排 (Reranking，由 Bing 提供)
+[Semantic ranker](https://learn.microsoft.com/azure/search/semantic-search-overview) 用語言理解重新排序搜尋結果，能明顯提升相關性。另外你還能拿到摘錄式的 caption、answer 和 highlight。 
 
 ```python
 # Semantic Hybrid Search
@@ -484,4 +493,13 @@ for result in results:
     Caption: <em>Industrialisation</em> (or<em> industrialization)</em> is a process that happens in countries when they start to use machines to do work that was once done by people.<em> Industrialisation changes</em> the things people do.<em> Industrialisation</em> caused towns to grow larger. Many people left farming to take higher paid jobs in factories in towns.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Azure AI Search 能同時當關鍵字搜尋引擎和 vector database，index 的 schema 要同時定義向量欄位。
+- 查詢的 embedding 必須和文件用同一個模型產生，向量搜尋才有意義。
+- 混合搜尋把關鍵字與向量分數合在一起，通常比單純向量搜尋更穩。
+- semantic ranker 是在檢索結果上再做一次語言理解的重排，可進一步提升相關性。
+
+## 練習
+1. 換一個查詢句子，比較向量搜尋和混合搜尋回傳的前幾筆結果有什麼不同。
+2. 調整搜尋時回傳的筆數（top 參數），觀察結果變化。
+3. 在混合搜尋的程式裡，改用不同欄位做向量查詢（例如 title 與 content 的 embedding），比較哪一個結果更準。

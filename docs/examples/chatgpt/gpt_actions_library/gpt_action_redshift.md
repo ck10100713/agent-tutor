@@ -1,66 +1,75 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_redshift.ipynb
 ---
 
-# GPT Actions library - AWS Redshift
+# GPT Actions 範例庫：AWS Redshift
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_redshift.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_redshift.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範用 AWS Lambda 類的 function 當 middleware，讓 GPT Action 能對 Redshift 下 SQL query，並把結果以檔案形式回傳給 ChatGPT 做資料分析。
 
+## 學完你會
+- 用 AWS SAM 部署一個連到 Redshift Serverless 的 middleware function。
+- 查出 Redshift 的 VPC 資訊並填進 `env.yaml`，再部署並用 cURL 測試。
+- 寫 Custom GPT 的 Instructions 和 OpenAPI schema，讓 GPT 傳 `query` 並取回檔案。
 
+## 開跑前
+- 需要 Redshift 環境，以及在同一個 VPC 部署 AWS function 的權限。
+- AWS CLI 要已經驗證過，並安裝 AWS SAM CLI、Python、yq。
+- 驗證要照 AWS Middleware cookbook 設定（用到 Cognito）。
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這一頁是給開發者的指南，說明怎麼為特定應用程式建立 GPT Action。開始之前，先看過這些資料： 
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This solution enables a GPT action to retrieve data from Redshift and perform data analysis.It uses AWS Functions, performing every action from AWS ecosystem and network. The middleware (AWS function) will perform the SQL query, wait for its completion and return the data as a file. The code is provided for information purpose only and should be modified to your needs.
+這個方案讓 GPT action 能從 Redshift 取資料並做資料分析。它使用 AWS Functions，所有動作都在 AWS 生態系和網路內執行。Middleware（AWS function）會執行 SQL query、等它完成，再把資料以檔案形式回傳。程式碼僅供參考，應該依你的需求修改。
 
-This solution uses the ability to [retrieve files in Actions](https://platform.openai.com/docs/actions/sending-files) and use them as if you had uploaded them directly to a conversation.
+這個方案用到[在 Actions 中取回檔案](https://platform.openai.com/docs/actions/sending-files)的能力，讓檔案可以當成直接上傳到對話裡的一樣使用。
 
-This solution highlight a connection to Redshift serverless, the integration with a provisioned Redshift might differ slighltly to retrieve networks and set-up connection, the overall code and (minimal) integration should be similar.
+這個方案以 Redshift serverless 為例，如果是 provisioned Redshift，取得網路資訊和設定連線的方式可能稍有不同，但整體程式碼和（最少的）整合應該類似。
 
-### Value & Example Business Use Cases
+### 價值與商業使用情境
 
-**Value**: Leverage ChatGPT's natural language capabilities to connect to Redshift's DWH.
+**價值**：利用 ChatGPT 的自然語言能力連接 Redshift 資料倉儲。
 
-**Example Use Cases**:
-- Data scientists can connect to tables and run data analyses using ChatGPT's Data Analysis
-- Citizen data users can ask basic questions of their transactional data
-- Users gain more visibility into their data & potential anomalies
+**使用情境範例**：
+- 資料科學家可以連到資料表，用 ChatGPT 的 Data Analysis 做資料分析
+- 一般資料使用者可以對交易資料問基本問題
+- 使用者能更清楚看到自己的資料和潛在異常
 
-## Application Information
+## 應用程式資訊
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure that:
-- You have access to a Redshift environment
-- You have the rights to deploy AWS function in the same VPC (Virtual Private Network)
-- Your AWS CLI is authenticated
+開始之前，確定：
+- 你能存取 Redshift 環境
+- 你有權限在同一個 VPC（虛擬私有網路）部署 AWS function
+- 你的 AWS CLI 已經驗證過
 
-## Middleware Information
+## Middleware 資訊
 
-### Install required libraries
-- Install AWS CLI, required for AWS SAM ([docs](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions))
-- Install AWS SAM CLI ([docs](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html))
-- Install Python
-- Install yq [docs](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
+### 安裝需要的函式庫
+- 安裝 AWS CLI，AWS SAM 需要它（[docs](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html#getting-started-install-instructions)）
+- 安裝 AWS SAM CLI（[docs](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html)）
+- 安裝 Python
+- 安裝 yq [docs](https://github.com/mikefarah/yq?tab=readme-ov-file#install)
 
 ### Middleware function
 
-To create a function, follow the steps in the [AWS Middleware Action cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function).
+要建立 function，照 [AWS Middleware Action cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function) 的步驟做。
 
-To deploy specifically an application that connects to Redshift, use the following code instead of the "hello-world" GitHub repository referenced in the Middleware AWS Function cookbook. You can either clone the repository or take the code pasted below and modify it to your needs.
+要部署連到 Redshift 的應用程式，請用下面的程式碼，取代 Middleware AWS Function cookbook 裡提到的 "hello-world" GitHub repository。你可以 clone repository，也可以拿下面貼的程式碼依需求修改。
 
-> This code is meant to be directional - while it should work out of the box, it is designed to be customized to your needs (see examples towards the end of this document).
+> 這份程式碼是參考用的，雖然應該能直接跑，但設計上是要依你的需求客製化（看文件後半的範例）。
 
-To get the code, you can clone openai-cookbook repository and navigate to the redshift-middleware directory
+要取得程式碼，可以 clone openai-cookbook repository，然後進到 redshift-middleware 目錄
 
 ```
 git clone https://github.com/pap-openai/redshift-middleware
@@ -157,24 +166,24 @@ def lambda_handler(event, context):
         }
 ```
 
-### Retrieve VPC information
+### 取得 VPC 資訊
 
-We will need to connect our function to Redshift, therefore we need to find the network used by Redshift. You can find this on your Redshift interface in the AWS console, under Amazon Redshift Serverless > Workgroup configuration > `your_workgroup` > Data access, or through the CLI:
+我們需要把 function 連到 Redshift，所以要先找出 Redshift 用的網路。你可以在 AWS console 的 Redshift 介面找到，路徑是 Amazon Redshift Serverless > Workgroup configuration > `your_workgroup` > Data access，或是用 CLI：
 
 ```python
 aws redshift-serverless get-workgroup --workgroup-name default-workgroup --query 'workgroup.{address: endpoint.address, port: endpoint.port, SecurityGroupIds: securityGroupIds, SubnetIds: subnetIds}'
 ```
 
-### Set up AWS function
+### 設定 AWS function
 
-Copy `env.sample.yaml` to `env.yaml` and replace with the values obtained above. You will need a Redshift user with access to your DB/schema.
+把 `env.sample.yaml` 複製成 `env.yaml`，並換成上面取得的值。你需要一個能存取你的 DB/schema 的 Redshift 使用者。
 
 ```
 cp env.sample.yaml env.yaml
 ```
 
-Fill in `env.yaml` with the values retrieved by the previous command as well as your credentials to Redshift.
-Alternatively, you can create a file named `env.yaml` manually and fill the following variables:
+把上一個指令取得的值，加上你的 Redshift 憑證，填進 `env.yaml`。
+或者你可以手動建立一個叫 `env.yaml` 的檔案，填入下面這些變數：
 ```
 RedshiftHost: default-workgroup.xxxxx.{region}.redshift-serverless.amazonaws.com
 RedshiftPort: 5439
@@ -190,7 +199,7 @@ SubnetId5: subnet-xx
 SubnetId6: subnet-xx
 ```
 
-This file will be used to deploy your function with parameters, as shown below:
+這個檔案會用來帶參數部署你的 function，如下：
 
 ```
 PARAM_FILE="env.yaml"
@@ -198,7 +207,7 @@ PARAMS=$(yq eval -o=json $PARAM_FILE | jq -r 'to_entries | map("\(.key)=\(.value
 sam deploy --template-file template.yaml --stack-name redshift-middleware --capabilities CAPABILITY_IAM --parameter-overrides $PARAMS
 ```
 
-The template.yaml has the following content:
+template.yaml 的內容如下：
 
 ```python
 AWSTemplateFormatVersion: '2010-09-09'
@@ -330,7 +339,7 @@ Outputs:
     Value: !GetAtt MyCognitoUserPool.Arn
 ```
 
-Retrieve the URL information from the previous command output, you can then run a cURL request, which should return data in a file format:
+從上一個指令的輸出取得 URL 資訊，然後就可以跑 cURL 請求，應該會回傳檔案格式的資料：
 
 ```python
 curl -X POST https://<your_url>/Prod/sql_statement/ \
@@ -338,11 +347,11 @@ curl -X POST https://<your_url>/Prod/sql_statement/ \
 -d '{ "sql_statement": "SELECT * FROM customers LIMIT 10", "workgroup_name": "default-workgroup", "database_name": "pap-db" }'
 ```
 
-## ChatGPT Steps
+## ChatGPT 的步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 欄位。
 
 ```python
 **Context**: You are an expert at writing Redshift SQL queries. You will initially retrieve the table schema that you will use thoroughly. Every attributes, table names or data type will be known by you.
@@ -358,13 +367,13 @@ Once you've created a Custom GPT, copy the text below in the Instructions panel.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 欄位。
 
-This expects a response that matches the file retrieval structure in our doc [here](https://platform.openai.com/docs/actions/sending-files) and passes in a `query` as a parameter to execute.
+它預期的回應符合我們文件[這裡](https://platform.openai.com/docs/actions/sending-files)說明的檔案取回結構，並傳入 `query` 當參數去執行。
 
-Make sure to follow the steps in the [AWS Middleware cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function) to set up authentication.
+驗證的部分，照 [AWS Middleware cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function) 的步驟設定。
 
-> Make sure to switch the function app name based on your function deployment.
+> 記得依你的 function 部署，換掉 function app 名稱。
 
 ```python
 openapi: 3.1.0
@@ -432,11 +441,21 @@ paths:
                     example: Database query failed error details
 ```
 
-## Conclusion
+## 結論
 
-You now have deployed a GPT that uses a middleware in AWS, in an authenticated manner, that's able to connect to Redsfhit. Users with access (that are in Cognito) can now query your databases to perform data analysis task:
+你現在部署好了一個 GPT，它透過 AWS 的 middleware 以已驗證的方式連到 Redsfhit。有權限的使用者（在 Cognito 裡的）現在可以查詢你的資料庫來做資料分析任務：
 
 ![../../../images/redshift_gpt.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/redshift_gpt.png)
 
 
-<!-- tutor:summary -->
+## 重點整理
+- GPT Action 不直接連資料庫，而是透過 VPC 內的 middleware function 執行 SQL。
+- Middleware 把查詢結果以檔案回傳，ChatGPT 就能當作上傳的檔案做 Data Analysis。
+- 網路設定（VPC、subnet、security group）要和 Redshift 一致，function 才連得到。
+- 驗證靠 Cognito，只有授權的使用者能查資料。
+- 這份程式碼是範本，查詢限制、權限等要依自己的需求客製。
+
+## 練習
+1. 照步驟把 `env.sample.yaml` 複製成 `env.yaml`，填入你的 VPC 資訊，並用 cURL 測一次簡單的 `SELECT 1`。
+2. 修改 Custom GPT Instructions，要求 GPT 只能產生 SELECT 語句，不准寫入。
+3. 在 OpenAPI schema 加一個參數（例如 row limit），並改 middleware 程式碼讓它套用到 query。

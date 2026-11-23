@@ -1,25 +1,31 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/Using_GPT4_Vision_With_Function_Calling.ipynb
 ---
 
-# Using GPT4 Vision with Function Calling
+# 用 GPT-4 Vision 搭配 Function Calling
 
 > 原文：[examples/multimodal/Using_GPT4_Vision_With_Function_Calling.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/Using_GPT4_Vision_With_Function_Calling.ipynb)
 
+## 這篇在做什麼
+把圖片丟給 GPT-4o，再讓它透過 function calling 決定要呼叫哪個函式。範例有兩個：看包裹照片決定退款、換貨還是轉人工，以及讀組織圖抽出員工與主管的結構化資料。重點是這樣能做到的事超過單純 OCR 或圖片描述。
 
+## 學完你會
+- 把圖片編成 base64，連同 tool 定義一起送給 GPT-4o
+- 用 Pydantic 定義 tool 的參數結構，讓模型依圖片內容選對 tool
+- 把模型回傳的 tool call 解析成 DataFrame，處理組織圖這類結構化資料
 
-<!-- tutor:goals -->
+## 開跑前
+需要 OpenAI API key。
 
+最新版的 GPT-4o（`gpt-4o-2024-11-20`，2024 年 11 月）支援帶圖片的 function calling，推理能力更好，知識截止日是 2023 年 10 月。圖片加上 function calling 可以開出多模態的應用，也能用上模型的推理，不只是 OCR 和圖片描述。
 
-The GPT-4o, available as gpt-4o-2024-11-20 as of November 2024, now enables function calling with vision capabilities, better reasoning and a knowledge cutoff date of Oct 2023. Using images with function calling will unlock multimodal use cases and the ability to use reasoning, allowing you to go beyond OCR and image descriptions.
+下面有兩個範例：
 
-We will go through two examples to demonstrate the use of function calling with GPT-4o with Vision:
+1. 模擬客服助理，處理配送異常
+2. 分析組織圖，抽出員工資訊
 
-1. Simulating a customer service assistant for delivery exception support
-2. Analyzing an organizational chart to extract employee information
-
-### Installation and Setup
+### 安裝與設定
 
 ```python
 !pip install pymupdf --quiet
@@ -55,13 +61,13 @@ from pydantic import BaseModel, Field
     Matplotlib is building the font cache; this may take a moment.
     ```
 
-## 1. Simulating a customer service assistant for delivery exception support
-We will simulate a customer service assistant for a delivery service that is equipped to analyze images of packages. The assistant will perform the following actions based on the image analysis:
-- If a package appears damaged in the image, automatically process a refund according to policy.
-- If the package looks wet, initiate a replacement.
-- If the package appears normal and not damaged, escalate to an agent.
+## 1. 模擬客服助理處理配送異常
+我們模擬一個配送服務的客服助理，它會看包裹照片，依照影像分析結果做事：
+- 包裹看起來損壞，就依政策自動退款。
+- 包裹看起來是濕的，就安排換貨。
+- 包裹看起來正常沒損壞，就轉給真人客服。
 
-Let's look at the sample images of packages that the customer service assistant will analyze to determine the appropriate action. We will encode the images as base64 strings for processing by the model.
+先看看助理要分析的範例包裹圖片。我們會把圖片編成 base64 字串給模型處理。
 
 ```python
 # Function to encode the image as base64
@@ -109,9 +115,9 @@ display_images(image_data)
     Encoded image: normal_package.jpg
     ```
 
-We have successfully encoded the sample images as base64 strings and displayed them. The customer service assistant will analyze these images to determine the appropriate action based on the package condition.
+圖片已經成功編成 base64 並顯示出來。助理會根據這些圖片判斷包裹狀況，決定該做什麼。
 
-Let's now define the functions/tools for order processing, such as escalating an order to an agent, refunding an order, and replacing an order. We will create placeholder functions to simulate the processing of these actions based on the identified tools. We will be using Pydantic models to define the structure of the data for order actions.
+接著定義訂單處理用的函式 / tool：轉給客服、退款、換貨。這裡用 placeholder 函式模擬這些動作，資料結構用 Pydantic model 定義。
 
 
 ```python
@@ -184,9 +190,9 @@ class RefundOrder(OrderActionBase):
     pass
 ```
 
-### Simulating user messages and processing the package images
+### 模擬使用者訊息並處理包裹圖片
 
-We will simulate user messages containing the package images and process the images using the GPT-4o with Vision model. The model will identify the appropriate tool call based on the image analysis and the predefined actions for damaged, wet, or normal packages. We will then process the identified action based on the order ID and display the results.
+我們模擬帶有包裹圖片的使用者訊息，交給 GPT-4o with Vision 處理。模型會依圖片分析結果，對應到損壞、潮濕或正常這三種預先定義的動作，選出該呼叫的 tool。之後我們再依訂單 ID 執行這個動作並顯示結果。
 
 ```python
 # extract the tool call from the response
@@ -262,11 +268,11 @@ assert delivery_exception_support_handler("wet_package").action == "replace_orde
     >> Action result: Order 12345 has been replaced with a new order.
     ```
 
-## 2.  Analyzing an organizational chart to extract employee information
+## 2. 分析組織圖，抽出員工資訊
 
-For the second example, we will analyze an organizational chart image to extract employee information, such as employee names, roles, managers, and manager roles. We will use GPT-4o with Vision to process the organizational chart image and extract structured data about the employees in the organization. Indeed, function calling lets us go beyond OCR to actually deduce and translate hierarchical relationships within the chart.
+第二個範例要分析一張組織圖，抽出員工姓名、職稱、主管和主管職稱。我們用 GPT-4o with Vision 處理組織圖，抽出組織裡員工的結構化資料。function calling 讓我們不只是做 OCR，而是真的推論並轉換圖裡的階層關係。
 
-We will start with a sample organizational chart in PDF format that we want to analyze and convert the first page of the PDF to a JPEG image for analysis.
+先拿一份 PDF 格式的組織圖範例，把第一頁轉成 JPEG 圖片來分析。
 
 ```python
 # Function to convert a single page PDF page to a JPEG image
@@ -292,7 +298,7 @@ convert_pdf_page_to_jpg(pdf_path, output_path)
 display_img_local(output_path)
 ```
 
-The organizational chart image has been successfully extracted from the PDF file and displayed. Let's now define a function to analyze the organizational chart image using the new GPT4o with Vision. The function will extract information about the employees, their roles, and their managers from the image. We will use function/tool calling to specify the input parameters for the organizational structure, such as the employee name, role, and manager's name and role. We will use Pydantic models to define the structure of the data.
+組織圖已經從 PDF 抽出並顯示。接下來定義一個函式，用 GPT-4o with Vision 分析這張圖，抽出員工、職稱、主管的資訊。我們用 function / tool calling 指定組織結構的輸入參數，像是員工姓名、職稱、主管姓名和主管職稱，資料結構一樣用 Pydantic model 定義。
 
 
 ```python
@@ -346,7 +352,7 @@ def parse_orgchart(base64_img: str) -> EmployeeList:
     return response
 ```
 
-Now, we will define a function to parse the response from GPT-4o with vision and extract the employee data. We will tabulate the extracted data for easy visualization. Please note that the accuracy of the extracted data may vary based on the complexity and clarity of the input image.
+再來定義一個函式，解析 GPT-4o 的回應、取出員工資料，並整理成表格方便檢視。注意抽出資料的準確度會受圖片複雜度和清晰度影響。
 
 ```python
 # call the functions to analyze the organizational chart and parse the response
@@ -384,6 +390,16 @@ display(df)
     14    Taylor Alonso    Intern     Aaron Loeb      Manager
     ```
 
-The extracted data from the organizational chart has been successfully parsed and displayed in a DataFrame. This approach allows us to leverage GPT-4o with Vision capabilities to extract structured information from images, such as organizational charts and diagrams, and process the data for further analysis. By using function calling, we can extend the functionality of multimodal models to perform specific tasks or call external functions.
+組織圖的資料已經解析完成，顯示在 DataFrame 裡。這個做法讓我們用 GPT-4o 的視覺能力從圖片（像組織圖、流程圖）抽出結構化資訊，再拿去做後續分析。靠 function calling，多模態模型可以擴充去做特定任務或呼叫外部函式。
 
-<!-- tutor:summary -->
+## 重點整理
+- GPT-4o 可以在同一個請求裡同時吃圖片和 tool 定義，讓模型依圖片內容選 tool。
+- 圖片要以 base64 等形式編碼後放進 message。
+- 用 Pydantic 定義 tool 參數，能讓抽出的資料結構穩定，後面好處理。
+- function calling 讓視覺模型做的事超過 OCR，能推論圖裡的關係，例如組織階層。
+- 抽取準確度會受圖片品質影響，重要場景要驗證結果。
+
+## 練習
+1. 在客服範例裡多加一個 tool，例如「通知物流重新配送」，並用一張新圖測試模型會不會選到它。
+2. 把組織圖範例的 Pydantic model 加一個欄位（例如部門），看抽出的 DataFrame 有沒有多一欄。
+3. 把兩個範例合併：先用組織圖抽出的資料，決定退款案件該轉給哪位主管。

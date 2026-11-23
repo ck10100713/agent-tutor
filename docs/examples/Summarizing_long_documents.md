@@ -1,21 +1,31 @@
 ---
-translated: false
+translated: true
 source: examples/Summarizing_long_documents.ipynb
 ---
 
-# Summarizing Long Documents
+# 摘要長文件
 
 > 原文：[examples/Summarizing_long_documents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Summarizing_long_documents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範怎麼摘要很長的文件，而且能控制摘要的詳細程度。做法是把文件切成多塊，逐塊摘要，最後把各塊摘要接起來。切的塊數越多，摘要越詳細。
 
+## 學完你會
 
-The objective of this notebook is to demonstrate how to summarize large documents with a controllable level of detail.
- 
-If you give a GPT model the task of summarizing a long document (e.g. 10k or more tokens), you'll tend to get back a relatively short summary that isn't proportional to the length of the document. For instance, a summary of a 20k token document will not be twice as long as a summary of a 10k token document. One way we can fix this is to split our document up into pieces, and produce a summary piecewise. After many queries to a GPT model, the full summary can be reconstructed. By controlling the number of text chunks and their sizes, we can ultimately control the level of detail in the output.
+- 寫工具函式把大文件切成小塊
+- 用 `detail` 參數（0 到 1）控制切塊數量，進而控制摘要長度
+- 加上額外指示，或用遞迴摘要（`summarize_recursively`）提升前後連貫
+
+## 開跑前
+
+- OpenAI API key（長文件會呼叫模型很多次，有費用）
+
+這份 notebook 的目的是示範如何摘要大型文件，並且能控制詳細程度。
+
+如果你叫 GPT 模型摘要一份很長的文件（例如 1 萬以上 token），通常會得到一份相對很短、跟文件長度不成比例的摘要。例如 2 萬 token 文件的摘要，不會是 1 萬 token 文件摘要的兩倍長。一個解法是把文件拆成幾塊，逐塊產生摘要。經過多次對 GPT 模型的查詢後，就能重組出完整的摘要。控制文字塊的數量和大小，就能控制輸出的詳細程度。
 
 ```python
 import os
@@ -43,7 +53,7 @@ len(encoding.encode(artificial_intelligence_wikipedia_text))
     14630
     ```
 
-We'll define a simple utility to wrap calls to the OpenAI API.
+我們先定義一個簡單的工具，包裝對 OpenAI API 的呼叫。
 
 ```python
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -57,7 +67,7 @@ def get_chat_completion(messages, model='gpt-4-turbo'):
     return response.choices[0].message.content
 ```
 
-Next we'll define some utilities to chunk a large document into smaller pieces.
+接著定義一些工具，把大文件切成較小的塊。
 
 ```python
 def tokenize(text: str) -> List[str]:
@@ -123,9 +133,9 @@ def combine_chunks_with_no_minimum(
     return output, output_indices, dropped_chunk_count
 ```
 
-Now we can define a utility to summarize text with a controllable level of detail (note the `detail` parameter).
+現在可以定義一個能控制詳細程度的摘要工具（注意 `detail` 參數）。
 
-The function first determines the number of chunks by interpolating between a minimum and a maximum chunk count based on a controllable `detail` parameter. It then splits the text into chunks and summarizes each chunk.
+這個函式會先根據可控的 `detail` 參數，在最小和最大塊數之間做內插，決定塊數。然後把文字切塊，逐塊摘要。
 
 ```python
 def summarize(text: str,
@@ -206,7 +216,7 @@ def summarize(text: str,
     return final_summary
 ```
 
-Now we can use this utility to produce summaries with varying levels of detail. By increasing `detail` from 0 to 1 we get progressively longer summaries of the underlying document. A higher value for the `detail` parameter results in a more detailed summary because the utility first splits the document into a greater number of chunks. Each chunk is then summarized, and the final summary is a concatenation of all the chunk summaries.
+現在可以用這個工具產生不同詳細程度的摘要。把 `detail` 從 0 調到 1，摘要會愈來愈長。`detail` 值越高摘要越詳細，因為工具一開始會把文件切成更多塊。每一塊各自摘要，最後的摘要是所有塊摘要的串接。
 
 ```python
 summary_with_detail_0 = summarize(artificial_intelligence_wikipedia_text, detail=0, verbose=True)
@@ -268,7 +278,7 @@ summary_with_detail_1 = summarize(artificial_intelligence_wikipedia_text, detail
     100%|██████████| 31/31 [04:08<00:00,  8.02s/it]
     ```
 
-The original document is nearly 15k tokens long. Notice how large the gap is between the length of `summary_with_detail_0` and `summary_with_detail_1`. It's nearly 25 times longer!
+原始文件將近 15k token 長。注意 `summary_with_detail_0` 和 `summary_with_detail_1` 的長度差距有多大，後者長了將近 25 倍！
 
 ```python
 # lengths of summaries
@@ -282,7 +292,7 @@ The original document is nearly 15k tokens long. Notice how large the gap is bet
     [235, 2529, 4336, 6742]
     ```
 
-Let's inspect the summaries to see how the level of detail changes when the `detail` parameter is increased from 0 to 1.
+我們來看看這些摘要，了解 `detail` 參數從 0 調到 1 時，詳細程度怎麼變化。
 
 ```python
 print(summary_with_detail_0)
@@ -348,7 +358,7 @@ print(summary_with_detail_1)
     ... (省略 103 行)
     ```
 
-Note that this utility also allows passing additional instructions.
+注意這個工具也可以傳入額外的指示。
 
 ```python
 summary_with_additional_instructions = summarize(artificial_intelligence_wikipedia_text, detail=0.1,
@@ -406,7 +416,7 @@ print(summary_with_additional_instructions)
     ... (省略 34 行)
     ```
 
-Finally, note that the utility allows for recursive summarization, where each summary is based on the previous summaries, adding more context to the summarization process. This can be enabled by setting the `summarize_recursively` parameter to True. This is more computationally expensive, but can increase consistency and coherence of the combined summary.
+最後，這個工具支援遞迴摘要：每一份摘要都以前面的摘要為基礎，讓摘要過程多一些 context。把 `summarize_recursively` 參數設成 True 就能啟用。這樣運算成本比較高，但能提升合併後摘要的一致性和連貫性。
 
 ```python
 recursive_summary = summarize(artificial_intelligence_wikipedia_text, detail=0.1, summarize_recursively=True)
@@ -451,4 +461,15 @@ print(recursive_summary)
     Artificial Intelligence (AI) and its portrayal in media, such as the film "Ex Machina" and Philip K. Dick's novel "Do Androids Dream of Electric Sheep?", explore how technology, particularly AI, can alter our understanding of human subjectivity.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 模型摘要長文件時，輸出長度不會跟輸入成比例，所以要靠切塊來控制詳細程度。
+- 塊數由 `detail` 在最小和最大塊數之間內插決定，塊越多摘要越細。
+- 逐塊摘要彼此獨立，可能缺乏連貫，遞迴摘要用前面的摘要當 context 來補這個缺點。
+- 遞迴摘要成本較高，是一致性和花費的取捨。
+
+## 練習
+
+1. 把 `detail` 設成 0.25 和 0.5，比較摘要長度，確認增長趨勢。
+2. 傳入額外指示（例如要求只摘要跟某主題有關的內容），看輸出有什麼改變。
+3. 開啟 `summarize_recursively`，比較同一個 `detail` 下，有開跟沒開在連貫性和 API 呼叫量上的差別。

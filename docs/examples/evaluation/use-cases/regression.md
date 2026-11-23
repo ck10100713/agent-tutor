@@ -1,28 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/regression.ipynb
 ---
 
-# Evals API Use-case - Detecting prompt regressions
+# Evals API 使用案例：偵測 prompt 退步
 
 > 原文：[examples/evaluation/use-cases/regression.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/regression.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Evals API 建立一個 eval，偵測改了 prompt 之後是不是讓結果變差。情境是一個把多則推播通知濃縮成一句話的 LLM 功能。
 
+## 學完你會
+- 用 JSON Schema 定義 eval 的 `data_source_config`，並設定 model grader 當 `testing_criteria`
+- 對同一個 eval 建立多個 run，比較 baseline 和修改後 prompt 的分數
+- 在 prompt 被改壞時，透過 eval 報告的低分及早發現
 
-Evals are **task oriented** and iterative, they're the best way to check how your LLM integration is doing and improve it.
+## 開跑前
+需要 OpenAI API key。建立 run 會呼叫模型，產生 API 費用。
 
-In the following eval, we are going to focus on the task of **detecting if my prompt change is a regression**.
+Eval 是**以任務為導向**且可迭代的，是檢查 LLM 整合表現並加以改善的最好方式。
 
-Our use-case is:
-1. I have an llm integration that takes a list of push notifications and summarizes them into a single condensed statement.
-2. I want to detect if a prompt change regresses the behavior
+在下面這個 eval 裡，我們聚焦在**偵測我改了 prompt 是不是造成退步**這個任務。
 
-## Evals structure
+我們的使用情境是：
+1. 我有一個 llm 整合，接收一串推播通知，並把它們摘要成一句濃縮的陳述。
+2. 我想偵測 prompt 的改動是否讓行為退步
 
-Evals have two parts, the "Eval" and the "Run". An "Eval" holds the configuration for your testing criteria and the structure of the data for your "Runs". An Eval can have many runs that are evaluated by your testing criteria.
+## Eval 的結構
+
+Eval 有兩個部分，「Eval」和「Run」。「Eval」裡放你的測試標準設定，以及「Run」的資料結構。一個 Eval 可以有很多個 run，由你的測試標準來評估。
 
 ```python
 import openai
@@ -33,9 +41,9 @@ import os
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "your-api-key")
 ```
 
-## Use-case
+## 使用案例
 
-We're testing the following integration, a push notifications summary, which takes in multiple push notifications and collapses them into a single one, this is a chat completions call.
+我們要測試下面這個整合，也就是推播通知摘要，它接收多則推播通知，並把它們合併成一則，這是一個 chat completions 呼叫。
 
 ```python
 class PushNotifications(pydantic.BaseModel):
@@ -70,14 +78,14 @@ result = summarize_push_notification(example_push_notifications_list.notificatio
 print(result.choices[0].message.content)
 ```
 
-# Setting up your eval
+# 設定你的 eval
 
-An Eval holds the configuration that is shared across multiple *Runs*, it has two components:
-1. Data source configuration `data_source_config` - the schema (columns) that your future *Runs* conform to.
-    - The `data_source_config` uses JSON Schema to define what variables are available in the Eval.
-2. Testing Criteria `testing_criteria` - How you'll determine if your integration is working for each *row* of your data source.
+Eval 裡放的是多個 *Run* 共用的設定，它有兩個組成：
+1. 資料來源設定 `data_source_config`：未來的 *Run* 要遵循的 schema（欄位）。
+    - `data_source_config` 用 JSON Schema 定義 Eval 中可用的變數。
+2. 測試標準 `testing_criteria`：你要怎麼判斷資料來源中每一*列*資料的整合有沒有正常運作。
 
-For this use-case, we want to test if the push notification summary completion is good, so we'll set-up our eval with this in mind.
+在這個使用案例裡，我們想測試推播通知摘要的結果好不好，所以會照這個目標來設定 eval。
 
 ```python
 # We want our input data to be available in our variables, so we set the item_schema to
@@ -90,9 +98,9 @@ data_source_config = {
 }
 ```
 
-This data_source_config defines what variables are available throughout the eval.
+這個 data_source_config 定義了整個 eval 中有哪些變數可用。
 
-This item schema:
+這個 item schema：
 ```json
 {
   "properties": {
@@ -106,12 +114,12 @@ This item schema:
   "type": "object"
 }
 ```
-Means that we'll have the variable `{{item.notifications}}` available in our eval.
+代表我們的 eval 裡會有 `{{item.notifications}}` 這個變數可用。
 
 `"include_sample_schema": True`
-Mean's that we'll have the variable `{{sample.output_text}}` available in our eval.
+代表我們的 eval 裡會有 `{{sample.output_text}}` 這個變數可用。
 
-**Now, we'll use those variables to set up our test criteria.**
+**現在，我們用這些變數來設定測試標準。**
 
 ```python
 GRADER_DEVELOPER_PROMPT = """
@@ -143,12 +151,12 @@ push_notification_grader = {
 }
 ```
 
-The `push_notification_grader` is a model grader (llm-as-a-judge), which looks at the input `{{item.notifications}}` and the generated summary `{{sample.output_text}}` and labels it as "correct" or "incorrect".
-We then instruct via. the "passing_labels", what constitutes a passing answer.
+`push_notification_grader` 是一個 model grader（llm-as-a-judge），它會看輸入 `{{item.notifications}}` 和產生的摘要 `{{sample.output_text}}`，並標記為 "correct" 或 "incorrect"。
+接著我們透過 "passing_labels" 指定什麼樣的答案算通過。
 
-Note: under the hood, this uses structured outputs so that labels are always valid.
+注意：它底層用的是 structured outputs，所以標籤一定是合法的。
 
-**Now we'll create our eval!, and start adding data to it**
+**現在來建立 eval！並開始加資料進去**
 
 ```python
 eval_create_result = openai.evals.create(
@@ -163,10 +171,10 @@ eval_create_result = openai.evals.create(
 eval_id = eval_create_result.id
 ```
 
-# Creating runs
+# 建立 run
 
-Now that we have our eval set-up with our test_criteria, we can start to add a bunch of runs!
-We'll start with some push notification data.
+現在 eval 已經用 test_criteria 設定好了，可以開始新增一堆 run！
+我們先從一些推播通知資料開始。
 
 ```python
 push_notification_data = [
@@ -222,8 +230,8 @@ push_notification_data = [
 """]
 ```
 
-Our first run will be our default grader from the completions function above `summarize_push_notification`
-We'll loop through our dataset, make completions calls, and then submit them as a run to be graded.
+第一個 run 會用上面 completions 函式 `summarize_push_notification` 的預設結果。
+我們會跑過資料集，呼叫 completions，然後把結果當成一個 run 送出去打分。
 
 ```python
 run_data = []
@@ -250,7 +258,7 @@ print(eval_run_result)
 print(eval_run_result.report_url)
 ```
 
-Now let's simulate a regression, here's our original prompt, let's simulate a developer breaking the prompt.
+現在來模擬一次退步，這是我們原本的 prompt，我們模擬開發者把 prompt 改壞的情況。
 
 ```python
 DEVELOPER_PROMPT = """
@@ -301,12 +309,12 @@ eval_run_result = openai.evals.runs.create(
 print(eval_run_result.report_url)
 ```
 
-If you view that report, you'll see that it has a score that's much lower than the baseline-run.
+如果你看那份報告，會發現它的分數比 baseline-run 低很多。
 
-## Congratulations, you just prevented a bug from shipping to users
+## 恭喜，你剛剛阻止了一個 bug 上線到使用者手上
 
-Quick note:
-Evals doesn't yet support the `responses` api natively, however, you can transform it to the `completions` format with the following code.
+小提醒：
+Evals 目前還沒有原生支援 `responses` API，不過你可以用下面的程式把它轉成 `completions` 格式。
 
 ```python
 def summarize_push_notification_responses(push_notifications: str):
@@ -355,4 +363,13 @@ report_response = openai.evals.runs.create(
 print(report_response.report_url)
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Eval 分成兩層：Eval 放共用設定（資料 schema 和測試標準），Run 是每次實際的測試。
+- `data_source_config` 決定 eval 中有哪些變數可用，`testing_criteria` 決定怎麼打分。
+- model grader（llm-as-a-judge）用 structured outputs，標籤格式保證合法。
+- 改 prompt 前後各跑一個 run 並比較分數，就能在上線前抓出退步。
+
+## 練習
+1. 修改 `push_notification_grader` 的 `passing_labels`，讓判準更嚴格，看 baseline 的分數怎麼變。
+2. 在資料集中加幾筆推播通知，重跑 baseline run。
+3. 自己寫一個更糟（或更好）的 prompt 版本當新的 run，在報告中比較三個 run 的分數。

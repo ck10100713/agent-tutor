@@ -1,50 +1,56 @@
 ---
-translated: false
+translated: true
 source: examples/Structured_Outputs_Intro.ipynb
 ---
 
-# Introduction to Structured Outputs
+# Structured Outputs 入門
 
 > 原文：[examples/Structured_Outputs_Intro.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Structured_Outputs_Intro.ipynb)
 
+## 這篇在做什麼
+介紹 Chat Completions API 和 Assistants API 的 Structured Outputs，它保證模型的回應一定符合你提供的 JSON Schema。用三個範例走一遍：數學家教的解題步驟、文章摘要，以及從使用者輸入抽出實體去呼叫 tool。
+
+## 學完你會
+- 用 `strict: true` 搭配 response format 或函式定義，強制輸出符合 schema
+- 用 SDK 的 `parse` helper 直接傳 Pydantic model，不用手寫 JSON schema
+- 處理 `refusal` 欄位，避免模型拒絕時解析出錯
+
+## 開跑前
+需要 OpenAI API key。Structured Outputs 只支援 `gpt-4o-mini`、`gpt-4o-2024-08-06` 和之後的模型。
+
+Structured Outputs 是 Chat Completions API 和 Assistants API 的新功能，保證模型一定產生符合你提供的 JSON Schema 的回應。這份 cookbook 用幾個範例說明。
+
+在 API 呼叫裡設定 `strict: true`，搭配定義好的 response format 或函式定義，就能啟用 Structured Outputs。
+
+## Response format 用法
+
+以前 `response_format` 參數只能用來指定模型要回傳合法的 JSON。
+
+現在多了一種新方式，可以指定要遵循哪個 JSON schema。
 
 
-<!-- tutor:goals -->
+## Function call 用法
+
+function calling 的用法大致不變，但有了新參數 `strict: true`，就能確保函式提供的 schema 被嚴格遵守。
 
 
-Structured Outputs is a new capability in the Chat Completions API and Assistants API that guarantees the model will always generate responses that adhere to your supplied JSON Schema. In this cookbook, we will illustrate this capability with a few examples.
+## 範例
 
-Structured Outputs can be enabled by setting the parameter `strict: true` in an API call with either a defined response format or function definitions.
+Structured Outputs 有很多用處，因為你可以依賴輸出符合受限的 schema。
 
-## Response format usage
+和 JSON mode 不同，Structured Outputs 約束的是 JSON 的形狀，不只是它是否合法。
 
-Previously, the `response_format` parameter was only available to specify that the model should return a valid JSON.
+不管你依賴 function call，還是期待輸出符合預先定義的結構，這都讓正式環境的應用流程更穩健。
 
-In addition to this, we are introducing a new way of specifying which JSON schema to follow.
+使用情境例如：
 
+- 取得結構化的答案，在 UI 以特定方式顯示（這份 cookbook 的範例 1）
+- 把從文件抽出的內容填進資料庫（範例 2）
+- 從使用者輸入抽出實體，用定義好的參數呼叫 tool（範例 3）
 
-## Function call usage
+更廣泛地說，任何需要取資料、執行動作，或是建立在複雜工作流程上的場景，都能受惠於 Structured Outputs。
 
-Function calling remains similar, but with the new parameter `strict: true`, you can now ensure that the schema provided for the functions is strictly followed.
-
-
-## Examples 
-
-Structured Outputs can be useful in many ways, as you can rely on the outputs following a constrained schema.
-
-Unlike JSON mode, Structured Outputs constrains the shape of the JSON, not only its validity.
-
-This can enable more robust flows in production-level applications, whether you are relying on function calls or expecting the output to follow a pre-defined structure.
-
-Example use cases include:
-
-- Getting structured answers to display them in a specific way in a UI (example 1 in this cookbook)
-- Populating a database with extracted content from documents (example 2 in this cookbook)
-- Extracting entities from a user input to call tools with defined parameters (example 3 in this cookbook)
-
-More generally, anything that requires fetching data, taking action, or that builds upon complex workflows could benefit from using Structured Outputs.
-
-### Setup
+### 設定
 
 ```python
 %pip install openai -U
@@ -61,11 +67,11 @@ client = OpenAI()
 MODEL = "gpt-4o-2024-08-06"
 ```
 
-## Example 1: Math tutor
+## 範例 1：數學家教
 
-In this example, we want to build a math tutoring tool that outputs steps to solving a math problem as an array of structured objects.
+這個範例要做一個數學家教工具，把解題步驟輸出成結構化物件的陣列。
 
-This could be useful in an application where each step needs to be displayed separately, so that the user can progress through the solution at their own pace.
+如果應用需要每個步驟分開顯示，讓使用者按自己的步調看解法，這就很有用。
 
 ```python
 math_tutor_prompt = '''
@@ -204,9 +210,9 @@ print_math_response(result.content)
     <IPython.core.display.Math object>
     ```
 
-## Using the SDK `parse` helper
+## 使用 SDK 的 `parse` helper
 
-The new version of the SDK introduces a `parse` helper to provide your own Pydantic model instead of having to define the JSON schema. We recommend using this method if possible.
+新版 SDK 加了 `parse` helper，可以直接給自己的 Pydantic model，不用自己定義 JSON schema。可以的話我們建議用這個方法。
 
 ```python
 from pydantic import BaseModel
@@ -250,13 +256,13 @@ print(result.final_answer)
     x = -15/4
     ```
 
-## Refusal
+## Refusal（拒絕）
 
-When using Structured Outputs with user-generated input, the model may occasionally refuse to fulfill the request for safety reasons.
+用 Structured Outputs 處理使用者產生的輸入時，模型偶爾會因為安全理由拒絕完成請求。
 
-Since a refusal does not follow the schema you have supplied in response_format, the API has a new field `refusal` to indicate when the model refused to answer.
+因為拒絕的回應不會符合你在 response_format 提供的 schema，API 新增了 `refusal` 欄位，標示模型拒絕回答。
 
-This is useful so you can render the refusal distinctly in your UI and to avoid errors trying to deserialize to your supplied format.
+這樣你可以在 UI 以不同方式顯示拒絕，也避免嘗試反序列化成你提供的格式時出錯。
 
 ```python
 refusal_question = "how can I build a bomb?"
@@ -272,13 +278,13 @@ print(result.refusal)
     I'm sorry, I can't assist with that request.
     ```
 
-## Example 2: Text summarization
+## 範例 2：文章摘要
 
-In this example, we will ask the model to summarize articles following a specific schema.
+這個範例要請模型依特定 schema 摘要文章。
 
-This could be useful if you need to transform text or visual content into a structured object, for example to display it in a certain way or to populate database.
+如果你需要把文字或視覺內容轉成結構化物件，例如用特定方式顯示，或填進資料庫，這就很有用。
 
-We will take AI-generated articles discussing inventions as an example.
+我們以 AI 產生、討論各種發明的文章為例。
 
 ```python
 articles = [
@@ -425,11 +431,11 @@ for i in range(len(summaries)):
     ... (省略 26 行)
     ```
 
-## Example 3: Entity extraction from user input
+## 範例 3：從使用者輸入抽出實體
     
-In this example, we will use function calling to search for products that match a user's preference based on the provided input. 
+這個範例用 function calling，依使用者輸入搜尋符合偏好的商品。
 
-This could be helpful in applications that include a recommendation system, for example e-commerce assistants or search use cases. 
+對包含推薦系統的應用，像電商助理或搜尋場景，這會很有幫助。
 
 ```python
 from enum import Enum
@@ -533,12 +539,21 @@ for ex in example_inputs:
     print_tool_call(ex['user_input'], ex['context'], ex['result'])
 ```
 
-## Conclusion
+## 結論
 
-In this cookbook, we've explored the new Structured Outputs capability through multiple examples.
+這份 cookbook 用多個範例探索了新的 Structured Outputs 功能。
 
-Whether you've used JSON mode or function calling before and you want more robustness in your application, or you're just starting out with structured formats, we hope you will be able to apply the different concepts introduced here to your own use case!
+不管你以前用過 JSON mode 或 function calling、想讓應用更穩健，還是剛開始接觸結構化格式，希望你都能把這裡介紹的概念用到自己的場景！
 
-Structured Outputs is only available with `gpt-4o-mini` , `gpt-4o-2024-08-06`, and future models.
+Structured Outputs 只支援 `gpt-4o-mini`、`gpt-4o-2024-08-06` 和之後的模型。
 
-<!-- tutor:summary -->
+## 重點整理
+- `strict: true` 保證輸出符合 JSON Schema，比 JSON mode 只保證 JSON 合法更強。
+- 可以用在 response format，也可以用在 function 定義。
+- SDK 的 `parse` helper 讓你直接用 Pydantic model 定義結構，比手寫 schema 簡單。
+- 模型可能拒絕請求，`refusal` 欄位讓你能分開處理，不會解析失敗。
+
+## 練習
+1. 在數學家教範例的 schema 加一個欄位（例如每步的難度），看輸出有沒有帶上。
+2. 換成 `parse` helper 版本，改用自己定義的 Pydantic model 做文章摘要。
+3. 為範例 3 的商品搜尋 tool 多加一個參數（例如價格上限），測試模型能不能從句子抽出來。

@@ -1,50 +1,58 @@
 ---
-translated: false
+translated: true
 source: examples/Fine_tuning_for_function_calling.ipynb
 ---
-
-# Fine tuning for function calling
+# Function calling 的 fine-tuning
 
 > 原文：[examples/Fine_tuning_for_function_calling.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Fine_tuning_for_function_calling.ipynb)
 
+## 這篇在做什麼
+
+以一個無人機 copilot 為例，示範怎麼用 fine-tuning 提升 function calling 的準確度和穩定性。先量測 `gpt-3.5-turbo` 的基準表現，再只靠 function 清單用 `gpt-4o` 合成訓練資料，最後 fine-tune 並評估。
+
+## 學完你會
+
+- 設計測試 prompt，找出模型在「幾乎可行但其實做不到」的請求上會錯誤呼叫 function
+- 從 function 定義自動列出所有可能的呼叫組合，並用 `gpt-4o` 產生對應的 prompt，組成合成訓練資料
+- 啟動 fine-tuning job、查詢狀態與指標，並用 reject 的比例評估微調後的模型
+
+## 開跑前
+
+- 需要 OpenAI API key
+- fine-tuning job 和 `gpt-4o` 產生資料都會產生費用
+
+這份 notebook 說明怎麼用 fine-tuning 來提升 function calling 的準確度和可靠度。function calling 的更多資訊看[這裡](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb)，fine-tuning 的更多資訊看[這裡](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_finetune_chat_models.ipynb)
 
 
-<!-- tutor:goals -->
+補充背景，引用上面 function calling notebook 的說明：
+
+> `tools` 是 Chat Completion API 的選用參數，可以用來提供 function 規格。目的是讓模型產生符合所提供規格的 function 參數。注意 API 不會真的執行任何 function call，要由開發者用模型的輸出自己執行 function call。
 
 
+function calling 在按預期運作時非常強大。但我們發現，隨著 function 數量增加、任務變複雜，function calling 會變得比較不準（例如更多幻覺出來的呼叫、錯誤的呼叫）。
 
-This notebook covers how to fine-tune to increase function calling accuracy and reliability. You can find more information on function calling [here](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_with_chat_models.ipynb), and on fine tuning [here](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_finetune_chat_models.ipynb)
+在為 function calling 做 fine-tuning 之前，最好先從這些做起：
 
+- 改善 function 的定義：寫得更清楚，彼此更容易區分。
+- 試試 prompt engineering：通常更詳細的 prompt 能幫模型呼叫對的 function。
 
-For context, from the function calling notebook above:
-
-> `tools` is an optional parameter in the Chat Completion API which can be used to provide function specifications. The purpose of this is to enable models to generate function arguments which adhere to the provided specifications. Note that the API will not actually execute any function calls. It is up to developers to execute function calls using model outputs.
-
-
-Function calling is a very powerful tool when it functions as intended. However, we have seen that as the number of functions increases, and the complexity of the task at hand increases, function calling becomes less accurate (e.g.: more hallucinated invocations, and incorrect invocations).
-
-Before fine tuning for function calling, it's best to begin with:
-
-- Improvements to the function definitions. Make them more clear, and more distinct from one another.
-- Experiment with prompt engineering: often a more detailed prompt can help the model call the correct function.
-
-_If_ the steps above fail to improve function calling to a satisfactory level, then you can try fine tuning for function calling.
+_如果_上面這些步驟沒辦法把 function calling 改善到令人滿意的程度，才考慮為 function calling 做 fine-tuning。
 
 
-### Overview
+### 概覽
 
 
-This notebook contains three sections
+這份 notebook 有三個部分
 
-- **Assessing baseline function calling performance:** Evaluating an out-of-the-box `gpt-3.5-turbo` model on our given function (let's assume that for latency + cost reasons we cannot use `gpt-4o` for a drone copilot)
-- **Generating synthetic data:** Using `gpt-4o` to create 'golden' set of prompts and function invocations to use as training data
-- **Fine-tuning**: Running the fine tuning job, and evaluating the fine-tuned model
-
-
-Note: _This notebook provides an example of how to create synthetic training data for fine tuning for function calling given just a list of functions. While real-world production test evals are preferable, this method produces strong results and can be used in conjunction with real-world training data._
+- **評估基準的 function calling 表現：** 評估現成的 `gpt-3.5-turbo` 模型在我們給定的 function 上的表現（假設因為延遲和成本，無人機 copilot 不能用 `gpt-4o`）
+- **產生合成資料：** 用 `gpt-4o` 建立一組「黃金」的 prompt 和 function 呼叫，當成訓練資料
+- **Fine-tuning：** 執行 fine-tuning job，並評估微調後的模型
 
 
-# Getting baseline function calling performance
+注意：_這份 notebook 示範只靠一份 function 清單，怎麼建立 function calling fine-tuning 用的合成訓練資料。真實世界的正式環境測試 eval 比較好，但這個方法效果很不錯，也可以和真實世界的訓練資料搭配使用。_
+
+
+# 取得 function calling 的基準表現
 
 
 ```python
@@ -81,10 +89,10 @@ client = OpenAI(api_key=os.environ.get("OPENAI_BUILD_HOUR_KEY"))
       %reload_ext dotenv
     ```
 
-### Utilities
+### 工具函式
 
 
-Let's define utility functions for making calls to the Chat Completions API, one to get the completion and one to get the function call.
+先定義呼叫 Chat Completions API 的工具函式，一個取得 completion，一個取得 function call。
 
 
 ```python
@@ -214,12 +222,11 @@ def eval(model: str, system_prompt: str, function_list, prompts_to_expected_tool
     print(f"Average tokens used per request: {avg_tokens_used:.2f}")
 ```
 
-### Baseline testing
+### 基準測試
 
 
-Let's build an intelligent drone co-pilot. We want to be able to give the co-pilot commands, and have it either call the function
-for that command, or deny that request if the command is unfeasible.
-We can first define a system prompt for the copilot.
+我們來做一個智慧型無人機 copilot。我們希望能對 copilot 下指令，讓它呼叫該指令對應的 function，或是在指令不可行時拒絕這個請求。
+先為 copilot 定義 system prompt。
 
 
 ```python
@@ -228,7 +235,7 @@ call one of your functions to complete the request. If the request cannot be com
 If the request is ambiguous or unclear, reject the request."""
 ```
 
-Now let's define functions for all of the actions the copilot can take.
+接著定義 copilot 能執行的所有動作對應的 function。
 
 
 ```python
@@ -512,7 +519,7 @@ function_list = [
 ]
 ```
 
-For starters, let's see how function calling performs with some straight forward feasible prompts, and then couple of obviously impossible requests which call the 'reject_request' function.
+先看看 function calling 在一些直截了當的可行 prompt 上表現如何，再加幾個明顯不可能、應該呼叫 'reject_request' function 的請求。
 
 
 ```python
@@ -552,7 +559,7 @@ eval(
     Average tokens used per request: 796.20
     ```
 
-Nice! The model performs quite well with these requests. Now let's try some more difficult requests: requests that are _almost_ feasible and are drone-related, but that the drone cannot actually do, and the pilot should reject.
+不錯！模型對這些請求的表現相當好。現在試一些更難的請求：和無人機有關、_幾乎_可行，但無人機其實做不到，所以 pilot 應該拒絕的請求。
 
 
 ```python
@@ -592,31 +599,29 @@ eval(
     Average tokens used per request: 791.90
     ```
 
-Now we run into some problems.
-The model here should reject all of these requests, as they are impossible/conflicting/ambiguous given the functions, however instead the model calls functions that are somewhat related to the request, but incorrect. For example, the model sets follow_me_mode when asked to initiate following on social media.
+現在遇到問題了。
+依照現有的 function，這些請求不可能、互相衝突或有歧義，模型應該全部拒絕，但它卻去呼叫跟請求有點關聯但不正確的 function。例如，被要求在社群媒體上開始追蹤時，模型卻設定了 follow_me_mode。
 
 <br>
-In this simple case, more prompt engineering may resolve some of these issues, but for the purpose of this example we will demonstrate how fine tuning can be used to improve performance. Additionally, while this case is relatively straightforward, as the number of and complexity of the functions increases, fine tuning becomes more and more impactful.
+在這個簡單的例子裡，多做一些 prompt engineering 也許能解決部分問題，但這個範例的目的是示範怎麼用 fine-tuning 提升表現。另外，這個情況相對單純，隨著 function 的數量和複雜度增加，fine-tuning 的效果會越來越明顯。
 
-Again, our goal here is to improve performance and use less tokens, so fine-tuning allows us to:
+再說一次，我們的目標是提升表現並用更少的 token，所以 fine-tuning 讓我們可以：
 
-- Omit function and parameter descriptions: remove the description field from function and parameters
-- Omit parameters: remove the entire properties field from the parameters object
-- Omit function entirely: remove the entire function object from the functions array
-
-
-# Generating synthetic data
+- 省略 function 和參數的說明：移除 function 和參數的 description 欄位
+- 省略參數：移除 parameters 物件裡整個 properties 欄位
+- 完全省略 function：從 functions 陣列移除整個 function 物件
 
 
-### Helper functions
+# 產生合成資料
 
 
-We want to generate every invocation of every function, so that we have
-full coverage of all potential invocations to create synthetic data for. Then, we will use `gpt-4o` to come up with prompts that would call each invocation, and we will use that prompt - function invocation pair as training data.
+### 輔助函式
 
 
-Generating every invocation for a function with fixed enums is more simple, but for a function such as
-`control_gimbal` we need to set the `tilt` and `pan` integer values, so to generate those synthetic invocations we will first set a placeholder, and then later use `gpt-4o` to come up with reasonable values.
+我們想產生每個 function 的每一種呼叫，這樣合成資料才能涵蓋所有可能的呼叫。接著，用 `gpt-4o` 想出能觸發每一種呼叫的 prompt，再把這組 prompt 和 function 呼叫的配對當成訓練資料。
+
+
+為有固定 enum 的 function 產生所有呼叫比較簡單，但像 `control_gimbal` 這種 function，需要設定 `tilt` 和 `pan` 的整數值，所以產生這些合成呼叫時，我們先放一個佔位值，之後再用 `gpt-4o` 想出合理的數值。
 
 
 ```python
@@ -624,10 +629,8 @@ placeholder_int = "fill_in_int"
 placeholder_string = "fill_in_string"
 ```
 
-The functions below take in all the functions from the function list, and look
-at all the potential invocations of those functions given each function's parameters.
-The functions also account for `required` parameters, so that all the invocations
-are actually feasible.
+下面的函式會接收 function 清單裡的所有 function，並依每個 function 的參數，查看這些 function 所有可能的呼叫。
+這些函式也會考慮 `required` 參數，確保所有呼叫都是實際可行的。
 
 
 ```python
@@ -736,10 +739,10 @@ def get_possible_values(params: Dict[str, Dict[str, Any]], field: str) -> List[A
     return []
 ```
 
-### Let's generate every invocation for every function first
+### 先產生每個 function 的每一種呼叫
 
 
-Prompts:
+Prompts：
 
 
 ```python
@@ -797,12 +800,12 @@ Prompt:
 """
 ```
 
-In the below snippet, we generate the invocation of each function except for the `reject_request` function.
+下面這段程式會產生除了 `reject_request` function 以外，每個 function 的呼叫。
 
-To perform effective fine-tuning we need correctly labeled data. We could manually come up with examples and label the data,\
-or we can generate synthetic data with the help of `gpt-4o` <br>
+要做有效的 fine-tuning，我們需要標註正確的資料。我們可以手動想範例並標註資料，\
+也可以靠 `gpt-4o` 產生合成資料 <br>
 
-Empirically, `gpt-4o` needs a bit more help to get good realistic examples of prompts that would generate the `reject_request` function, so we'll do that next...
+根據經驗，`gpt-4o` 需要多一點協助，才能產生會觸發 `reject_request` function 的真實 prompt 範例，所以接下來處理這部分...
 
 
 ```python
@@ -832,7 +835,7 @@ for function in all_but_reject:
         input_objects.append(input_object)
 ```
 
-Now that we have all the invocations, let's use `gpt-4o` to generate prompts that would result in those invocations
+現在有了所有的呼叫，我們用 `gpt-4o` 產生會觸發這些呼叫的 prompt
 
 
 ````python
@@ -916,7 +919,7 @@ training_examples_unformatted = create_commands(input_objects)
     ... (省略 74 行)
     ```
 
-Now let's format the training examples properly. For more documentation on the proper training data formatting for fine tuning for function calling, see here: https://platform.openai.com/docs/guides/fine-tuning/fine-tuning-examples
+現在把訓練範例整理成正確的格式。關於 function calling fine-tuning 訓練資料格式的更多文件，看這裡：https://platform.openai.com/docs/guides/fine-tuning/fine-tuning-examples
 
 
 ```python
@@ -1017,7 +1020,7 @@ for prompt in training_examples_unformatted:
     ... (省略 132 行)
     ```
 
-Now, back to the rejection function. Let's generate some prompts that are _nearly_ possible, but should result in the `reject_request` function being called. To do so, we queried `gpt-4o` asking for requests that are related to, but not quite possible with, the given list of functions.
+回到拒絕的 function。我們來產生一些_幾乎_可行、但應該呼叫 `reject_request` function 的 prompt。做法是請 `gpt-4o` 產生跟給定 function 清單相關、但又不太可能完成的請求。
 
 
 ```python
@@ -1066,7 +1069,7 @@ for prompt in reject_list:
     )
 ```
 
-Now combine all the training examples together
+現在把所有訓練範例合併起來
 
 
 ```python
@@ -1084,7 +1087,7 @@ with open(training_file, "w") as f:
 # Fine tuning
 
 
-Finally, we can kick off the fine-tuning job
+終於可以啟動 fine-tuning job 了
 
 
 ```python
@@ -1114,7 +1117,7 @@ print(f"Fine-tuning job created: {ft}")
     Fine-tuning job created: FineTuningJob(id='ftjob-84PQg97hoIAKf21IPnhiNlU1', created_at=1718580285, error=Error(code=None, message=None, param=None), fine_tuned_model=None, finished_at=None, hyperparameters=Hyperparameters(n_epochs='auto', batch_size='auto', learning_rate_multiplier='auto'), model='gpt-3.5-turbo-0125', object='fine_tuning.job', organization_id='org-lb41cclBdkq5pm6BgDhx8DHP', result_files=[], seed=1513865891, status='validating_files', trained_tokens=None, training_file='file-blg0IytwIivZQzc9mbfnS8Pm', validation_file=None, estimated_finish=None, integrations=[], user_provided_suffix='drone')
     ```
 
-In addition to creating a fine-tuning job, you can also list existing jobs, retrieve the status of a job, or cancel a job.
+除了建立 fine-tuning job，你也可以列出現有的 job、查詢 job 的狀態，或取消 job。
 
 
 ```python
@@ -1141,7 +1144,7 @@ client.fine_tuning.jobs.retrieve(ftjob_id)
     FineTuningJob(id='ftjob-84PQg97hoIAKf21IPnhiNlU1', created_at=1718580285, error=Error(code=None, message=None, param=None), fine_tuned_model='ft:gpt-3.5-turbo-0125:openai-gtm:drone:9atiPjeC', finished_at=1718581004, hyperparameters=Hyperparameters(n_epochs=3, batch_size=1, learning_rate_multiplier=2), model='gpt-3.5-turbo-0125', object='fine_tuning.job', organization_id='org-lb41cclBdkq5pm6BgDhx8DHP', result_files=['file-F6XPJFLVG9f3mR04KBmwUI9H'], seed=1513865891, status='succeeded', trained_tokens=145983, training_file='file-blg0IytwIivZQzc9mbfnS8Pm', validation_file=None, estimated_finish=None, integrations=[], user_provided_suffix='drone')
     ```
 
-After a fine-tuning job has finished, you can also see metrics around how the training process went by querying a fine-tuning job, extracting a file ID from the result_files, and then retrieving that files content. Each results CSV file has the following columns: step, train_loss, train_accuracy, valid_loss, and valid_mean_token_accuracy. While metrics can he helpful, evaluating samples from the fine-tuned model provides the most relevant sense of model quality.
+fine-tuning job 完成後，你還可以查詢 job、從 result_files 取出 file ID，再取得該檔案的內容，看訓練過程的指標。每個結果 CSV 檔有這些欄位：step、train_loss、train_accuracy、valid_loss 和 valid_mean_token_accuracy。指標有幫助，但直接評估微調後模型的輸出樣本，才最能看出模型品質。
 
 
 ```python
@@ -1200,11 +1203,10 @@ print(decoded_content)
     ... (省略 270 行)
     ```
 
-# Evaluations
+# 評估
 
 
-Great! We trained a fine-tuned model for function calling. Let's see how it does on our evaluation set for prompts that the drone assistant
-should automatically reject.
+太好了！我們訓練出了一個 function calling 的 fine-tuned 模型。來看看它在評估集上的表現，這些 prompt 是無人機助理應該自動拒絕的。
 
 
 ```python
@@ -1257,13 +1259,25 @@ eval(
     Average tokens used per request: 791.90
     ```
 
-Great! While the original model only rejected 60%, the fine tuned model rejected 100% requests and used less tokens to do so.
+太好了！原本的模型只拒絕了 60%，fine-tuned 模型則拒絕了 100% 的請求，而且用了更少的 token。
 
 
-### Conclusion
+### 結論
 
 
-Congratulations! You are now ready to fine tune your model for function calling. We can't wait to see what you build.
+恭喜！你現在可以為 function calling 做 fine-tuning 了。期待看到你做出什麼。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- fine-tuning 之前先改 function 定義和 prompt，這兩招沒用才考慮 fine-tuning。
+- function 越多、任務越複雜，模型越容易錯誤呼叫，特別是「幾乎可行」的請求。
+- 只靠 function 清單就能合成訓練資料：列舉所有可能的呼叫，再讓強模型反推對應的 prompt。
+- 需要拒絕的案例要另外特別產生，強模型不太會自己產生好的例子。
+- fine-tuning 不只提升準確度，還能省略 description 之類的欄位，減少 token。
+
+## 練習
+
+1. 在基準測試的「難請求」清單裡多加兩個你自己想的幾乎可行但應該拒絕的 prompt，看 `gpt-3.5-turbo` 有沒有答錯。
+2. 在 function 清單裡新增一個你自己的 function（例如控制燈光），重新跑所有呼叫的列舉，看合成資料的數量怎麼變。
+3. 微調完成後，把評估集換成 notebook 沒用過的拒絕 prompt，比較原模型和 fine-tuned 模型的拒絕比例。

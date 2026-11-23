@@ -1,53 +1,62 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_outlook.ipynb
 ---
-
-# GPT Actions library - Outlook
+# GPT Actions 範例庫：Outlook
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_outlook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_outlook.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼做一個連到 Outlook 的 GPT Action，讓使用者用自然語言收發郵件、讀寫行事曆。內容包含 Custom GPT 的 Instructions、OpenAPI schema，以及 Azure 的 App Registration 和 OAuth 設定。
+
+## 學完你會
+- 在 Azure Portal 註冊 App、建立 client secret，並加上 Microsoft Graph 的 delegated 權限。
+- 把 Instructions 和 OpenAPI schema 貼到 Custom GPT，在 ChatGPT 填好 OAuth 欄位（含 Tenant ID）。
+- 把 GPT Action 的 callback URL 回填到 Azure 的 Redirect URI。
+
+## 開跑前
+- 需要 Azure 帳號，並有權限建立 [App Registration](https://portal.azure.com/?feature.tokencaching=true&feature.internalgraphapiversion=true#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)。
+- 需要能建立 Custom GPT 的 ChatGPT 帳號。
 
 
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+這一頁是給要為特定應用開發 GPT Action 的開發者看的說明和指南。開始前，請先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions 範例庫簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零打造 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to Outlook, Microsoft's web service for emailing and calendar events. This action assumes a user’s context and allows them to send and retrieve emails and calendar events from Outlook.
+這個 GPT Action 說明怎麼連到 Outlook，也就是 Microsoft 的電子郵件與行事曆網路服務。這個 action 以使用者自己的身分運作，可以從 Outlook 寄信、取信，以及讀取、建立行事曆事件。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to Outlook
+**價值**：使用者可以用 ChatGPT 的自然語言能力，直接連到 Outlook
 
-**Example Use Cases**: 
-- A user can look up all of their meetings for the day and have ChatGPT summarize the day
-- A user can email a ChatGPT output to someone directly
+**使用情境範例**： 
+- 使用者查詢當天所有的會議，請 ChatGPT 總結這一天
+- 使用者直接把 ChatGPT 的輸出寄信給某人
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- Application Website: https://portal.azure.com/
-- Application API Documentation: https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
+開始前先看看這些連結：
+- 應用程式網站：https://portal.azure.com/
+- 應用程式 API 文件：https://learn.microsoft.com/en-us/graph/api/overview?view=graph-rest-1.0
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Ensure you have the access and permissions to [Set up an App Registration in Azure](https://portal.azure.com/?feature.tokencaching=true&feature.internalgraphapiversion=true#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
+開始前，先在應用程式環境完成下面的步驟：
+- 確認你有權限[在 Azure 設定 App Registration](https://portal.azure.com/?feature.tokencaching=true&feature.internalgraphapiversion=true#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade)
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
 ```python
 **Context**: you are specialized GPT designed to manage emails and calendar events through API connections to Microsoft Outlook. This GPT can create, read, send, and alter emails and calendar events based on user instructions. It ensures efficient handling of communication and scheduling needs by leveraging Microsoft Graph API for seamless integration with Outlook services.
@@ -62,7 +71,7 @@ Once you've created a Custom GPT, copy the text below in the Instructions panel.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
 ```python
 openapi: 3.1.0
@@ -280,31 +289,31 @@ paths:
                 $ref: '#/components/schemas/CalendarEvent'
 ```
 
-## Authentication Instructions
+## 驗證設定說明
 
-Below are instructions on setting up authentication with Outlook. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面說明怎麼設定 Outlook 的驗證。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
 
-### Azure Steps
+### Azure 步驟
 
-1. <b>App Registration</b>: The first step is to register a new App registration in the [Azure Portal](https://portal.azure.com) which will be used to integrate OAuth between our application and Azure Active Directory/Entra ID. Simply provide the application with a relevant name, leaving the Redirect URI blank for now as we will return to this, and save.
+1. <b>App Registration</b>：第一步是在 [Azure Portal](https://portal.azure.com) 註冊一個新的 App registration，用來在我們的應用和 Azure Active Directory/Entra ID 之間整合 OAuth。給應用取一個合適的名稱，Redirect URI 先留空，之後會回來設定，然後儲存。
 
 ![gptactions_outlook_registerapplication.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_registerapplication.png)
 
-2. <b>Certificate & Secrets</b>: We next need to generate a client secret to provide secure communication between the GPT and Azure. Within the App registration, navigate to <b>Certificate & secrets</b> in the sidebar
+2. <b>Certificate & Secrets</b>：接著要產生一個 client secret，讓 GPT 和 Azure 之間能安全通訊。在 App registration 裡，從側邊欄進到 <b>Certificate & secrets</b>
 
 ![gptactions_outlook_secrets.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_secrets.png)
 
-Click New client secret and create a new client secret with desired name and expiry date. Clicking save will provide us a Secret to use in our GPT creation. Make sure to save the **Value** field as it’ll only be visible at creation, and we will need it later!
+點 New client secret，用想要的名稱和到期日建立一個新的 client secret。按儲存後會得到一個 Secret，供建立 GPT 時使用。務必把 **Value** 欄位存下來，因為它只有在建立時看得到，之後會用到！
 
 ![gptactions_outlook_secretvalue.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_secretvalue.png)
 
-3. <b>API Permissions</b>: The next step is to provide the integration with the scope it needs to perform our specific required actions. 
-Within the App registration, navigate to <b>Manage > API permissions</b> in the sidebar. 
+3. <b>API Permissions</b>：下一步是給整合所需的 scope，讓它能執行我們需要的動作。 
+在 App registration 裡，從側邊欄進到 <b>Manage > API permissions</b>。 
 
 ![gptactions_outlook_permissions.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_permissions.png)
 
-Click <b>Add a permission</b> and <b>Microsoft graph > Delegated Permissions</b> as options in the opened side menu. Use the search bar to add the following permissions:
+點 <b>Add a permission</b>，在打開的側邊選單選 <b>Microsoft graph > Delegated Permissions</b>。用搜尋列加入下面這些權限：
 - Calendars.ReadWrite
 - Mail.Read
 - Mail.Send
@@ -313,40 +322,49 @@ Click <b>Add a permission</b> and <b>Microsoft graph > Delegated Permissions</b>
 
 ![gptactions_outlook_permissionadd.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_permissionadd.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點 "Authentication"，選 **"OAuth"**，填入下面的資訊。 
 
-- **Client ID**: The value listed on the Azure Registered App’s Overview page under **Application (client) ID**
-- **Client Secret**: the secret **Value** saved from step 2 of **Azure Steps**
+- **Client ID**：Azure 註冊的 App 的 Overview 頁面上，**Application (client) ID** 列出的值
+- **Client Secret**：**Azure 步驟** 第 2 步存下來的 secret **Value**
 
-For the following two inputs, replace <Tenant_ID> with the value listed on the Registered App’s Overview page under **Directory (tenant) ID**
+下面兩個欄位，把 <Tenant_ID> 換成已註冊 App 的 Overview 頁面上 **Directory (tenant) ID** 列出的值
 
-- **Authorization URL**: https://login.microsoftonline.com/<Tenant_ID>/oauth2/v2.0/authorize
-- **Token URL**: https://login.microsoftonline.com/<Tenant_ID>/oauth2/v2.0/token
-- **Scope**: https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Calendars.ReadWrite 
-- **Token Exchange Method**: Default (POST Request)
+- **Authorization URL**：https://login.microsoftonline.com/<Tenant_ID>/oauth2/v2.0/authorize
+- **Token URL**：https://login.microsoftonline.com/<Tenant_ID>/oauth2/v2.0/token
+- **Scope**：https://graph.microsoft.com/User.Read https://graph.microsoft.com/Mail.Send https://graph.microsoft.com/Mail.Read https://graph.microsoft.com/Calendars.ReadWrite 
+- **Token Exchange Method**：Default (POST Request)
 
-### Post-Action Steps
+### Action 設定後的步驟
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+在 ChatGPT 設好驗證之後，照下面的步驟回到應用程式完成 Action 的設定。
 
-- Copy the callback URL from the GPT Action
+- 從 GPT Action 複製 callback URL
 
 ![gptactions_outlook_callback.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_callback.png)
 
-- In the Azure app, navigate to the **Manage > Authentication** tab, click **Add a platform**, select **Web** and add your callback URL under **Redirect URI**
+- 在 Azure 的 app 裡，進到 **Manage > Authentication** 分頁，點 **Add a platform**，選 **Web**，把你的 callback URL 加到 **Redirect URI**
 
 
 ![gptactions_outlook_redirectconfig.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_redirectconfig.png)
 ![gptactions_outlook_redirectinput.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_outlook_redirectinput.png)
 
-### FAQ & Troubleshooting
+### FAQ 與疑難排解
 
-- **Callback URL Error**: If you get a callback URL error in ChatGPT, double check the Callback URL value as it can occasionally change depending on any alterations made to the authentication
-
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- **Callback URL 錯誤**：如果在 ChatGPT 看到 callback URL 錯誤，請再確認 Callback URL 的值，因為驗證設定有改動時，它偶爾會變
 
 
-<!-- tutor:summary -->
+*有想要我們優先處理的整合嗎？我們的整合有錯誤嗎？歡迎在 github 提 PR 或 issue，我們會去看。*
+
+
+## 重點整理
+- GPT Action 由三塊組成：Custom GPT 的 Instructions、OpenAPI schema、驗證設定。
+- Outlook 透過 Microsoft Graph 的 delegated 權限，以使用者身分存取信件和行事曆。
+- OAuth 的 URL 要帶自己的 Tenant ID，client secret 的 Value 只在建立時看得到，要先存好。
+- 設定有個來回：Redirect URI 先留空，等 ChatGPT 產生 callback URL 後再回填 Azure。
+
+## 練習
+1. 把你的 Tenant ID 填進頁面上 Authorization URL 和 Token URL 的 `<Tenant_ID>`。
+2. 把 Scope 裡的 `Mail.Send` 拿掉（Azure 權限也對應移除），確認 GPT 就不能寄信了。
+3. 在 OpenAPI schema 加一個 Microsoft Graph 的端點（例如列出行事曆事件的篩選條件），並更新 Instructions 讓 GPT 知道怎麼用。

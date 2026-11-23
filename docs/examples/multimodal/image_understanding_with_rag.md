@@ -1,47 +1,57 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/image_understanding_with_rag.ipynb
 ---
 
-# Image Understanding with RAG
+# 用 RAG 做圖像理解
 
 > 原文：[examples/multimodal/image_understanding_with_rag.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/image_understanding_with_rag.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 OpenAI 的 Vision 和 Responses API 建一個多模態 RAG，分析包含照片和文字的顧客回饋。它建立有圖片理解和沒有圖片理解的兩個 vector store，用 file search 檢索，再用 Evals API 比較差異。
+
+## 學完你會
+- 用 Image API 和 Responses API 產生合成的圖片與文字資料。
+- 建立兩個 vector store（純文字 vs. 文字加圖片），用 file search 搭配 attribute filter 做檢索。
+- 用 Evals API 的 `string_check` 評估情感分析結果，並分析加入圖片後對準確度和 token 數的影響。
+
+## 開跑前
+- 需要 OpenAI API key，並有使用 GPT-5、圖片生成、vector store 和 Evals 的額度。
+- 圖片生成、file search 和 evals 都會產生費用。
 
 
-Welcome! This notebook demonstrates how to build a Retrieval-Augmented Generation (RAG) system using OpenAI’s Vision and Responses APIs. It focuses on multimodal data, combining image and text inputs to analyze customer experiences. The system leverages GPT-5 and integrates image understanding with file search to provide context-aware responses.
+歡迎！這份 notebook 示範怎麼用 OpenAI 的 Vision 和 Responses API 建立 Retrieval-Augmented Generation (RAG) 系統。重點放在多模態資料，結合圖片和文字輸入來分析顧客體驗。系統使用 GPT-5，並把圖像理解和 file search 整合起來，提供有 context 的回應。
 
-Multimodal datasets are increasingly common, particularly in domains like healthcare, where records often contain both visual data (e.g. radiology scans) and accompanying text (e.g. clinical notes). Real-world datasets also tend to be noisy, with incomplete or missing information, making it critical to analyze multiple modalities in tandem.
+多模態資料集越來越常見，特別是在醫療這類領域，紀錄常同時包含視覺資料（例如放射科掃描）和附帶的文字（例如臨床筆記）。真實世界的資料集通常也很雜亂，資訊不完整或有缺漏，所以同時分析多種模態很重要。
 
-This guide focuses on a customer service use case: evaluating customer feedback that may include photos, and written reviews. You’ll learn how to synthetically generate both image and text inputs, use file search for context retrieval, and apply the Evals API to assess how incorporating image understanding impacts overall performance.
+這份指南聚焦客服情境：評估可能包含照片和文字評論的顧客回饋。你會學到怎麼合成產生圖片和文字輸入、用 file search 檢索 context，並用 Evals API 評估加入圖像理解對整體表現的影響。
 
 ---
 
-## Overview
+## 概觀
 
 ---
 
-## Table of Contents
+## 目錄
 
 1. [Setup & Dependencies](#setup-and-dependencies)
 2. [Example Generations](#example-generations)
 3. [Data Processing](#data-processing)
-   - Load synthetic datasets
-   - Merge data
+   - 載入合成資料集
+   - 合併資料
 4. [Populating Vector Store](#populating-vector-store)
-   - Upload data for file search
-   - Set up attribute filters
+   - 上傳資料給 file search
+   - 設定 attribute filter
 5. [Retrieval and Filtering](#retrieval-and-filtering)
-   - Test retrieval performance
-   - Apply attribute-based filters
+   - 測試檢索表現
+   - 套用以 attribute 為基礎的 filter
 6. [Evaluation and Analysis](#evaluation-and-analysis)
-   - Compare predictions to ground truth
-   - Analyze performance metrics
+   - 比較預測和 ground truth
+   - 分析效能指標
 
-## Setup and Dependencies
+## 設定與依賴
 
 ```python
 %pip install openai evals pandas numpy matplotlib tqdm ipython --upgrade --quiet
@@ -66,9 +76,9 @@ cache_dir.mkdir(parents=True, exist_ok=True)
 client = OpenAI()
 ```
 
-## Example Generations
+## 範例生成
 
-Generating high-quality training and evaluation data for machine learning tasks can be costly and time-consuming. Synthetic data offers a practical and scalable alternative. In this notebook, the OpenAI Image API is used to generate synthetic images, while the Responses API is employed to create synthetic text, enabling efficient prototyping and experimentation across multimodal tasks.
+為機器學習任務產生高品質的訓練和評估資料，成本高又耗時。合成資料是實用且可擴展的替代方案。在這份 notebook 裡，用 OpenAI Image API 產生合成圖片，用 Responses API 產生合成文字，讓多模態任務能有效率地做原型和實驗。
 
 ```python
 
@@ -125,9 +135,9 @@ print(review)
     Order arrived 10 minutes early, food was hot and packaged securely. Tacos were fresh, well-seasoned, and the salsa tasted homemade. Driver was friendly, followed instructions, and left it at the door. Will definitely order again.
     ```
 
-## Data Processing
+## 資料處理
 
-In this example, we’ll work with a pre-generated synthetic dataset of customer feedback that includes short text snippets, images from customer reviews, and occasionally combined multimodal entries. You can also generate your own synthetic dataset using the examples provided above to tailor the data to your specific use case.
+在這個範例裡，我們會用預先產生好的合成顧客回饋資料集，它包含簡短的文字片段、顧客評論的圖片，以及偶爾同時有兩者的多模態項目。你也可以用上面提供的範例產生自己的合成資料集，針對你的使用情境量身訂做資料。
 
 ```python
 # Download the dataset
@@ -228,9 +238,9 @@ display(df.head())
     4                   Received the wrong items. I ordered vegetarian and got meat. Totally unacceptable.
     ```
 
-## Populating Vector Store
+## 填入 Vector Store
 
-This example uses OpenAI's built-in vector store and file search capabilities to build a RAG system that can analyse customer experiences from their feedback, which can be both visual and text-based. We create two vector stores for comparisons, one with image understanding and one without.
+這個範例使用 OpenAI 內建的 vector store 和 file search 功能建立 RAG 系統，可以分析顧客從回饋（可能是視覺或文字）得來的體驗。我們建立兩個 vector store 做比較，一個有圖像理解，一個沒有。
 
 ```python
 text_vector_store = client.vector_stores.create(
@@ -289,11 +299,11 @@ upload_files_to_vector_store(text_image_vector_store_id, df)
 upload_files_to_vector_store(text_vector_store_id, df, column_name="text")
 ```
 
-# Retrieval and Filtering
+# 檢索與過濾
 
-We can analyse our dataset with natural language queries with the help of File Search. For the text-only dataset, we see that information is missing that could inform our analysis.
+我們可以借助 File Search，用自然語言 query 分析資料集。對純文字資料集來說，我們看到缺少了一些能幫助分析的資訊。
 
-The only positive review for spaghetti in July has visual feedback and we can see the RAG system with only text based context available is uncertain about positive details. However with image context provided the second RAG system is able to provide a more accurate response.
+七月唯一一則關於 spaghetti 的正面評論只有視覺回饋，我們可以看到只有文字 context 的 RAG 系統對正面的細節不確定。但有提供圖像 context 時，第二個 RAG 系統能給出更準確的回應。
 
 
 ```python
@@ -365,7 +375,7 @@ print(response.output_text)
     Yes. There’s a positive note describing “a neatly plated spaghetti in tomato sauce with parsley, served alongside arugula, garlic bread, and grated cheese.”
     ```
 
-We can confirm if this is correct by checking the retrieved images.
+我們可以檢查檢索到的圖片來確認這是否正確。
 
 ```python
 IMAGE_ID_MAPPING = {
@@ -411,7 +421,7 @@ displayed = display_retrieved_images(response)
 print(f"Displayed {len(displayed)} images")
 ```
 
-Likewise we can test this for negative reviews in June concerning any burnt pizza.
+同樣地，我們可以測試六月關於燒焦 pizza 的負面評論。
 
 ```python
 query = "Were there any negative reviews for pizza, and if so, was the pizza burnt?"
@@ -446,16 +456,16 @@ print(response.output_text)
     Yes. One review explicitly describes a “burnt pepperoni pizza with charred crust and grease stains in the box” and is marked as negative sentiment .
     ```
 
-We can confirm if this is correct by checking the retrieved images.
+我們可以檢查檢索到的圖片來確認這是否正確。
 
 ```python
 displayed = display_retrieved_images(response)
 print(f"Displayed {len(displayed)} images")
 ```
 
-## Evaluation and Analysis
+## 評估與分析
 
-As our dataset likely evolves over time and we want to evaluate new models, we can use the OpenAI Evaluation API to evaluate the performance of our system for sentiment analysis. In this simple example, using the string_check criteria we checked if the output was one of the three possible values: positive, negative, or unclear.
+因為我們的資料集可能隨時間演進，也想評估新模型，所以可以用 OpenAI Evaluation API 評估系統在情感分析上的表現。在這個簡單的範例裡，我們用 string_check 準則檢查輸出是否是三個可能值之一：positive、negative 或 unclear。
 
 ```python
 def prepare_evaluation_data(
@@ -579,7 +589,7 @@ text_only_run_output_items = client.evals.runs.output_items.list(eval_id=eval_id
 text_image_run_output_items = client.evals.runs.output_items.list(eval_id=eval_id, run_id=text_image_run_id)
 ```
 
-We can retrieve the results of these evaluation runs and perform some local analysis. In this case, we will compare the performance of the text-only and text+image runs and evaluate how increasing the number of total tokens (through the addition of image context) affects the accuracy of the model. We can also do some basic error analysis by analysing the model input of the failed examples.
+我們可以取回這些評估執行的結果並做一些本機分析。這裡我們會比較純文字和文字加圖片兩次執行的表現，並評估增加總 token 數（因為加入圖片 context）如何影響模型準確度。我們也可以分析失敗範例的模型輸入，做一些基本的錯誤分析。
 
 ```python
 # Calculate passed and total for text_only_run
@@ -653,7 +663,7 @@ display(failed_df.style.set_properties(**{'text-align': 'left'}))
     <pandas.io.formats.style.Styler at 0x134997530>
     ```
 
-Finally, let's clean up some of the resources we created.
+最後，把我們建立的一些資源清理掉。
 
 ```python
 # delete vector stores
@@ -668,4 +678,14 @@ deleted_vector_store = client.vector_stores.delete(
 print(deleted_vector_store)
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 多模態資料常有缺漏，只靠文字 context 的 RAG 會對圖片裡的資訊不確定。
+- 做 A/B 比較時建兩個 vector store，只差在有沒有圖像理解，才看得出圖像的貢獻。
+- File search 搭配 attribute filter，可以用月份、類別這類條件縮小檢索範圍。
+- 用 Evals API 把評估變成可重複執行的流程，新模型或新資料來時能再跑。
+- 加入圖像 context 會增加 token，要看準確度提升值不值得。
+
+## 練習
+1. 把檢索的 query 改成「八月關於冷掉的湯的負面評論」，比較兩個 RAG 系統的回答。
+2. 修改 `string_check` 的準則，讓它多接受一個 `mixed` 標籤，並重跑評估。
+3. 統計失敗範例中有圖片和沒圖片的比例，找出哪一類錯誤最多。

@@ -1,39 +1,45 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_build_an_agent_with_the_node_sdk.mdx
 ---
 
-# How to build an agent with the OpenAI Node.js SDK
+# 用 OpenAI Node.js SDK 打造 agent
 
 > 原文：[examples/How_to_build_an_agent_with_the_node_sdk.mdx](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_build_an_agent_with_the_node_sdk.mdx)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 OpenAI 的 function calling 加上最新版 Node.js SDK，做一個在瀏覽器跑的小 agent。它有取得位置和查天氣兩個 function，會自己判斷要呼叫哪個，最後根據結果推薦當地活動。
 
+## 學完你會
+- 用 `tools` schema 向模型描述 function，並從回應判斷它要你呼叫哪一個
+- 把模型回傳的 function 名稱對應成真正的函式呼叫，並把結果用 `messages` 送回去
+- 寫一個有上限的 for-loop，讓 agent 在 `tool_calls` 和 `stop` 之間來回直到有答案
 
-OpenAI functions enable your app to take action based on user inputs. This means that it can, e.g., search the web, send emails, or book tickets on behalf of your users, making it more powerful than a regular chatbot.
+## 開跑前
+需要 OpenAI API key（存在環境變數）。程式在瀏覽器跑，用編輯器加 VS Code Live Server 就能在本機跟著做，也可以用 Scrimba 的線上 playground。
 
-In this tutorial, you will build an app that uses OpenAI functions along with the latest version of the Node.js SDK. The app runs in the browser, so you only need a code editor and, e.g., VS Code Live Server to follow along locally. Alternatively, write your code directly in the browser via [this code playground at Scrimba.](https://scrimba.com/scrim/c6r3LkU9)
+OpenAI 的 function 讓你的 app 可以根據使用者輸入採取行動。也就是說，它可以代替使用者搜尋網路、寄 email、訂票，比一般聊天機器人強大。
 
-## What you will build
+這份教學會用 OpenAI functions 加上最新版 Node.js SDK 做一個 app。這個 app 在瀏覽器執行，所以你只需要一個編輯器，加上像 VS Code Live Server 這樣的工具，就能在本機跟著做。也可以直接在瀏覽器裡寫程式，用 [Scrimba 的這個 code playground](https://scrimba.com/scrim/c6r3LkU9)。
 
-Our app is a simple agent that helps you find activities in your area.
-It has access to two functions, `getLocation()` and `getCurrentWeather()`,
-which means it can figure out where you’re located and what the weather
-is at the moment.
+## 你會做出什麼
 
-At this point, it's important to understand that
-OpenAI doesn't execute any code for you. It just tells your app which
-functions it should use in a given scenario, and then leaves it up to
-your app to invoke them.
+我們的 app 是一個簡單的 agent，幫你找所在地區的活動。
+它有兩個 function 可以用：`getLocation()` 和 `getCurrentWeather()`，
+所以它能查出你在哪裡，以及現在天氣如何。
 
-Once our agent knows your location and the weather, it'll use GPT’s
-internal knowledge to suggest suitable local activities for you.
+這裡要先搞清楚一件事：
+OpenAI 不會幫你執行任何程式碼。它只會告訴你的 app 在某個情境下該用哪些
+function，然後由你的 app 自己去呼叫。
 
-## Importing the SDK and authenticating with OpenAI
+Agent 知道你的位置和天氣之後，就會用 GPT 內部的知識，
+推薦適合的當地活動。
 
-We start by importing the OpenAI SDK at the top of our JavaScript file and authenticate with our API key, which we have stored as an environment variable.
+## 匯入 SDK 並向 OpenAI 驗證
+
+先在 JavaScript 檔案最上面匯入 OpenAI SDK，並用 API key 驗證，key 存在環境變數裡。
 
 ```js
 import OpenAI from "openai";
@@ -44,13 +50,12 @@ const openai = new OpenAI({
 });
 ```
 
-Since we're running our code in a browser environment at Scrimba, we also need to set `dangerouslyAllowBrowser: true` to confirm we understand the risks involved with client-side API requests. Please note that you should move these requests over to a Node server in a production app.
+因為我們在 Scrimba 的瀏覽器環境執行程式，所以還需要設定 `dangerouslyAllowBrowser: true`，表示我們了解 client 端 API 請求的風險。注意，正式的 app 要把這些請求移到 Node server 上。
 
-## Creating our two functions
+## 建立兩個 function
 
-Next, we'll create the two functions. The first one - `getLocation` -
-uses the [IP API](https://ipapi.co/) to get the location of the
-user.
+接著建立這兩個 function。第一個 `getLocation`，
+用 [IP API](https://ipapi.co/) 取得使用者的位置。
 
 ```js
 async function getLocation() {
@@ -60,11 +65,9 @@ async function getLocation() {
 }
 ```
 
-The IP API returns a bunch of data about your location, including your
-latitude and longitude, which we’ll use as arguments in the second
-function `getCurrentWeather`. It uses the [Open Meteo
-API](https://open-meteo.com/) to get the current weather data, like
-this:
+IP API 會回傳一堆關於你位置的資料，包括經緯度，
+這些會當成第二個 function `getCurrentWeather` 的參數。它用 [Open Meteo
+API](https://open-meteo.com/) 取得目前的天氣資料，像這樣：
 
 ```js
 async function getCurrentWeather(latitude, longitude) {
@@ -75,13 +78,11 @@ async function getCurrentWeather(latitude, longitude) {
 }
 ```
 
-## Describing our functions for OpenAI
+## 向 OpenAI 描述我們的 function
 
-For OpenAI to understand the purpose of these functions, we need to
-describe them using a specific schema. We'll create an array called
-`tools` that contains one object per function. Each object
-will have two keys: `type`, `function`, and the `function` key has 
-three subkeys: `name`, `description`, and `parameters`.
+為了讓 OpenAI 理解這些 function 的用途，我們要用特定的 schema 來描述它們。我們會建立一個叫 `tools` 的陣列，
+每個 function 一個物件。每個物件有兩個 key：`type` 和 `function`，而 `function` 這個 key 底下有
+三個子 key：`name`、`description` 和 `parameters`。
 
 ```js
 const tools = [
@@ -118,11 +119,11 @@ const tools = [
 ];
 ```
 
-## Setting up the messages array
+## 設定 messages 陣列
 
-We also need to define a `messages` array. This will keep track of all of the messages back and forth between our app and OpenAI.
+我們還要定義一個 `messages` 陣列，用來記錄 app 和 OpenAI 之間來回的所有訊息。
 
-The first object in the array should always have the `role` property set to `"system"`, which tells OpenAI that this is how we want it to behave.
+陣列的第一個物件，`role` 屬性一定要是 `"system"`，這是告訴 OpenAI 我們希望它怎麼表現。
 
 ```js
 const messages = [
@@ -134,13 +135,13 @@ const messages = [
 ];
 ```
 
-## Creating the agent function
+## 建立 agent function
 
-We are now ready to build the logic of our app, which lives in the
-`agent` function. It is asynchronous and takes one argument: the
-`userInput`.
+現在可以開始寫 app 的邏輯了，它放在
+`agent` function 裡。這是個非同步函式，接收一個參數：
+`userInput`。
 
-We start by pushing the `userInput` to the messages array. This time, we set the `role` to `"user"`, so that OpenAI knows that this is the input from the user.
+先把 `userInput` push 到 messages 陣列。這次 `role` 設成 `"user"`，讓 OpenAI 知道這是使用者的輸入。
 
 ```js
 async function agent(userInput) {
@@ -157,29 +158,26 @@ async function agent(userInput) {
 }
 ```
 
-Next, we'll send a request to the Chat completions endpoint via the
-`chat.completions.create()` method in the Node SDK. This method takes a
-configuration object as an argument. In it, we'll specify three
-properties:
+接著透過 Node SDK 的
+`chat.completions.create()` 方法，對 Chat completions endpoint 送出請求。這個方法接收一個設定物件，我們要在裡面指定三個
+屬性：
 
-- `model` - Decides which AI model we want to use (in our case,
-  GPT-4).
-- `messages` - The entire history of messages between the user and the
-  AI up until this point.
-- `tools` - A list of tools the model may call. Currently, only 
-  functions are supported as a tool., we'll we use the `tools` array we 
-  created earlier.
+- `model`：決定要用哪個 AI 模型（這裡用
+  GPT-4）。
+- `messages`：到目前為止使用者和
+  AI 之間的完整訊息歷史。
+- `tools`：模型可以呼叫的 tool 清單。目前只
+  支援 function 當 tool，這裡用的就是前面建立的 `tools` 陣列。
 
-## Running our app with a simple input
+## 用簡單輸入執行 app
 
-Let's try to run the `agent` with an input that requires a function call to give a suitable reply.
+來試試用一個需要 function call 才能適當回覆的輸入執行 `agent`。
 
 ```js
 agent("Where am I located right now?");
 ```
 
-When we run the code above, we see the response from OpenAI logged out
-to the console like this:
+執行上面的程式碼後，OpenAI 的回應會像這樣印在 console：
 
 ```js
 {
@@ -213,17 +211,16 @@ to the console like this:
 }
 ```
 
-This response tells us that we should call one of our functions, as it contains the following key: `finish_reason: "tool_calls"`.
+這個回應告訴我們要呼叫其中一個 function，因為它包含這個 key：`finish_reason: "tool_calls"`。
 
-The name of the function can be found in the
-`response.choices[0].message.tool_calls[0].function.name` key, which is set to
-`"getLocation"`.
+Function 的名稱可以在
+`response.choices[0].message.tool_calls[0].function.name` 這個 key 找到，值是
+`"getLocation"`。
 
-## Turning the OpenAI response into a function call
+## 把 OpenAI 的回應變成 function call
 
-Now that we have the name of the function as a string, we'll need to
-translate that into a function call. To help us with that, we'll gather
-both of our functions in an object called `availableTools`:
+現在我們拿到字串形式的 function 名稱，需要把它轉成真正的 function call。為此，我們把
+兩個 function 收集到一個叫 `availableTools` 的物件裡：
 
 ```js
 const availableTools = {
@@ -232,9 +229,9 @@ const availableTools = {
 };
 ```
 
-This is handy because we'll be able to access the `getLocation` function
-via bracket notation and the string we got back from OpenAI, like this:
-`availableTools["getLocation"]`.
+這樣很方便，因為我們可以用中括號語法，搭配 OpenAI 回傳的字串來取用 `getLocation` function，
+像這樣：
+`availableTools["getLocation"]`。
 
 ```js
 const { finish_reason, message } = response.choices[0];
@@ -249,21 +246,18 @@ if (finish_reason === "tool_calls" && message.tool_calls) {
 }
 ```
 
-We're also grabbing ahold of any arguments OpenAI wants us to pass into
-the function: `message.tool_calls[0].function.arguments`.
-However, we won't need any arguments for this first function call.
+我們也會取得 OpenAI 要我們傳進 function 的任何參數：`message.tool_calls[0].function.arguments`。
+不過第一個 function call 用不到任何參數。
 
-If we run the code again with the same input
-(`"Where am I located right now?"`), we'll see that `functionResponse`
-is an object filled with location about where the user is located right
-now. In my case, that is Oslo, Norway.
+如果用同樣的輸入（`"Where am I located right now?"`）再執行一次，會看到 `functionResponse`
+是一個物件，裡面是使用者目前所在位置的資料。以我的情況來說，是挪威奧斯陸。
 
 ```js
 {ip: "193.212.60.170", network: "193.212.60.0/23", version: "IPv4", city: "Oslo", region: "Oslo County", region_code: "03", country: "NO", country_name: "Norway", country_code: "NO", country_code_iso3: "NOR", country_capital: "Oslo", country_tld: ".no", continent_code: "EU", in_eu: false, postal: "0026", latitude: 59.955, longitude: 10.859, timezone: "Europe/Oslo", utc_offset: "+0200", country_calling_code: "+47", currency: "NOK", currency_name: "Krone", languages: "no,nb,nn,se,fi", country_area: 324220, country_population: 5314336, asn: "AS2119", org: "Telenor Norge AS"}
 ```
 
-We'll add this data to a new item in the `messages` array, where we also
-specify the name of the function we called.
+我們會把這份資料加到 `messages` 陣列的新項目裡，同時
+指定我們呼叫的 function 名稱。
 
 ```js
 messages.push({
@@ -276,30 +270,26 @@ messages.push({
 });
 ```
 
-Notice that the `role` is set to `"function"`. This tells OpenAI
-that the `content` parameter contains the result of the function call
-and not the input from the user.
+注意 `role` 設成 `"function"`。這告訴 OpenAI，
+`content` 參數裡是 function call 的結果，
+不是使用者的輸入。
 
-At this point, we need to send a new request to OpenAI with this updated
-`messages` array. However, we don’t want to hard code a new function
-call, as our agent might need to go back and forth between itself and
-GPT several times until it has found the final answer for the user.
+這時候，我們需要用更新後的 `messages` 陣列對 OpenAI 送出新的請求。不過我們不想把新的 function
+call 寫死，因為 agent 可能需要在自己和
+GPT 之間來回好幾次，才能找到給使用者的最終答案。
 
-This can be solved in several different ways, e.g. recursion, a
-while-loop, or a for-loop. We'll use a good old for-loop for the sake of
-simplicity.
+這可以用好幾種方式解決，例如遞迴、while 迴圈或 for 迴圈。為了簡單，我們用傳統的 for 迴圈。
 
-## Creating the loop
+## 建立迴圈
 
-At the top of the `agent` function, we'll create a loop that lets us run
-the entire procedure up to five times.
+在 `agent` function 的最上面，我們建立一個迴圈，讓整個流程最多執行五次。
 
-If we get back `finish_reason: "tool_calls"` from GPT, we'll just
-push the result of the function call to the `messages` array and jump to
-the next iteration of the loop, triggering a new request.
+如果 GPT 回傳 `finish_reason: "tool_calls"`，我們就把 function call 的結果
+push 到 `messages` 陣列，然後跳到
+迴圈的下一輪，觸發新的請求。
 
-If we get `finish_reason: "stop"` back, then GPT has found a suitable
-answer, so we'll return the function and cancel the loop.
+如果回傳 `finish_reason: "stop"`，表示 GPT 已經找到合適的
+答案，我們就回傳結果並結束迴圈。
 
 ```js
 for (let i = 0; i < 5; i++) {
@@ -334,13 +324,13 @@ for (let i = 0; i < 5; i++) {
 return "The maximum number of iterations has been met without a suitable answer. Please try again with a more specific input.";
 ```
 
-If we don't see a `finish_reason: "stop"` within our five iterations,
-we'll return a message saying we couldn’t find a suitable answer.
+如果五輪之內都沒看到 `finish_reason: "stop"`，
+就回傳一則訊息，說我們找不到合適的答案。
 
-## Running the final app
+## 執行最終版 app
 
-At this point, we are ready to try our app! I'll ask the agent to
-suggest some activities based on my location and the current weather.
+現在可以試試我們的 app 了！我會請 agent
+根據我的位置和目前天氣推薦一些活動。
 
 ```js
 const response = await agent(
@@ -349,7 +339,7 @@ const response = await agent(
 console.log(response);
 ```
 
-Here's what we see in the console (formatted to make it easier to read):
+以下是 console 裡看到的結果（已排版方便閱讀）：
 
 ```js
 Based on your current location in Oslo, Norway and the weather (15°C and snowy),
@@ -365,26 +355,22 @@ here are some activity suggestions:
 Always remember to bundle up and stay warm. Enjoy your day!
 ```
 
-If we peak under the hood, and log out `response.choices[0].message` in
-each iteration of the loop, we'll see that GPT has instructed us to use
-both our functions before coming up with an answer.
+如果我們看一下內部，在迴圈每一輪都印出 `response.choices[0].message`，會看到 GPT 指示我們兩個 function 都要用，才給出答案。
 
-First, it tells us to call the `getLocation` function. Then it tells us
-to call the `getCurrentWeather` function with
-`"longitude": "10.859", "latitude": "59.955"` passed in as the
-arguments. This is data it got back from the first function call we did.
+首先，它要我們呼叫 `getLocation` function。接著要我們呼叫 `getCurrentWeather` function，並傳入
+`"longitude": "10.859", "latitude": "59.955"` 當參數。這些資料是它從我們第一次 function call 的結果拿到的。
 
 ```js
 {"role":"assistant","content":null,"tool_calls":[{"id":"call_Cn1KH8mtHQ2AMbyNwNJTweEP","type":"function","function":{"name":"getLocation","arguments":"{}"}}]}
 {"role":"assistant","content":null,"tool_calls":[{"id":"call_uc1oozJfGTvYEfIzzcsfXfOl","type":"function","function":{"name":"getCurrentWeather","arguments":"{\n\"latitude\": \"10.859\",\n\"longitude\": \"59.955\"\n}"}}]}
 ```
 
-You've now built an AI agent using OpenAI functions and the Node.js SDK! If you're looking for an extra challenge, consider enhancing this app. For example, you could add a function that fetches up-to-date information on events and activities in the user's location.
+你現在已經用 OpenAI functions 和 Node.js SDK 做出一個 AI agent 了！如果想要多一點挑戰，可以試著強化這個 app，例如加一個 function，取得使用者所在地最新的活動資訊。
 
-Happy coding!
+寫得開心！
 
 <details>
-<summary>Complete code</summary>
+<summary>完整程式碼</summary>
 
 ```js
 import OpenAI from "openai";
@@ -503,4 +489,14 @@ console.log("response:", response);
 
 </details>
 
-<!-- tutor:summary -->
+## 重點整理
+- OpenAI 不會幫你執行程式，它只告訴你該呼叫哪個 function，執行是你 app 的工作
+- 用 `tools` 陣列描述 function 的 name、description、parameters，模型才知道什麼時候該用
+- 把 function 放進 `availableTools` 物件，就能用模型回傳的字串名稱查到函式並呼叫
+- 結果要用 `messages` 送回去，agent 才能接著推理，所以需要迴圈
+- 迴圈以 `finish_reason` 判斷：`tool_calls` 繼續，`stop` 結束，並設上限避免無限跑
+
+## 練習
+1. 把迴圈上限從 5 改成 2，看看 agent 還能不能完成「根據位置和天氣推薦活動」的請求，以及失敗時的訊息。
+2. 在 `tools` 和 `availableTools` 裡新增第三個 function（例如回傳目前時間），並修改輸入，讓 agent 把時間也納入推薦。
+3. 把 `getCurrentWeather` 改成同時回傳濕度，並調整 system 訊息，要求 agent 在推薦時一定要提到濕度。

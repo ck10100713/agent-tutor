@@ -1,26 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_use_guardrails.ipynb
 ---
-
-# How to implement LLM guardrails
+# 如何實作 LLM guardrails
 
 > 原文：[examples/How_to_use_guardrails.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_use_guardrails.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範怎麼替 LLM 應用加上 guardrails：在輸入端用一個 `gpt-4o-mini` 判斷問題是不是離題，在輸出端用 G-Eval 風格的評分擋掉不適當的回答。同時也講設計 guardrail 時要怎麼在準確度、延遲和成本之間取捨。
 
-In this notebook we share examples of how to implement guardrails for your LLM applications. A guardrail is a generic term for **detective controls** that aim to steer your application. Greater steerability is a common requirement given the inherent randomness of LLMs, and so creating effective guardrails has become one of the most common areas of performance optimization when pushing an LLM from prototype to production. 
+## 學完你會
 
-Guardrails are incredibly [diverse](https://github.com/NVIDIA/NeMo-Guardrails/blob/main/examples/README.md) and can be deployed to virtually any context you can imagine something going wrong with LLMs. This notebook aims to give simple examples that can be extended to meet your unique use case, as well as outlining the trade-offs to consider when deciding whether to implement a guardrail, and how to do it.
+- 寫一個 topical guardrail，並用 async 讓它跟主 LLM 呼叫平行執行，被擋下時直接回罐頭訊息。
+- 寫一個 moderation guardrail，用 domain、criteria、steps 讓 LLM 打 1 到 5 分，超過門檻就擋掉回答。
+- 判斷 guardrail 的限制（prompt injection、長對話、over-refusal），並知道怎麼調整門檻和緩解。
 
-This notebook will focus on:
-1. **Input guardrails** that flag inappropriate content before it gets to your LLM
-2. **Output guardrails** that validate what your LLM has produced before it gets to the customer
+## 開跑前
 
-**Note:** This notebook tackles guardrails as a generic term for detective controls around an LLM - for the official libraries that provide distributions of pre-built guardrails frameworks, please check out the following:
+- 需要 OpenAI API key，guardrail 和主 LLM 都會呼叫模型，會產生費用。
+
+在這份 notebook 裡，我們分享幾個替 LLM 應用實作 guardrails 的範例。guardrail 是一個通用詞，指的是用來引導應用行為的**偵測型控制（detective controls）**。LLM 本質上有隨機性，所以需要更高的可控性很常見，因此做出有效的 guardrails，成了把 LLM 從原型推向正式環境時最常見的效能最佳化方向之一。
+
+Guardrails 的種類非常[多樣](https://github.com/NVIDIA/NeMo-Guardrails/blob/main/examples/README.md)，幾乎可以部署在任何你想得到 LLM 會出問題的情境。這份 notebook 想提供簡單的範例，讓你延伸去符合自己的使用情境，同時也說明在決定要不要實作 guardrail、以及怎麼實作時該考慮的取捨。
+
+這份 notebook 會聚焦在：
+1. **輸入 guardrails**：在不適當的內容進到 LLM 之前就先標記起來
+2. **輸出 guardrails**：在 LLM 的產出送到客戶面前之前先驗證
+
+**注意：** 這份 notebook 把 guardrails 當成圍繞 LLM 的偵測型控制的通稱。如果你要找提供現成 guardrails 框架的正式函式庫，可以看：
 - [NeMo Guardrails](https://github.com/NVIDIA/NeMo-Guardrails/tree/main)
 - [Guardrails AI](https://github.com/ShreyaR/guardrails)
 
@@ -31,43 +41,43 @@ import openai
 GPT_MODEL = 'gpt-4o-mini'
 ```
 
-## 1. Input guardrails
+## 1. 輸入 guardrails
 
-Input guardrails aim to prevent inappropriate content getting to the LLM in the first place - some common use cases are:
-- **Topical guardrails:** Identify when a user asks an off-topic question and give them advice on what topics the LLM can help them with.
-- **Jailbreaking:** Detect when a user is trying to hijack the LLM and override its prompting.
-- **Prompt injection:** Pick up instances of prompt injection where users try to hide malicious code that will be executed in any downstream functions the LLM executes. 
+輸入 guardrails 的目標是從源頭阻止不適當的內容進到 LLM，常見的用途有：
+- **主題 guardrails（topical）：** 辨識使用者問了離題的問題，並告訴他 LLM 能協助哪些主題。
+- **Jailbreaking：** 偵測使用者想劫持 LLM、覆蓋它原本的 prompt。
+- **Prompt injection：** 抓出使用者想藏惡意程式碼的情況，這些程式碼會在 LLM 執行的下游函式裡被執行。
 
-In all of these they act as a preventative control, running either before or in parallel with the LLM, and triggering your application to behave differently if one of these criteria are met.
+這些情況下，guardrail 都是預防型控制，在 LLM 之前或與 LLM 平行執行，一旦符合其中一項條件，就觸發應用改變行為。
 
-### Designing a guardrail
+### 設計一個 guardrail
 
-When designing guardrails it is important to consider the trade-off between **accuracy**, **latency** and **cost**, where you try to achieve maximum accuracy for the least impact to your bottom line and the user's experience. 
+設計 guardrails 時，要考慮**準確度**、**延遲**和**成本**之間的取捨，目標是在對獲利和使用者體驗影響最小的前提下，達到最高的準確度。
 
-We'll begin with a simple **topical guardrail** which aims to detect off-topic questions and prevent the LLM from answering if triggered. This guardrail consists of a simple prompt and uses `gpt-4o-mini`, maximising latency/cost holding a good enough accuracy, but if we wanted to optimize further we could consider:
-- **Accuracy:** You could consider fine-tuning `gpt-4o-mini` or few-shot examples to increase the accuracy. RAG can also be effective if you have a corpus of information that can help determine whether a piece of content is allowed or not.
-- **Latency/Cost:** You could try fine-tuning smaller models, such as `babbage-002` or open-source offerings like Llama, which can perform quite well when given enough training examples. When using open-source offerings you can also tune the machines you are using for inference to maximize either cost or latency reduction.
+我們先從一個簡單的 **topical guardrail** 開始，它負責偵測離題的問題，一旦觸發就阻止 LLM 回答。這個 guardrail 只有一個簡單的 prompt，用的是 `gpt-4o-mini`，在準確度夠好的前提下把延遲和成本壓到最低。如果想進一步最佳化，可以考慮：
+- **準確度：** 可以考慮 fine-tune `gpt-4o-mini` 或加 few-shot 範例來提高準確度。如果你有一份能幫助判斷內容是否允許的資料，RAG 也會有效。
+- **延遲/成本：** 可以試著 fine-tune 更小的模型，例如 `babbage-002`，或是 Llama 這類開源模型，給足夠的訓練範例時表現可以很好。用開源模型時，也可以調整推論用的機器，把成本或延遲壓到最低。
 
-This simple guardrail aims to ensure the LLM only answers to a predefined set of topics, and responds to out-of-bounds queries with a canned message.
+這個簡單的 guardrail 要確保 LLM 只回答預先定義的主題，對超出範圍的問題就回一則罐頭訊息。
 
-### Embrace async
+### 擁抱 async
 
-A common design to minimize latency is to send your guardrails asynchronously along with your main LLM call. If your guardrails get triggered you send back their response, otherwise send back the LLM response.
+降低延遲的常見設計，是把 guardrails 和主要的 LLM 呼叫一起非同步送出。如果 guardrail 被觸發，就回傳它的回應，否則就回傳 LLM 的回應。
 
-We'll use this approach, creating an `execute_chat_with_guardrails` function that will run our LLM's `get_chat_response` and the `topical_guardrail` guardrail in parallel, and return the LLM response only if the guardrail returns `allowed`.
+我們會用這個做法，建立一個 `execute_chat_with_guardrails` 函式，讓它平行執行 LLM 的 `get_chat_response` 和 `topical_guardrail` guardrail，只有在 guardrail 回傳 `allowed` 時才回傳 LLM 的回應。
 
-### Limitations
+### 限制
 
-You should always consider the limitations of guardrails when developing your design. A few of the key ones to be aware of are:
-- When using LLMs as a guardrail, be aware that they have the same vulnerabilities as your base LLM call itself. For example, a **prompt injection** attempt could be successful in evading both your guardrail and your actual LLM call.
-- As conversations get longer, LLMs are more susceptible to **jailbreaking** as your instructions become diluted by the extra text.
-- Guardrails can harm the user experience if you make them overly restrictive to compensate for the issues noted above. This manifests as **over-refusals**, where your guardrails reject innocuous user requests because there are similarities with prompt injection or jailbreaking attempts.
+開發設計時，一定要考慮 guardrails 的限制。幾個要注意的重點：
+- 用 LLM 當 guardrail 時，要知道它們和你的基礎 LLM 呼叫有一樣的弱點。例如 **prompt injection** 的嘗試可能同時繞過你的 guardrail 和實際的 LLM 呼叫。
+- 對話越長，LLM 越容易被 **jailbreak**，因為你的指示會被多出來的文字稀釋。
+- 如果為了彌補上述問題把 guardrails 設得太嚴格，就會傷害使用者體驗。具體表現是 **over-refusal**：guardrails 因為某些無害的請求跟 prompt injection 或 jailbreak 嘗試有相似之處，就把它拒絕了。
 
-### Mitigations
+### 緩解方式
 
-If you can combine guardrails with rules-based or more traditional machine learning models for detection this can mitigate some of these risks. We've also seen customers have guardrails that only ever consider the latest message, to alleviate the risks of the model being confused by a long conversation.
+如果能把 guardrails 結合規則式或比較傳統的機器學習模型來做偵測，可以降低一部分風險。我們也看過有客戶讓 guardrails 只看最新一則訊息，以降低模型被長對話搞混的風險。
 
-We would also recommend doing a gradual roll-out with active monitoring of conversations so you can pick up instances of prompt injection or jailbreaking, and either add more guardrails to cover these new types of behaviour, or include them as training examples to your existing guardrails.
+我們也建議逐步上線，並主動監控對話，這樣才能抓到 prompt injection 或 jailbreak 的案例，然後再加更多 guardrails 來涵蓋這些新的行為類型，或是把它們當成訓練範例加進現有的 guardrails。
 
 ```python
 system_prompt = "You are a helpful assistant."
@@ -187,33 +197,33 @@ print(response)
     I can only talk about cats and dogs, the best animals that ever lived.
     ```
 
-Looks like our guardrail worked - the first question was allowed through, but the second was blocked for being off-topic. Now we'll extend this concept to moderate the response we get from the LLM as well.
+看起來 guardrail 有效：第一個問題被放行，第二個因為離題被擋下。接下來把這個概念延伸，也去審查 LLM 回傳的回應。
 
-## 2. Output guardrails
+## 2. 輸出 guardrails
 
-Output guardrails govern what the LLM comes back with. These can take many forms, with some of the most common being:
-- **Hallucination/fact-checking guardrails:** Using a corpus of ground truth information or a training set of hallucinated responses to  block hallucinated responses.
-- **Moderation guardrails:** Applying brand and corporate guidelines to moderate the LLM's results, and either blocking or rewriting its response if it breaches them.
-- **Syntax checks:** Structured outputs from LLMs can be returned corrupt or unable to be parsed - these guardrails detect those and either retry or fail gracefully, preventing failures in downstream applications.
-    - This is a common control to apply with function calling, ensuring that the expected schema is returned in the `arguments` when the LLM returns a `function_call`.
+輸出 guardrails 管的是 LLM 回傳的內容。形式很多，最常見的有：
+- **幻覺/事實查核 guardrails：** 用一份基準事實資料，或是一份幻覺回答的訓練集，來擋掉幻覺的回答。
+- **內容審查 guardrails：** 套用品牌和公司準則來審查 LLM 的結果，一旦違反就擋掉或改寫回答。
+- **語法檢查：** LLM 的結構化輸出可能壞掉、無法解析。這類 guardrails 會偵測這些情況，然後重試或優雅地失敗，避免下游應用出錯。
+    - 這是 function calling 常用的控制，確保 LLM 回傳 `function_call` 時，`arguments` 裡是預期的 schema。
     
 ### Moderation guardrail
 
-Here we implement a **moderation guardrail** that uses a version of the [G-Eval](https://arxiv.org/abs/2303.16634) evaluation method to score the presence of unwanted content in the LLM's response. This method is demonstrated in more detail in of our other [notebooks](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/How_to_eval_abstractive_summarization.ipynb).
+這裡我們實作一個 **moderation guardrail**，用 [G-Eval](https://arxiv.org/abs/2303.16634) 評估方法的一個版本，替 LLM 回應裡出現不想要內容的程度打分數。這個方法在我們另一份 [notebook](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/How_to_eval_abstractive_summarization.ipynb) 有更詳細的示範。
 
-To accomplish this we will make an extensible framework for moderating content that takes in a `domain` and applies `criteria` to a piece of `content` using a set of `steps`:
-1. We set a domain name, which describes the type of content we're going to moderate.
-2. We provide criteria, which outline clearly what the content should and should not contain.
-3. Step-by-step instructions are provided for the LLM to grade the content.
-4. The LLM returns a discrete score from 1-5.
+為此我們會做一個可擴充的內容審查框架，接收 `domain`，並用一組 `steps` 把 `criteria` 套用到一段 `content` 上：
+1. 設定 domain 名稱，描述我們要審查的內容類型。
+2. 提供 criteria，清楚說明內容該包含和不該包含什麼。
+3. 提供一步步的指示，讓 LLM 替內容評分。
+4. LLM 回傳 1 到 5 的離散分數。
 
-### Setting guardrail thresholds
+### 設定 guardrail 的門檻
 
-Our output guardrail will assess the LLM's response and block anything scoring a 3 or higher. Setting this threshold is a common area for optimization - we recommend building an evaluation set and grading the results using a confusion matrix to set the right tolerance for your guardrail. The trade-off here is generally:
-- More false positives leads to a fractured user experience, where customers get annoyed and the assistant seems less helpful.
-- More false negatives can cause lasting harm to your business, as people get the assistant to answer inappropriate questions, or prompt inject/jailbreak it.
+我們的輸出 guardrail 會評估 LLM 的回應，並擋掉任何分數 3 以上的內容。設定這個門檻是常見的最佳化重點。我們建議建立一份評估集，用 confusion matrix 檢視結果，才能替你的 guardrail 設定適合的容忍度。這裡的取捨通常是：
+- false positive 太多會讓使用者體驗支離破碎，客戶會覺得煩，助理也顯得沒那麼有用。
+- false negative 太多可能對你的業務造成長期傷害，因為有人會讓助理回答不適當的問題，或是對它做 prompt injection、jailbreak。
 
-For example, for jailbreaking you may want to have a very low threshold, as the risk to your business if your LLM is hijacked and used to produce dangerous content that ends up on social media is very high. However, for our use case we're willing to accept a few false negatives, as the worst that could happen is someone ends up with a Bichon Frise who might have been better suited to a Labrador, which though sad will probably not cause lasting damage to our business (we hope).
+例如 jailbreak 的門檻可能要設得很低，因為 LLM 被劫持、產生危險內容並流到社群媒體上，對你業務的風險很高。不過在我們這個使用情境，我們願意接受少量 false negative，因為最糟的情況只是有人拿到一隻其實比較適合拉不拉多的比熊犬，雖然令人難過，但大概不會對我們的業務造成長期傷害（我們希望如此）。
 
 ```python
 domain = "animal breed recommendation"
@@ -343,16 +353,28 @@ for test in tests:
     Sorry, we're not permitted to give animal breed advice. I can help you with any general queries you might have.
     ```
 
-## Conclusion
+## 結論
 
-Guardrails are a vibrant and evolving topic in LLMs, and we hope this notebook has given you an effective introduction to the core concepts around guardrails. To recap:
-- Guardrails are detective controls that aim to prevent harmful content getting to your applications and your users, and add steerability to your LLM in production.
-- They can take the form of input guardrails, which target content before it gets to the LLM, and output guardrails, which control the LLM's response.
-- Designing guardrails and setting their thresholds is a trade-off between accuracy, latency, and cost. Your decision should be based on clear evaluations of the performance of your guardrails, and an understanding of what the cost of a false negative and false positive are for your business.
-- By embracing asynchronous design principles, you can scale guardrails horizontally to minimize the impact to the user as your guardrails increase in number and scope.
+Guardrails 是 LLM 領域一個活躍又持續演進的主題，希望這份 notebook 讓你對 guardrails 的核心概念有了有效的入門。回顧一下：
+- Guardrails 是偵測型控制，目的是防止有害內容進到你的應用和使用者那裡，並替正式環境中的 LLM 增加可控性。
+- 它們可以是輸入 guardrails（針對進到 LLM 之前的內容），也可以是輸出 guardrails（控制 LLM 的回應）。
+- 設計 guardrails 和設定門檻，是在準確度、延遲和成本之間取捨。你的決定應該建立在對 guardrails 表現的清楚評估上，也要了解 false negative 和 false positive 對你的業務各自代表什麼成本。
+- 採用非同步的設計原則，guardrails 的數量和範圍增加時，可以水平擴展，把對使用者的影響降到最低。
 
-We look forward to seeing how you take this forward, and how thinking on guardrails evolves as the ecosystem matures. 
+期待看到你怎麼往下發展，也期待看到生態系成熟後，大家對 guardrails 的想法如何演進。
 
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Guardrail 是偵測型控制，分輸入端（LLM 之前）和輸出端（LLM 之後）兩種。
+- 設計時永遠是準確度、延遲、成本三者取捨，用評估集說話，不要憑感覺。
+- 讓 guardrail 跟主 LLM 呼叫平行跑，被觸發才換成罐頭回應，可以把延遲影響壓到最低。
+- LLM 當 guardrail 也有跟主模型一樣的弱點（prompt injection、長對話稀釋指示），太嚴格又會造成 over-refusal，可以搭配規則式偵測、只看最新訊息、逐步上線來緩解。
+- 輸出端門檻怎麼設，看 false positive 和 false negative 對你的業務哪個傷害比較大。
+
+## 練習
+
+1. 把 topical guardrail 允許的主題換成你自己的領域（例如只回答某個產品的客服問題），再丟幾個在題內和離題的問題測試。
+2. 把 moderation guardrail 的門檻從 3 改成 2 和 4，各丟同一批回應，看哪些回答被擋、哪些被放過。
+3. 新增第二個 input guardrail 專門偵測 jailbreak，用 `asyncio.gather` 跟 topical guardrail 和主 LLM 呼叫一起平行跑，任何一個被觸發就回罐頭訊息。

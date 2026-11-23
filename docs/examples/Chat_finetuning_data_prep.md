@@ -1,21 +1,29 @@
 ---
-translated: false
+translated: true
 source: examples/Chat_finetuning_data_prep.ipynb
 ---
 
-# Data preparation and analysis for chat model fine-tuning
+# 聊天模型 fine-tuning 的資料準備與分析
 
 > 原文：[examples/Chat_finetuning_data_prep.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Chat_finetuning_data_prep.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+拿一份 chat 格式的 JSONL 資料集，在送去 fine-tuning 前先檢查格式、算統計數字，並估算要花多少 token（也就是多少錢）。
 
+## 學完你會
+- 寫程式驗證每筆對話符合 fine-tuning API 要求的格式，並依錯誤類型統計
+- 用 tiktoken 算出每筆對話和 assistant 訊息的 token 數，找出超過上限的樣本
+- 估算整份資料 fine-tuning 的總 token 數與訓練 epoch 數
 
-This notebook serves as a tool to preprocess and analyze the chat dataset used for fine-tuning a chat model. 
-It checks for format errors, provides basic statistics, and estimates token counts for fine-tuning costs.
-The method shown here corresponds to the [current fine-tuning method](https://platform.openai.com/docs/guides/fine-tuning) for gpt-3.5-turbo.
-See [legacy fine-tuning](https://platform.openai.com/docs/guides/legacy-fine-tuning) for models like babbage-002 and davinci-002.
+## 開跑前
+需要安裝 tiktoken 等套件。這個 notebook 本身只讀本機的 JSONL 檔，不需要 API key。
+
+這個 notebook 是用來前處理並分析 chat 資料集，為 fine-tuning 聊天模型做準備。
+它會檢查格式錯誤、提供基本統計，並估算 fine-tuning 的 token 數與成本。
+這裡的做法對應 gpt-3.5-turbo 的[目前 fine-tuning 方法](https://platform.openai.com/docs/guides/fine-tuning)。
+babbage-002、davinci-002 這類模型請看 [legacy fine-tuning](https://platform.openai.com/docs/guides/legacy-fine-tuning)。
 
 ```python
 import json
@@ -24,9 +32,9 @@ import numpy as np
 from collections import defaultdict
 ```
 
-## Data loading
+## 載入資料
 
-We first load the chat dataset from an [example JSONL file](https://github.com/openai/openai-cookbook/blob/main/examples/data/toy_chat_fine_tuning.jsonl).
+先從一個[範例 JSONL 檔](https://github.com/openai/openai-cookbook/blob/main/examples/data/toy_chat_fine_tuning.jsonl)載入 chat 資料集。
 
 ```python
 data_path = "data/toy_chat_fine_tuning.jsonl"
@@ -52,19 +60,19 @@ for message in dataset[0]["messages"]:
     {'role': 'assistant', 'content': "It's great that you're getting exercise outdoors!"}
     ```
 
-## Format validation
+## 格式驗證
 
-We can perform a variety of error checks to validate that each conversation in the dataset adheres to the format expected by the fine-tuning API. Errors are categorized based on their nature for easier debugging.
+我們可以做幾種錯誤檢查，確認資料集裡每段對話都符合 fine-tuning API 預期的格式。錯誤會依性質分類，方便除錯。
 
-1. **Data Type Check**: Checks whether each entry in the dataset is a dictionary (`dict`). Error type: `data_type`.
-2. **Presence of Message List**: Checks if a `messages` list is present in each entry. Error type: `missing_messages_list`.
-3. **Message Keys Check**: Validates that each message in the `messages` list contains the keys `role` and `content`. Error type: `message_missing_key`.
-4. **Unrecognized Keys in Messages**: Logs if a message has keys other than `role`, `content`, `weight`, `function_call`, and `name`. Error type: `message_unrecognized_key`.
-5. **Role Validation**: Ensures the `role` is one of "system", "user", or "assistant". Error type: `unrecognized_role`.
-6. **Content Validation**: Verifies that `content` has textual data and is a string. Error type: `missing_content`.
-7. **Assistant Message Presence**: Checks that each conversation has at least one message from the assistant. Error type: `example_missing_assistant_message`.
+1. **資料型別檢查**：檢查每筆資料是否為 dictionary (`dict`)。錯誤類型：`data_type`。
+2. **有沒有 messages 清單**：檢查每筆資料是否有 `messages` 清單。錯誤類型：`missing_messages_list`。
+3. **message 的 key 檢查**：確認 `messages` 裡每則訊息都有 `role` 和 `content`。錯誤類型：`message_missing_key`。
+4. **訊息中的未知 key**：如果訊息出現 `role`、`content`、`weight`、`function_call`、`name` 以外的 key 就記錄。錯誤類型：`message_unrecognized_key`。
+5. **role 驗證**：確認 `role` 是 "system"、"user" 或 "assistant" 其中之一。錯誤類型：`unrecognized_role`。
+6. **content 驗證**：確認 `content` 有文字內容而且是字串。錯誤類型：`missing_content`。
+7. **是否有 assistant 訊息**：檢查每段對話至少有一則 assistant 訊息。錯誤類型：`example_missing_assistant_message`。
 
-The code below performs these checks, and outputs counts for each type of error found are printed. This is useful for debugging and ensuring the dataset is ready for the next steps.
+下面的程式會做這些檢查，並印出每種錯誤的數量。這在除錯、確認資料集可以進入下一步時很有用。
 
 
 ```python
@@ -114,9 +122,9 @@ else:
     No errors found
     ```
 
-## Token Counting Utilities
+## Token 計數工具
 
-Lets define a few helpful utilities to be used in the rest of the notebook.
+先定義幾個後面會用到的小工具。
 
 ```python
 encoding = tiktoken.get_encoding("cl100k_base")
@@ -148,15 +156,15 @@ def print_distribution(values, name):
     print(f"p5 / p95: {np.quantile(values, 0.1)}, {np.quantile(values, 0.9)}")
 ```
 
-## Data Warnings and Token Counts 
+## 資料警告與 token 數 
 
-With some lightweight analysis we can identify potential issues in the dataset, like missing messages, and provide statistical insights into message and token counts.
+做一些輕量分析，就能找出資料集的潛在問題（例如缺少訊息），並得到訊息數與 token 數的統計。
 
-1. **Missing System/User Messages**: Counts the number of conversations missing a "system" or "user" message. Such messages are critical for defining the assistant's behavior and initiating the conversation.
-2. **Number of Messages Per Example**: Summarizes the distribution of the number of messages in each conversation, providing insight into dialogue complexity.
-3. **Total Tokens Per Example**: Calculates and summarizes the distribution of the total number of tokens in each conversation. Important for understanding fine-tuning costs.
-4. **Tokens in Assistant's Messages**: Calculates the number of tokens in the assistant's messages per conversation and summarizes this distribution. Useful for understanding the assistant's verbosity.
-5. **Token Limit Warnings**: Checks if any examples exceed the maximum token limit (16,385 tokens), as such examples will be truncated during fine-tuning, potentially resulting in data loss.
+1. **缺少 system/user 訊息**：統計缺少 "system" 或 "user" 訊息的對話數量。這些訊息對定義 assistant 的行為和開啟對話很關鍵。
+2. **每筆範例的訊息數**：彙整每段對話的訊息數分布，可以看出對話的複雜度。
+3. **每筆範例的總 token 數**：計算並彙整每段對話總 token 數的分布，對了解 fine-tuning 成本很重要。
+4. **assistant 訊息的 token 數**：計算每段對話中 assistant 訊息的 token 數並彙整分布，可以看出 assistant 講話多不多話。
+5. **token 上限警告**：檢查有沒有範例超過 token 上限（16,385 tokens），超過的範例在 fine-tuning 時會被截斷，可能造成資料遺失。
 
 
 ```python
@@ -210,9 +218,9 @@ print(f"\n{n_too_long} examples may be over the 16,385 token limit, they will be
     0 examples may be over the 16,385 token limit, they will be truncated during fine-tuning
     ```
 
-## Cost Estimation
+## 成本估算
 
-In this final section, we estimate the total number of tokens that will be used for fine-tuning, which allows us to approximate the cost. It is worth noting that the duration of the fine-tuning jobs will also increase with the token count. 
+最後這一段，我們估算 fine-tuning 會用掉的總 token 數，藉此推算成本。要注意 fine-tuning job 的時間也會隨 token 數增加。 
 
 ```python
 # Pricing and default n_epochs estimate
@@ -245,6 +253,15 @@ print(f"By default, you'll be charged for ~{n_epochs * n_billing_tokens_in_datas
     By default, you'll be charged for ~86120 tokens
     ```
 
-See https://openai.com/pricing to estimate total costs.
+實際總成本請參考 https://openai.com/pricing 來估算。
 
-<!-- tutor:summary -->
+## 重點整理
+- fine-tuning 前先驗證資料格式，能避免 job 送出後才因為格式錯誤失敗。
+- 每則訊息都要有合法的 `role` 和字串 `content`，而且每段對話至少要有一則 assistant 訊息。
+- 超過 token 上限的範例會被截斷，要在送出前先找出來。
+- 成本跟總 token 數和 epoch 數成正比，先估算再決定要不要訓練。
+
+## 練習
+1. 在範例 JSONL 裡故意刪掉某一筆的 `role`，重跑驗證，看哪個錯誤類型的計數會增加。
+2. 把 token 上限警告的門檻改小（例如 500），看有幾筆範例被標記。
+3. 修改成本估算的 epoch 數，比較總 token 數怎麼變，並想想資料量變大時成本如何成長。

@@ -1,65 +1,80 @@
 ---
-translated: false
+translated: true
 source: articles/text_comparison_examples.md
 ---
 
-# Use cases for embeddings
+# Embedding 的使用情境
 
 > 原文：[articles/text_comparison_examples.md](https://github.com/openai/openai-cookbook/blob/main/articles/text_comparison_examples.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+整理 embedding 常見的四種用途：語意搜尋、問答、推薦，以及客製化 embedding。每種用途都指到對應的範例 notebook，這篇比較像觀念地圖。
 
+## 學完你會
+- 說明語意搜尋「預先計算」和「即時計算」兩個階段各做什麼
+- 知道怎麼結合搜尋結果和 prompt，讓模型根據文件回答問題
+- 理解客製化 embedding 是靠訓練一個矩陣來改變向量或距離函數
 
-The [OpenAI API embeddings endpoint](https://beta.openai.com/docs/guides/embeddings) can be used to measure relatedness or similarity between pieces of text.
+[OpenAI API embeddings endpoint](https://beta.openai.com/docs/guides/embeddings) 可以用來衡量文字之間的相關性或相似度。
 
-By leveraging GPT-3's understanding of text, these embeddings [achieved state-of-the-art results](https://arxiv.org/abs/2201.10005) on benchmarks in unsupervised learning and transfer learning settings.
+借助 GPT-3 對文字的理解，這些 embedding 在非監督式學習和遷移學習的 benchmark 上[達到 state-of-the-art 的結果](https://arxiv.org/abs/2201.10005)。
 
-Embeddings can be used for semantic search, recommendations, cluster analysis, near-duplicate detection, and more.
+Embedding 可用於語意搜尋、推薦、分群分析、近似重複偵測等等。
 
-For more information, read OpenAI's blog post announcements:
+更多資訊請看 OpenAI 的部落格公告：
 
 - [Introducing Text and Code Embeddings (Jan 2022)](https://openai.com/blog/introducing-text-and-code-embeddings/)
 - [New and Improved Embedding Model (Dec 2022)](https://openai.com/blog/new-and-improved-embedding-model/)
 
-For comparison with other embedding models, see [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard)
+想跟其他 embedding 模型比較，可以看 [Massive Text Embedding Benchmark (MTEB) Leaderboard](https://huggingface.co/spaces/mteb/leaderboard)
 
-## Semantic search
+## 語意搜尋 (Semantic search)
 
-Embeddings can be used for search either by themselves or as a feature in a larger system.
+Embedding 可以單獨拿來搜尋，也可以當成大型系統裡的一個 feature。
 
-The simplest way to use embeddings for search is as follows:
+最簡單的搜尋用法如下：
 
-- Before the search (precompute):
-  - Split your text corpus into chunks smaller than the token limit (8,191 tokens for `text-embedding-3-small`)
-  - Embed each chunk of text
-  - Store those embeddings in your own database or in a vector search provider like [Pinecone](https://www.pinecone.io), [Weaviate](https://weaviate.io) or [Qdrant](https://qdrant.tech)
-- At the time of the search (live compute):
-  - Embed the search query
-  - Find the closest embeddings in your database
-  - Return the top results
+- 搜尋之前（預先計算）：
+  - 把文本切成比 token 上限小的 chunk（`text-embedding-3-small` 的上限是 8,191 tokens）
+  - 對每個 chunk 做 embedding
+  - 把 embedding 存進你自己的資料庫，或是 [Pinecone](https://www.pinecone.io)、[Weaviate](https://weaviate.io)、[Qdrant](https://qdrant.tech) 這類 vector search 服務
+- 搜尋當下（即時計算）：
+  - 對搜尋 query 做 embedding
+  - 在資料庫找出最接近的 embedding
+  - 回傳排名最前面的結果
 
-An example of how to use embeddings for search is shown in [Semantic_text_search_using_embeddings.ipynb](../examples/Semantic_text_search_using_embeddings.md).
+用 embedding 做搜尋的範例在 [Semantic_text_search_using_embeddings.ipynb](../examples/Semantic_text_search_using_embeddings.md)。
 
-In more advanced search systems, the cosine similarity of embeddings can be used as one feature among many in ranking search results.
+在更進階的搜尋系統裡，embedding 的 cosine similarity 可以是排序結果時眾多 feature 之一。
 
-## Question answering
+## 問答 (Question answering)
 
-The best way to get reliably honest answers from GPT-3 is to give it source documents in which it can locate correct answers. Using the semantic search procedure above, you can cheaply search through a corpus of documents for relevant information and then give that information to GPT-3 via the prompt to answer a question. We demonstrate this in [Question_answering_using_embeddings.ipynb](../examples/Question_answering_using_embeddings.md).
+想從 GPT-3 得到可靠、誠實的答案，最好的做法是給它來源文件，讓它能在裡面找到正確答案。用上面的語意搜尋流程，你可以低成本地在大量文件中找出相關資訊，再透過 prompt 交給 GPT-3 回答問題。範例在 [Question_answering_using_embeddings.ipynb](../examples/Question_answering_using_embeddings.md)。
 
-## Recommendations
+## 推薦 (Recommendations)
 
-Recommendations are quite similar to search, except that instead of a free-form text query, the inputs are items in a set.
+推薦和搜尋很像，只是輸入不是自由文字的 query，而是集合裡的項目。
 
-An example of how to use embeddings for recommendations is shown in [Recommendation_using_embeddings.ipynb](../examples/Recommendation_using_embeddings.md).
+用 embedding 做推薦的範例在 [Recommendation_using_embeddings.ipynb](../examples/Recommendation_using_embeddings.md)。
 
-Similar to search, these cosine similarity scores can either be used on their own to rank items or as features in larger ranking algorithms.
+跟搜尋一樣，這些 cosine similarity 分數可以直接拿來排序項目，也可以當成更大排序演算法的 feature。
 
-## Customizing Embeddings
+## 客製化 Embedding
 
-Although OpenAI's embedding model weights cannot be fine-tuned, you can nevertheless use training data to customize embeddings to your application.
+OpenAI 的 embedding 模型權重不能 fine-tune，但你還是可以用訓練資料來客製化 embedding，讓它更適合你的應用。
 
-In [Customizing_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Customizing_embeddings.ipynb), we provide an example method for customizing your embeddings using training data. The idea of the method is to train a custom matrix to multiply embedding vectors by in order to get new customized embeddings. With good training data, this custom matrix will help emphasize the features relevant to your training labels. You can equivalently consider the matrix multiplication as (a) a modification of the embeddings or (b) a modification of the distance function used to measure the distances between embeddings.
+在 [Customizing_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Customizing_embeddings.ipynb) 裡，我們提供了一個用訓練資料客製化 embedding 的方法。概念是訓練一個自訂矩陣，拿 embedding 向量去乘它，得到客製化後的新 embedding。訓練資料夠好的話，這個矩陣會強調和你的訓練標籤相關的特徵。你可以把這個矩陣乘法看成 (a) 修改 embedding，或 (b) 修改用來衡量 embedding 之間距離的距離函數，兩種看法是等價的。
 
-<!-- tutor:summary -->
+## 重點整理
+- Embedding 把文字變成向量，用向量距離衡量語意相近程度。
+- 語意搜尋分兩段：事先把文件切 chunk、embed 並存起來，搜尋時只需 embed query 再找最近的向量。
+- 問答的關鍵是先檢索相關文件，再放進 prompt，這樣答案比較可靠。
+- 推薦就是輸入從 query 換成項目的搜尋。
+- 模型權重不能 fine-tune，但可以訓練一個矩陣來客製化 embedding。
+
+## 練習
+1. 打開語意搜尋的範例 notebook，換一個自己的 query，看回傳的前三筆是否合理。
+2. 把語意搜尋範例的 chunk 大小調小一半，比較檢索結果有什麼差別。
+3. 讀客製化 embedding 的 notebook，改變訓練資料的比例或標籤，觀察客製化矩陣對相似度分數的影響。

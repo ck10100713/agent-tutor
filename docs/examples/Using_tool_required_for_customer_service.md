@@ -1,22 +1,29 @@
 ---
-translated: false
+translated: true
 source: examples/Using_tool_required_for_customer_service.ipynb
 ---
-
-# Using tool required for customer service
+# 用 tool_choice required 做客服 agent
 
 > 原文：[examples/Using_tool_required_for_customer_service.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Using_tool_required_for_customer_service.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇示範在 Chat Completions 加上 `tool_choice='required'`，強制模型每次都要呼叫某個 tool，用它建出一個有明確出口的客服流程。最後再用另一個 GPT 扮演客戶，跟客服 agent 多輪對話，當作自動化測試。
 
+## 學完你會
+- 用 `tool_choice='required'` 讓每次呼叫都保證拿到 tool call，寫出更可預期的外層程式
+- 定義 `tools` 和 `instructions`，讓客服 agent 依客戶問題取得對應的處理指示
+- 寫一個 `execute_conversation`，用客戶 GPT 跟客服 agent 多輪對話來評測
 
-The `ChatCompletion` endpoint now includes the ability to specify whether a tool **must** be called every time, by adding `tool_choice='required'` as a parameter. 
+## 開跑前
+需要 OpenAI API key。
 
-This adds an element of determinism to how you build your wrapping application, as you can count on a tool being provided with every call. We'll demonstrate here how this can be useful for a contained flow like customer service, where having the ability to define specific exit points gives more control.
+`ChatCompletion` endpoint 現在可以指定每次都**必須**呼叫 tool，做法是加上 `tool_choice='required'` 這個參數。
 
-The notebook concludes with a multi-turn evaluation, where we spin up a customer GPT to imitate our customer and test the LLM customer service agent we've set up.
+這讓你的外層應用程式更有確定性，因為你可以確定每次呼叫都會拿到 tool。這裡我們會示範，在客服這種範圍明確的流程中，這有什麼用處：能定義明確的出口，就多一分掌控。
+
+notebook 最後是一個多輪評測：我們啟動一個客戶 GPT 來模仿客戶，測試我們設定好的 LLM 客服 agent。
 
 ```python
 import json
@@ -27,11 +34,11 @@ client = OpenAI()
 GPT_MODEL = 'gpt-4-turbo'
 ```
 
-## Config definition
+## 設定定義
 
-We will define `tools` and `instructions` which our LLM customer service agent will use. It will source the right instructions for the problem the customer is facing, and use those to answer the customer's query.
+我們會定義客服 LLM agent 要用的 `tools` 和 `instructions`。它會針對客戶遇到的問題找出對應的指示，並用這些指示回答客戶的問題。
 
-As this is a demo example, we'll ask the model to make up values where it doesn't have external systems to source info.
+這只是示範範例，所以在沒有外部系統可以取得資訊的地方，我們會請模型自己編出數值。
 
 ```python
 # The tools our customer service LLM will use to communicate
@@ -196,11 +203,11 @@ def execute_function(function_calls,messages):
     return (respond, messages)
 ```
 
-## Example
+## 範例
 
-To test this we will run an example for a customer who has experienced fraud, and see how the model handles it.
+為了測試，我們會用一位遇到詐騙的客戶當例子，看模型怎麼處理。
 
-Play the role of the user and provide plausible next steps to keep the conversation going.
+請你扮演使用者，提供合理的下一步，讓對話持續下去。
 
 ```python
 messages = submit_user_message("Hi, I have had an item stolen that was supposed to be delivered to me yesterday.")
@@ -254,11 +261,11 @@ messages = submit_user_message("Thanks very much.",messages)
     Assistant: You're welcome! If you need any more help in the future, don't hesitate to reach out. Have a great day!
     ```
 
-## Evaluation
+## 評測
 
-Now we'll do a simple evaluation where a GPT will pretend to be our customer. The two will go back and forth until a resolution is reached.
+現在做一個簡單的評測：由一個 GPT 假裝成我們的客戶。兩邊來回對話，直到問題解決。
 
-We'll reuse the functions above, adding an `execute_conversation` function where the customer GPT will continue answering.
+我們會重用上面的函式，並加上一個 `execute_conversation` 函式，讓客戶 GPT 繼續回答。
 
 ```python
 customer_system_prompt = """You are a user calling in to customer service.
@@ -379,10 +386,19 @@ for x in questions:
     ... (省略 30 行)
     ```
 
-## Conclusion
+## 結論
 
-You can now control your LLM's behaviour explicitly by making tool use mandatory, as well as spin up GPT testers to challenge your LLM and to act as automated test cases.
+現在你可以讓 tool 使用變成必要，明確控制 LLM 的行為，也可以啟動 GPT 測試員來挑戰你的 LLM，當作自動化的測試案例。
 
-We hope this has given you an appreciation for a great use case for tool use, and look forward to seeing what you build!
+希望這份內容讓你體會到 tool use 的一個很好的應用情境，也期待看到你做出什麼。
 
-<!-- tutor:summary -->
+## 重點整理
+- `tool_choice='required'` 保證每次回應都包含 tool call，外層程式不用處理「模型沒呼叫 tool」的情況。
+- 把「結束對話」之類的出口也做成 tool，流程的終點就由 tool call 明確決定。
+- 用 instructions 查詢 tool 取得對應問題的處理步驟，可以讓 agent 依情境切換行為。
+- 用另一個 GPT 扮演客戶，是低成本的多輪自動化測試做法。
+
+## 練習
+1. 把 `tool_choice` 改成 `'auto'` 跑同一段對話，觀察模型什麼時候不呼叫 tool。
+2. 在 `tools` 裡新增一個處理「退款」問題的 instructions 項目，並用客戶 GPT 測試它會不會被正確選到。
+3. 修改客戶 GPT 的 system prompt，讓它扮演更不配合的客戶，看客服 agent 能否仍然走到結束 tool。

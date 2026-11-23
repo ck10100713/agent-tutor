@@ -1,38 +1,50 @@
 ---
-translated: false
+translated: true
 source: examples/partners/model_selection_guide/model_selection_guide.ipynb
 ---
 
-# Practical Guide for Model Selection for Real‑World Use Cases
+# 真實場景的模型選擇實用指南
 
 > 原文：[examples/partners/model_selection_guide/model_selection_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/model_selection_guide/model_selection_guide.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇教你在 GPT-4.1、o3、o4-mini 之間，針對不同工作負載挑模型、寫 prompt、上線。內容用三個實際案例（法律文件 RAG、製藥研發的多 agent 系統、保險表單 OCR）示範怎麼選模型，每個案例都有可以直接改的程式碼。
+
+## 學完你會
+
+- 用決策表判斷某個任務該從哪個模型開始，什麼時候升級或降級
+- 做出一個不需要 embedding 和向量資料庫的長文件 agentic RAG，並附上可驗證的 citation
+- 把 OCR 用的視覺模型和負責推理的模型串成兩階段 pipeline，處理手寫表單
+
+## 開跑前
+
+需要 OpenAI API key。範例會呼叫 `gpt-4.1`、`gpt-4.1-mini`、`o3`、`o4-mini`，都是付費用量。
 
 
-## Purpose & Audience
+## 目的與讀者
 
-This cookbook serves as your practical guide to selecting, prompting, and deploying the right OpenAI model (between GPT 4.1, o3, and o4-mini) for specific workloads. Instead of exhaustive documentation, we provide actionable decision frameworks and real-world examples that help Solutions Engineers, Technical Account Managers, Partner Architects, and semi-technical practitioners quickly build working solutions. The content focuses on current model capabilities, vertical-specific implementations, and today's industry needs, with clear pathways from model selection to production deployment. Each section offers concise, adaptable code examples that you can immediately apply to your use cases while pointing to existing resources for deeper dives into specific topics.
+這份 cookbook 是實用指南，教你針對特定工作負載，在 GPT 4.1、o3、o4-mini 之間選模型、寫 prompt 並部署。它不是完整文件，而是提供可以直接照著做的決策框架和真實案例，幫 Solutions Engineer、Technical Account Manager、Partner Architect 和半技術背景的實務工作者快速做出可用的方案。內容聚焦在目前的模型能力、各產業的實作，以及現在的產業需求，從選模型到上線有清楚的路徑。每個段落的程式碼都很精簡、可以改了就用，想深入的主題則指向既有資源。
 
-> Note: The below prescriptive guidance and experimentation has been conducted with latest SOTA models available today. These metrics are bound to change in the future with different scenarios and timeline into consideration.
+> 注意：下面的建議和實驗都是用目前最新的 SOTA 模型做的。這些數字在不同情境和時間點都可能改變。
 
-## How to Use This Cookbook
+## 怎麼使用這份 Cookbook
 
-This cookbook is organized into distinct sections to help you quickly find the information you need. Each section covers a specific aspect of model selection, implementation, and deployment.
+內容分成幾個段落，方便你快速找到需要的資訊。每個段落涵蓋模型選擇、實作、部署的一個面向。
 
-1. **[Purpose & Audience](#purpose-audience)**: An overview of who this cookbook is for and what it covers.
-2. **[Model Guide](#model-guide)**: A quick reference to help you select the right model for your needs, including model comparisons and evolution diagrams based on mapping different use-case scenarios.
-3. **Use Cases**:
-   - **[3A. Long-Context RAG for Legal Q&A](#3a-use-case-long-context-rag-for-legal-qa)**: Building an agentic system to answer questions from complex legal documents.
-   - **[3B. AI Co-Scientist for Pharma R&D](#3b-use-case-ai-co-scientist-for-pharma-rd)**: Accelerating experimental design in pharmaceutical research with multi-agent systems.
-   - **[3C. Insurance Claim Processing](#3c-use-case-insurance-claim-processing)**: Digitizing and validating handwritten insurance forms with vision and reasoning.
-4. **[Prototype to Production](#prototype-to-production)**: A checklist to help you transition from prototype to production.
-5. **[Adaptation Decision Tree](#adaptation-decision-tree)**: A flowchart to guide your model selection based on specific requirements.
-6. **[Appendices](#appendices)**: Reference materials including pricing, latency, prompt patterns, and links to external resources.
+1. **[Purpose & Audience](#purpose-audience)**：這份 cookbook 給誰看、涵蓋什麼。
+2. **[Model Guide](#model-guide)**：快速參考，幫你選模型，包含模型比較，以及依使用情境對應的模型演進圖。
+3. **Use Cases**：
+   - **[3A. Long-Context RAG for Legal Q&A](#3a-use-case-long-context-rag-for-legal-qa)**：建一個 agentic 系統，回答複雜法律文件的問題。
+   - **[3B. AI Co-Scientist for Pharma R&D](#3b-use-case-ai-co-scientist-for-pharma-rd)**：用 multi-agent 系統加速製藥研究的實驗設計。
+   - **[3C. Insurance Claim Processing](#3c-use-case-insurance-claim-processing)**：用 vision 和 reasoning 把手寫保險表單數位化並驗證。
+4. **[Prototype to Production](#prototype-to-production)**：從原型走到上線的檢查清單。
+5. **[Adaptation Decision Tree](#adaptation-decision-tree)**：依需求挑模型的流程圖。
+6. **[Appendices](#appendices)**：參考資料，包含價格、延遲、prompt 模式和外部資源連結。
 
-For quick decisions, focus on the Model Guide and Adaptation Decision Tree sections. For implementation details, explore the specific use cases relevant to your needs.
+想快速做決定，看 Model Guide 和 Adaptation Decision Tree 就夠了。要看實作細節，就挑跟你需求有關的 use case。
 
 
 ================================================================================
@@ -52,42 +64,42 @@ For quick decisions, focus on the Model Guide and Adaptation Decision Tree secti
 
 *(Full price and utility table → [Section 6.1](#appendices))*
 
-## 2.2 Model Evolution at a Glance
+## 2.2 模型演進一覽
 
-OpenAI's model lineup has evolved to address specialized needs across different dimensions. These diagrams showcase the current model families and their relationships.
+OpenAI 的模型產品線已經發展出針對不同面向的專用模型。下面的圖整理了目前的模型家族和彼此的關係。
 
-### Fundamental Differences: "o-series" vs "GPT" Models
+### 根本差異：「o-series」vs「GPT」模型
 
-OpenAI offers two distinct model families, each with unique strengths:
+OpenAI 有兩個不同的模型家族，各有強項：
 
-- **GPT Models (4o, 4.1)**: Optimized for general-purpose tasks with excellent instruction following. GPT-4.1 excels with long contexts (1M tokens) while GPT-4o has variants for realtime speech, text-to-speech, and speech-to-text. GPT-4.1 also comes in a mini, and nano variant, while GPT-4o has a mini variant. These variants are cheaper and faster than their full-size counterparts.
+- **GPT 模型（4o、4.1）**：針對一般用途最佳化，instruction following 很好。GPT-4.1 擅長長 context（1M tokens），GPT-4o 則有即時語音、text-to-speech、speech-to-text 的變體。GPT-4.1 另外有 mini 和 nano 版本，GPT-4o 有 mini 版本。這些變體比完整版便宜、快。
 
-- **o-series Models (o3, o4-mini)**: Specialized for deep reasoning and step-by-step problem solving. These models excel at complex, multi-stage tasks requiring logical thinking and tool use. Choose these when accuracy and reasoning depth are paramount. These models also have an optional `reasoning_effort` parameter (that can be set to `low`, `medium`, or `high`), which allows users to control the amount of tokens used for reasoning.
+- **o-series 模型（o3、o4-mini）**：專門做深度推理和逐步解題。這些模型擅長需要邏輯思考和使用 tool 的複雜多階段任務，準確度和推理深度最重要時就選它們。它們還有一個選用參數 `reasoning_effort`（可設為 `low`、`medium`、`high`），讓你控制花在 reasoning 上的 token 量。
 
-### OpenAI Model Evolution 
+### OpenAI 模型演進
 
 ![OpenAI Model Evolution](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/2.2_model_evolution.png)
 
-### Key Characteristics
+### 主要特性
 
-- **GPT-4.1 Family**: Optimized for long context processing with 1M token context window.
-- **o3**: Specialized for deep multi-step reasoning. 
-- **o4-mini**: Combines reasoning capabilities with vision at lower cost.
+- **GPT-4.1 家族**：針對長 context 處理最佳化，context window 有 1M token。
+- **o3**：專門做深度多步驟推理。
+- **o4-mini**：把 reasoning 和 vision 結合，成本更低。
 
-Each model excels in different scenarios, with complementary strengths that can be combined for complex workflows.
+每個模型在不同情境各有優勢，互補的長處可以組合起來處理複雜的 workflow。
 
-In this cookbook we only experimented with the GPT-4.1 series models, o3, and o4-mini. We didn't experiment with the GPT-4o series models.
+這份 cookbook 只實驗了 GPT-4.1 系列、o3 和 o4-mini，沒有實驗 GPT-4o 系列。
 
 ================================================================================
 
 
 
-## 3A. Use Case: Long-Context RAG for Legal Q&A
+## 3A. Use Case：Legal Q&A 的 Long-Context RAG
 
 ![Long-Context RAG for Legal Q&A](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3A_rag_task_card.png)
 ## 🗂️ TL;DR Matrix
 
-This table summarizes the core technology choices and their rationale for **this specific Long-Context Agentic RAG implementation**.
+下表整理了**這個 Long-Context Agentic RAG 實作**的核心技術選擇和理由。
 
 | Layer | Choice | Utility |
 | :---- | :---- | :---- |
@@ -98,44 +110,44 @@ This table summarizes the core technology choices and their rationale for **this
 | **Synthesis** | `gpt-4.1` (Structured Output) | Generates answers directly from selected paragraphs with citations. |
 | **Verification** | `o4-mini` (LLM-as-Judge) | Validates factual accuracy and citation correctness. |
 
-*Note: Prices and model identifiers accurate as of April 2025, subject to change.*
+*註：價格和模型識別碼為 2025 年 4 月的資訊，之後可能變動。*
 
-This section outlines the construction of a Retrieval-Augmented Generation (RAG) system designed to accurately answer questions about complex and lengthy procedural texts, using the *Trademark Trial and Appeal Board Manual of Procedure (TBMP)* as a representative case. The TBMP is an essential legal resource detailing the procedures governing trademark litigation before the USPTO's Trademark Trial and Appeal Board, and is frequently consulted by intellectual property attorneys and legal professionals. By leveraging the latest OpenAI models, the system enhances understanding and interpretability of dense legal content, enabling precise, contextually aware responses through advanced language understanding and dynamic retrieval capabilities.
+這一節要建一個 Retrieval-Augmented Generation (RAG) 系統，準確回答複雜又冗長的程序性文件的問題，示範文件是 *Trademark Trial and Appeal Board Manual of Procedure (TBMP)*。TBMP 詳細規範美國專利商標局 (USPTO) 的商標審理暨訴願委員會處理商標訴訟的程序，智慧財產權律師和法律專業人員經常查閱。系統利用最新的 OpenAI 模型，提升對密集法律內容的理解和可解釋性，靠進階的語言理解和動態檢索，給出精確、符合上下文的回答。
 
-These approaches can also be applied to other use cases that require precise information retrieval from complex documentation, such as healthcare compliance manuals, financial regulatory frameworks, or technical documentation systems where accuracy, citation, and auditability are mission-critical requirements.
+這些做法也能用在其他需要從複雜文件精準檢索資訊的場景，例如醫療法規手冊、金融監理框架、技術文件系統，只要準確性、引用來源和可稽核性是關鍵需求就適用。
 
-## 1\. Scenario Snapshot
+## 1\. 情境摘要
 
-* **Corpus:** The primary document is the [Trademark Trial and Appeal Board Manual of Procedure (TBMP, 2024 version)](https://www.uspto.gov/sites/default/files/documents/tbmp-Master-June2024.pdf). This manual contains detailed procedural rules and guidelines, coming to 1194 pages total.  
-* **Users:** The target users are intellectual property (IP) litigation associates and paralegals who need quick, accurate answers to procedural questions based *only* on the TBMP.  
-* **Typical Asks:** Users pose questions requiring synthesis and citation, such as:  
+* **語料：**主要文件是 [Trademark Trial and Appeal Board Manual of Procedure (TBMP, 2024 version)](https://www.uspto.gov/sites/default/files/documents/tbmp-Master-June2024.pdf)。這份手冊有詳細的程序規則和指引，總共 1194 頁。  
+* **使用者：**目標使用者是智慧財產權訴訟的律師助理和 paralegal，他們需要針對程序問題，*只*根據 TBMP 得到快速又準確的答案。  
+* **典型問題：**使用者會問需要整合並引用的問題，例如：  
   1. "What are the requirements for filing a motion to compel discovery according to the TBMP?"  
   2. "What deadlines apply to discovery conferences as specified in the manual?"  
   3. "Explain how the Board handles claims of attorney-client privilege during depositions according to the TBMP."  
   4. "Enumerate the Fed. R. Civ. P. 11 sanctions the Board can invoke according to the TBMP."  
 
-*Note: Depending on your specific deployment environment, you may need to adapt some implementation steps to match your infrastructure requirements.*
+*註：依你的部署環境，可能需要調整一些實作步驟來配合你的基礎設施。*
 
-> While OpenAI's File Search tool offers a good starting point for many use cases, this section introduces a different approach that takes advantage of million-token context windows to process large documents without any preprocessing or vector database. The agentic approach described here enables zero-latency ingestion, dynamic granularity of retrieval, and fine-grained citation traceability.
+> OpenAI 的 File Search tool 對很多情境是不錯的起點，這一節則介紹不同的做法：利用百萬 token 的 context window，不用任何前處理或向量資料庫就能處理大文件。這種 agentic 做法做到零延遲 ingestion、動態調整檢索粒度，以及細緻的 citation 可追溯性。
 
-## 2\. Agentic RAG Flow
+## 2\. Agentic RAG 流程
 
-Before diving into the implementation, let's understand the overall approach:
+動手實作前，先看整體做法：
 
-1. **Load the entire document** into the context window
-2. **Split into 20 chunks** that respect sentence boundaries
-3. **Ask the model** which chunks might contain relevant information
-4. **Drill down** into selected chunks by splitting them further
-5. **Repeat** until we reach paragraph-level content
-6. **Generate an answer** based on the selected paragraphs
-7. **Verify the answer** for factual accuracy
+1. **把整份文件載入** context window
+2. **切成 20 個 chunk**，並尊重句子邊界
+3. **問模型**哪些 chunk 可能含有相關資訊
+4. **往下鑽**：把選中的 chunk 再切細
+5. **重複**直到切到段落層級
+6. **根據選出的段落產生答案**
+7. **驗證答案**的事實正確性
 
-This hierarchical navigation approach mimics how a human might skim a document, focus on relevant chapters, then specific sections, and finally read only the most relevant paragraphs.
+這種階層式導覽模仿人怎麼瀏覽文件：先掃過章節，再看相關小節，最後只讀最相關的段落。
 
 ![Hierarchical Router](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3A_rag_hierarchical_router.png)
 
 
-## Agentic RAG System: Model Usage
+## Agentic RAG 系統：模型用法
 
 | Process Stage | Model Used | Purpose |
 |---------------|------------|---------|
@@ -144,13 +156,13 @@ This hierarchical navigation approach mimics how a human might skim a document, 
 | Answer Generation | `gpt-4.1` | Creates structured response with citations from selected paragraphs |
 | Answer Verification | `o4-mini` | Validates factual accuracy and proper citation usage |
 
-This zero-preprocessing approach leverages large context windows to navigate documents on-the-fly, mimicking how a human would skim a document to find relevant information. 
+這種零前處理的做法靠大 context window 即時導覽文件，就像人在文件裡掃描找資訊。
 
-## 3\. Implementation
+## 3\. 實作
 
-Let's implement this approach step by step.
+一步一步來實作這個做法。
 
-Start by installing the required packages.
+先安裝需要的套件。
 
 ```python
 %pip install tiktoken pypdf nltk openai pydantic --quiet
@@ -162,9 +174,9 @@ Start by installing the required packages.
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-### 3.1 Document Loading
+### 3.1 載入文件
 
-First, let's load the document and check its size. For this guide, we'll focus on sections 100-900, which cover the core procedural aspects through Review of Decision of Board. Sections 1000 and beyond (Interferences, Concurrent Use Proceedings, Ex Parte Appeals) are specialized procedures outside our current scope.
+先載入文件並檢查大小。這份指南只看第 100 到 900 節，涵蓋核心的程序面向，直到 Review of Decision of Board。第 1000 節之後（Interferences、Concurrent Use Proceedings、Ex Parte Appeals）是特殊程序，不在目前範圍內。
 
 ```python
 import requests
@@ -244,13 +256,13 @@ print("-" * 50)
     --------------------------------------------------
     ```
 
-We can see that the document is over 900k tokens long! While we could fit that into GPT 4.1's context length, we also want to have verifiable citations, so we're going to proceed with a recursive chunking strategy.
+可以看到文件超過 900k token。雖然 GPT 4.1 的 context 長度放得下，但我們也要可驗證的 citation，所以採用遞迴式 chunking 策略。
 
-### 3.2 Improved 20-Chunk Splitter with Minimum Token Size
+### 3.2 有最小 token 數的改良版 20-Chunk Splitter
 
-Now, let's create an improved function to split the document into 20 chunks, ensuring each has a minimum token size and respecting sentence boundaries.
+現在寫一個改良版函式，把文件切成 20 個 chunk，確保每個都有最小 token 數，並尊重句子邊界。
 
-> 20 is an empirically chosen number for this specific document/task and it might need tuning for other documents based on size and structure (The higher the number, the more fine-grained the chunks). The key principle here however is splitting sections of the document up, in order to let the language model decide relevant components. This same reasoning also applies to the `max_depth` parameter which will be introduced later on in the cookbook.
+> 20 是針對這份文件和任務憑經驗選的數字，換別的文件可能要依大小和結構調整（數字越大，chunk 越細）。關鍵原則是把文件的各部分切開，讓語言模型自己判斷哪些部分相關。同樣的道理也適用於後面會介紹的 `max_depth` 參數。
 
 ```python
 # Global tokenizer name to use consistently throughout the code
@@ -366,11 +378,11 @@ document_chunks = split_into_20_chunks(document_text, min_tokens=500)
     Chunk 19: 42507 tokens
     ```
 
-### 3.3 Router Function with Improved Tool Schema
+### 3.3 有改良 Tool Schema 的 Router 函式
 
-Now, let's create the router function that will select relevant chunks and maintain a scratchpad.
+接著寫 router 函式，負責選出相關的 chunk 並維護 scratchpad。
 
-> Maintaining a scratchpad allows the model to track decision criteria and reasoning over time. This implementation uses a two-pass approach with GPT-4.1-mini: first requiring the model to update the scratchpad via a tool call (tool_choice="required"), then requesting structured JSON output for chunk selection. This approach provides better visibility into the model's reasoning process while ensuring consistent structured outputs for downstream processing.
+> 維護 scratchpad 讓模型可以持續記錄判斷標準和推理過程。這個實作用 GPT-4.1-mini 分兩輪：先強制模型透過 tool call 更新 scratchpad（tool_choice="required"），再要求結構化 JSON 輸出來選 chunk。這樣更容易看到模型的推理過程，同時下游處理拿到的結構化輸出也很一致。
 
 ```python
 from openai import OpenAI
@@ -526,9 +538,9 @@ First think carefully about what information would help answer the question, the
     }
 ```
 
-### 3.4 Recursive Navigation Function
+### 3.4 遞迴導覽函式
 
-Now, let's create the recursive navigation function that drills down through the document. `max_depth` is the maximum number of levels to drill down (keeping token minimums in mind):
+接著寫遞迴導覽函式，一層一層往下鑽文件。`max_depth` 是最多往下鑽幾層（要顧到 token 的最小數量）：
 
 ```python
 def navigate_to_paragraphs(document_text: str, question: str, max_depth: int = 1) -> Dict[str, Any]:
@@ -600,9 +612,9 @@ def navigate_to_paragraphs(document_text: str, question: str, max_depth: int = 1
         chunks = next_level_chunks
 ```
 
-### 3.5 Run the Improved Navigation for a Sample Question
+### 3.5 用範例問題跑改良版導覽
 
-Let's run the navigation for a sample question with our improved approach:
+用範例問題跑一次改良版的導覽：
 
 ```python
 # Run the navigation for a sample question
@@ -665,17 +677,17 @@ for i, paragraph in enumerate(navigation_result["paragraphs"][:3]):
     ... (省略 411 行)
     ```
 
-GPT 4.1-mini's results show the iterative extraction of relevant components in a document with the scratchpad explaining it's thought process through it! At depth 1, the model identifies "*Detailed rules for signatures on submissions including motions*" and "*use of ESTTA, required signature format including electronic signatures with the symbol method '/sig/'*" as critical components needed to answer the query.
+GPT 4.1-mini 的結果顯示它一輪一輪萃取文件中的相關部分，scratchpad 還解釋了它的思考過程。在 depth 1，模型把 "*Detailed rules for signatures on submissions including motions*" 和 "*use of ESTTA, required signature format including electronic signatures with the symbol method '/sig/'*" 認定為回答問題所需的關鍵部分。
 
-By depth 2, the scratchpad demonstrates sophisticated judgment by isolating precisely which chunks contain vital regulations about electronic signatures (chunks 5-12) while maintaining awareness of absent content, noting "*discovery-related motions... should be in chunks from 400 onwards (although these aren't fully visible here...)*".
+到了 depth 2，scratchpad 展現出相當成熟的判斷：它精準找出哪些 chunk 含有電子簽名的重要規定（chunk 5-12），同時也知道哪些內容缺席，註記 "*discovery-related motions... should be in chunks from 400 onwards (although these aren't fully visible here...)*"。
 
-This process shows how GPT 4.1 mimics a legal analyst, through iteratively digging deeper into relevant content, and explaining it's reasoning along the way (making it easier to debug *why* the model selected the chunks it did)
+這個過程顯示 GPT 4.1 像法律分析師一樣，一層層深入相關內容，並一路解釋自己的理由（所以要 debug 模型*為什麼*選那些 chunk 會容易很多）。
 
-### 3.6 Answer Generation
+### 3.6 產生答案
 
-Now, let's generate an answer using GPT-4.1 with the retrieved paragraphs. 
+現在用 GPT-4.1 根據檢索到的段落產生答案。
 
-> We do a nifty trick here where we dynamically construct a List of Literals (which forces the model's answers to be one of the options we provide -- in this case the paragraph IDs). There are some restrictions on the number of options we can provide, so if you find your system citing > 500 documents, then this solution might not work. In that case, you can either have a filter to go up to 500 potential citations, or you can ask the model to cite the exact ID in it's response, then post-process the response to extract the IDs, thus the citations (e.g. it might say "... [doc 0.0.12]", and you could use some regex to extract the citation).
+> 這裡用了一個巧妙的做法：動態建構一個 List of Literals（強制模型的答案只能是我們提供的選項，這裡就是段落 ID）。可提供的選項數量有限制，如果你的系統會引用超過 500 份文件，這個方法可能行不通。這時你可以加一個 filter，把候選 citation 限制在 500 個以內，或是請模型在回答裡寫出確切的 ID，再後處理抽出 ID 當作 citation（例如它可能寫 "... [doc 0.0.12]"，你用 regex 抽出來）。
 
 
 
@@ -771,13 +783,13 @@ answer = generate_answer(question, navigation_result["paragraphs"],
     Citations: ['0.0.5.0', '0.0.5.4', '0.0.5.5.6.0', '0.0.5.5.6.2', '0.0.5.5.6.3', '0.0.5.5.6.4', '0.0.5.5.7.3']
     ```
 
-GPT 4.1 effectively integrates citations throughout its response while maintaining a clear flow of information. Each procedural requirement is linked to specific authoritative references (like "0.0.5.0" and "0.0.5.5.6.2"), creating a response that's both informative and precisely sourced. 
+GPT 4.1 把 citation 有效地整合進整段回答，同時資訊流動也很清楚。每個程序要求都連到特定的權威來源（像 "0.0.5.0" 和 "0.0.5.5.6.2"），產生的回答既有資訊量，來源也很精確。
 
-Rather than simply listing citations at the end, it weaves them directly into the content using parenthetical notation after each key requirement. This approach transforms a standard recitation of rules into a well-supported legal analysis where statements about ESTTA filing procedures, electronic signature requirements, and paper submission exceptions are immediately backed by their corresponding regulatory citations.
+它不是把 citation 全部列在最後，而是在每個關鍵要求後面用括號直接織進內文。這讓原本只是複述規則的內容，變成有依據的法律分析：ESTTA 提交程序、電子簽名要求、紙本提交的例外，每一項都立刻有對應的法規引用。
 
-### 3.7 Answer Verification
+### 3.7 答案驗證
 
-Let's first look at the cited paragraphs:
+先看被引用的段落：
 
 ```python
 cited_paragraphs = []
@@ -843,9 +855,9 @@ for i, paragraph in enumerate(cited_paragraphs):
     ... (省略 102 行)
     ```
 
-The "List of Literals" trick forces the model to cite only specific paragraph IDs (like "0.0.5.4") rather than making up its own references or highlighting random text — imagine it as creating a digital "table of contents" that GPT-4.1 can only select from. This solution ensures you get verifiable citation trails back to exact source material, solving an important problem in long-context RAG.
+"List of Literals" 這招強制模型只能引用特定的段落 ID（像 "0.0.5.4"），不能自己編參考來源或隨便標一段文字。可以把它想成一個只能從中挑選的數位「目錄」。這樣你拿到的 citation 都能追溯回確切的原始資料，解決了 long-context RAG 的一個重要問題。
 
-Finally, let's verify the answer with an LLM-as-judge approach.
+最後，用 LLM-as-judge 的方式驗證答案。
 
 ```python
 from typing import List, Dict, Any, Literal
@@ -967,75 +979,75 @@ for citation in answer.citations:
     - 0.0.5.5.7.3
     ```
 
-The verification step produces a clean, structured assessment that references specific regulations and methodically checks both the answer's accuracy and its proper use of citations. Rather than just saying "correct," it offers useful context by explaining exactly why the answer was correct, giving you the confidence to then present the answer to the user with specific citations
+驗證步驟產生乾淨的結構化評估，引用具體法規，有條理地檢查答案的正確性和 citation 的使用是否恰當。它不是只說「正確」，還解釋了為什麼正確，讓你有信心把答案連同具體 citation 交給使用者。
 
-## 4. Infrastructure Costs
+## 4. 基礎設施成本
 
-Let's break down the cost structure for this agentic RAG approach:
+拆解這個 agentic RAG 做法的成本結構：
 
-### Estimated Fixed vs. Variable Costs
+### 固定成本 vs. 變動成本估算
 
-* **Estimated Fixed (One-time) Costs:**  
-  * **Traditional RAG:** ~$0.43 (embedding + metadata generation)
-  * **Agentic RAG:** $0.00 (zero preprocessing required)
+* **估計固定（一次性）成本：**  
+  * **Traditional RAG：**約 $0.43（embedding + metadata 產生）
+  * **Agentic RAG：**$0.00（完全不用前處理）
 
 
-* **Estimated Variable (Per-Query) Costs:**  
-  * **Router Model (`gpt-4.1-mini`):**  
-    * Initial routing (20 chunks): ~$0.10  
-    * Two recursive levels: ~$0.20
-  * **Synthesis (`gpt-4.1`):** ~$0.05
-  * **Verification (`o4-mini`):** ~$0.01
-  * **Total per query:** ~$0.36
+* **估計變動（每次查詢）成本：**  
+  * **Router 模型（`gpt-4.1-mini`）：**  
+    * 初次 routing（20 個 chunk）：約 $0.10  
+    * 兩層遞迴：約 $0.20
+  * **Synthesis（`gpt-4.1`）：**約 $0.05
+  * **Verification（`o4-mini`）：**約 $0.01
+  * **每次查詢總計：**約 $0.36
 
-While the per-query cost is higher than traditional RAG, this approach offers:
-- Immediate results on new documents
-- More precise citations
-- Better handling of paraphrases and conceptual questions
-- No infrastructure maintenance overhead
+雖然每次查詢成本比傳統 RAG 高，這個做法的好處是：
+- 新文件馬上就能用
+- citation 更精確
+- 更能處理換句話說和概念性的問題
+- 不用維護基礎設施
 
-The cost can be optimized through:
-- Caching results for common queries
-- Limiting max tokens in the model calls
-- Using a hybrid approach that pre-filters the document first
+成本可以這樣優化：
+- 對常見查詢做結果 cache
+- 限制模型呼叫的 max tokens
+- 用混合做法，先對文件做預過濾
 
-## 5. Benefits and Tradeoffs versus Traditional RAG
+## 5. 相較傳統 RAG 的優點與取捨
 
-### Benefits
-- **Zero-ingest latency**: Answer questions from new documents immediately, with no preprocessing.
-- **Dynamic navigation**: Mimics human reading patterns by focusing on promising sections.
-- **Cross-section reasoning**: Model can find connections across document sections that might be missed by independent chunk retrieval, potentially increasing accuracy of generated answers and saving time on optimizing retrieval pipelines.
+### 優點
+- **零 ingest 延遲**：新文件不用前處理，馬上能問問題。
+- **動態導覽**：模仿人的閱讀方式，專注在有希望的段落。
+- **跨段落推理**：模型能找出獨立 chunk 檢索可能漏掉的段落關聯，有機會提高答案準確度，也省下優化檢索 pipeline 的時間。
 
-### Tradeoffs
-- **Higher per-query cost**: Requires more computation for each question compared to embedding-based retrieval.
-- **Increased latency**: Hierarchical navigation takes longer to process than simple vector lookups.
-- **Limited scalability**: May struggle with extremely large document collections where preprocessing becomes more efficient.
+### 取捨
+- **每次查詢成本較高**：每個問題需要的運算比 embedding 檢索多。
+- **延遲增加**：階層式導覽比單純的向量查詢慢。
+- **擴展性有限**：文件集合非常大時可能吃力，這時前處理反而比較有效率。
 
-## 6. Future Steps
+## 6. 後續方向
 
-There are a few modifications we can make to the approach taken:
-- **Generating a Knowledge Graph**: We can use the large context window of GPT 4.1-mini to iteratively generate a detailed knowledge graph, and then GPT 4.1 can traverse this graph to answer questions. This way we only need to "ingest" the document once, regardless of the question.
-- **Improved Scratchpad Tool**: The scratchpad tool could be given more choices such as editing or deleting past memory. This would allow the model to choose whatever is most relevant to the question at hand
-- **Adjust Depth**: We can adjust the depth of the hierarchical navigation to find the right balance between cost and performance. Certain usecases will require sentence level citations (like legal documents), while others may only require paragraph level citations (like news articles). 
+這個做法還可以做一些修改：
+- **產生 Knowledge Graph**：用 GPT 4.1-mini 的大 context window 反覆產生詳細的 knowledge graph，再讓 GPT 4.1 走訪這個 graph 來回答問題。這樣不管問什麼問題，文件只需要「ingest」一次。
+- **改良 Scratchpad Tool**：scratchpad tool 可以給更多選擇，例如編輯或刪除過去的記憶，讓模型挑對當前問題最相關的內容。
+- **調整深度**：調整階層式導覽的深度，在成本和效能之間找平衡。有些情境需要句子層級的 citation（像法律文件），有些只需要段落層級（像新聞文章）。
 
-## 7. Takeaways
+## 7. 重點
 
-1. **Context Window is a Superpower:** Million-token context windows make it possible to navigate documents on-the-fly.
-2. **Hierarchical Approach Mimics Human Reading:** Agentic routing works like a human skimming a document for relevant sections.
-3. **Scratchpad Enables Multi-Step Reasoning:** Maintaining a reasoning record improves navigation quality.
-4. **Fast Implementation, No Database:** The entire system can be built with just API calls, no infrastructure needed.
-5. **Verification Improves Reliability:** The LLM-as-judge pattern catches errors before they reach users.
+1. **Context Window 是超能力：**百萬 token 的 context window 讓你可以即時導覽文件。
+2. **階層式做法模仿人的閱讀：**agentic routing 就像人在文件裡掃描找相關章節。
+3. **Scratchpad 支援多步驟推理：**保留推理記錄能提升導覽品質。
+4. **實作快、不需資料庫：**整個系統只靠 API call 就能建起來，不需要基礎設施。
+5. **驗證提升可靠度：**LLM-as-judge 模式可以在錯誤送到使用者前攔下來。
 
 ================================================================================
 
-## 3B. Use Case: AI Co-Scientist for Pharma R&D
+## 3B. Use Case：製藥研發的 AI Co-Scientist
 ![AI Co-Scientist for Pharma R&D](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3B_reasoning_task_card.png)
 
-This section details how to build an AI system that functions as a "co-scientist" to accelerate experimental design in pharmaceutical R&D, focusing on optimizing a drug synthesis process under specific constraints.
+這一節說明怎麼建一個扮演「co-scientist」的 AI 系統，加速製藥研發的實驗設計，重點是在特定限制下優化藥物合成流程。
 
 ## 🗂️ TL;DR Matrix
 
-This table summarizes the core technology choices and their rationale for this specific AI Co-Scientist implementation.
+下表整理了這個 AI Co-Scientist 實作的核心技術選擇和理由。
 
 | Layer              | Choice                                                                  | Utility                                                                                           |
 | :----------------- | :------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------- |
@@ -1047,32 +1059,31 @@ This table summarizes the core technology choices and their rationale for this s
 | **Learning**       | `o3` + Code Interpreter (Result Analysis → DB)                            | Captures experimental outcomes systematically, enabling continuous improvement over time.                |
 | **Core Technique** | Multi-Agent Collaboration & Escalation                                    | Leverages strengths of different models (speed vs. depth) for a complex, multi-step reasoning task.      |
 
-*Note: Model identifiers accurate as of April 2025, subject to change.*
+*註：模型識別碼為 2025 年 4 月的資訊，之後可能變動。*
 
-## 1. Scenario Snapshot
+## 1. 情境摘要
 
-* **Problem Space:** Optimizing complex experimental procedures in pharmaceutical R&D, such as improving the synthesis yield of a new drug compound ("XYZ-13") while adhering to strict constraints.
-* **Users:** Research scientists and lab technicians involved in drug discovery and development.
-* **Typical Asks:**
+* **問題領域：**優化製藥研發中複雜的實驗流程，例如在嚴格限制下，提升新藥化合物 ("XYZ-13") 的合成產率。
+* **使用者：**參與藥物探索和開發的研究科學家與實驗室技術人員。
+* **典型需求：**
     1. Suggest 3 distinct protocols to increase XYZ-13 yield by ≥15% by testing different catalysts, staying under $15k using approved reagents.
     2. Propose protocols to optimize XYZ-13 yield below 60°C (due to past heat issues), exploring different approved solvents within budget.
     3. Design two XYZ-13 yield strategies (aiming for ≥15%): a. one maximizing potential yield within the \$15k budget, b. one prioritizing cost under \$10k.
-* **Constraints:**
-    * **Budgetary:** Operate within defined financial limits (e.g., $15,000 per experiment series).
-    * **Regulatory/Safety:** Use only pre-approved chemicals/reagents and adhere rigorously to safety protocols.
-    * **Human Oversight:** Final experimental plans must be reviewed and validated by a human expert before execution.
+* **限制：**
+    * **預算：**在既定的財務上限內運作（例如每個實驗系列 $15,000）。
+    * **法規/安全：**只能使用預先核准的化學品/試劑，並嚴格遵守安全規範。
+    * **人工監督：**最終的實驗計畫必須由人類專家審閱並確認後才能執行。
+> 傳統上，優化這類實驗要花好幾週做人工規劃、文獻回顧、反覆的實驗操作和分析。這個 AI Co-Scientist 做法想大幅縮短週期，自動化假設產生、protocol 設計和初步評估，讓科學家專心在高層策略和最終確認。科學家的角色從手動執行規劃步驟，變成專家監督並與 AI 協作。
 
-> Traditionally, optimizing such experiments involves weeks of manual planning, literature review, iterative benchwork, and analysis. This AI Co-Scientist approach aims to dramatically reduce the cycle time by automating hypothesis generation, protocol design, and preliminary evaluation, enabling scientists to focus on higher-level strategy and final validation. It shifts the scientist's role from manual execution of planning steps to expert oversight and collaboration with the AI.
 
+## 2. 架構（Multi-Agent Reasoning）
 
-## 2. Architecture (Multi-Agent Reasoning)
-
-The system employs a multi-agent architecture that emulates a high-performing scientific team. Different AI components, acting in specialized roles (such as ideation, critique, and learning from outcomes), collaborate using various models and tools to execute the workflow.
+系統採用 multi-agent 架構，模擬高效能的科學團隊。不同的 AI 元件扮演專門角色（例如發想、批判、從結果學習），用各種模型和 tool 協作完成 workflow。
 
 ![AI Co-Scientist Architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3B_coscientist_architecture.png)
 
-### 2.1. **Scientist Input & Constraints:** 
-The process starts with the scientist defining the goal, target compound, and constraints.
+### 2.1. **科學家輸入與限制：** 
+流程從科學家定義目標、目標化合物和限制開始。
 
 ```python
 from openai import OpenAI
@@ -1089,8 +1100,8 @@ user_input = {
 ctx = Context(client=OpenAI(), **user_input)
 ```
 
-### 2.2.  **Ideation (`o4-mini` + Tools):** 
-Multiple `o4-mini` instances, prompted with different roles (e.g., `Hypothesis Agent`, `Protocol Agent`, `Resource Agent`), generate experimental plans in parallel. Assigning distinct personas encourages diverse perspectives and covers different aspects of the problem simultaneously during the ideation phase.
+### 2.2.  **發想（`o4-mini` + Tools）：** 
+多個 `o4-mini` 實例用不同角色的 prompt（例如 `Hypothesis Agent`、`Protocol Agent`、`Resource Agent`），平行產生實驗計畫。給每個實例不同的 persona，能在發想階段同時帶來多元觀點，涵蓋問題的不同面向。
 
 ```python
 ROLE_FOCUS = {
@@ -1154,7 +1165,7 @@ def ideation(ctx: Context):
     Logs will be stored in: logs/9835f69c
     ```
 
-The ideation agents can utilize external tools such as `literature_search`, `chem_lookup` (chemical database), `cost_estimator`, `outcome_db` (outcome of previous experiments) to ground their suggestions in data. Explicitly enabling and prompting models to use external tools ensures that generated plans are feasible, compliant, and informed by existing knowledge. The model decides when and which tool to call based on the task.
+發想 agent 可以使用外部 tool，例如 `literature_search`、`chem_lookup`（化學資料庫）、`cost_estimator`、`outcome_db`（先前實驗的結果），讓建議有資料依據。明確開啟並 prompt 模型使用外部 tool，能確保產生的計畫可行、合規，而且參考了既有知識。什麼時候呼叫哪個 tool，由模型依任務自己決定。
 
 ```python
 IDEATION_PROMPT += """\nUse the following tools as appropriate:
@@ -1202,13 +1213,13 @@ logging.info("Ideation complete!")
     Ideation complete!
     ```
 
-These tools are defined in `agent_utils.py`. For purposes of this solution, the tool calls are mocked in `tools.py`. In a real use case, these tools would call real APIs.
+這些 tool 定義在 `agent_utils.py`。為了這個方案，tool call 在 `tools.py` 裡是 mock 的，實際使用時這些 tool 會呼叫真正的 API。
 
 
-### 2.3. **Tournament Ranking (`o4-mini` / `o3`):** 
-Generated protocols are compared pairwise based on criteria like expected effectiveness, feasibility, cost, and novelty. Instead of asking a model to score protocols in isolation, providing two protocols at a time and asking for a direct comparison against specific criteria often yields more reliable relative rankings.
+### 2.3. **Tournament 排名（`o4-mini` / `o3`）：** 
+產生的 protocol 會兩兩比較，標準包括預期效果、可行性、成本和新穎度。與其請模型單獨幫每個 protocol 打分數，每次給兩個 protocol、依特定標準直接比較，通常會得到更可靠的相對排名。
 
-This Elo-style ranking identifies the most promising candidates for deeper review.
+這種 Elo 式排名能找出最有潛力的候選，進入更深入的審查。
 
 ```python
 TOURNAMENT_PROMPT = """
@@ -1249,10 +1260,10 @@ logging.info("Tournament winner picked!")
     Tournament winner picked!
     ```
 
-> In early experiments, we found that asking models to score protocols on a 1-10 scale led to inconsistent results with score compression. The tournament approach solved this by forcing relative judgments that proved more reliable. This mirrors human expert behavior — scientists often find it easier to compare two options directly than to assign absolute scores.
+> 早期實驗中我們發現，請模型用 1-10 分幫 protocol 打分數，結果不一致，而且分數會擠在一起。Tournament 做法強迫模型做相對判斷，結果更可靠。這也符合人類專家的行為，科學家常常覺得直接比較兩個選項，比給絕對分數容易。
 
-### 2.4. **Deep Critique & Synthesis (`o3`):** 
-The top-ranked protocols are passed to `o3` for rigorous review. `o3` acts like a senior scientist, assessing scientific validity, methodology, safety, budget compliance, and suggesting improvements or synthesizing a final, refined protocol. It may also call tools for verification.
+### 2.4. **深度批判與整合（`o3`）：** 
+排名前面的 protocol 交給 `o3` 做嚴格審查。`o3` 像資深科學家一樣，評估科學有效性、方法、安全性、預算是否合規，並提出改進建議，或整合出最終的精煉版 protocol。它也可以呼叫 tool 來驗證。
 
 ```python
 # Deep critique phase using a more powerful model for rigorous review
@@ -1296,10 +1307,10 @@ logging.info("Deep critique completed!")
     Deep critique completed!
     ```
 
-> We deliberately separate ideation from critique using different models and personas. Having the same model both generate and critique its own work often leads to self-justification rather than objective assessment. The o3 model, acting as a "senior scientist," consistently identified methodological weaknesses that o4-mini missed during ideation.
+> 我們刻意用不同的模型和 persona 把發想和批判分開。同一個模型自己產生又自己批判，常常變成自我辯護，而不是客觀評估。扮演「資深科學家」的 o3 模型，一直都能找出 o4-mini 在發想時漏掉的方法學弱點。
 
-### 2.5. **(Optional) Safety Check:** 
-A specialized model, such as `gpt-4.1-mini`, can perform a final check for specific safety concerns (e.g., hazardous reagent combos).
+### 2.5. **（選用）安全檢查：** 
+可以用專門的模型，例如 `gpt-4.1-mini`，對特定安全疑慮（例如危險的試劑組合）做最後檢查。
 
 ```python
 # Optional safety check using a targeted model
@@ -1336,8 +1347,8 @@ logging.info("Safety check completed!")
     Safety check completed!
     ```
 
-### 2.6. **Human Review:** 
-The AI-generated final plan is presented to the human scientist via an interface for validation, potential edits, and final approval.
+### 2.6. **人工審閱：** 
+AI 產生的最終計畫會透過介面呈現給人類科學家，由他確認、必要時編輯，並做最後核准。
 
 ```python
 def human_review(safety_package: Dict[str, Any], ctx: Context):
@@ -1414,8 +1425,8 @@ human_decision = human_review(secured, ctx)
     Protocol approved
     ```
 
-### 2.7. **Execution & Learning (`o3` + Code Interpreter):** 
-Once the human approves, the plan is sent for lab execution. After lab execution, results are fed back into the system. `o3` combined with the `Code Interpreter` analyzes the data, generates insights, and stores structured outcomes (protocol, parameters, results, insights) in a database (`Outcome DB`). This database informs future ideation cycles, creating a learning loop.
+### 2.7. **執行與學習（`o3` + Code Interpreter）：** 
+人類核准後，計畫送去實驗室執行。實驗結束後，結果回饋進系統。`o3` 搭配 `Code Interpreter` 分析資料、產生 insight，並把結構化的結果（protocol、參數、結果、insight）存進資料庫 (`Outcome DB`)。這個資料庫會用在之後的發想循環，形成學習迴圈。
 
 ```python
 # Simulating execution and analyzing results
@@ -1469,9 +1480,9 @@ print(f"\n🎉 Completed. Summary written to {out_path}")
     🎉 Completed. Summary written to output/9835f69c_summary.json
     ```
 
-## 3. Model Playbook
+## 3. 模型 Playbook
 
-Choosing between `o4-mini` and `o3` depends on the task's complexity and required depth. For other tasks, `gpt-4.1-mini` provides balance between cost and performance, with the more powerful `gpt4.1` recommended when greater capability or nuance is needed.
+在 `o4-mini` 和 `o3` 之間選，取決於任務的複雜度和需要的深度。其他任務用 `gpt-4.1-mini` 可以在成本和效能之間取得平衡，需要更強能力或更細膩判斷時，建議用更強的 `gpt4.1`。
 
 | Task               | Start With     | Upgrade When...                                            | Escalate To  | Rationale                                                                                    |
 | :----------------- | :------------- | :--------------------------------------------------------- | :----------- | :------------------------------------------------------------------------------------------- |
@@ -1480,37 +1491,37 @@ Choosing between `o4-mini` and `o3` depends on the task's complexity and require
 | Deep Critique & Synthesis | `o3` | N/A - Already using the most capable model for this critical task. | N/A | `o3` excels at rigorous scientific review, identifying methodological flaws, and synthesizing improvements across complex protocols. This task inherently requires deep reasoning. |
 | Safety Assessment | `gpt-4.1-mini` | Domain-specific hazards require higher accuracy or specialized knowledge. | `gpt-4.1` | `gpt-4.1-mini` offers a good balance of cost and performance for standard safety checks. Escalate to `gpt4.1` when higher accuracy or more nuanced reasoning is needed for complex safety risks. |
 
-**Key Insight:**
-> This use case exemplifies a powerful pattern: using faster, cheaper models (`o4-mini`) for breadth and initial filtering, then escalating to more powerful models (`o3`) for depth, critical review, and synthesis. This layered approach optimizes for both creativity/speed and rigor/accuracy, while managing computational costs effectively. The integration with tools is essential for grounding the AI's reasoning in verifiable, real-world data.
+**關鍵洞察：**
+> 這個 use case 示範了一個很有力的模式：先用更快更便宜的模型（`o4-mini`）處理廣度和初步篩選，再升級到更強的模型（`o3`）做深度、關鍵審查和整合。這種分層做法兼顧創意/速度和嚴謹/準確，同時有效控制運算成本。與 tool 整合是必要的，這樣 AI 的推理才有可驗證的真實資料當依據。
 
-## 4. Deployment Notes
+## 4. 部署注意事項
 
-Transitioning the AI Co-Scientist from prototype to lab use involves careful planning.
+把 AI Co-Scientist 從原型轉到實驗室使用，需要仔細規劃。
 
-* **Cost Control:**
-    * Implement configurable "modes" (such as `Fast`, `Standard`, `Thorough`) that adjust the number of `o4-mini` ideation agents, the depth of `o3` critique, or the use of optional checks to balance result quality with cost and latency.
-    * Track token usage per stage (ideation, ranking, critique) and per tool call for fine-grained cost monitoring.
-* **Observability:**
-    * Log inputs, outputs, model choices, tool calls/responses, latencies, and token counts for each step.
-    * Monitor the performance of the tournament ranking and the impact of `o3` critiques (such as how often plans are significantly altered or rejected).
-    * Track user interactions: which plans are approved, edited, or rejected by the human scientist.
-* **Safety & Compliance:**
-    * Implement multiple safety layers: constraints in prompts, tool-based checks (such as reagent compatibility via `chem_lookup`), optional dedicated model checks (`gpt-4.1-mini`), automated filters (such as for known hazardous combinations), and mandatory human review.
-    * Ensure tool endpoints (such as internal databases) meet security requirements.
-* **Rollout Strategy:** 
-    * Begin with retrospective analysis of past experiments, then move to shadow mode (AI suggests plans alongside human planners), followed by limited live use cases with close monitoring before broader adoption.
-
-
-## 5. Takeaways
-
-1. **Model pairing creates synergy**: `o4-mini` covers more ground quickly; `o3` brings precision and depth.
-2. **Tool integration grounds reasoning in reality**: Real-world data such as chemical costs and safety constraints inform decision-making.
-3. **Human scientists remain central**: The system empowers experts by removing grunt work—not by replacing them.
+* **成本控制：**
+    * 實作可設定的「模式」（例如 `Fast`、`Standard`、`Thorough`），調整 `o4-mini` 發想 agent 的數量、`o3` 批判的深度，或是否做選用的檢查，在結果品質和成本、延遲之間取捨。
+    * 追蹤每個階段（發想、排名、批判）和每次 tool call 的 token 用量，做細緻的成本監控。
+* **Observability：**
+    * 記錄每個步驟的輸入、輸出、模型選擇、tool call/回應、延遲和 token 數。
+    * 監控 tournament 排名的表現，以及 `o3` 批判的影響（例如計畫被大幅修改或否決的頻率）。
+    * 追蹤使用者互動：哪些計畫被人類科學家核准、編輯或否決。
+* **安全與合規：**
+    * 實作多層安全機制：prompt 裡的限制、tool 型檢查（例如透過 `chem_lookup` 查試劑相容性）、選用的專用模型檢查（`gpt-4.1-mini`）、自動 filter（例如已知的危險組合），以及強制的人工審閱。
+    * 確保 tool endpoint（例如內部資料庫）符合安全要求。
+* **上線策略：** 
+    * 先對過去的實驗做回溯分析，再進入 shadow mode（AI 與人類規劃者並行提出計畫），然後在密切監控下做有限的實際使用，最後才擴大採用。
 
 
-## 6. Useful Cookbooks & Resources
+## 5. 重點
 
-Here are select resources that complement the design and implementation of the AI Co-Scientist system:
+1. **模型搭配產生綜效**：`o4-mini` 快速涵蓋更多範圍，`o3` 帶來精準度和深度。
+2. **Tool 整合讓推理落在現實**：化學品成本、安全限制這類真實資料會影響決策。
+3. **人類科學家仍是核心**：系統是替專家省掉雜務，不是取代他們。
+
+
+## 6. 實用 Cookbook 與資源
+
+下面是幾個和 AI Co-Scientist 系統設計與實作互補的資源：
 
 - **[Orchestrating Agents: Routines and Handoffs](https://cookbook.openai.com/examples/orchestrating_agents)** Structuring multi-agent workflows with routines and handoffs, relevant to the ideation→ranking→critique pipeline.
 
@@ -1525,15 +1536,15 @@ Here are select resources that complement the design and implementation of the A
 
 
 
-## 3C. Use Case: Insurance Claim Processing
+## 3C. Use Case：保險理賠處理
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3C_insurance_task_card.png)
 
-Many businesses are faced with the task of digitizing hand-filled forms. In this section, we will demonstrate how OpenAI can be used to digitize and validate a hand-filled insurance form. While this is a common problem for insurance, the same techniques can be applied to a variety of other industries and forms, for example tax forms, invoices, and more.
+很多企業都要處理手寫表單數位化的工作。這一節示範怎麼用 OpenAI 把手寫的保險表單數位化並驗證。這在保險業很常見，同樣的技術也能用在其他產業和表單，例如稅務表單、發票等。
 
 ## 🗂️ TL;DR Matrix
 
-This table summarizes the core technology choices and their rationale for this specific OCR implementation targeting the insurance use case.
+下表整理了這個針對保險場景的 OCR 實作的核心技術選擇和理由。
 
 | Layer | Choice | Utility |
 | :---- | :---- | :---- |
@@ -1542,38 +1553,38 @@ This table summarizes the core technology choices and their rationale for this s
 | Reasoning | `o4-mini` | Affordable but capable reasoning, function calling available |
 | Form Validation | Custom function calling | Can provide interaction with custom or internal databases |
 
-\*Note: Prices and model identifiers accurate as of April 2025, subject to change.
+\*註：價格和模型識別碼為 2025 年 4 月的資訊，之後可能變動。
 
-## 1\. Scenario Snapshot
+## 1\. 情境摘要
 
-* **Users:** The target users are insurance servicing and ops teams who need to ingest data from handwritten forms.  
-* **Typical Asks:** Each form will have a different required structure, as well as different fields that need to be extracted.  
-* **Constraints:**  
-  * **Accuracy:** High accuracy is required to ensure that the data is correct and complete.  
-  * **Uncertainty:** The system must handle uncertainty in the data, such as missing data, ambiguous data, and different formats of the same field. In the event that the model cannot resolve the uncertainty, the system requires a mechanism to request human review.  
-  * **Performance & Cost:** While system latency is not critical, high accuracy is required while keeping costs under control. We will aim for a cost target of $20 or less per 1000 pages processed.
+* **使用者：**目標使用者是保險服務與營運團隊，需要從手寫表單 ingest 資料。  
+* **典型需求：**每種表單的結構和要擷取的欄位都不同。  
+* **限制：**  
+  * **準確度：**需要高準確度，確保資料正確且完整。  
+  * **不確定性：**系統必須處理資料的不確定性，例如缺漏資料、模糊資料，以及同一欄位的不同格式。如果模型無法解決不確定性，系統需要有機制請求人工審閱。  
+  * **效能與成本：**系統延遲不是重點，但需要高準確度，同時要控制成本。目標是每處理 1000 頁不超過 $20。
 
-## 2\. Architecture
+## 2\. 架構
 
-The high level basic architecture of the solution is shown below.
+解決方案的高階基本架構如下。
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3C_insurance_architecture.png)
 
-This task is complex and requires a wide variety of model capabilities, including vision, function calling, reasoning, and structured output. While `o3` is capable of doing all of these at once, we found during experimentation that `o4-mini` alone was not sufficient to achieve the necessary performance. Due to the higher relative costs of `o3`, we instead opted for a two-stage approach.
+這個任務很複雜，需要多種模型能力，包括 vision、function calling、reasoning 和 structured output。`o3` 雖然能一次做完這些，但實驗發現只靠 `o4-mini` 達不到需要的效能。因為 `o3` 成本相對較高，我們改採兩階段做法。
 
-1. Stage one is performed using the vision capabilities of GPT 4.1. This stage is optimized to extract text with maximum accuracy, leaving uncertainty for the reasoning stage and not making any assumptions not visible on the page. By doing OCR in the first stage, we do not require the reasoning model to work directly from an image, which can be challenging given all the other tasks the reasoning model must perform.  
+1. 第一階段用 GPT 4.1 的 vision 能力。這個階段最佳化的目標是用最高準確度擷取文字，把不確定的部分留給推理階段，不對頁面上看不到的內容做任何假設。在第一階段做 OCR，推理模型就不用直接看圖片，因為推理模型本來就有很多其他工作要做，再加上看圖會很吃力。  
      
-2. Stage two takes advantage of the reasoning abilities of `o4-mini`. We use `o4-mini` to validate the accuracy of the OCR and to extract the data into a structured format. Importantly, we expect o4-mini to act as the secondary quality gate \-- if the OCR is incomplete at this stage we can use o4-mini to refine and validate the original results.
+2. 第二階段利用 `o4-mini` 的推理能力。我們用 `o4-mini` 驗證 OCR 的準確度，並把資料擷取成結構化格式。重點是，我們期待 o4-mini 成為第二道品質關卡 \-- 如果這個階段發現 OCR 不完整，可以用 o4-mini 來修正並驗證原本的結果。
 
-To demonstrate concretely how this works, let's look at a sample image of an insurance form.
+為了具體示範怎麼運作，來看一張保險表單的範例圖片。
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3C_insurance_form.png)
 
-While the form itself is fairly straightforward, there is missing data and ambiguous information that will be difficult for a traditional OCR system to fill out correctly. First, notice that the zip code and county have been omitted. Second, the email address of the user is ambiguous \-- it could be `jsmith1@gmail.com` or `jsmithl@gmail.com`. In the following sections, we will walk through how a well-designed solution can handle these ambiguities and return the correct form results.
+這張表單本身很單純，但有缺漏和模糊的資料，傳統 OCR 系統很難正確填完。第一，注意郵遞區號和 county 沒填。第二，使用者的 email 很模糊 \-- 可能是 `jsmith1@gmail.com`，也可能是 `jsmithl@gmail.com`。接下來幾節會一步步說明，設計良好的方案怎麼處理這些模糊之處，並回傳正確的表單結果。
 
-**Environment Setup & Library Code:**
+**環境設定與函式庫程式碼：**
 
-To make our example code more clear, we have broken out environment setup (such as `pip install` commands) and library functions into a separate code block. This will make it easier to focus on only the relevant logic in each step of our solution.
+為了讓範例程式碼更清楚，我們把環境設定（例如 `pip install` 指令）和函式庫函式獨立放到另一個 code block。這樣你就能在每個步驟專心看相關的邏輯。
 
 ```python
 # Install Python requirements
@@ -1659,11 +1670,11 @@ def run_conversation_loop(
             return response, summaries
 ```
 
-**Flow Explanation: Stage 1**
+**流程說明：第一階段**
 
-1. **Image:** The image of the form taken from the user's smartphone is passed to the model. OpenAI's models can accept a variety of image formats, but we typically use a PNG format to keep the text crisp and reduce artifacts. For this example, we pass the image to the model from a publicly available content URL. In a production environment, you likely would pass the image as a signed URL to an image hosted in your own cloud storage bucket.  
+1. **圖片：**用戶用手機拍的表單圖片會傳給模型。OpenAI 的模型能接受多種圖片格式，我們通常用 PNG，讓文字保持清晰並減少瑕疵。這個範例是從公開的內容 URL 把圖片傳給模型。在 production 環境，你多半會傳 signed URL，指向放在自己雲端 storage bucket 的圖片。  
      
-2. **Structured Output Schema:** We define a Pydantic model that sets the structure of the output data. The model includes all of the fields that we need to extract from the form, along with the appropriate types for each field. Our model is broken into several subcomponents, each of which is a Pydantic model itself and referenced by the parent model.
+2. **Structured Output Schema：**我們定義一個 Pydantic model 來規範輸出資料的結構。這個 model 包含表單上所有要擷取的欄位，以及每個欄位適當的型別。整個 model 拆成幾個子元件，每個子元件本身也是 Pydantic model，由上層 model 引用。
 
 ```python
 class PersonContact(BaseModel):
@@ -1711,7 +1722,7 @@ class InsuranceFormData(BaseModel):
     expiration_date: str
 ```
 
-3. **Run OCR:** Using the vision capabilities of GPT-4.1, we run the first stage of our pipeline to extract the text from the document in a structured format. This initial stage aims to achieve high accuracy while passing through uncertainty to the second stage. Our prompt explicitly instructs the model to avoid inferring inputs and instead to fill out the details as exact as possible. For the image input, we set image input detail to `auto` to infer a detail level that's appropriate to the image. We found in our experiments that `auto` worked well, but if you are seeing quality issues in your OCR processing consider using `high`.
+3. **執行 OCR：**用 GPT-4.1 的 vision 能力執行 pipeline 的第一階段，把文件文字以結構化格式擷取出來。這個初始階段的目標是達到高準確度，並把不確定性傳給第二階段。我們的 prompt 明確指示模型不要推測輸入內容，盡可能精確地填入細節。圖片輸入的 detail 我們設成 `auto`，讓它依圖片推斷合適的細節程度。實驗中 `auto` 效果不錯，但如果你發現 OCR 品質有問題，可以考慮改用 `high`。
 
 ```python
 OCR_PROMPT = """You are a helpful assistant who excels at processing insurance forms.
@@ -1792,11 +1803,11 @@ print(s1_json_results)
     ... (省略 13 行)
     ```
 
-Notice that the output is missing several fields. In the next stage of processing we will take advantage of OpenAI's reasoning models to infer the missing fields where possible.
+注意輸出缺了好幾個欄位。下一個處理階段會用 OpenAI 的 reasoning 模型，盡可能推論出缺漏的欄位。
 
-**Flow Explanation: Stage 2**
+**流程說明：第二階段**
 
-1. **Function Definitions:** We define a set of custom functions that the model can use to resolve uncertainty. In this case, we define a function that can validate email addresses by checking if the email exists. This can be used to resolve the ambiguous email address field where the model must choose between multiple possible values. By default, o4-mini supports built-in tools like web search, which in this case it will use to resolve zip codes and incomplete addresses.
+1. **Function 定義：**我們定義一組自訂 function，讓模型用來解決不確定性。這裡定義的 function 可以檢查 email 是否存在來驗證 email 地址，用來解決模糊的 email 欄位，也就是模型必須在多個可能值之間選一個的情況。預設情況下，o4-mini 支援內建 tool 像 web search，這裡它會用來補上郵遞區號和不完整的地址。
 
 ```python
 tools = [{
@@ -1837,7 +1848,7 @@ tools = [{
 }]
 ```
 
-2. **Prompt:** We provide a prompt to the model explaining that we have extracted text via OCR and requesting that the model perform reasoning and function calling to fill in the missing or ambiguous fields.
+2. **Prompt：**我們給模型一個 prompt，說明我們已經用 OCR 擷取了文字，請模型做推理和 function calling，填入缺漏或模糊的欄位。
 
 ```python
 PROMPT = """You are a helpful assistant who excels at processing insurance forms.
@@ -1928,11 +1939,11 @@ print(json.dumps(json.loads(response.output_parsed.model_dump_json()), indent=2)
     ... (省略 21 行)
     ```
 
-You can see that the email address has been refined to a single value, the zip code and county have been filled in, and the mailing address has been filled in by using the risk address. The model has also returned the results in a structured format (with appropriate types such as boolean for yes/no questions), which can be easily parsed by a downstream system.
+可以看到 email 地址被收斂成單一值，郵遞區號和 county 被補上，mailing address 也用 risk address 填好了。模型還以結構化格式（yes/no 問題用 boolean 這類適當型別）回傳結果，下游系統很容易解析。
 
-To help us understand and debug the model, we can also print the summary chain-of-thought reasoning produced by the model. This can help expose common failure modes, points where the model is unclear, or incorrect upstream details.
+為了幫助我們理解和 debug 模型，也可以印出模型產生的 chain-of-thought 摘要。這能暴露常見的失敗模式、模型不確定的地方，或上游不正確的細節。
 
-While developing this solution, the chain-of-thought summaries exposed some incorrectly named and typed schema values.
+開發這個方案時，chain-of-thought 摘要就揭露了一些命名和型別不正確的 schema 值。
 
 ```python
 for summary in summaries:
@@ -1958,38 +1969,38 @@ for summary in summaries:
     All co-applicant fields are present, and dwelling details are complete. The effective and expiration dates are also provided. I plan to validate both email options by checking each one separately. Let's begin with validating the first email.
     ```
 
-## 3\. Model and Capabilities Playbook
+## 3\. 模型與能力 Playbook
 
-Selecting the right tool for the job is key to getting the best results. In general, it's a good idea to start with the simplest solution that fits your needs and then upgrade if you need more capabilities.
+挑對工具是得到最佳結果的關鍵。一般來說，先從符合需求的最簡單方案開始，需要更多能力再升級。
 
 | Task | Start With | Upgrade When... | Escalate To | Rationale |
 | :---- | :---- | :---- | :---- | :---- |
 | OCR | `gpt-4.1` | Complex forms that are difficult to understand at a glance | `o3` | `gpt-4.1` is fast and cost-effective for most OCR. `o-3` has the ability to reason about form structure. |
 | Results Refinement | `o4-mini` | Complex logic for inferring details, many function calls required. | `o3` | Better for very long chains of reasoning, especially with both function calls and structured output. |
 
-## 4\. Evaluation Metrics
+## 4\. 評估指標
 
-Track key metrics to ensure the system is performing accurately and as expected.
+追蹤關鍵指標，確保系統準確、符合預期。
 
-### Critical Metrics
+### 關鍵指標
 
-* **OCR Accuracy:** Per-character and per-word accuracy.  
-* **Inferred Field Rate:** Portion unfilled entries correctly inferred from either existing data or function calling.  
-* **Human Intervention Rate:** How often a document contains an UNKNOWN and must be referred to a human.
+* **OCR 準確度：**每字元和每個字的準確度。  
+* **推論欄位比率：**未填的欄位中，能從既有資料或 function calling 正確推論出來的比例。  
+* **人工介入比率：**文件包含 UNKNOWN 而必須轉給人處理的頻率。  
 
-We recommend building a labeled hold-out set of forms and their expected responses. This dataset should be representative of the expected deployment environment, see the [OpenAI evals](https://platform.openai.com/docs/guides/evals) guide for more detailed information on building and evaluating your system.
+我們建議建一個有標註的 hold-out 表單集和預期回應。這個資料集應該能代表預期的部署環境，建立和評估系統的詳細做法請見 [OpenAI evals](https://platform.openai.com/docs/guides/evals) 指南。
 
-## 5\. Deployment Notes
+## 5\. 部署注意事項
 
-Moving from prototype to a production-ready system requires attention to operational details (LLMOps).
+從原型走到 production 等級的系統，需要注意營運細節 (LLMOps)。
 
-### Cost Breakdown
+### 成本拆解
 
-We will assume that for document ingestion, [batch pricing](https://platform.openai.com/docs/guides/batch) is a viable option due to high latency tolerance (i.e. overnight runs are fine).
+我們假設文件 ingestion 可以用 [batch pricing](https://platform.openai.com/docs/guides/batch)，因為延遲容忍度高（例如跑一晚也沒問題）。
 
-#### **Stage 1: OCR (Optical Character Recognition)**
+#### **第一階段：OCR (Optical Character Recognition)**
 
-**Model:** `gpt-4.1`
+**模型：**`gpt-4.1`
 
 | Type | Tokens | Rate (per 1M) | Cost |
 | :---- | :---- | :---- | :---- |
@@ -1997,9 +2008,9 @@ We will assume that for document ingestion, [batch pricing](https://platform.ope
 | Output | 1,500 | $4.00 | $0.006 |
 | **Total for 1,000 pages (Stage 1\)** |  |  | **$8.00** |
 
-#### **Stage 2: Reasoning**
+#### **第二階段：Reasoning**
 
-**Model:** `o4-mini`
+**模型：**`o4-mini`
 
 | Type | Tokens | Rate (per 1M) | Cost |
 | :---- | :---- | :---- | :---- |
@@ -2007,24 +2018,24 @@ We will assume that for document ingestion, [batch pricing](https://platform.ope
 | Output | 3,000 | $2.20 | $0.0066 |
 | **Total for 1,000 pages (Stage 2\)** |  |  | **$7.70** |
 
-#### Grand Total (per 1,000 pages): **$15.70**
+#### 總計（每 1,000 頁）：**$15.70**
 
-Compare this cost to a one-stage `o3` deployment. Assuming equal token usage and batch usage, the additional cost of the more powerful reasoning model would come to $70/1000 pages.
+拿這個成本跟單階段的 `o3` 部署比。假設 token 用量相同、都用 batch，更強的推理模型會多花 $70/1000 頁。
 
-### Monitoring & Deployment
+### 監控與部署
 
-Monitor your system by logging key metrics:
+記錄關鍵指標來監控系統：
 
-* `llm_model_used`, `llm_input_tokens`, `llm_output_tokens`, `llm_latency_ms` per model  
-* `total_query_latency_ms`, `estimated_query_cost` per model  
-* `function_calls_per_document`, `num_email_validation_calls`  
+* 每個模型的 `llm_model_used`、`llm_input_tokens`、`llm_output_tokens`、`llm_latency_ms`  
+* 每個模型的 `total_query_latency_ms`、`estimated_query_cost`  
+* `function_calls_per_document`、`num_email_validation_calls`  
 * `human_review_required`
 
-Pin the specific model version identifier (e.g., `o4-mini-2025-04-16`) used in deployment via configuration/environment variables to prevent unexpected behavior from silent model updates.
+部署時，透過設定或環境變數固定（pin）用到的特定模型版本識別碼（例如 `o4-mini-2025-04-16`），避免模型被悄悄更新而出現意外行為。
 
-## 6\. Useful Cookbooks & Resources
+## 6\. 實用 Cookbook 與資源
 
-Refer to these related resources for deeper dives into specific components:
+想深入特定元件，可參考這些相關資源：
 
 * [Structured Output](https://platform.openai.com/docs/guides/structured-outputs)  
 * [Vision Models](https://platform.openai.com/docs/guides/images)  
@@ -2035,7 +2046,7 @@ Refer to these related resources for deeper dives into specific components:
 
 <h2 id="prototype-to-production">Prototype to Production</h2>
 
-Transitioning a prototype to production requires careful planning and execution. This checklist highlights critical steps, drawing from our flagship use cases, to ensure your deployment is robust, efficient, and meets business goals.
+把原型轉成 production 需要仔細規劃和執行。這份檢查清單根據我們的主要 use case，整理了關鍵步驟，確保你的部署穩健、有效率，並符合商業目標。
 
 ## 🗂️ TL;DR Matrix
 
@@ -2048,47 +2059,47 @@ Transitioning a prototype to production requires careful planning and execution.
 | **Safety & Compliance** | • Use safety mechanisms (moderation APIs, prompts). • Enforce domain-specific compliance rules. • Mandate Human-in-the-Loop (HITL) for high-risk outputs. | Ensures responsible operation; meets requirements. |
 | **Model Updates & Versioning** | • Define version pinning strategy • Implement A/B testing for new versions • Create rollback procedures | Maintains stability while allowing improvements. |
 
-1. **Define Success Criteria Quantitatively:** Move beyond "it works" to measurable targets *before* major development.  
+1. **用量化方式定義成功標準：**在大規模開發前，從「能動」進一步到可衡量的目標。  
      
-   * **Set Key Performance Indicators (KPIs) & SLOs:** Define specific targets for business value (e.g., RAG accuracy \> 95%, OCR cost \< $X/page) and performance (e.g., P95 latency \< 1s, error rates).  
-   * **Ensure Measurability:** Confirm that all KPIs and SLOs can be directly measured from system logs (e.g., tracking `total_tokens`, `critique_status`).
+   * **設定關鍵績效指標 (KPI) 與 SLO：**定義商業價值的具體目標（例如 RAG 準確度 \> 95%、OCR 成本 \< $X/頁）和效能目標（例如 P95 延遲 \< 1s、錯誤率）。  
+   * **確保可衡量：**確認所有 KPI 和 SLO 都能直接從系統 log 衡量（例如追蹤 `total_tokens`、`critique_status`）。
 
    
 
-2. **Document Initial Model Selection Rationale:** Justify your starting model choices for future reference.  
+2. **記錄最初選擇模型的理由：**為日後參考，說明你起手選這些模型的原因。  
      
-   * **Choose Models Deliberately:** Use the Model-Intro Matrix and use cases to select appropriate models for each task (e.g., `o4-mini` for speed/cost, `gpt-4.1` for accuracy, `o3` for depth).  
-   * **Record the "Why":** Briefly document the reasoning behind your choices (cost, latency, capability trade-offs) in code comments or design docs so future teams understand the context.
+   * **刻意選模型：**用 Model-Intro Matrix 和各 use case 為每個任務選合適的模型（例如 `o4-mini` 求速度/成本、`gpt-4.1` 求準確度、`o3` 求深度）。  
+   * **記下「為什麼」：**簡短記錄你選擇背後的考量（成本、延遲、能力的取捨），寫在程式碼註解或設計文件裡，讓之後的團隊了解背景。
 
    
 
-3. **Implement Robust Evaluation & Testing:** Verify quality and prevent regressions *before* shipping changes.  
+3. **做穩健的評估與測試：**在上線變更前驗證品質，避免 regression。  
      
-   * **Build an Automated Eval Suite:** Create a repeatable test process using a "golden set" (50-100 diverse, expert-verified examples). Focus tests on `factuality`, `hallucination rate`, `tool-error rate`, and task-specific metrics.  
-   * **Test Reliably:** Rigorously test integrated tool reliability (success rate, error handling) and system behavior under load and with edge cases (malformed data, adversarial inputs).
+   * **建立自動化 eval suite：**用「golden set」（50-100 個多元、專家驗證過的範例）建立可重複的測試流程。測試重點放在 `factuality`、`hallucination rate`、`tool-error rate` 和任務專屬的指標。  
+   * **可靠地測試：**嚴格測試整合進來的 tool 可靠度（成功率、錯誤處理），以及系統在負載下和邊界情況（格式錯誤的資料、對抗性輸入）的行為。
 
    
 
-4. **Establish Observability & Cost Controls:** Monitor performance and keep spending within budget.  
+4. **建立 Observability 與成本控制：**監控效能，並讓花費在預算內。  
      
-   * **Set Cost Guardrails:** Prevent unexpected cost increases by defining max token limits per stage and considering operational modes ("Fast," "Standard," "Thorough") to balance cost and performance.  
-   * **Implement Essential Logging:** Capture key operational data via structured logs for each processing stage to enable debugging and monitoring.
+   * **設定成本護欄：**為每個階段定義 max token 上限，並考慮用運作模式（"Fast"、"Standard"、"Thorough"）在成本和效能之間取捨，避免成本意外增加。  
+   * **做好必要的 logging：**為每個處理階段用結構化 log 記錄關鍵營運資料，方便 debug 和監控。
 
    
 
-5. **Implement Safety & Compliance Guardrails:** Ensure responsible operation and meet requirements.  
+5. **建立安全與合規護欄：**確保負責任地運作並符合要求。  
      
-   * **Use Safety Mechanisms:** Employ tools like OpenAI's moderation APIs, safety-focused system prompts, or sentinel models for checks, especially with user input or sensitive topics.  
-   * **Enforce Compliance:** Build in checks relevant to your specific industry and risks (e.g., legal constraints, lab safety).  
-   * **Require Human-in-the-Loop (HITL):** Mandate human review for low-confidence outputs, high-risk scenarios, or critical decisions, ensuring the workflow flags these items clearly.
+   * **使用安全機制：**使用像 OpenAI moderation API、以安全為重點的 system prompt 或 sentinel 模型來做檢查，特別是處理使用者輸入或敏感主題時。  
+   * **落實合規：**內建符合你所屬產業和風險的檢查（例如法律限制、實驗室安全）。  
+   * **要求 Human-in-the-Loop (HITL)：**低信心的輸出、高風險情境或關鍵決策都要強制人工審閱，並確保 workflow 清楚標記這些項目。
 
 
-6. **Manage Model Updates and Versioning:** Prepare for model evolution over time.
+6. **管理模型更新與版本：**為模型隨時間演進做好準備。
    
-   * **Version Pinning Strategy:** Decide whether to pin to specific model versions for stability or automatically adopt new versions for improvements.
-   * **A/B Testing Framework:** Establish a process to evaluate new model versions against your key metrics before full deployment.
-   * **Rollback Plan:** Create a clear procedure for reverting to previous model versions if issues arise with updates.
-   * **Monitor Version Performance:** Track metrics across model versions to identify performance trends and inform future selection decisions.
+   * **版本固定策略：**決定要固定特定模型版本求穩定，還是自動採用新版本來獲得改進。
+   * **A/B 測試框架：**建立流程，在全面部署前，用關鍵指標評估新的模型版本。
+   * **Rollback 計畫：**建立明確的程序，在更新出問題時退回先前的模型版本。
+   * **監控版本效能：**追蹤各模型版本的指標，找出效能趨勢，作為日後選模型的參考。
 
 ================================================================================
 
@@ -2098,21 +2109,21 @@ Transitioning a prototype to production requires careful planning and execution.
 
 ![Model Selection Decision Tree](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/3D_model_selection_flowchart.png)
 
-## Communicating Model Selection to Non-Technical Stakeholders
+## 向非技術背景的利害關係人說明模型選擇
 
-When explaining your model choices to business stakeholders, focus on these key points:
+向業務利害關係人解釋你的模型選擇時，著重這幾點：
 
-1. **Align with Business Outcomes**: Explain how your model selection directly supports specific business goals (time savings, cost reduction, improved accuracy).
+1. **對齊商業成果**：說明你選的模型如何直接支援特定的商業目標（節省時間、降低成本、提升準確度）。
 
-2. **Translate Technical Metrics**: Convert technical considerations into business impact:
+2. **翻譯技術指標**：把技術考量轉成商業影響：
    - "This model reduces processing time from 5 seconds to 0.7 seconds, allowing us to handle customer inquiries 7x faster"
    - "By using the mini variant, we can process 5x more documents within the same budget"
 
-3. **Highlight Trade-offs**: Present clear scenarios for different models:
+3. **強調取捨**：針對不同模型提出清楚的情境：
    - "Option A (GPT-4.1): Highest accuracy but higher cost - ideal for client-facing legal analysis"
    - "Option B (GPT-4.1 mini): 90% of the accuracy at 30% of the cost - perfect for internal document processing"
 
-4. **Use Concrete Examples**: Demonstrate the practical difference in outputs between models to illustrate the value proposition of each option.
+4. **用具體例子**：展示不同模型輸出的實際差異，說明各選項的價值。
 
 ================================================================================
 
@@ -2120,7 +2131,7 @@ When explaining your model choices to business stakeholders, focus on these key 
 
 ## Appendices
 
-## Glossary of Key Terms
+## 詞彙表
 
 | Term | Definition |
 |------|------------|
@@ -2133,7 +2144,7 @@ When explaining your model choices to business stakeholders, focus on these key 
 | **SOTA** | State-of-the-Art; representing the most advanced stage in a field at a given time |
 | **Token** | The basic unit of text that models process (roughly 0.75 words in English) |
 
-## 6.1 Price and Utility Table (Apr 2025)
+## 6.1 價格與用途表（2025 年 4 月）
 
 | Model | Context Window | Input Price (per 1M tokens) | Output Price (per 1M tokens) | Best For |
 |-------|----------------|-----------------------------|-----------------------------|----------|
@@ -2149,9 +2160,9 @@ When explaining your model choices to business stakeholders, focus on these key 
 | o4-mini (med) | 200K | \$1.10* | \$4.40* | Balanced vision + reasoning |
 | o4-mini (high) | 200K | \$1.10* | \$4.40* | Deep reasoning with cost control |
 
-\* *Note: The low/med/high settings affect token usage rather than base pricing. Higher settings may use more tokens for deeper reasoning, increasing per-request cost and latency.*
+\* *註：low/med/high 設定影響的是 token 用量，不是基本價格。較高的設定可能用更多 token 做更深的推理，增加每次請求的成本和延遲。*
 
-## 6.2 Prompt-pattern Quick Sheet (Token vs Latency Deltas)
+## 6.2 Prompt 模式速查表（Token 與延遲差異）
 
 | Prompt Pattern | Description | Token Impact | Latency Impact | Best Model Fit |
 |----------------|-------------|--------------|----------------|----------------|
@@ -2165,7 +2176,7 @@ When explaining your model choices to business stakeholders, focus on these key 
 | **Tournament Ranking** | Compare options pairwise rather than scoring individually | +50-100% tokens | +30-60% latency | o3, o4-mini (high) |
 | **Tool-Calling Reflex** | Prompt model to call tools when uncertainty is detected | +10-30% tokens | +20-40% latency | o3, GPT-4.1 |
 
-## 6.3 Links to External Cookbooks & Docs
+## 6.3 外部 Cookbook 與文件連結
 
 ### OpenAI Official Resources
 - [OpenAI Cookbook Main Repository](https://cookbook.openai.com/)
@@ -2194,12 +2205,24 @@ When explaining your model choices to business stakeholders, focus on these key 
 
 
 
-## Contributors
+## 貢獻者
 
- This cookbook serves as a joint collaboration effort between OpenAI and [Tribe AI](https://www.tribe.ai/)
+ 這份 cookbook 是 OpenAI 和 [Tribe AI](https://www.tribe.ai/) 合作完成的成果。
 - [Kashyap Coimbatore Murali](https://www.linkedin.com/in/kashyap-murali/)
 - [Nate Harada](https://www.linkedin.com/in/nate-harada/) 
 - [Sai Prashanth Soundararaj](https://www.linkedin.com/in/saiprashanths/)
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 選模型先看任務性質：長文件和一般任務用 GPT-4.1 系列，需要多步驟推理和 tool 使用用 o3，要便宜又快的推理用 o4-mini。
+- 常見模式是先用便宜的模型處理廣度，再升級到強的模型做深度審查，成本和品質都兼顧。
+- 把工作拆成階段、每階段用最合適的模型（例如 gpt-4.1 做 OCR、o4-mini 做推理），比單用一個最強模型省很多。
+- 動態限制輸出選項（List of Literals）和 LLM-as-judge 驗證，能讓 citation 可追溯、答案更可靠。
+- 上線前要有量化的成功標準、eval suite、成本護欄、版本固定與 rollback 計畫，高風險輸出要有人工審閱。
+
+## 練習
+
+1. 把 3A 範例的 chunk 數 20 改成 10 或 40，並調整 `max_depth`，觀察導覽結果和成本怎麼變。
+2. 把 3A 的 router 模型從 `gpt-4.1-mini` 換成 `gpt-4.1-nano`，比較它選出的 chunk 和 scratchpad 的品質。
+3. 在 3C 第二階段多加一個自訂 function（例如檢查郵遞區號是否符合 county），並確認 o4-mini 會呼叫它來補欄位。

@@ -1,57 +1,66 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_notion.ipynb
 ---
 
-# GPT Actions library - Notion
+# GPT Actions library：Notion
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_notion.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_notion.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你做一個連到 Notion 的 GPT Action。它接收使用者的問題，用 Notion 的搜尋功能掃描相關頁面，再回傳符合頁面的資訊。
+
+## 學完你會
+- 在 Notion 建立 Internal Integration，取得 Internal Integration Secret
+- 設定 Custom GPT 的 Instructions、OpenAPI schema 和 Bearer 認證
+- 知道要把頁面或 wiki 分享給 integration，GPT 才查得到
+
+## 開跑前
+- 一個有內容頁面的 Notion workspace
+- 在 Notion 建立的 integration 和它的 secret
 
 
+## 簡介
 
-## Introduction
-
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這一頁是給開發者的說明，教你替特定應用程式建 GPT Action。開始之前，請先熟悉以下內容： 
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to **Notion**. This Action takes a user’s question, scans the relevant Notion pages using Notions search functionality, and then returns information on the matching pages.
+這個 GPT Action 說明怎麼連到 **Notion**。這個 Action 接收使用者的問題，用 Notion 的搜尋功能掃描相關的 Notion 頁面，然後回傳符合頁面的資訊。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境
 
-**Value**: Users can now harness ChatGPT’s natural language capabilities to directly connect to, query, and synthesize their knowledge within Notion. Administrators can explicitly share pages with the integration to manage access.
+**價值**：使用者現在可以用 ChatGPT 的自然語言能力，直接連到 Notion 裡的知識，並查詢和整合。管理員可以明確地把頁面分享給 integration 來管理存取權限。
 
-**Example Use Cases**: 
-- A new employee seeks quick how-to information on setting up a new system
-- A support agent needs to quickly retrieve information from Notion without reading the entire document
-- Users want to synthesize information and create summaries or transformations for use in other aspects of their work
+**使用情境範例**： 
+- 新進員工想快速找到設定新系統的 how-to 資訊
+- 客服人員需要從 Notion 快速取得資訊，不用讀完整份文件
+- 使用者想整合資訊，做成摘要或轉換格式，用在工作的其他地方
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- Application Website: https://www.notion.so/
-- Application API Documentation: https://developers.notion.com/reference/intro
-- Notion Authorization Approach: https://developers.notion.com/docs/authorization
-    - NOTE:  Notion only allows OAuth with "Public Integrations."  Refer to the linked documentation to determine what is best suited for your needs
+開始之前，先看看這些應用程式的連結：
+- 應用程式網站：https://www.notion.so/
+- 應用程式 API 文件：https://developers.notion.com/reference/intro
+- Notion 授權方式：https://developers.notion.com/docs/authorization
+    - 注意：Notion 只允許「Public Integrations」使用 OAuth。請參考連結的文件，判斷哪種最適合你的需求
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Set up a notion workspace with populated pages
-- Sharing pages through notion works best with specific Wikis.  Consider organizing your knowledge base into a wiki or set of wikis
+開始之前，請先在你的應用程式環境完成以下步驟：
+- 建立一個有內容頁面的 notion workspace
+- 在 notion 分享頁面，搭配特定的 Wiki 效果最好。可以考慮把知識庫整理成一個或一組 wiki
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/.gpt_action_getting_started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有問題可以看 [Getting Started Example](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/.gpt_action_getting_started)，裡面有這一步的詳細說明。
 
 ```python
 **Context**: You are a helpful chatbot focussed on retrieving information from a company's Notion. An administrator has given you access to a number of useful Notion pages.  You are to act similar to a librarian and be helpful answering and finding answers for users' questions.
@@ -72,7 +81,7 @@ Once you've created a Custom GPT, copy the text below in the Instructions panel.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有問題可以看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started)，裡面有這一步的詳細說明。
 
 ```python
 openapi: 3.1.0
@@ -358,39 +367,49 @@ paths:
                                     type: string
 ```
 
-## Authentication Instructions
+## 認證設定說明
 
-Below are instructions on setting up authentication with this 3rd party application.
+以下是設定這個第三方應用程式認證的步驟。
 
-### Pre-Action Steps
+### Action 前的步驟
 
-Before you set up authentication in ChatGPT, please take the following steps in the Notion.
+在 ChatGPT 設定認證之前，請先在 Notion 完成以下步驟。
 
-1. Go to the Notion Settings Page for your workspace
-2. Navigate to My Connections > Develop or Manage Integrations
-3. Create new Integration marked as Internal
-4. Locate your integration and find the API Key labeled: Internal Integration Secret.  This is the bearer token for this integration.
+1. 前往 workspace 的 Notion Settings 頁面
+2. 到 My Connections > Develop or Manage Integrations
+3. 建立新的 Integration，標記為 Internal
+4. 找到你的 integration，找到標示為 Internal Integration Secret 的 API Key。這就是這個 integration 的 bearer token。
 
-**NOTE!** You need to share specific pages, databases, or wikis with the integration in order to access them in ChatGPT.  Do this by selecting the ... button on the upper right of a page and select the appropriate connection.
+**注意！** 你必須把特定的頁面、資料庫或 wiki 分享給 integration，才能在 ChatGPT 裡存取。做法是點頁面右上角的 ... 按鈕，選擇對應的 connection。
 
-**NOTE!** Notion allows integrations to leverage OAuth if they are marked as "Public."  Review [Notion's Auth Documentation](https://developers.notion.com/docs/authorization) to determine what integration path is best for your needs.
+**注意！** 如果 integration 標記為「Public」，Notion 允許它使用 OAuth。請看 [Notion's Auth Documentation](https://developers.notion.com/docs/authorization)，判斷哪種 integration 路線最適合你的需求。
 
 ![notion_connections.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/creating_notion_integration.png)
 
 ![sharing_notion_pages.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/sharing_notion_with_GPT.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose **"API Key"**. Enter in the information below. 
+在 ChatGPT 點「Authentication」，選 **"API Key"**，填入下列資訊。 
 
-- **API Key**: Use Internal Integration Secret from steps above
-- **Auth Type**: Bearer
+- **API Key**：用上面步驟取得的 Internal Integration Secret
+- **Auth Type**：Bearer
 
-### FAQ & Troubleshooting
+### FAQ 與疑難排解
 
-- *Search returns nothing* If you don't see any pages returned when running a search, double check that you've shared relevant pages with the application from Notion
+- *搜尋沒有回傳任何東西*：如果搜尋沒有回傳任何頁面，請再確認你已經在 Notion 把相關頁面分享給這個應用程式
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想要我們優先支援的整合嗎？我們的整合有錯誤嗎？歡迎在 GitHub 提 PR 或 issue，我們會處理。*
 
 
-<!-- tutor:summary -->
+## 重點整理
+- Notion 的 Internal Integration 用 Bearer token 認證，Public Integration 才能走 OAuth。
+- integration 只能存取被明確分享給它的頁面、資料庫或 wiki，這同時也是權限管理的方式。
+- 搜尋沒結果時，先檢查頁面有沒有分享給 integration。
+- 把知識庫整理成 wiki 再分享，管理起來比較省事。
+- Instructions 和 OpenAPI schema 決定 GPT 怎麼用 Notion 的搜尋 API。
+
+## 練習
+1. 建一個 Internal Integration，只分享一個測試頁面，確認 GPT 只搜得到那一頁。
+2. 在 Instructions 加一條規則，要求回答時附上來源頁面的標題。
+3. 改 OpenAPI schema 裡搜尋請求的參數（例如篩選條件），觀察回傳結果的變化。

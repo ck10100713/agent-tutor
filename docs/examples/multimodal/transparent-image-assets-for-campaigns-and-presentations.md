@@ -1,35 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.ipynb
 ---
-
-# Generate Transparent Image Assets for Campaigns and Presentations
+# 為行銷活動與簡報產生透明背景圖片素材
 
 > 原文：[examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.ipynb)
 
-Generate reusable transparent PNG assets for seasonal ecommerce campaigns and branded PowerPoint presentations.
+為季節性電商活動和品牌 PowerPoint 簡報，產生可重複使用的透明 PNG 素材。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用圖片模型直接產生帶 alpha channel 的透明 PNG，不用再手動去背。同一批素材可以放到不同的活動背景、簡報主題、設計模板和商品 mockup 上。
+
+## 學完你會
+
+- 用 `background="transparent"` 和 `output_format="png"` 產生透明 PNG，並檢查 alpha channel 是否真的存在。
+- 寫出只描述主體、不帶背景的 prompt，避免模型把背景畫出來。
+- 把同一份透明素材套到網站、簡報和服飾 mockup 上重複使用。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，並有支援透明背景的圖片模型權限。
+- 建網站和簡報的部分會用到 Codex。
 
 A great image should work on any background. Transparent image assets make it easy to reuse the same visuals across campaigns, websites, presentations, and product catalogs without white boxes or manual background removal.
 
-This cookbook covers four customer use cases:
+好的圖片應該放在任何背景上都能用。透明素材讓你把同一批視覺資產重複用在活動、網站、簡報和商品目錄，不會有白框，也不用手動去背。
 
-- **Seasonal e-commerce campaigns:** Generate transparent product images once and reuse them across storefront backgrounds, seasonal banners, and marketing layouts.
-- **Branded enterprise presentations:** Generate transparent charts that blend directly into required PowerPoint themes and gradient slide backgrounds.
-- **Design-template assets:** Generate app icons, stickers, and decorative elements that users can place on any template or background.
-- **Print-on-demand merchandise:** Apply one transparent print design to different blank garments and product mockups.
+這份 cookbook 涵蓋四種客戶情境：
 
-## Set up
+- **季節性電商活動：** 只產生一次透明商品圖，就能放到不同的店面背景、季節 banner 和行銷版型上。
+- **品牌企業簡報：** 產生透明圖表，直接融入指定的 PowerPoint 主題和漸層投影片背景。
+- **設計模板素材：** 產生 app icon、貼紙和裝飾元素，使用者可以放在任何模板或背景上。
+- **隨需列印商品：** 把同一份透明印花設計套到不同的空白衣物和商品 mockup 上。
 
-Install the Python packages with `pip install openai pillow`, and set `OPENAI_API_KEY` in your environment. You will also need access to a transparency-capable image model and Codex to build the website.
+## 環境設定
 
-This example uses `gpt-image-2.5-flare` and requests PNG output with `background="transparent"`. To compare a model optimized for demanding quality requirements, set `IMAGE_MODEL` to `"gpt-image-2.5-sunburst"`. Both models support transparent backgrounds. Keep the prompts, sizes, and `quality="high"` unchanged for the first comparison, then inspect transparency, fine edges, and text before tuning quality or latency.
+用 `pip install openai pillow` 安裝 Python 套件，並在環境變數設定 `OPENAI_API_KEY`。你還需要支援透明背景的圖片模型，以及用來建網站的 Codex。
 
-The images and screenshots below are retained from the original GPT Image 2 version of this cookbook. They illustrate the workflows, not measured GPT Image 2.5 results. Save a copy of those assets before rerunning the generation cells, which write to the same filenames.
+這個範例用 `gpt-image-2.5-flare`，並以 `background="transparent"` 要求 PNG 輸出。如果想比較偏重高品質需求的模型，把 `IMAGE_MODEL` 設成 `"gpt-image-2.5-sunburst"`，兩個模型都支援透明背景。第一次比較時，prompt、尺寸和 `quality="high"` 都先不要動，先檢查透明度、細緻邊緣和文字，再去調品質或延遲。
 
-For more background, see the [image prompting guide](https://developers.openai.com/api/docs/guides/image-prompting), the [OpenAI models page](https://developers.openai.com/api/docs/models), and the [image generation guide](https://developers.openai.com/api/docs/guides/image-generation).
+下面的圖片和截圖沿用這份 cookbook 原本 GPT Image 2 版本的成果。它們是用來說明流程，不是 GPT Image 2.5 的實測結果。重跑產生圖片的 cell 之前，先備份這些素材，因為重跑會寫到同樣的檔名。
+
+更多背景可以看 [image prompting guide](https://developers.openai.com/api/docs/guides/image-prompting)、[OpenAI models page](https://developers.openai.com/api/docs/models) 和 [image generation guide](https://developers.openai.com/api/docs/guides/image-generation)。
 
 ```python
 import base64
@@ -49,15 +62,15 @@ asset_dir = Path("images/transparent-image-assets")
 asset_dir.mkdir(parents=True, exist_ok=True)
 ```
 
-## Use case 1: Seasonal e-commerce campaigns
+## 情境 1：季節性電商活動
 
-A fictional home-fragrance brand wants to reuse one product collection across multiple seasonal storefronts. Generate transparent product shots once, then place the same assets over different campaign backgrounds without cutting them out by hand.
+一個虛構的居家香氛品牌，想把同一組商品用在多個季節性店面。先一次產生透明商品圖，再把同樣的素材放到不同的活動背景上，不用手動裁切。
 
-### 1.1 Define the original product prompts
+### 1.1 定義原始商品 prompt
 
-The website uses four products from the same fictional home-fragrance brand. Each original product description is followed by the same brand-and-transparency instructions to keep the collection visually consistent.
+網站用了同一個虛構香氛品牌的四項商品。每個商品描述後面都接上相同的品牌與透明背景指示，讓整組商品風格一致。
 
-**Note:** Prompt instructions take priority over `background="transparent"`. If the prompt describes a backdrop, scene, color, or other background, the model may generate that background instead of producing transparency. Keep the prompt focused on an isolated subject and explicitly request a transparent background.
+**注意：** prompt 的指示優先於 `background="transparent"`。如果 prompt 描述了背景、場景、顏色或其他背景元素，模型可能會畫出那個背景，而不是輸出透明。prompt 要聚焦在單獨的主體，並明確要求透明背景。
 
 ```python
 brand_prompt = (
@@ -108,7 +121,7 @@ products = {
 }
 ```
 
-### 1.2 Generate high-quality transparent PNGs
+### 1.2 產生高品質透明 PNG
 
 ```python
 generate_images = True
@@ -128,9 +141,9 @@ if generate_images:
         (asset_dir / f"{filename}.png").write_bytes(image_bytes)
 ```
 
-### 1.3 Inspect the four generated products
+### 1.3 檢查四個產生的商品
 
-These are the original, unchanged transparent PNGs used on the campaign website.
+這些是活動網站用的原始、未修改的透明 PNG。
 
 | Wild Fig Eau de Parfum | Meadow Botanical Oil |
 | --- | --- |
@@ -138,7 +151,7 @@ These are the original, unchanged transparent PNGs used on the campaign website.
 | **Cedar Reed Diffuser** | **Garden After Rain Candle** |
 | ![Cedar Reed Diffuser with fine reeds and feathery pampas fibers](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/reed-diffuser.png) | ![Garden After Rain Candle in a frosted amber-glass vessel](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/garden-candle.png) |
 
-The next cell confirms that every file contains an alpha channel and reports how much of each image is fully transparent.
+下一個 cell 會確認每個檔案都有 alpha channel，並回報每張圖有多少比例是完全透明的。
 
 ```python
 for filename in products:
@@ -156,11 +169,11 @@ for filename in products:
         )
 ```
 
-### 1.4 Build a seasonal campaign website with Codex
+### 1.4 用 Codex 建立季節活動網站
 
-Give Codex the four generated PNGs and ask it to build a single-page storefront for STILLROOM. The finished site places the same products over Spring, Summer, Autumn, and Winter campaign backgrounds, lets visitors switch between one product, two products, or the full collection, and includes a checkerboard view that makes the transparency visible.
+把四張產生的 PNG 交給 Codex，請它為 STILLROOM 建一個單頁店面。完成的網站會把同樣的商品放到春、夏、秋、冬四種活動背景上，訪客可以切換單品、雙品或全系列，還有一個棋盤格檢視，讓透明效果看得見。
 
-Run the following cell and paste its output into Codex alongside the image files.
+執行下面的 cell，把輸出連同圖片檔一起貼給 Codex。
 
 ```python
 codex_prompt = '''
@@ -184,29 +197,29 @@ replacement images or run a separate background-removal step.
 print(codex_prompt)
 ```
 
-### 1.5 View the finished storefront
+### 1.5 看完成的店面
 
-The screenshots below show the same four transparent assets reused across different campaign backgrounds and product arrangements.
+下面的截圖是同樣四個透明素材，放在不同活動背景和商品排列上的樣子。
 
-**Spring campaign: the full four-product collection on a green background.**
+**春季活動：四項商品的完整系列，綠色背景。**
 
 ![STILLROOM spring campaign website showing all four transparent product images on a green background](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/stillroom-spring-campaign.png)
 
-**Winter campaign: a two-product arrangement on a dark blue background.**
+**冬季活動：兩項商品的排列，深藍色背景。**
 
 ![STILLROOM winter campaign website showing the reed diffuser and candle on a dark blue background](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/stillroom-winter-campaign.png)
 
-#### Look closely at the difficult edges
+#### 仔細看難處理的邊緣
 
-Switch between seasons and inspect the clear and frosted glass, the perfume bottle's sheer ribbon, the diffuser's thin reeds and hairlike pampas fibers, and the candle's fine cotton cord. Conventional background-removal tools can clip these details, add halos, or flatten translucent materials. Generating the alpha channel directly helps preserve those subtle edges when the same product is placed on very different backgrounds.
+切換季節，檢查透明和霧面玻璃、香水瓶上的薄紗緞帶、擴香竹的細竹枝和髮絲般的蒲葦纖維，還有蠟燭的細棉芯。傳統的去背工具可能會切掉這些細節、產生光暈，或把半透明材質壓平。直接產生 alpha channel，能在同一件商品放到差異很大的背景上時，保留這些細微的邊緣。
 
-## Use case 2: Branded enterprise presentations
+## 情境 2：品牌企業簡報
 
-Enterprise teams often have to use a required PowerPoint theme with a specific background color or gradient. An AI-generated chart with an opaque white background can clash with that theme, while a transparent PNG lets the slide's original background remain visible.
+企業團隊常常得用指定的 PowerPoint 主題，背景有特定顏色或漸層。AI 產生的圖表如果是不透明的白底，會跟主題衝突，透明 PNG 則能讓投影片原本的背景露出來。
 
-### 2.1 Define the presentation scenario and mock business data
+### 2.1 定義簡報情境和模擬的業務資料
 
-The fictional Northstar Cloud board-review slide uses two data series: quarterly revenue and the regional distribution of qualified sales opportunities. These values are examples, not real company results.
+虛構的 Northstar Cloud 董事會檢討投影片用兩組資料：每季營收，以及合格銷售機會的區域分布。這些數字只是範例，不是真實的公司成果。
 
 
 ```python
@@ -233,11 +246,11 @@ print(f"Regional pipeline: {regional_pipeline} percent")
 print(f"Q1-to-Q4 revenue growth: {revenue_growth:.0%}")
 ```
 
-### 2.2 Define transparent chart prompts
+### 2.2 定義透明圖表的 prompt
 
-Ask for transparent areas across the entire chart, not just outside its silhouette. For a dark enterprise theme, also specify white or pale labels, bright brand-compatible colors, and no card, frame, panel, or filled plot area.
+要求整張圖表都是透明區域，不只是輪廓外面。深色企業主題還要指定白色或淺色的標籤、明亮且符合品牌的顏色，以及不要卡片、外框、面板或填色的繪圖區。
 
-The model receives the exact mock values, but generated image content is still raster artwork. Verify that labels, values, and proportions match the source data before using the charts. For production reporting where numerical precision is critical, render charts deterministically and use image generation for illustrations or other visual elements.
+模型會拿到精確的模擬數值，但產生的圖片內容終究是點陣圖。使用前要檢查標籤、數值和比例是否跟來源資料一致。如果正式報表需要精確的數字，圖表請用程式確定性地繪製，圖片生成留給插圖或其他視覺元素。
 
 
 ```python
@@ -275,9 +288,9 @@ chart_prompts = {
 }
 ```
 
-### 2.3 Generate transparent PNG charts
+### 2.3 產生透明 PNG 圖表
 
-As in the product example, request `background="transparent"` and `output_format="png"`. A landscape size of `1536x1024` gives the charts room for their labels, and `quality="high"` helps with small text.
+跟商品範例一樣，要求 `background="transparent"` 和 `output_format="png"`。橫向的 `1536x1024` 讓圖表有足夠空間放標籤，`quality="high"` 則有助於小字。
 
 
 ```python
@@ -298,15 +311,15 @@ if generate_charts:
         (asset_dir / f"{filename}.png").write_bytes(image_bytes)
 ```
 
-### 2.4 Inspect the generated chart assets
+### 2.4 檢查產生的圖表素材
 
-The following files are separate transparent PNGs, ready to place on top of an enterprise slide theme.
+下面是兩個獨立的透明 PNG，可以直接放到企業投影片主題上。
 
 | Quarterly revenue | Regional pipeline mix |
 | --- | --- |
 | ![Transparent bar chart showing quarterly revenue increasing from 42 million to 78 million dollars](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/quarterly-revenue-growth.png) | ![Transparent doughnut chart showing regional pipeline shares for North America, Europe, and APAC](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/regional-pipeline-mix.png) |
 
-The next cell checks that both files contain real alpha channels and reports how much of each chart image is fully transparent.
+下一個 cell 會檢查兩個檔案是否有真正的 alpha channel，並回報每張圖表有多少比例是完全透明的。
 
 
 ```python
@@ -328,11 +341,11 @@ for filename in chart_prompts:
         )
 ```
 
-### 2.5 Build a branded PowerPoint slide with Codex
+### 2.5 用 Codex 建立品牌 PowerPoint 投影片
 
-Give Codex the two transparent chart PNGs, their mock source data, and the required slide theme. Ask it to preserve the alpha channels and use the slide's native background rather than adding white rectangles or decorative background shapes.
+把兩張透明圖表 PNG、模擬的來源資料和指定的投影片主題交給 Codex。請它保留 alpha channel，使用投影片原生的背景，不要加白色矩形或裝飾性的背景形狀。
 
-Run the following cell and paste its output into Codex alongside the chart image files.
+執行下面的 cell，把輸出連同圖表圖片檔一起貼給 Codex。
 
 
 ```python
@@ -366,20 +379,20 @@ notice, and page number as editable PowerPoint text.
 print(presentation_prompt)
 ```
 
-### 2.6 View the finished enterprise slide
+### 2.6 看完成的企業投影片
 
-PowerPoint files are not rendered directly in notebook output, so the image below shows the completed single-slide presentation. Both generated charts remain separate PNG assets in the underlying PowerPoint file.
+PowerPoint 檔案不會直接在 notebook 輸出裡顯示，所以下面的圖是完成的單頁簡報。兩張產生的圖表在 PowerPoint 檔案裡仍然是獨立的 PNG 素材。
 
 ![Enterprise board-review slide with transparent quarterly revenue and regional pipeline charts placed directly on a subtle navy-to-teal gradient background](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/enterprise-chart-slide.png)
 
-The gradient remains visible behind the bars, through the center of the doughnut chart, and around each label because the charts contain genuine alpha channels. This lets teams add generated visual assets to a required enterprise presentation theme without introducing distracting white boxes.
+漸層在長條後面、甜甜圈圖的中間和每個標籤周圍都看得到，因為這些圖表有真正的 alpha channel。團隊可以把產生的視覺素材加進指定的企業簡報主題，不會出現礙眼的白框。
 
 
-## Use case 3: Design-template assets
+## 情境 3：設計模板素材
 
-Design platforms need reusable app icons, stickers, and decorative elements that work across many layouts. Generating these elements with transparent backgrounds lets users drop the same assets into any template without masking, cutting out, or repainting a background.
+設計平台需要能用在各種版面的 app icon、貼紙和裝飾元素。用透明背景產生這些元素，使用者就能把同樣的素材放進任何模板，不用遮罩、去背或重畫背景。
 
-### 3.1 Generate transparent design elements
+### 3.1 產生透明的設計元素
 
 ```python
 design_prompts = {
@@ -420,23 +433,23 @@ if generate_design_assets:
         (asset_dir / f"{filename}.png").write_bytes(image_bytes)
 ```
 
-### 3.2 Place the assets on a simple website
+### 3.2 把素材放到簡單的網站上
 
-Each asset is an independent transparent PNG, ready to move, resize, or reuse on another template.
+每個素材都是獨立的透明 PNG，可以移動、縮放，或用在別的模板上。
 
 | App icon | Transparent sticker | Decorative element |
 | --- | --- | --- |
 | ![Transparent rounded app icon with an abstract folded paper bird](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/design-app-icon.png) | ![Transparent strawberry character sticker with a close-fitting die-cut border](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/design-sticker.png) | ![Transparent botanical decoration with fine branches and separate leaves](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/design-decoration.png) |
 
-The sample webpage combines the three assets on a colored template and lets visitors switch the background while keeping the same PNGs in place.
+範例網頁把三個素材組合在有顏色的模板上，訪客可以切換背景，同樣的 PNG 維持在原位。
 
 ![Simple design-template website showing a transparent app icon, strawberry sticker, and botanical decoration reused on a colored canvas](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/design-template-studio.png)
 
-## Use case 4: Print-on-demand merchandise
+## 情境 4：隨需列印商品
 
-Merchandise platforms can generate one print-ready transparent design and place it on different products without removing a white rectangle for every garment color. A single artwork can become a T-shirt, sweatshirt, or another item in a seller's catalog.
+商品平台可以產生一份可直接列印的透明設計，放到不同商品上，不用針對每種衣物顏色去掉白色矩形。同一份圖案可以變成 T 恤、大學 T 或賣家目錄裡的其他商品。
 
-### 4.1 Generate a reusable print design and blank garments
+### 4.1 產生可重複使用的印花設計和空白衣物
 
 ```python
 merchandise_prompts = {
@@ -482,15 +495,15 @@ if generate_merchandise_assets:
         (asset_dir / f"{filename}.png").write_bytes(image_bytes)
 ```
 
-### 4.2 Apply one design to multiple products
+### 4.2 把一份設計套到多個商品
 
-The print artwork and both blank garments are separate transparent images. Keeping them separate means a seller can reuse the design across garment types, product colors, and future catalog layouts.
+印花圖案和兩件空白衣物都是各自獨立的透明圖片。分開保存，賣家就能把設計用在不同衣物類型、商品顏色和之後的目錄版型上。
 
 | Reusable print design | Blank ivory T-shirt | Blank forest-green sweatshirt |
 | --- | --- | --- |
 | ![Transparent outdoor apparel illustration with mountains, pine trees, and a setting sun](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/merchandise-design.png) | ![Transparent product photograph of a blank ivory crew-neck T-shirt](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/merchandise-blank-tshirt.png) | ![Transparent product photograph of a blank forest-green crew-neck sweatshirt](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/merchandise-blank-sweatshirt.png) |
 
-Use Pillow to trim empty transparent margins, place the same artwork over each garment, and create a simple two-product catalog preview.
+用 Pillow 裁掉透明的空白邊緣，把同一份圖案放到每件衣物上，再做出簡單的雙商品目錄預覽。
 
 ```python
 from PIL import ImageDraw, ImageFont
@@ -566,16 +579,28 @@ canvas.convert("RGB").save(output_path, optimize=True)
 print(f"Saved merchandise preview to {output_path}")
 ```
 
-The same transparent design blends naturally into both garment colors while the blank products remain available for other designs.
+同一份透明設計自然地融入兩種衣物顏色，空白商品仍然可以留給其他設計使用。
 
 ![Print-on-demand catalog showing the same transparent outdoor illustration printed on an ivory T-shirt and a forest-green sweatshirt](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/multimodal/images/transparent-image-assets/merchandise-print-mockups.png)
 
-## Evaluate the generated assets
+## 評估產生的素材
 
-Collect human feedback on transparency, edge quality, brand fit, and usefulness across representative campaigns, slides, design templates, and merchandise mockups. Use a vision-capable language model to evaluate the same assets against a clear rubric, flagging opaque backgrounds, clipped details, poor garment placement, and chart labels that do not match the source data.
+針對有代表性的活動、投影片、設計模板和商品 mockup，收集人工對透明度、邊緣品質、品牌契合度和實用性的回饋。也可以用具備視覺能力的語言模型，依明確的評分標準檢查同一批素材，標出不透明的背景、被切掉的細節、衣物上位置不佳的圖案，以及跟來源資料不符的圖表標籤。
 
-## Conclusion
+## 結論
 
-Transparent PNG assets let teams reuse generated images across seasonal campaigns, branded presentations, design templates, and merchandise catalogs without manual background removal. Pairing these workflows with human and vision-model evaluations helps keep creative output consistent as usage grows.
+透明 PNG 素材讓團隊能把產生的圖片重複用在季節活動、品牌簡報、設計模板和商品目錄，不用手動去背。再搭配人工和視覺模型的評估，用量變大時也能維持創意產出的一致性。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- `background="transparent"` 搭配 `output_format="png"` 會直接產生 alpha channel，邊緣比事後去背更能保留細節。
+- prompt 只能描述孤立的主體，只要寫到背景或場景，模型就可能照畫，透明設定會被蓋過。
+- 圖表要求整張透明，包含繪圖區內部，深色主題要指定淺色標籤。
+- 圖片生成出來的圖表是點陣圖，數字要檢查；需要精確數值的正式報表請用程式繪製。
+- 素材和空白商品分開保存，才能在不同背景、衣物和版型間重複使用。
+
+## 練習
+
+1. 把產生商品圖的 cell 裡的 `quality` 改成別的值，比較透明邊緣和細節的差異。
+2. 在某個商品 prompt 故意加上一句背景描述，看看輸出還是不是透明，再改回去。
+3. 改檢查 alpha channel 的 cell，額外算出每張圖「半透明像素」（alpha 介於 0 和 255 之間）的比例，用來判斷邊緣品質。

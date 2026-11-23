@@ -1,27 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.ipynb
 ---
-
-# Vision Fine-tuning on GPT-4o for Visual Question Answering
+# 用 GPT-4o 做 Vision Fine-tuning：視覺問答
 
 > 原文：[examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 OCR-VQA 資料集裡的書籍封面圖片和問答配對，對 GPT-4o 做 vision fine-tuning，讓它更會回答「這本書的書名、作者、類型是什麼」這類問題。最後拿測試集比較 fine-tune 前後的準確度。
 
+## 學完你會
 
-We're excited to announce the launch of [Vision Fine-Tuning on GPT-4o](https://openai.com/index/introducing-vision-to-the-fine-tuning-api/), a cutting-edge multimodal fine-tuning capability that empowers developers to fine-tune GPT-4o using both **images** and **text**. With this new feature, you can customize models to have stronger image understanding capabilities, unlocking possibilities across various industries and applications.
+- 把圖片加文字的問答資料整理成 vision fine-tuning 要求的 Chat Completions 訊息格式，圖片用 base64 編碼，輸出成 `.jsonl`。
+- 用 Files API 上傳資料，並用 fine-tuning API 建立 GPT-4o 的 fine-tuning job。
+- 用 GPT-4o 當評審，把預測答案和標準答案的相似度分級，並按問題類型比較 fine-tune 前後的差異。
 
-From **advanced visual search** to **improved object detection** for autonomous vehicles or smart cities, vision fine-tuning enables you to craft solutions tailored to your specific needs. By combining text and image inputs, this product is uniquely positioned for tasks like **visual question answering**, where detailed, context-aware answers are derived from analyzing images. In general, this seems to be most effective when the model is presented with questions and images that resemble the training data as we are able to teach the model how to search and identify relevant parts of the image to answer the question correctly. Similarly to fine-tuning on text inputs, vision fine-tuning is not as useful for teaching the model new information.
+## 開跑前
 
-In this guide, we’ll walk you through the steps to fine-tune GPT-4o with multimodal inputs. Specifically, we’ll demonstrate how to train a model for answering questions related to **images of books**, but the potential applications span countless domains—from **web design** and **education** to **healthcare** and **research**.
+- 需要 OpenAI API key，fine-tuning 和推論都會產生費用。
+- 資料集透過 HuggingFace 下載。
 
-Whether you're looking to build smarter defect detection models for manufacturing, enhance complex document processing and diagram understanding, or develop applications with better visual comprehension for a variety of other use cases, this guide will show you just how fast and easy it is to get started.
+OpenAI 推出了 [GPT-4o 的 Vision Fine-Tuning](https://openai.com/index/introducing-vision-to-the-fine-tuning-api/)，這是一種多模態 fine-tuning 功能，讓開發者可以同時用**圖片**和**文字**來 fine-tune GPT-4o。有了它，你可以把模型客製得更會理解圖片，應用在各種產業和場景。
 
-For more information, check out the full [Documentation](https://platform.openai.com/docs/guides/fine-tuning/vision).
+從**進階的視覺搜尋**，到自駕車或智慧城市的**物件偵測改善**，vision fine-tuning 讓你做出貼合自己需求的解法。結合文字和圖片輸入，它特別適合像**視覺問答（visual question answering）** 這種任務，也就是分析圖片後給出詳細、符合脈絡的答案。整體來說，當模型面對的問題和圖片跟訓練資料很像時效果最好，因為我們能教模型怎麼去找、怎麼辨認圖片中跟問題相關的部分。跟文字 fine-tuning 一樣，vision fine-tuning 對教模型新知識沒什麼幫助。
+
+這篇會一步步帶你用多模態輸入 fine-tune GPT-4o。具體來說，我們會訓練一個回答**書籍圖片**相關問題的模型，不過應用範圍很廣，從**網頁設計**、**教育**到**醫療**和**研究**都可以。
+
+不管你想做更聰明的製造業瑕疵偵測模型、強化複雜文件處理和圖表理解，還是開發其他需要更好視覺理解的應用，這篇都會讓你看到上手有多快多簡單。
+
+更多資訊請看完整的[文件](https://platform.openai.com/docs/guides/fine-tuning/vision)。
 
 ```python
 from openai import OpenAI, ChatCompletion
@@ -31,11 +41,11 @@ import os
 client = OpenAI()
 ```
 
-### Load Dataset
+### 載入資料集
 
-We will work with a dataset of question-answer pairs on images of books from the [OCR-VQA dataset](https://ocr-vqa.github.io/), accessible through HuggingFace. This dataset contains 207,572 images of books with associated question-answer pairs inquiring about title, author, edition, year and genre of the book. In total, the dataset contains ~1M QA pairs. For the purposes of this guide, we will only use a small subset of the dataset to train, validate and test our model.
+我們會使用 [OCR-VQA 資料集](https://ocr-vqa.github.io/)裡書籍圖片的問答配對，可以透過 HuggingFace 取得。這個資料集有 207,572 張書籍圖片，附帶詢問書名、作者、版本、年份和類型的問答配對，總共約 100 萬組 QA。這篇只拿其中一小部分來訓練、驗證和測試模型。
 
-We believe that this dataset will be well suited for fine-tuning on multimodal inputs as it requires the model to not only accurately identify relevant bounding boxes to extract key information, but also reason about the content of the image to answer the question correctly.
+我們認為這個資料集很適合用在多模態輸入的 fine-tuning，因為模型不只要正確找出關鍵資訊所在的 bounding box，還要對圖片內容做推理才能答對。
 
 ```python
 from datasets import load_dataset
@@ -44,7 +54,7 @@ from datasets import load_dataset
 ds = load_dataset("howard-hou/OCR-VQA")
 ```
 
-We'll begin by sampling 150 training examples, 50 validation examples and 100 test examples. We will also explode the `questions` and `answers` columns to create a single QA pair for each row. Additionally, since our images are stored as byte strings, we'll convert them to images for processing.
+先抽樣 150 筆訓練資料、50 筆驗證資料和 100 筆測試資料。我們也會把 `questions` 和 `answers` 欄位展開（explode），讓每一列只有一組 QA。另外，圖片是以 byte string 儲存的，所以要先轉成圖片才能處理。
 
 ```python
 import pandas as pd
@@ -87,11 +97,11 @@ ds_val = ds_val[['question', 'answer', 'image']]
 ds_test = ds_test[['question', 'answer', 'image']]
 ```
 
-Let's inspect a random sample from the training set.
+來看一筆隨機抽出的訓練資料。
 
-In this example, the question prompts the model to determine the title of the book. In this case, the answer is quite ambiguous as there is the main title "Patty's Patterns - Advanced Series Vol. 1 & 2" as well as the subtitle "100 Full-Page Patterns Value Bundle" which are found in different parts of the image. Also, the name of the author here is not an individual, but a group called "Penny Farthing Graphics" which could be mistaken as part of the title.
+這個例子是問書名。答案其實相當模稜兩可，因為有主標題「Patty's Patterns - Advanced Series Vol. 1 & 2」，也有副標題「100 Full-Page Patterns Value Bundle」，兩者出現在圖片的不同位置。而且這裡的作者不是個人，而是一個叫「Penny Farthing Graphics」的團體，很容易被誤認成書名的一部分。
 
-This type of task is typical in visual question answering, where the model must interpret complex images and provide accurate, context-specific responses. By training on these kinds of questions, we can enhance the model's ability to perform detailed image analysis across a variety of domains.
+這類任務是視覺問答的典型情況：模型必須解讀複雜的圖片，給出準確且符合脈絡的回答。用這類問題訓練，可以提升模型在各種領域做細緻圖片分析的能力。
 
 ```python
 from IPython.display import display
@@ -112,19 +122,19 @@ print('ANSWER:', ds_train.iloc[198]['answer'])
     ANSWER: Patty's Patterns - Advanced Series Vol. 1 & 2: 100 Full-Page Patterns Value Bundle
     ```
 
-### Data Preparation
+### 資料準備
 
-To ensure successful fine-tuning of our model, it’s crucial to properly structure the training data. Correctly formatting the data helps avoid validation errors during training and ensures the model can effectively learn from both text and image inputs. The good news is, this process is quite straightforward.
+要讓 fine-tuning 順利，訓練資料的結構一定要正確。格式正確能避免訓練時的 validation 錯誤，也讓模型能有效地同時從文字和圖片學習。好消息是這個過程很簡單。
 
-Each example in the training dataset should be a conversation in the same format as the **Chat Completions API**. Specifically, this means structuring the data as a series of **messages**, where each message includes a `role` (such as "user" or "assistant") and the `content` of the message.
+訓練資料裡的每個範例都應該是一段對話，格式和 **Chat Completions API** 一樣。也就是把資料組成一連串**訊息**，每則訊息包含 `role`（例如 "user" 或 "assistant"）和訊息的 `content`。
 
-Since we are working with both text and images for vision fine-tuning, we’ll construct these messages to include both content types. For each training sample, the question about the image is presented as a user message, and the corresponding answer is provided as an assistant message.
+因為 vision fine-tuning 同時有文字和圖片，所以訊息裡要包含兩種內容。每筆訓練樣本中，關於圖片的問題是一則 user 訊息，對應的答案則是一則 assistant 訊息。
 
-Images can be included in one of two ways:
-* As **HTTP URLs**, referencing the location of the image.
-* As **data URLs** containing the image encoded in **base64**.
+圖片有兩種放進去的方式：
+* 用 **HTTP URL**，指向圖片的位置。
+* 用 **data URL**，內容是 **base64** 編碼的圖片。
 
-Here’s an example of how the message format should look:
+訊息格式大概長這樣：
 
 ```python
 {
@@ -145,7 +155,7 @@ Here’s an example of how the message format should look:
 }
 ```
 
-Let's start by defining the **system instructions** for our model. These instructions provide the model with important context, guiding how it should behave when processing the training data. Clear and concise system instructions are particularly useful to make sure the model reasons well on both text and images.
+先定義模型的 **system instructions**。這些指示提供重要的脈絡，引導模型處理訓練資料時該怎麼表現。清楚簡潔的 system instructions 特別有助於讓模型在文字和圖片上都推理得好。
 
 ```python
 SYSTEM_PROMPT = """
@@ -183,9 +193,9 @@ You will read the question and examine the corresponding image to provide an acc
 You will be provided with examples of questions and corresponding images of book covers, along with the reasoning and conclusion for each example. Use these examples to guide your reasoning process."""
 ```
 
-To ensure our images are properly formatted for vision fine-tuning, they must be in **base64 format** and either **RGB or RGBA**. This ensures the model can accurately process the images during training. Below is a function that handles the encoding of images, while also converting them to the correct format if necessary.
+為了確保圖片格式符合 vision fine-tuning 的要求，圖片必須是 **base64 格式**，而且是 **RGB 或 RGBA**。這樣模型在訓練時才能正確處理圖片。下面的函式負責編碼圖片，必要時也會轉成正確的格式。
 
-This function allows us to control the quality of the image encoding, which can be useful if we want to reduce the size of the file. 100 is the highest quality, and 1 is the lowest. The maximum file size for a fine-tuning job is 1GB, but we are unlikely to see improvements with a very large amount of training data. Nevertheless, we can use the `quality` parameter to reduce the size of the file if needed to accommodate file size limits.
+這個函式可以控制圖片編碼的品質，想縮小檔案大小時很有用。100 是最高品質，1 是最低。一個 fine-tuning job 的檔案大小上限是 1GB，不過訓練資料量非常大時，通常也不太會有進一步的改善。如果需要符合檔案大小限制，可以用 `quality` 參數把檔案縮小。
 
 ```python
 import base64
@@ -198,7 +208,7 @@ def encode_image(image, quality=100):
     return base64.b64encode(buffered.getvalue()).decode("utf-8")
 ```
 
-We will also include **Few-Shot examples** from the training set as user and assistant messages to help guide the model's reasoning process.
+我們也會從訓練集挑出 **Few-Shot 範例**，用 user 和 assistant 訊息的形式放進去，幫忙引導模型的推理。
 
 
 ```python
@@ -284,9 +294,9 @@ FEW_SHOT_EXAMPLES = [
 ]
 ```
 
-Now that we have our system instructions, few-shot examples, and the image encoding function in place, the next step is to iterate through the training set and construct the messages required for fine-tuning. As a reminder, each training example must be formatted as a conversation and must include both the image (in base64 format) and the corresponding question and answer.
+system instructions、few-shot 範例和圖片編碼函式都備好了，下一步是走過整個訓練集，組出 fine-tuning 需要的訊息。提醒一下，每個訓練範例都必須是對話格式，而且要同時包含圖片（base64 格式）和對應的問題與答案。
 
-To fine-tune GPT-4o, we recommend providing at least **10 examples**, but you’ll typically see noticeable improvements with **50 to 100** training examples. In this case, we'll go all-in and fine-tune the model using our larger training sample of **150 images, and 721 QA pairs**.
+fine-tune GPT-4o 建議至少提供 **10 筆範例**，不過通常用 **50 到 100 筆**訓練範例就能看到明顯改善。這裡我們直接用比較大的訓練樣本：**150 張圖片、721 組 QA**。
 
 ```python
 from tqdm import tqdm
@@ -324,7 +334,7 @@ for idx, example in tqdm(ds_train.iterrows()):
     721it [00:01, 518.61it/s]
     ```
 
-We save our final training set in a `.jsonl` file where each line in the file represents a single example in the training dataset.
+把最終的訓練集存成 `.jsonl` 檔，檔案裡每一行就是訓練資料集中的一筆範例。
 
 ```python
 # save the JSON data to a file
@@ -334,7 +344,7 @@ with open("ocr-vqa-train.jsonl", "w") as f:
         f.write("\n")
 ```
 
-Just like the training set, we need to structure our validation and test sets in the same message format. However, for the test set, there's a key difference: since the test set is used for evaluation, we do not include the assistant's message (i.e., the answer). This ensures the model generates its own answers, which we can later compare to the ground truth for performance evaluation.
+驗證集和測試集也要整理成跟訓練集一樣的訊息格式。不過測試集有個關鍵差異：因為測試集是拿來評估的，所以不放 assistant 的訊息（也就是答案）。這樣模型才會自己產生答案，之後我們再拿它跟標準答案比較來評估表現。
 
 ```python
 # constructing the validation set
@@ -413,7 +423,7 @@ with open("ocr-vqa-test.jsonl", "w") as f:
 
 ### Fine-tuning
 
-Now that we have prepared our training and validation datasets in the right format, we can upload them using the [Files API](https://platform.openai.com/docs/api-reference/files/create) for fine-tuning.
+訓練和驗證資料集都整理成正確格式後，就可以用 [Files API](https://platform.openai.com/docs/api-reference/files/create) 上傳來做 fine-tuning。
 
 ```python
 # upload training file
@@ -429,9 +439,9 @@ val_file = client.files.create(
 )
 ```
 
-Once the files are uploaded, we're ready to proceed to the next step: starting the fine-tuning job.
+檔案上傳完成後，就能進入下一步：啟動 fine-tuning job。
 
-To create a fine-tuning job, we use the fine-tuning API. This may take some time to complete, but you can track the progress of the fine-tuning job in the [Platform UI](https://platform.openai.com/finetune/).
+要建立 fine-tuning job，我們用 fine-tuning API。這可能要花一段時間，不過你可以在 [Platform UI](https://platform.openai.com/finetune/) 追蹤 fine-tuning job 的進度。
 
 ```python
 # create fine tuning job
@@ -452,9 +462,9 @@ client.fine_tuning.jobs.create(
     FineTuningJob(id='ftjob-I1GKWTvusx0900L4ggohrGCP', created_at=1730479789, error=Error(code=None, message=None, param=None), fine_tuned_model=None, finished_at=None, hyperparameters=Hyperparameters(n_epochs='auto', batch_size='auto', learning_rate_multiplier='auto'), model='gpt-4o-2024-08-06', object='fine_tuning.job', organization_id='org-l89177bnhkme4a44292n5r3j', result_files=[], seed=662273734, status='validating_files', trained_tokens=None, training_file='file-UzGnMr4kYPgcFeuq121UBifQ', validation_file='file-LoWiW0fCIa3eirRZExRU3pKB', estimated_finish=None, integrations=[], user_provided_suffix=None, method=None)
     ```
 
-### Evaluation
+### 評估
 
-Once the fine-tuning job is complete, it’s time to evaluate the performance of our model by running inference on the test set. This step involves using the fine-tuned model to generate responses to the questions in the test set and comparing its predictions to the ground truth answers for evaluation. We will also run inference on the test set using the non-fine-tuned GPT-4o model for comparison.
+fine-tuning job 完成後，就要用測試集跑推論來評估模型表現。這一步是用 fine-tune 好的模型回答測試集裡的問題，再把它的預測和標準答案比較。我們也會用沒有 fine-tune 的 GPT-4o 在測試集上跑推論來做對照。
 
 ```python
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -526,7 +536,7 @@ with open("ocr-vqa-4o-results.jsonl", "w") as f:
     100%|██████████| 485/485 [01:35<00:00,  5.09it/s]
     ```
 
-Now that we’ve run inference using our fine-tuned model, let’s inspect a few specific examples to understand how well the model performed compared to the actual answers.
+fine-tune 模型的推論跑完了，接著看幾個具體的例子，了解它跟實際答案比起來表現如何。
 
 ```python
 # Q: What is the title of this book?
@@ -543,18 +553,18 @@ Now that we’ve run inference using our fine-tuned model, let’s inspect a few
 {"example_id": 482, "predicted_answer": "Christian Books & Bibles", "actual_answer": "Religion & Spirituality"}
 ```
 
-As we can see, the fine-tuned model does a great job at answering the questions, with many responses being exactly correct. 
+可以看到 fine-tune 後的模型回答得很好，很多回答都完全正確。
 
-However, there are also cases where the model’s **predicted answers** are close to the **ground truth**, while not matching exactly, particularly in open-ended questions where phrasing or details may differ. To assess the quality of these predictions, we will use GPT-4o to evaluate the similarity between the predicted responses and the ground truth labels from the dataset.
+不過也有一些情況，模型的**預測答案**很接近**標準答案**但不完全一樣，尤其是在開放式問題上，措辭或細節可能不同。為了評估這些預測的品質，我們會用 GPT-4o 來判斷預測答案和資料集標準答案之間的相似度。
 
-In order to evaluate our model responses, we will use GPT-4o to determine the similarity between the ground truth and our predicted responses. We will rank our predicted answers based on the following criteria:
-* **Very Similar**: The predicted answer exactly matches the ground truth and no important information is omitted, although there may be some minor omissions or discrepancies in punctuation.
+評估模型回答時，我們用 GPT-4o 判斷標準答案和預測答案的相似程度，並依下列標準替預測答案分級：
+* **Very Similar**：預測答案和標準答案完全一致，沒有漏掉重要資訊，標點上可能有些微的遺漏或差異。
 
-* **Mostly Similar**: The predicted answer closely aligns with the ground truth, perhaps with some missing words or phrases.
+* **Mostly Similar**：預測答案和標準答案很接近，可能少了一些字詞。
 
-* **Somewhat Similar**: Although the predicted answer has noticeable differences to the ground truth, the core content is accurate and semantically similar, perhaps with some missing information.
+* **Somewhat Similar**：預測答案和標準答案有明顯差異，但核心內容正確、語意相近，可能漏了一些資訊。
 
-* **Incorrect**: The predicted answer is completely incorrect, irrelevant, or contains critical errors or omissions from the ground truth.
+* **Incorrect**：預測答案完全錯誤、不相關，或是跟標準答案相比有重大錯誤或遺漏。
 
 
 ````python
@@ -707,11 +717,11 @@ with open("ocr-vqa-4o-similarity.jsonl", "w") as f:
     100%|██████████| 485/485 [00:17<00:00, 27.09it/s]
     ```
 
-To fully understand the impact of fine-tuning, we also evaluated the same set of test questions using the **non-fine-tuned GPT-4o** model.
+為了完整了解 fine-tuning 的影響，我們也用**沒有 fine-tune 的 GPT-4o** 評估同一組測試問題。
 
-Let's start by comparing the performance of the fine-tuned model vs the non-fine-tuned model for **Closed** form (Yes/No) questions.
+先比較 fine-tune 模型和未 fine-tune 模型在**封閉式**（是/否）問題上的表現。
 
-Note that with the fine-tuned model, we can check for exact matches between the predicted and actual answers because the model has learned to produce consistent answers that follow the response format specified in the system prompt. However, for the non-fine-tuned model, we need to account for variations in phrasing and wording in the predicted answers. Below is an example of a non-fine-tuned model output. As we can see, the final answer is correct but the response format is inconsistent and outputs reasoning in the response.
+注意，fine-tune 後的模型可以直接檢查預測和實際答案是否完全一致，因為模型已經學會產生一致、符合 system prompt 指定格式的答案。但未 fine-tune 的模型，我們得容許預測答案在措辭和用字上的變化。下面是一個未 fine-tune 模型輸出的例子，可以看到最終答案是對的，但回答格式不一致，還把推理過程寫在回答裡。
 
 ```python
 # example of non-fine-tuned model output
@@ -752,9 +762,9 @@ print(f"Non-fine-tuned model accuracy: {round(100*len(correct_4o_closed) / len(r
     Non-fine-tuned model accuracy: 87.89%
     ```
 
-With a generous allowance for variations in phrasing and wording for the non-fine-tuned model including ignoring case and allowing for partial matches, the fine-tuned model still outperforms the non-fine-tuned model by a margin of **2.64%** on this set of questions.
+就算對未 fine-tune 的模型給予很寬鬆的措辭和用字容許度（包括忽略大小寫、允許部分比對），fine-tune 模型在這組問題上還是領先 **2.64%**。
 
-Now, let's compare the performance of the fine-tuned model vs the non-fine-tuned model over all the open-ended questions. First, we'll check for exact matches between the predicted and actual answers, again allowing for general variations in phrasing and wording for the non-fine-tuned model, but maintaining a strict standard for the fine-tuned model.
+接著比較兩個模型在所有開放式問題上的表現。我們先檢查預測和實際答案是否完全一致，一樣對未 fine-tune 的模型容許一般的措辭用字變化，但對 fine-tune 模型維持嚴格的標準。
 
 
 ```python
@@ -779,12 +789,11 @@ print(f"Non-fine-tuned model accuracy: {round(100*len(correct_4o_open) / len(res
     Fine-tuned model accuracy: 64.07%
     Non-fine-tuned model accuracy: 46.1%
     ```
+這裡準確度的提升明顯多了：即使對未 fine-tune 的模型給予非常寬鬆的措辭用字容許度，fine-tune 模型還是大幅領先 **17.97%**！
 
-The improvement in accuracy here is much more pronounced, with the fine-tuned model outperforming the non-fine-tuned model by a substantial margin of **17.97%**, even with very generous allowances for variations in phrasing and wording for the non-fine-tuned model!
+如果對 fine-tune 模型也給同樣的寬鬆標準，準確度還會再多 4.1%，領先幅度總共達到 **22.07%**。
 
-If we were to afford the same leniency to the fine-tuned model, we would see an additional 4.1% increase in accuracy, bringing the total margin of improvement to **22.07%**.
-
-To dig a little deeper, we can also look at the accuracy by question type.
+再深入一點，我們也可以按問題類型看準確度。
 
 ```python
 import matplotlib.pyplot as plt
@@ -861,11 +870,11 @@ plt.show()
 
     ![](Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering_files/out_46_0.png)
 
-It appears that the largest performance gains for the fine-tuned model are for questions in the **Genre** category, such as "What type of book is this?" or "What is the genre of this book?" This may demonstrate a benefit of fine-tuning: we teach the model to classify genres based on the categories present in the training data. It also highlights the model's strong visual understanding capabilities, since the model can identify the genre from the visual content of the book cover alone.
+fine-tune 模型進步最大的是 **Genre**（類型）這類問題，例如「這是什麼類型的書？」或「這本書的 genre 是什麼？」。這可能顯示了 fine-tuning 的一個好處：我們教模型依訓練資料裡的類別來分類 genre。這也顯示模型有很強的視覺理解能力，光看書封的視覺內容就能判斷類型。
 
-Additionally, we see significant lift in the **Title** category, which suggests that fine-tuning has boosted the model's OCR capabilities and its ability to understand the layout and structure of the book cover to extract the relevant information.
+另外，**Title**（書名）類別也有明顯的提升，表示 fine-tuning 加強了模型的 OCR 能力，以及理解書封版面和結構、抽出相關資訊的能力。
 
-Finally, let's compare the distribution of similarity ratings between the fine-tuned model and the non-fine-tuned model to allow for variations in phrasing and wording.
+最後，比較 fine-tune 模型和未 fine-tune 模型的相似度評級分佈，同樣容許措辭用字上的變化。
 
 ```python
 from collections import Counter
@@ -903,24 +912,36 @@ plt.show()
 
     ![](Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering_files/out_48_0.png)
 
-The results provide a clear picture of the benefits gained through fine-tuning, without any other modifications.
-Comparing the distribution of ratings between the **fine-tuned GPT-4o** model and **GPT-4o without fine-tuning**, we see that the fine-tuned model gets many more responses exactly correct, with a comparable amount of incorrect responses.
-### Key Takeaways
+結果清楚呈現了 fine-tuning 的好處，而且沒有做其他任何修改。
+比較 **fine-tune 後的 GPT-4o** 和**沒有 fine-tune 的 GPT-4o** 的評級分佈，可以看到 fine-tune 模型有多得多的回答是完全正確的，答錯的數量則差不多。
+### 重點結論
 
-* **Improved Precision**: Fine-tuning helped the model produce more precise answers that matched the ground truth, especially in highly domain-specific tasks like OCR on book covers.
-* **Better Generalization**: While the non-fine-tuned GPT-4o was able to get at least somewhat to the ground truth for many questions, it was less consistent. The fine-tuned model exhibited better generalization across a variety of test questions, thanks to the exposure to multimodal data during training.
+* **精準度提升**：fine-tuning 讓模型產生更精準、更貼近標準答案的回答，特別是在書封 OCR 這類高度特定領域的任務上。
+* **泛化更好**：未 fine-tune 的 GPT-4o 對很多問題至少能接近標準答案，但不夠穩定。fine-tune 模型因為訓練時看過多模態資料，在各種測試問題上的泛化更好。
 
-While the results from vision fine-tuning are promising, there are still opportunities for improvement. Much like fine-tuning on text, the effectiveness of vision fine-tuning depends heavily on the **quality, diversity, and representativeness** of the training data. In particular, models benefit from focusing on cases where errors occur most frequently, allowing for targeted improvements.
+雖然 vision fine-tuning 的結果很有希望，但還有改進空間。跟文字 fine-tuning 一樣，vision fine-tuning 的效果很大程度取決於訓練資料的**品質、多樣性和代表性**。特別是，模型針對錯誤最常出現的情況加強，可以得到有針對性的改善。
 
-Upon reviewing the incorrect results, many of the "Incorrect" responses from the fine-tuned model are in fact due to inconsistencies in the labels from the dataset. For example, some ground truth answers provide only the first and last name of the author, whereas the image actually shows the middle initial as well. Similarly, some ground truth labels for the title include subheadings and taglines, whereas others do not. 
+檢查答錯的結果後發現，fine-tune 模型很多「Incorrect」的回答其實是資料集標籤不一致造成的。例如有些標準答案只給作者的名和姓，但圖片上其實還有中間名縮寫。同樣地，有些書名的標準答案包含副標題和標語，有些則沒有。
 
-Another common theme was miscategorization of genres. Although the model was almost always able to produce a semantically similar genre to the ground truth, the answer sometimes deviated. This is likely due to the lack of presence of these genres in the training data. Providing the model with more diverse training examples to cover these genres, or clearer instructions for dealing with edge cases can help to guide the model’s understanding.
+另一個常見的問題是 genre 分類錯誤。雖然模型幾乎都能給出語意上跟標準答案相近的類型，但答案有時還是會偏離。這很可能是因為訓練資料裡缺少這些類型。給模型更多樣的訓練範例來涵蓋這些類型，或提供處理邊界情況的更清楚指示，可以幫助引導模型的理解。
 
-### Next Steps:
-* **Expand the Training Dataset**: Adding more varied examples that cover the model’s weaker areas, such as identifying genres, could significantly enhance performance.
+### 下一步
+* **擴充訓練資料集**：加入更多樣、涵蓋模型弱項（例如辨識 genre）的範例，可能會明顯提升表現。
 
-* **Expert-Informed Prompts**: Incorporating domain-specific instructions into the training prompts may further refine the model’s ability to accurately interpret and respond in complex cases.
+* **專家提供的 prompt**：在訓練 prompt 裡加入特定領域的指示，可能進一步改善模型在複雜情況下正確解讀與回應的能力。
 
-Although there is still some progress to be made on this particular task, the initial results are highly encouraging. With minimal setup and effort, we’ve already observed a substantial uplift in overall accuracy with vision fine-tuning, indicating that this approach holds great potential. Vision fine-tuning opens up possibilities for improvement across a wide range of visual question answering tasks, as well as other tasks that rely on strong visual understanding.
+雖然這個任務還有進步的空間，但初步結果非常令人鼓舞。只用很少的設定和努力，我們就已經看到 vision fine-tuning 讓整體準確度大幅提升，顯示這個做法潛力很大。Vision fine-tuning 為各種視覺問答任務，以及其他仰賴強大視覺理解的任務，開啟了改善的可能。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Vision fine-tuning 的訓練資料就是 Chat Completions 格式的對話，圖片用 HTTP URL 或 base64 data URL 放進 user 訊息。
+- 它適合讓模型學會在相似的問題和圖片上去找、去辨認對的區域，不適合教新知識。
+- 資料量不用很大，至少 10 筆，50 到 100 筆通常就有感，品質、多樣性和代表性比數量更重要。
+- 評估時 fine-tune 模型因為格式穩定可以嚴格比對，未 fine-tune 的模型則要容許措辭變化，再搭配 LLM 評審分級。
+- 看錯誤案例能找出下一步：資料標籤不一致、訓練資料沒涵蓋的類別，都是可以補強的地方。
+
+## 練習
+
+1. 把 `quality` 參數從原本的值調低（例如 50），重新編碼圖片，比較輸出 `.jsonl` 檔案大小的變化。
+2. 修改 system instructions，要求回答只輸出答案本身不附任何說明，再用同一份測試集重跑未 fine-tune 的 GPT-4o，看看格式不一致的問題有沒有改善。
+3. 把 few-shot 範例的數量改成 0 和 3 兩種版本，各準備一份訓練資料，比較資料內容與後續 fine-tune 結果的差異。

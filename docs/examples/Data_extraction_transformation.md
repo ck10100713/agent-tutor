@@ -1,47 +1,55 @@
 ---
-translated: false
+translated: true
 source: examples/Data_extraction_transformation.ipynb
 ---
-
-# Data Extraction and Transformation in ELT Workflows using GPT-4o as an OCR Alternative
+# 在 ELT 流程中用 GPT-4o 取代 OCR 做資料擷取與轉換
 
 > 原文：[examples/Data_extraction_transformation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Data_extraction_transformation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範用 GPT-4o 的視覺能力，把多語言的 PDF 發票擷取成 JSON，再依指定 schema 轉換，最後載入關聯式資料庫查詢。整個流程模擬一個簡單的 ELT workflow。
+
+## 學完你會
+- 把 PDF 每頁轉成 base64 圖片，用 GPT-4o 擷取成 JSON。
+- 用 prompt 搭配目標 schema，把不一致的原始 JSON 轉成統一格式（含翻譯成英文）。
+- 把轉換後的資料拆成 Hotels、Invoices、Charges、Taxes 四張表載入資料庫，並用 SQL 查詢。
+
+## 開跑前
+- 需要 OpenAI API key，並有 GPT-4o 的使用權限（會產生 API 費用）。
 
 
 
-A lot of enterprise data is unstructured and locked up in difficult-to-use formats, e.g. PDFs, PPT, PNG, that are not optimized for use with LLMs or databases. As a result this type of data tends to be underutilized for analysis and product development, despite it being so valuable. The traditional way of extracting information from unstructured or non-ideal formats has been to use OCR, but OCR struggles with complex layouts and can have limited multilingual support. Moreover, manually applying transforms to data can be cumbersome and timeconsuming. 
+很多企業資料是非結構化的，鎖在難以使用的格式裡，例如 PDF、PPT、PNG，這些格式沒有針對 LLM 或資料庫最佳化。結果這類資料雖然很有價值，卻常常沒被充分用在分析和產品開發上。傳統上從非結構化或不理想的格式擷取資訊的做法是 OCR，但 OCR 對複雜版面吃力，多語言支援也有限。此外，手動對資料做轉換既麻煩又耗時。 
 
-The multi-modal capabilities of GPT-4o enable new ways to extract and transform data because of GPT-4o's ability to adapt to different types of documents and to use reasoning for interpreting the content of documents. Here are some reasons why you would choose GPT-4o for your extraction and transformation workflows over traditional methods. 
+GPT-4o 的多模態能力帶來了擷取和轉換資料的新方式，因為 GPT-4o 能適應不同類型的文件，也能用 reasoning 來詮釋文件內容。下面是在擷取和轉換流程中，選 GPT-4o 而不是傳統方法的一些理由。 
 
 
-| **Extraction**                                               | **Transformation**                                              |
+| **擷取**                                               | **轉換**                                              |
 |---------------------------------------------------------------|------------------------------------------------------------------|
-| **Adaptable**: Handles complex document layouts better, reducing errors | **Schema Adaptability**: Easily transforms data to fit specific schemas for database ingestion |
-| **Multilingual Support**: Seamlessly processes documents in multiple languages | **Dynamic Data Mapping**: Adapts to different data structures and formats, providing flexible transformation rules |
-| **Contextual Understanding**: Extracts meaningful relationships and context, not just text | **Enhanced Insight Generation**: Applies reasoning to create more insightful transformations, enriching the dataset with derived metrics, metadata and relationships |
-| **Multimodality**: Processes various document elements, including images and tables |  |
+| **Adaptable**：更能處理複雜的文件版面，減少錯誤 | **Schema Adaptability**：輕鬆把資料轉成符合特定 schema，便於寫入資料庫 |
+| **Multilingual Support**：無縫處理多種語言的文件 | **Dynamic Data Mapping**：適應不同的資料結構和格式，提供彈性的轉換規則 |
+| **Contextual Understanding**：擷取有意義的關係和 context，不只是文字 | **Enhanced Insight Generation**：運用 reasoning 做出更有洞察的轉換，用衍生指標、metadata 和關係豐富資料集 |
+| **Multimodality**：處理各種文件元素，包括圖片和表格 |  |
 
 
-This cookbook has three parts:
-1. How to extract data from multilingual PDFs 
-2. How to transform data according to a schema for loading into a database
-3. How to load transformed data into a database for downstream analysis
+這份 cookbook 分三個部分：
+1. 怎麼從多語言 PDF 擷取資料 
+2. 怎麼依 schema 轉換資料，以便載入資料庫
+3. 怎麼把轉換後的資料載入資料庫，做後續分析
 
-We're going to mimic a simple ELT workflow where data is first extracted from PDFs into JSON using GPT-4o, stored in an unstructured format somewhere like a data lake, transformed to fit a schema using GPT-4o, and then finally ingested into a relational database for querying. It's worth noting that you can do all of this with the BatchAPI if you're interested in lowering the cost of this workflow. 
+我們模擬一個簡單的 ELT workflow：先用 GPT-4o 把 PDF 的資料擷取成 JSON，以非結構化的格式存在 data lake 之類的地方，再用 GPT-4o 轉換成符合 schema 的格式，最後寫入關聯式資料庫供查詢。如果想降低這個流程的成本，這些全部都可以用 BatchAPI 做。 
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/elt_workflow.png)
 
-The data we'll be using is a set of publicly available 2019 hotel invoices from Germany available on [Jens Walter's GitHub](https://github.com/JensWalter/my-receipts/tree/master/2019/de/hotel), (thank you Jens!). Though hotel invoices generally contain similar information (reservation details, charges, taxes etc.), you'll notice that the invoices present itemized information in different ways and are multilingual containing both German and English. Fortunately GPT-4o can adapt to a variety of different document styles without us having to specify formats and it can seamlessly handle a variety of languages, even in the same document. 
-Here is what one of the invoices looks like: 
+我們用的資料是 2019 年德國的一組公開飯店發票，來自 [Jens Walter 的 GitHub](https://github.com/JensWalter/my-receipts/tree/master/2019/de/hotel)（謝謝 Jens！）。飯店發票通常包含類似的資訊（訂房細節、費用、稅金等），但你會發現這些發票呈現明細的方式各不相同，而且是多語言，同時有德文和英文。幸好 GPT-4o 不需要我們指定格式，就能適應各種不同的文件樣式，也能無縫處理多種語言，連同一份文件裡混用也行。 
+其中一張發票長這樣： 
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/sample_hotel_invoice.png)
 
-## Part 1: Extracting data from PDFs using GPT-4o's vision capabilities
-GPT-4o doesn't natively handle PDFs so before we extract any data we'll first need to convert each page into an image and then encode the images as base64. 
+## 第 1 部分：用 GPT-4o 的視覺能力從 PDF 擷取資料
+GPT-4o 不能直接處理 PDF，所以擷取資料前，要先把每一頁轉成圖片，再把圖片編碼成 base64。 
 
 ```python
 from openai import OpenAI
@@ -86,7 +94,7 @@ def pdf_to_base64_images(pdf_path):
     return base64_images
 ```
 
-We can then pass each base64 encoded image in a GPT-4o LLM call, specifying a high level of detail and JSON as the response format. We're not concerned about enforcing a schema at this step, we just want all of the data to be extracted regardless of type.
+接著把每張 base64 編碼的圖片放進 GPT-4o 的 LLM 呼叫，指定高細節等級，並以 JSON 作為回應格式。這一步不用強制 schema，只要不管型別，把資料全部擷取出來就好。
 
 ```python
 def extract_invoice_data(base64_image):
@@ -136,7 +144,7 @@ def extract_invoice_data(base64_image):
     return response.choices[0].message.content
 ```
 
-Because invoice data can span multiple pages in a PDF, we're going to produce JSON objects for each page in the invoice and then append them together. The final invoice extraction will be a single JSON file.
+因為發票資料可能橫跨 PDF 的多頁，所以我們對發票的每一頁各產生一個 JSON 物件，再把它們接在一起。最後的發票擷取結果是單一個 JSON 檔案。
 
 ```python
 def extract_from_multiple_pages(base64_images, original_filename, output_directory):
@@ -174,9 +182,9 @@ read_path = os.path.join(hotel_invoice_path, "receipts_2019_de_hotel")
 main_extract(read_path, extracted_invoice_json_path)
 ```
 
-Raw invoice extractions contain one JSON object per page, stored as an array in `data/hotel_invoices/extracted_invoice_json/`. Keys, languages, and value types can vary across invoices and extraction runs. The [JSON format guide](https://github.com/openai/openai-cookbook/blob/main/examples/data/hotel_invoices/README.md) describes how raw extractions differ from the normalized objects used for database ingestion.
+原始發票擷取結果每頁含一個 JSON 物件，以陣列形式存在 `data/hotel_invoices/extracted_invoice_json/`。不同發票和不同次擷取之間，key、語言和值的型別可能不同。[JSON 格式指南](https://github.com/openai/openai-cookbook/blob/main/examples/data/hotel_invoices/README.md)說明了原始擷取結果和資料庫寫入用的標準化物件有何不同。
 
-The next cell loads an invoice from the same directory used by the extraction and transformation steps.
+下一個 cell 從擷取與轉換步驟使用的同一個目錄載入一張發票。
 
 
 ```python
@@ -235,9 +243,9 @@ print(json.dumps(sample_invoice, ensure_ascii=False, indent=4))
     ... (省略 72 行)
     ```
 
-## Part 2: Transforming data according to a schema 
+## 第 2 部分：依 schema 轉換資料 
 
-You've extracted data from PDFs and have likely loaded the unstructured extractions as JSON objects in a data lake. The next step in our ELT workflow is to use GPT-4o to transform the extractions according to our desired schema. This will enable us to ingest any resulting tables into a database. We've decided upon the following schema that broadly covers most of the information we would have seen across the different invoices. This schema will be used to process each raw JSON extraction into our desired schematized JSON and can specify particular formats such as "date": "YYYY-MM-DD". We're also going to translate the data into English at this step. 
+你已經從 PDF 擷取了資料，而且大概已經把非結構化的擷取結果以 JSON 物件存進 data lake。ELT workflow 的下一步，是用 GPT-4o 依我們想要的 schema 轉換這些擷取結果，這樣產生的資料表才能寫進資料庫。我們決定了下面這個 schema，大致涵蓋各種發票上會看到的大部分資訊。這個 schema 用來把每個原始 JSON 擷取結果，處理成我們想要的有 schema 的 JSON，也可以指定特定格式，例如 "date": "YYYY-MM-DD"。這一步也會把資料翻譯成英文。 
 
 
 ```python
@@ -367,9 +375,9 @@ save_path = os.path.join(hotel_invoice_path, "transformed_invoice_json")
 main_transform(extracted_invoice_json_path, json_schema_path, save_path)
 ```
 
-## Part 3: Loading transformed data into a database 
+## 第 3 部分：把轉換後的資料載入資料庫 
 
-Now that we've schematized all of our data, we can segment it into tables for ingesting into a relational database. In particular, we're going to create four tables: Hotels, Invoices, Charges and Taxes. All of the invoices pertained to one guest, so we won't create a guest table. 
+資料都有 schema 之後，就能把它切成多張表，載入關聯式資料庫。具體來說，我們會建四張表：Hotels、Invoices、Charges 和 Taxes。所有發票都屬於同一位住客，所以不建 guest 表。 
 
 ```python
 import os
@@ -527,8 +535,8 @@ def ingest_transformed_jsons(json_folder_path, db_path):
     conn.close()
 ```
 
-Now let's check that we've correctly ingested the data by running a sample SQL query to determine the most expensive hotel stay and the same of the hotel!  
-You can even automate the generation of SQL queries at this step by using function calling, check out our [cookbook on function calling with model generated arguments](https://cookbook.openai.com/examples/how_to_call_functions_with_chat_models#how-to-call-functions-with-model-generated-arguments) to learn how to do that. 
+現在跑一個範例 SQL 查詢，找出最貴的飯店住宿和飯店名稱，確認資料有正確寫入！  
+這一步甚至可以用 function calling 自動產生 SQL 查詢，做法請看我們的 [model 產生參數的 function calling cookbook](https://cookbook.openai.com/examples/how_to_call_functions_with_chat_models#how-to-call-functions-with-model-generated-arguments)。
 
 ```python
 
@@ -596,6 +604,16 @@ for row in results:
     ('Citadines Michel Hamburg', 903.63)
     ```
 
-To recap in this cookbook we showed you how to use GPT-4o for extracting and transforming data that would otherwise be inaccessible for data analysis. If you don't need these workflows to happen in real-time, you can take advantage of OpenAI's BatchAPI to run jobs asynchronously at a much lower cost! 
+總結一下，這份 cookbook 示範了怎麼用 GPT-4o 擷取並轉換原本無法用在資料分析的資料。如果這些流程不需要即時完成，可以用 OpenAI 的 BatchAPI 非同步執行，成本低很多！ 
 
-<!-- tutor:summary -->
+## 重點整理
+- 傳統 OCR 對複雜版面和多語言吃力，GPT-4o 的多模態和 reasoning 能適應不同文件樣式。
+- ELT 的順序是先擷取成 JSON 存起來，之後再轉換和載入，擷取階段不強制 schema，轉換階段才套 schema。
+- GPT-4o 不能直接吃 PDF，要先把每頁轉成圖片再用 base64 傳入。
+- 轉換階段可以順便做格式正規化（如日期）和翻譯。
+- 不需要即時的話，用 BatchAPI 可以大幅降低成本。
+
+## 練習
+1. 把擷取呼叫的 detail 等級從高改成低，比較擷取結果的差異。
+2. 在轉換用的 schema 裡多加一個欄位（例如住客人數），重跑轉換，看有沒有擷取到。
+3. 多寫一個 SQL 查詢，例如算每家飯店的稅金總額，驗證載入的 Taxes 表。

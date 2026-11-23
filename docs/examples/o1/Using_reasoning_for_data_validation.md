@@ -1,29 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/o1/Using_reasoning_for_data_validation.ipynb
 ---
 
-# Using reasoning for data validation
+# 用 reasoning 做資料驗證
 
 > 原文：[examples/o1/Using_reasoning_for_data_validation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/o1/Using_reasoning_for_data_validation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 o1 模型（這裡是 o1-preview）靠推理來驗證資料。拿一份合成的醫療資料集當例子，讓模型逐列找出資料裡的問題，再量測它抓得準不準。
 
+## 學完你會
+- 用模型產生一份刻意帶有不一致的合成醫療資料集
+- 寫一個函式，把單列資料交給 reasoning 模型判斷是否有效並說明問題
+- 用 gpt-4o 當 grader，算出抓問題的準確率，以及指出具體問題的準確率
 
+## 開跑前
+需要 OpenAI API key，而且要有 o1-preview 的使用權限。這類模型 rate limit 較低，要調整並行 worker 的數量。
 
-In this guide, we’ll explore how to use the o1 model, specifically o1-preview, to perform data validation through reasoning. We’ll walk through a practical example involving a synthetic medical dataset and demonstrate how to assess the model’s accuracy in identifying issues within the data.
+這份指南會看怎麼用 o1 模型（具體是 o1-preview）靠推理做資料驗證。我們會用一個合成醫療資料集當實例，並示範怎麼評估模型找出資料問題的準確度。
 
-## Overview
+## 總覽
 
-Data validation is a critical step in ensuring the quality and reliability of datasets, especially in sensitive fields like healthcare. Traditional validation methods often rely on predefined rules and patterns. However, advanced  models like o1 can understand context and reason about data, offering a more flexible and intelligent approach to validation.
+資料驗證是確保資料集品質和可靠度的關鍵步驟，在醫療這類敏感領域尤其重要。傳統的驗證方法常依賴預先定義的規則和模式。不過像 o1 這種進階模型能理解 context 並對資料做推理，提供更靈活、更聰明的驗證方式。
 
-In this tutorial, we will:
-- Generate a synthetic dataset of medical data that contains inconsistencies.
-- Define a function that takes in a row of data and validates its accuracy
-- Run the validation process and compute accuracy metrics.
-- Analyze and interpret the results.
+這份教學要做的事：
+- 產生一份含有不一致的合成醫療資料集。
+- 定義一個函式，接收一列資料並驗證它是否正確
+- 執行驗證流程並計算準確度指標。
+- 分析並解讀結果。
 
 ```python
 from openai import OpenAI
@@ -38,29 +45,29 @@ client = OpenAI()
 MODEL = 'o1-preview'
 ```
 
-## Synthetic Data Generation
+## 合成資料產生
 
-We will use a lot of the principles described in the [Synthetic Data Generation](https://cookbook.openai.com/examples/sdg1) cookbook to create the foundation of our dataset.
+我們會用到 [Synthetic Data Generation](https://cookbook.openai.com/examples/sdg1) cookbook 裡的許多原則，來建立資料集的基礎。
 
-We will prompt the model to generate sets of medical data for our use case. We have provided detailed instructions to the model on how to create the dataset, what format to follow, and how to fill it with inaccuracies. We also provide a few rows of sample data to get the model started. 
+我們會 prompt 模型，為我們的使用情境產生幾組醫療資料。我們給了模型詳細的指示：怎麼建立資料集、要遵循什麼格式、怎麼在裡面放入錯誤。也提供了幾列範例資料讓模型起步。
 
-Each row in the dataset will have the following fields:
-- Patient ID: A randomly generated patient id
-- Date of Birth: Date of birth of the patient
-- Gender: M/F
-- Medical History: Past diagnoses
-- Current Medications: Medication the patient is taking
-- Allergies: Identified allergies
+資料集每一列有這些欄位：
+- Patient ID：隨機產生的病患 id
+- Date of Birth：病患的出生日期
+- Gender：M/F
+- Medical History：過去的診斷
+- Current Medications：病患目前服用的藥物
+- Allergies：已確認的過敏
 - Lab Results (Glucose mg/dL)
-- Diagnoses: Current diagnosis
-- Treatment Plan: Current treatment plan
-- Is Valid: Whether or not the current row of data is valid (True/False)
-- Issue: If the row of data is not valid, what the issue is
+- Diagnoses：目前的診斷
+- Treatment Plan：目前的治療計畫
+- Is Valid：這列資料是否有效（True/False）
+- Issue：如果這列資料無效，問題是什麼
 
-Some examples of inaccuracies that may be present in the data are:
-- Prescribing medications that the patient is allergic to
-- Current medications do not match medical history
-- Treatment plan does not match diagnosis
+資料裡可能出現的錯誤例子有：
+- 開了病患會過敏的藥
+- 目前用藥跟病史對不上
+- 治療計畫跟診斷不符
 
 ````python
 def generate_data():
@@ -138,17 +145,17 @@ print("Synthetic data generation and appending completed.")
     Synthetic data generation and appending completed.
     ```
 
-## Data Validation
+## 資料驗證
 
-Now that we have our dataset prepared, we will prompt the reasoning model to review each row of data and determine whether or not it contains an issue. We will ask the model to output whether or not there is an issue in the data and then offer an explanation of the issue.
+資料集準備好之後，我們 prompt reasoning 模型檢視每一列資料，判斷它有沒有問題。我們會要求模型輸出資料有沒有問題，並說明問題是什麼。
 
-Once we have the model determine its list of invalid data, we will pass those results on to a model grader to assess two metrics:
-- Accuracy of the model's ability correctly identify issues with the data
-- For the subset of data that issues have been correctly identified, what is the accuracy of the model in identifying the issue at hand
+模型列出它認為無效的資料後，我們把這些結果交給 model grader，評估兩個指標：
+- 模型正確找出資料問題的準確度
+- 在問題被正確找出的那部分資料裡，模型指出具體問題的準確度
 
-Given that this task is much more narrow, we can use the faster gpt-4o model to calculate the accuracy.
+因為這個任務窄很多，我們可以用比較快的 gpt-4o 模型來計算準確度。
 
-REMINDER: Given that these models are still in beta, rate limits will be significantly reduced. Please adjust the number of concurrent workers accordingly.
+提醒：這些模型還在 beta，rate limit 會低很多，請依此調整並行 worker 的數量。
 
 ````python
 def validate_data(input_data):
@@ -237,7 +244,7 @@ with ThreadPoolExecutor() as executor:
         pred_issues[i] = result_json['issue']
 ```
 
-Now that we have the model's results, we can compare it against the source of truth and determine the system's accuracy
+拿到模型的結果後，就可以跟 source of truth 比對，算出系統的準確度
 
 ```python
 # Convert predicted and true 'is_valid' labels to boolean if they aren't already
@@ -267,9 +274,9 @@ print(f"F1: {f1:.2f}")
     F1: 0.84
     ```
 
-## Issue Identification
+## 問題辨識
 
-We will now determine the model's ability to accurately classify the issue in the data
+接下來看模型能不能準確分類資料裡的問題
 
 ```python
 def validate_issue(model_generated_answer, correct_answer):
@@ -361,7 +368,7 @@ df_results = pd.DataFrame([model_results])
 df_validation_results = pd.DataFrame(validation_results)
 ```
 
-Below we'll display the subset of rows that we correctly identified contained an issue. For each row, we'll show the predicted vs. true issue and whether or not there is a match
+下面會顯示我們正確判斷出有問題的那些列。每一列都會顯示預測的問題和真實的問題，以及兩者是否吻合
 
 ```python
 def display_formatted_dataframe(df):
@@ -395,10 +402,19 @@ print(df_results)
     0   0.818182  0.870968  0.84375        0.615385
     ```
 
-## Conclusion
+## 結論
 
-We can see from the results here that we're able to generate a high precision/recall for issue identification as well as decent accuracy for pinpointing the exact issue in the data.
+從這裡的結果可以看到，模型在找出有問題的資料上可以達到高 precision/recall，在指出具體問題上也有不錯的準確度。
 
-This should help streamline data validation for eval sets across a variety of domains.
+這應該能幫各種領域簡化 eval 資料集的資料驗證。
 
-<!-- tutor:summary -->
+## 重點整理
+- reasoning 模型能理解 context，所以能抓到固定規則寫不出來的不一致，例如藥物跟過敏衝突。
+- 合成資料帶有標準答案（Is Valid 和 Issue），所以能直接量測驗證流程的好壞。
+- 評估分兩層：有沒有抓到有問題的列，以及抓到的列有沒有說對問題。
+- 評分任務比較窄，可以交給較快的模型（gpt-4o）當 grader。
+
+## 練習
+1. 在產生資料的 prompt 多加一種錯誤類型（例如劑量不合理），重新產生資料集。
+2. 調整驗證時的並行 worker 數量，觀察 rate limit 錯誤是否減少。
+3. 把 grader 的模型換成別的模型，比較算出的準確度有沒有差異。

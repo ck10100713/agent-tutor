@@ -1,39 +1,50 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/gpt-5_frontend.ipynb
 ---
-
-# Frontend coding with GPT-5
+# 用 GPT-5 寫前端
 
 > 原文：[examples/gpt-5/gpt-5_frontend.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5_frontend.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 GPT-5 一次生成完整的前端網站，從零開始做、換風格、參考既有設計稿加頁面，到做出會動的小遊戲。每個範例都只靠一行 prompt 打一次 API，再把產出的 HTML 直接渲染出來看。
+
+## 學完你會
+
+- 寫一個 helper，把 GPT-5 生成的網頁存下來並在 notebook 裡預覽
+- 用一行 prompt 改整個網站的主題與風格
+- 把設計稿截圖丟給模型，讓新頁面跟既有介面風格一致
+
+## 開跑前
+
+需要 OpenAI API key，並設定好環境變數。
 
 
-GPT-5 is a large leap forward in frontend development. We have seen the model be excellent at developing full stack applications in one shot, making complex refactors look easy, and making surgical edits within large codebases. 
+GPT-5 在前端開發上進步很多。我們看到它能一次生成完整的 full stack 應用、讓複雜的重構變得簡單，也能在大型 codebase 裡做精準的小修改。
 
-In this cookbook we will show some examples and some learnings of developing frontend applications with GPT-5 across multiple axes. 
+這篇會用幾個範例，分享用 GPT-5 開發前端應用的一些心得。
 
-## Intro
-There are some general principles we have seen be effective in developing strong frontend applications. We share some of these learnings in the [prompt guide](https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide). Below are some important pieces to consider when building frontend applications.
+## 簡介
+有幾個原則在做出好的前端應用時很有效，我們整理在 [prompt guide](https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide) 裡。下面是做前端時值得考慮的重點。
 
-Here are libraries and packages we recommend to start with steering the model:
-- Frameworks: Next.js (TypeScript), React, HTML
-- Styling / UI: Tailwind CSS, shadcn/ui, Radix Themes
-- Icons: Material Symbols, Heroicons, Lucide
-- Animation: Motion
-- Fonts: San Serif, Inter, Geist, Mona Sans, IBM Plex Sans, Manrope
+建議一開始用這些函式庫和套件來引導模型：
+- Frameworks：Next.js (TypeScript)、React、HTML
+- Styling / UI：Tailwind CSS、shadcn/ui、Radix Themes
+- Icons：Material Symbols、Heroicons、Lucide
+- Animation：Motion
+- Fonts：San Serif、Inter、Geist、Mona Sans、IBM Plex Sans、Manrope
 
-These packages are not an exhaustive list and we have seen many different application styles. 
+這份清單沒有涵蓋所有選擇，我們也看過很多不同風格的應用。
 
-Below you'll find an easy way to iterate over frontend abstractions on the API. We’re excited to see how users can unlock creativity with GPT-5.
+下面提供一個簡單的方式，讓你透過 API 反覆調整前端的各種抽象。期待看到大家用 GPT-5 發揮創意。
 
 
-## Interactive Example
+## 互動範例
 
-Let's dive into an example of creating frontends from scratch. First let's create some help functions to see the generated websites from GPT-5.
+我們從零開始做幾個前端。先寫幾個 helper function，用來查看 GPT-5 生成的網站。
 
 ````python
 import os
@@ -92,7 +103,7 @@ def open_in_browser(path: Path) -> None:
         os.system(f'open "{path}"')
 ````
 
-Now, let's combine the above into one helper function.
+接著把上面的東西合成一個 helper function。
 
 ```python
 def make_website_and_open_in_browser(*, website_input: str | ResponseInputParam, filename: str = "website.html"):
@@ -102,7 +113,7 @@ def make_website_and_open_in_browser(*, website_input: str | ResponseInputParam,
     open_in_browser(output_path)
 ```
 
-We'll start with a simple example: one-shot building a retro gaming store with the right theme
+先從簡單的開始：一次生成一個主題正確的復古遊戲商店。
 
 ```python
 make_website_and_open_in_browser(
@@ -120,12 +131,12 @@ make_website_and_open_in_browser(
     open_in_browser: finished
     ```
 
-Not bad for a one line, one shot prompt!
+一行 prompt、一次生成，結果不錯。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retro_dark.png" style="width:60vw; display:block; margin:auto;">
 
 
-Now let's steer it to be lighter, and a bit softer
+現在引導它改成比較亮、比較柔和的風格。
 
 ```python
 make_website_and_open_in_browser(
@@ -143,15 +154,15 @@ make_website_and_open_in_browser(
     open_in_browser: finished
     ```
 
-As you can see GPT-5 is incredibly steerable - with just a one line you can change entire applications effortlessly
+可以看到 GPT-5 很好引導，一行字就能輕鬆改掉整個應用的樣子。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retro_light.png" style="width:60vw; display:block; margin:auto;">
 
-But what if you have existing website designs that you want to make additions to? For example, we already have this dashboard.
+那如果你已經有網站設計，想在上面加東西呢？例如我們已經有這個 dashboard。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/input_image.png" style="width:60vw; display:block; margin:auto;">
 
-Since GPT-5 is natively multimodal and accepts both image and text input, when you are generating frontend applications we can take advantage of image input to improve model performance. 
+GPT-5 原生支援多模態，可以同時吃圖片和文字輸入，所以生成前端時可以用圖片輸入來提升效果。
 
 ```python
 import base64
@@ -190,11 +201,11 @@ make_website_and_open_in_browser(
     open_in_browser: finished
     ```
 
-As you can see, GPT-5 does an incredible job of matching the existing style & vibe of the app.
+可以看到 GPT-5 把既有應用的風格和氛圍抓得很準。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/login_page.png" style="width:60vw; display:block; margin:auto;">
 
-So far this has been pretty static - let's try a more interactive task
+到目前為止都是靜態的，來試一個互動性更高的任務。
 
 ```python
 make_website_and_open_in_browser(
@@ -212,13 +223,13 @@ make_website_and_open_in_browser(
     open_in_browser: finished
     ```
 
-We've got a theme consistent snake game: matching colours, typography, and even sound
+我們得到一個主題一致的貪食蛇遊戲：配色、字體，連音效都對得上。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/snake_game.png" style="width:60vw; display:block; margin:auto;">
 
-A single underspecified prompt can generate frontend code in one API call, but production use still requires review and iteration.
+一個沒寫清楚的 prompt 就能在一次 API call 生成前端程式碼，但要上 production 還是得 review 和反覆調整。
 
-Now it's your turn - we can't wait to see what you'll build
+現在換你了，期待看到你做出什麼。
 
 ```python
 your_prompt = "[edit this! what website would you like to build?]"
@@ -238,4 +249,15 @@ make_website_and_open_in_browser(
     open_in_browser: finished
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- GPT-5 一行 prompt 就能生成整個前端，改風格也只要改那一行。
+- 在 prompt 裡指定框架、樣式、icon、字型，可以讓產出更穩定。
+- 提供設計稿圖片能讓新頁面貼近既有風格，因為模型是原生多模態。
+- 生成的程式碼只是起點，上線前仍需要 review 與迭代。
+
+## 練習
+
+1. 把復古遊戲商店的 prompt 主題換成別的（例如咖啡店），看生成結果有什麼變化。
+2. 在 prompt 裡明確指定用 Tailwind CSS 和 Lucide icons，對比有沒有指定的差別。
+3. 換一張你自己的 dashboard 截圖當輸入，請它多加一個設定頁，檢查風格是否一致。

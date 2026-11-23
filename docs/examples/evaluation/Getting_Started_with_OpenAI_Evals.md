@@ -1,86 +1,84 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/Getting_Started_with_OpenAI_Evals.ipynb
 ---
-
 # Getting Started with OpenAI Evals
 
 > 原文：[examples/evaluation/Getting_Started_with_OpenAI_Evals.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/Getting_Started_with_OpenAI_Evals.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 OpenAI Evals 這個開源框架，替「讓模型產生 SQL」這個任務建一組 eval：先做資料集和 YAML 設定，再用 `oaieval` 跑，最後翻 log 看哪些題答錯。
+
+## 學完你會
+
+- 知道 eval 的兩種評分方式（程式邏輯比對、model grading），以及 basic 和 model-graded 模板各適合什麼情境。
+- 能做出 `jsonl` 格式的 eval 資料集，也能用 GPT-4 生成 synthetic data，再寫出 registry 用的 YAML。
+- 能用 `oaieval` 跑 eval，並從 `/tmp/evallogs` 的 log 找出失敗的 sample 來分析。
+
+## 開跑前
+
+- 要 clone [openai/evals](https://github.com/openai/evals) 並照它的說明安裝。
+- 設好 `OPENAI_API_KEY` 環境變數，跑 eval 會花 API 費用。
 
 
 
-**Note: OpenAI now has a hosted evals product with an API! We recommend you use this instead.
-See [Evals](https://platform.openai.com/docs/guides/evals)**
+**注意：OpenAI 現在有託管版的 evals 產品和 API，建議改用那個。
+見 [Evals](https://platform.openai.com/docs/guides/evals)**
 
-The [OpenAI Evals](https://github.com/openai/evals/tree/main) framework consists of
-1. A framework to evaluate an LLM (large language model) or a system built on top of an LLM.
-2. An open-source registry of challenging evals
+[OpenAI Evals](https://github.com/openai/evals/tree/main) 框架包含：
+1. 一個用來評估 LLM（大型語言模型）或建構在 LLM 上的系統的框架。
+2. 一個開源的 eval registry，收錄各種有難度的 eval。
 
-This notebook will cover:
-* Introduction to Evaluation and the [OpenAI Evals](https://github.com/openai/evals/tree/main) library
-* Building an Eval
-* Running an Eval
+這份 notebook 會講：
+* eval 和 [OpenAI Evals](https://github.com/openai/evals/tree/main) 函式庫的簡介
+* 建立一個 eval
+* 執行一個 eval
 
-#### What are evaluations/ `evals`?
+#### 什麼是 evaluations / `evals`？
 
-Evaluation is the process of validating and testing the outputs that your LLM applications are producing. Having strong evaluations ("evals") will mean a more stable, reliable application that is resilient to code and model changes. An eval is a task used to measure the quality of the output of an LLM or LLM system. Given an input prompt, an output is generated. We evaluate this output with a set of ideal answers and find the quality of the LLM system.
+Evaluation 就是驗證、測試你的 LLM 應用產生的輸出。有扎實的 eval，應用會比較穩、比較可靠，程式或模型換版時也不容易壞掉。eval 是一個用來衡量 LLM 或 LLM 系統輸出品質的任務：給一個輸入 prompt，產生一個輸出，再拿一組理想答案去評估這個輸出，得出系統的品質。
 
-#### Importance of Evaluations
+#### 為什麼 eval 重要
 
-If you are building with foundational models like `GPT-4`, creating high quality evals is one of the most impactful things you can do. Developing AI solutions involves an iterative design process. [Without evals, it can be very difficult and time intensive to understand](https://youtu.be/XGJNo8TpuVA?feature=shared&t=1089) how different model versions and prompts might affect your use case.
+如果你在用 `GPT-4` 這類 foundation model 開發，寫好的 eval 是你能做的最有效益的事之一。開發 AI 方案是反覆迭代的過程，[沒有 eval 的話，很難也很花時間去搞清楚](https://youtu.be/XGJNo8TpuVA?feature=shared&t=1089)不同模型版本和 prompt 會怎麼影響你的使用情境。
 
-With OpenAI’s [continuous model upgrades](https://platform.openai.com/docs/models/continuous-model-upgrades), evals allow you to efficiently test model performance for your use cases in a standardized way. Developing a suite of evals customized to your objectives will help you quickly and effectively understand how new models may perform for your use cases. You can also make evals a part of your CI/CD pipeline to make sure you achieve the desired accuracy before deploying.
+OpenAI 會[持續升級模型](https://platform.openai.com/docs/models/continuous-model-upgrades)，有了 eval，你可以用標準化的方式快速測試新模型在你的情境表現如何。針對自己的目標建一套 eval，就能很快知道新模型適不適合。你也可以把 eval 放進 CI/CD pipeline，確保上線前準確率有達標。
 
-#### Types of evals
+#### eval 的類型
 
-There are two main ways we can evaluate/grade completions: writing some validation logic in code
-or using the model itself to inspect the answer. We’ll introduce each with some examples.
+評分 completion 主要有兩種：自己寫驗證邏輯，或是讓模型自己檢查答案。下面各舉例說明。
 
-**Writing logic for answer checking**
+**寫程式邏輯來檢查答案**
 
-The simplest and most common type of eval has an input and an ideal response or answer. For example,
-we can have an eval sample where the input is "What year was Obama elected president for the first
-time?" and the ideal answer is "2008". We feed the input to a model and get the completion. If the model
-says "2008", it is then graded as correct. We can write a string match to check if the completion includes the phrase "2008". If it does, we consider it correct.
+最簡單也最常見的 eval 是一個輸入配一個理想答案。例如輸入是「Obama 第一次當選總統是哪一年？」，理想答案是「2008」。把輸入餵給模型拿到 completion，如果模型說「2008」就算對。我們可以寫個字串比對，檢查 completion 有沒有包含「2008」。
 
-Consider another eval where the input is to generate valid JSON: We can write some code that
-attempts to parse the completion as JSON and then considers the completion correct if it is
-parsable.
+另一個例子是要求產生合法的 JSON：寫段程式嘗試把 completion 當 JSON 解析，解析得過就算對。
 
-**Model grading: A two stage process where the model first answers the question, then we ask a
-model to look at the response to check if it’s correct.**
+**Model grading：兩階段流程，模型先回答問題，再請模型檢查這個回答對不對。**
 
-Consider an input that asks the model to write a funny joke. The model then generates a
-completion. We then create a new input to the model to answer the question: "Is this following
-joke funny? First reason step by step, then answer yes or no" that includes the completion." We
-finally consider the original completion correct if the new model completion ends with "yes".
+假設輸入是要模型寫一個好笑的笑話。模型產生 completion 之後，我們再建一個新的輸入問模型：「下面這個笑話好笑嗎？先一步一步推理，再回答 yes 或 no」，並把 completion 放進去。如果新的 completion 最後是 "yes"，原本的 completion 就算對。
 
-Model grading works best with the latest, most powerful models like `GPT-4` and if we give them the ability
-to reason before making a judgment. Model grading will have an error rate, so it is important to validate
-the performance with human evaluation before running the evals at scale. For best results, it makes
-sense to use a different model to do grading from the one that did the completion, like using `GPT-4` to
-grade `GPT-3.5` answers.
+Model grading 用最新、最強的模型（像 `GPT-4`）效果最好，而且要讓它先推理再下判斷。model grading 本身有錯誤率，所以大規模跑之前，要先用人工評估驗證它的表現。最好用跟產生答案不同的模型來評分，例如用 `GPT-4` 評 `GPT-3.5` 的答案。
 
-#### OpenAI Eval Templates
+#### OpenAI Eval 模板
 
-In using evals, we have discovered several "templates" that accommodate many different benchmarks. We have implemented these templates in the OpenAI Evals library to simplify the development of new evals. For example, we have defined 2 types of eval templates that can be used out of the box:
+我們在使用 eval 的過程中發現有幾種「模板」可以涵蓋很多不同的 benchmark，並且把它們實作在 OpenAI Evals 函式庫裡，讓新 eval 更好寫。目前內建兩種模板：
 
-* **Basic Eval Templates**: These contain deterministic functions to compare the output to the ideal_answers. In cases where the desired model response has very little variation, such as answering multiple choice questions or simple questions with a straightforward answer, we have found this following templates to be useful.
+* **Basic Eval Templates**：用確定性的函式比對輸出和 ideal_answers。適合預期回答變化很小的情況，像選擇題，或答案很直接的簡單問題。
 
-* **Model-Graded Templates**: These contain functions where an LLM compares the output to the ideal_answers and attempts to judge the accuracy. In cases where the desired model response can contain significant variation, such as answering an open-ended question, we have found that using the model to grade itself is a viable strategy for automated evaluation.
+* **Model-Graded Templates**：用 LLM 比對輸出和 ideal_answers 並判斷準不準。適合回答可能變化很大的情況，像開放式問題，這時讓模型自己評分是可行的自動化評估方式。
 
 
-### Getting Setup
+### 環境設定
 
-First, go to [github.com/openai/evals](https://github.com/openai/evals), clone the repository with `git clone git@github.com:openai/evals.git` and go through the [setup instructions](https://github.com/openai/evals). 
+先到 [github.com/openai/evals](https://github.com/openai/evals)，用 `git clone git@github.com:openai/evals.git` clone 專案，並照[安裝說明](https://github.com/openai/evals)做完。
 
-To run evals later in this notebook, you will need to set up and specify your OpenAI API key. After you obtain an API key, specify it using the `OPENAI_API_KEY` environment variable. 
+之後要跑 eval，需要設定 OpenAI API key。拿到 key 後，用 `OPENAI_API_KEY` 環境變數指定。
 
-Please be aware of the costs associated with using the API when running evals.
+跑 eval 前請留意 API 的費用。
 
 ```python
 from openai import OpenAI
@@ -89,43 +87,43 @@ import pandas as pd
 client = OpenAI()
 ```
 
-## Building an evaluation for OpenAI Evals framework
+## 為 OpenAI Evals 框架建立 eval
 
-At its core, an eval is a dataset and an eval class that is defined in a YAML file. To start creating an eval, we need
+eval 的核心是一份資料集，加上一個定義在 YAML 檔裡的 eval class。要開始建一個 eval，我們需要：
 
-1. The test dataset in the `jsonl` format.
-2. The eval template to be used
+1. `jsonl` 格式的測試資料集。
+2. 要用的 eval 模板。
 
-### Creating the eval dataset
-Lets create a dataset for a use case where we are evaluating the model's ability to generate syntactically correct SQL. In this use case, we have a series of tables that are related to car manufacturing
+### 建立 eval 資料集
+這次的情境是評估模型產生語法正確 SQL 的能力，資料表跟汽車製造有關。
 
-First we will need to create a system prompt that we would like to evaluate. We will pass in instructions for the model as well as an overview of the table structure:
+首先要寫出想評估的 system prompt，裡面放給模型的指示，加上資料表結構的概要：
 ```
 "TASK: Answer the following question with syntactically correct SQLite SQL. The SQL should be correct and be in context of the previous question-answer pairs.\nTable car_makers, columns = [*,Id,Maker,FullName,Country]\nTable car_names, columns = [*,MakeId,Model,Make]\nTable cars_data, columns = [*,Id,MPG,Cylinders,Edispl,Horsepower,Weight,Accelerate,Year]\nTable continents, columns = [*,ContId,Continent]\nTable countries, columns = [*,CountryId,CountryName,Continent]\nTable model_list, columns = [*,ModelId,Maker,Model]\nForeign_keys = [countries.Continent = continents.ContId,car_makers.Country = countries.CountryId,model_list.Maker = car_makers.Id,car_names.Model = model_list.Model,cars_data.Id = car_names.MakeId]"
 ```
 
-For this prompt, we can ask a specific question:
+針對這個 prompt，我們可以問一個具體的問題：
 ```
 "Q: how many car makers are their in germany?"
 ```
 
-And we have an expected answer:
+並且有一個預期答案：
 ```
 "A: SELECT count ( * )  FROM CAR_MAKERS AS T1 JOIN COUNTRIES AS T2 ON T1.Country   =   T2.CountryId WHERE T2.CountryName   =   'germany'"
 ```
 
-The dataset needs to be in the following format:
+資料集需要是下面這個格式：
 ```
 "input": [{"role": "system", "content": "<input prompt>"}, {"role": "user", "content": <user input>}, "ideal": "correct answer"]
 ```
 
-Putting it all together, we get:
+全部組起來就是：
 ```
 {"input": [{"role": "system", "content": "TASK: Answer the following question with syntactically correct SQLite SQL. The SQL should be correct and be in context of the previous question-answer pairs.\nTable car_makers, columns = [*,Id,Maker,FullName,Country]\nTable car_names, columns = [*,MakeId,Model,Make]\nTable cars_data, columns = [*,Id,MPG,Cylinders,Edispl,Horsepower,Weight,Accelerate,Year]\nTable continents, columns = [*,ContId,Continent]\nTable countries, columns = [*,CountryId,CountryName,Continent]\nTable model_list, columns = [*,ModelId,Maker,Model]\nForeign_keys = [countries.Continent = continents.ContId,car_makers.Country = countries.CountryId,model_list.Maker = car_makers.Id,car_names.Model = model_list.Model,cars_data.Id = car_names.MakeId]\n"}, {"role": "system", "content": "Q: how many car makers are their in germany"}, "ideal": ["A: SELECT count ( * )  FROM CAR_MAKERS AS T1 JOIN COUNTRIES AS T2 ON T1.Country   =   T2.CountryId WHERE T2.CountryName   =   'germany'"]}
 ```
 
 
-One way to speed up the process of building eval datasets, is to use `GPT-4` to generate synthetic data
+加速建 eval 資料集的一個方法，是用 `GPT-4` 生成 synthetic data。
 
 ````````````python
 ## Use GPT-4 to generate synthetic data
@@ -202,7 +200,7 @@ for choice in completion.choices:
     A: SELECT AVG(cars_data.Horsepower) FROM cars_data JOIN car_names ON cars_data.Id = car_names.MakeId JOIN car_makers ON car_names.MakeId = car_makers.Id JOIN countries ON car_makers.Country = countries.CountryId WHERE countries.CountryName = 'USA'
     ```
 
-Once we have the synthetic data, we need to convert it to match the format of the eval dataset.
+拿到 synthetic data 之後，要把它轉成符合 eval 資料集的格式。
 
 ```python
 eval_data = []
@@ -233,15 +231,15 @@ for item in eval_data:
     {'input': [{'role': 'system', 'content': 'TASK: Answer the following question with syntactically correct SQLite SQL. The SQL should be correct and be in context of the previous question-answer pairs.\nTable car_makers, columns = [*,Id,Maker,FullName,Country]\nTable car_names, columns = [*,MakeId,Model,Make]\nTable cars_data, columns = [*,Id,MPG,Cylinders,Edispl,Horsepower,Weight,Accelerate,Year]\nTable continents, columns = [*,ContId,Continent]\nTable countries, columns = [*,CountryId,CountryName,Continent]\nTable model_list, columns = [*,ModelId,Maker,Model]\nForeign_keys = [countries.Continent = continents.ContId,car_makers.Country = countries.CountryId,model_list.Maker = car_makers.Id,car_names.Model = model_list.Model,cars_data.Id = car_names.MakeId]'}, {'role': 'user', 'content': 'What is the average horsepower for cars made in the USA?'}], 'ideal': "SELECT AVG(cars_data.Horsepower) FROM cars_data JOIN car_names ON cars_data.Id = car_names.MakeId JOIN car_makers ON car_names.MakeId = car_makers.Id JOIN countries ON car_makers.Country = countries.CountryId WHERE countries.CountryName = 'USA'"}
     ```
 
-Next we need to create the eval registry to run it in the framework.
+接著要建 eval registry，這樣才能在框架裡跑它。
 
-The evals framework requires a `.yaml` file structured with the following properties:
-* `id` - An identifier for your eval
-* `description` - A short description of your eval
-* `disclaimer` - An additional notes about your eval
-* `metrics` - There are three types of eval metrics we can choose from: match, includes, fuzzyMatch
+evals 框架需要一個 `.yaml` 檔，包含這些欄位：
+* `id`：eval 的識別名稱
+* `description`：eval 的簡短描述
+* `disclaimer`：關於 eval 的補充說明
+* `metrics`：有三種 metric 可選：match、includes、fuzzyMatch
 
-For our eval, we will configure the following:
+我們這個 eval 的設定如下：
 
 ```python
 """
@@ -266,25 +264,25 @@ spider-sql.dev.v0:
     '\nspider-sql:\n  id: spider-sql.dev.v0\n  metrics: [accuracy]\n  description: Eval that scores SQL code from 194 examples in the Spider Text-to-SQL test dataset. The problems are selected by taking the first 10 problems for each database that appears in the test set.\n    Yu, Tao, et al. "Spider; A Large-Scale Human-Labeled Dataset for Complex and Cross-Domain Semantic Parsing and Text-to-SQL Task." Proceedings of the 2018 Conference on Empirical Methods in Natural Language Processing, 2018, https://doi.org/10.18653/v1/d18-1425.\n  disclaimer: Problems are solved zero-shot with no prompting other than the schema; performance may improve with training examples, fine tuning, or a different schema format. Evaluation is currently done through model-grading, where SQL code is not actually executed; the model may judge correct SQL to be incorrect, or vice-versa.\nspider-sql.dev.v0:\n  class: evals.elsuite.modelgraded.classify:ModelBasedClassify\n  args:\n    samples_jsonl: sql/spider_sql.jsonl\n    eval_type: cot_classify\n    modelgraded_spec: sql\n  '
     ```
 
-## Running an evaluation
+## 執行 eval
 
-We can run this eval using the `oaieval` CLI. To get setup, install the library: `pip install .` (if you are running the [OpenAI Evals library](https://github.com/openai/evals) locally) or `pip install oaieval` if you are running an existing eval.
+我們用 `oaieval` CLI 來跑這個 eval。先安裝函式庫：如果是在本機跑 [OpenAI Evals library](https://github.com/openai/evals)，用 `pip install .`；如果是跑現成的 eval，用 `pip install oaieval`。
 
-Then, run the eval using the CLI: `oaieval gpt-3.5-turbo spider-sql`
+然後用 CLI 執行：`oaieval gpt-3.5-turbo spider-sql`
 
-This command expects a model name and an eval set name. Note that we provide two command line interfaces (CLIs): `oaieval` for running a single eval and `oaievalset` for running a set of evals. The valid eval names are specified in the YAML files under `evals/registry/evals` and their corresponding implementations can be found in `evals/elsuite`.
+這個指令需要一個模型名稱和一個 eval 名稱。另外要注意，我們提供兩個 CLI：`oaieval` 跑單一 eval，`oaievalset` 跑一組 eval。有效的 eval 名稱定義在 `evals/registry/evals` 底下的 YAML 檔，對應的實作在 `evals/elsuite`。
 
 ```python
 !pip install evals --quiet
 ```
 
-The `oaieval` CLI can accept various flags to modify the default behavior. You can run `oaieval --help` to see a full list of CLI options. 
+`oaieval` CLI 有很多 flag 可以改預設行為，用 `oaieval --help` 可以看完整清單。
 
-After running that command, you’ll see the final report of accuracy printed to the console, as well as a file path to a temporary file that contains the full report.
+指令跑完後，你會在 console 看到最終的準確率報告，還有一個暫存檔的路徑，裡面是完整報告。
 
-`oaieval` will search for the `spider-sql` eval YAML file in the `evals/registry/evals` directory, following the format specified in cell 4 above. The path to the eval dataset is specified in the eval YAML file under the args: parameter as `samples_jsonl: sql/spider_sql.jsonl`, with the file content in JSONL format (as generated in step 3 above).
+`oaieval` 會到 `evals/registry/evals` 目錄找 `spider-sql` 的 eval YAML 檔，格式就是前面 cell 4 的那份。資料集的路徑寫在 eval YAML 的 args 參數裡，是 `samples_jsonl: sql/spider_sql.jsonl`，內容是 JSONL 格式（就是上面第 3 步產生的那份）。
 
-After running that command, you’ll see the final report of accuracy printed to the console, as well as a file path to a temporary file that contains the full report.
+指令跑完後，你會在 console 看到最終的準確率報告，還有一個暫存檔的路徑，裡面是完整報告。
 
 ```python
 !oaieval gpt-3.5-turbo spider-sql --max_samples 25
@@ -336,11 +334,11 @@ After running that command, you’ll see the final report of accuracy printed to
     ... (省略 25 行)
     ```
 
-`oaievalset` expects a model name and an eval set name, for which the valid options are specified in the YAML files under `evals/registry/eval_sets`.
+`oaievalset` 需要一個模型名稱和一個 eval set 名稱，有效的選項定義在 `evals/registry/eval_sets` 底下的 YAML 檔。
 
-### Going through eval logs
+### 查看 eval log
 
-The eval logs are located at `/tmp/evallogs` and different log files are created for each evaluation run. 
+eval log 放在 `/tmp/evallogs`，每次跑 eval 都會產生一個獨立的 log 檔。
 
 ```python
 log_name = '240327024443FACXGMKA_gpt-3.5-turbo_spider-sql.jsonl' # "EDIT THIS" - copy from above
@@ -401,7 +399,7 @@ with open(events, "r") as f:
     events_df = pd.read_json(f, lines=True)
 ```
 
-This file will contain structured logs of the evaluation. The first entry provides a detailed specification of the evaluation, including the completion functions, evaluation name, run configuration, creator’s name, run ID, and creation timestamp.
+這個檔案裡是 eval 的結構化 log。第一筆記錄詳細描述了這次 eval 的規格，包括 completion function、eval 名稱、執行設定、建立者名稱、run ID 和建立時間。
 
 ```python
 display(events_df.iloc[0].spec)
@@ -431,7 +429,7 @@ display(events_df.iloc[0].spec)
      'created_at': '2024-03-27 02:44:43.626043'}
     ```
 
-Let's also look at the entry which provides the final report of the evaluation.
+再來看提供最終報告的那筆記錄。
 
 ```python
 display(events_df.dropna(subset=['final_report']).iloc[0]['final_report'])
@@ -443,7 +441,7 @@ display(events_df.dropna(subset=['final_report']).iloc[0]['final_report'])
     {'counts/Correct': 20, 'counts/Incorrect': 5, 'score': 0.8}
     ```
 
-We can also review individual evaluation events that provide specific samples (`sample_id`), results, event types, and metadata.
+我們也可以看個別的 eval event，裡面有各個 sample（`sample_id`）、結果、event 類型和 metadata。
 
 ```python
 pd.set_option('display.max_colwidth', None)  # None means no truncation
@@ -499,7 +497,7 @@ for i, row in events_df[events_df['type'] == 'sampling'].head(5).iterrows():
     ----------
     ````
 
-Let's review our failures to understand which tests did not succeed.
+接著看失敗的案例，了解哪些測試沒過。
 
 ````python
 def pretty_print_text(prompt):
@@ -640,16 +638,27 @@ for i, row in events_df[events_df['type'] == 'metrics'].iterrows():
     ----------------------------------------
     ```
 
-Reviewing some of the failures we see the following:
-* The second incorrect answer had an unnecessary join with the 'Templates' table. Our eval was able to accurately identify this and flag this as incorrect. 
-* Few other answers have minor syntax differences that caused the answers to get flagged.
-  * In situations like this, it would be worthwhile exploring whether we should continue iterating on the prompt to ensure certain stylistic choices, or if we should modify the evaluation suite to capture this variation.
-  * This type of failure hints at the potential need for model-graded evals as a way to ensure accuracy in grading the results
+看了一些失敗案例，我們發現：
+* 第二個錯誤答案多做了一個不必要的 `Templates` 資料表 join，eval 正確辨識出來並標為錯誤。
+* 其他幾個答案只是語法上有小差異，就被標成錯。
+  * 碰到這種情況，值得想想是要繼續調整 prompt 來固定某些寫法風格，還是要修改評估套件，把這類差異算進去。
+  * 這種失敗也暗示可能需要 model-graded eval，才能準確評分。
 
-# Conclusion
+# 結論
 
-Building out effective evals is a core part of the development cycle of LLM-based applications. The OpenAI Evals framework provides the core structure of building evals out of the box, and allows you to quickly spin up new tests for your various use cases. In this guide, we demonstrated step-by-step how to create an eval, run it, and analyze the results.
+建立有效的 eval 是開發 LLM 應用的核心環節。OpenAI Evals 框架提供了現成的 eval 建構架構，讓你可以很快為不同使用情境開出新測試。這篇一步一步示範了怎麼建 eval、跑 eval、分析結果。
 
-The example shown in this guide represents a straightforward use case for evals. As you continue to explore this framework, we recommend you explore creating more complex model-graded evals for actual production use cases. Happy evaluating!
+這篇的例子是 eval 很單純的用法。接著用這個框架時，建議針對實際的 production 情境，去做更複雜的 model-graded eval。祝評估順利！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- eval 的本質是「輸入 + 理想答案 + 評分方式」，換模型或改 prompt 時它是你的回歸測試。
+- 答案變化小就用 basic 模板（match、includes、fuzzyMatch），答案開放就用 model-graded，而且最好用不同模型來評分。
+- eval 資料集是 `jsonl`，每筆有 prompt 跟 ideal answer，再用 YAML 註冊到 registry 才能被 `oaieval` 找到。
+- 失敗案例要看，因為有時是模型真的錯，有時只是比對規則太死，這時該改的是評分方式。
+
+## 練習
+
+1. 把 YAML 裡的 metric 換成另一種（例如 match 換成 includes），重跑 eval，看準確率和失敗案例怎麼變。
+2. 用 `GPT-4` 再生成一批不同資料表的 SQL 樣本，轉成 `jsonl` 加進資料集，跑跑看。
+3. 挑一個因為語法小差異被判錯的 sample，想辦法讓它能算對，例如改 prompt 固定寫法，或改用 model-graded 模板評分。

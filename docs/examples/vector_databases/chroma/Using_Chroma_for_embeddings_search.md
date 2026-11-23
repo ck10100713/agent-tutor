@@ -1,42 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/chroma/Using_Chroma_for_embeddings_search.ipynb
 ---
 
-# Using Chroma for embeddings search
+# 用 Chroma 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/chroma/Using_Chroma_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/chroma/Using_Chroma_for_embeddings_search.ipynb)
 
+## 這篇在做什麼
+走一遍完整流程：載入已經 embed 好的資料，建到 Chroma 這個向量資料庫，再用語意搜尋查詢。Chroma 是開源、可自架、預設跑在記憶體的向量資料庫。
+
+## 學完你會
+- 建立 Chroma client，並為 title 和 content 各建一個 collection
+- 用 Chroma 內建的 OpenAI embedding function，讓它幫你處理 query 的 embedding
+- 對 collection 下 query，再用 ID 對回原本的 dataframe 看結果
+
+## 開跑前
+需要 OpenAI API key（query 時會呼叫 embedding 模型）。
+
+這個 notebook 帶你走一個簡單流程：下載資料、做 embedding，再用向量資料庫建索引並搜尋。很多客戶想在安全的環境裡儲存、搜尋自己資料的 embedding，來支援聊天機器人、主題建模等正式環境的用途，這就是常見的需求。
+
+### 什麼是向量資料庫
+
+向量資料庫是專門用來儲存、管理和搜尋 embedding 向量的資料庫。近年 AI 在自然語言、影像辨識等非結構化資料的應用越來越有效，把文字、音訊、影片等非結構化資料編碼成向量給機器學習模型使用的做法也快速成長，向量資料庫就成了企業落地這些應用並擴大規模的有效方案。
+
+### 為什麼要用向量資料庫
+
+向量資料庫讓企業能把這個 repo 裡分享過的許多 embedding 用例（例如問答、聊天機器人、推薦服務），放到安全、可擴展的環境中運行。很多客戶在小規模時 embedding 能解決問題，但效能和安全性擋住了上線，我們認為向量資料庫是解決這件事的關鍵元件。這份指南會走過基本流程：embed 文字資料、存進向量資料庫，並用來做語意搜尋。
 
 
-<!-- tutor:goals -->
+### Demo 流程
+流程如下：
+- **設定**：import 套件、設定需要的變數
+- **載入資料**：載入資料集，並用 OpenAI embedding 處理
+- **Chroma**：
+    - *設定*：這裡設定 Chroma 的 Python client，詳情看[這裡](https://docs.trychroma.com/usage-guide)
+    - *建索引*：為 __title__ 和 __content__ 各建一個帶向量的 collection
+    - *搜尋*：跑幾個搜尋確認可以正常運作
 
+跑完這個 notebook，你應該對向量資料庫怎麼設定和使用有基本概念，之後可以進一步做更複雜、運用 embedding 的用例。
 
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
+## 設定
 
-### What is a Vector Database
-
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
-
-### Why use a Vector Database
-
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
-
-
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
-- **Chroma**:
-    - *Setup*: Here we'll set up the Python client for Chroma. For more details go [here](https://docs.trychroma.com/usage-guide)
-    - *Index Data*: We'll create collections with vectors for __titles__ and __content__
-    - *Search Data*: We'll run a few searches to confirm it works
-
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
-
-## Setup
-
-Import the required libraries and set the embedding model that we'd like to use.
+import 需要的函式庫，並設定想用的 embedding 模型。
 
 ```python
 # Make sure the OpenAI library is installed
@@ -118,9 +124,9 @@ warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWa
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared previous to this session.
+這一節載入我們事先準備好、已經 embed 完的資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -215,17 +221,17 @@ article_df.info(show_counts=True)
 
 # Chroma
 
-We'll index these embedded documents in a vector database and search them. The first option we'll look at is **Chroma**, an easy to use open-source self-hosted in-memory vector database, designed for working with embeddings together with LLMs. 
+我們要把這些 embed 好的文件建到向量資料庫並搜尋。第一個選項是 **Chroma**，一個好上手、開源、可自架、跑在記憶體的向量資料庫，專門設計給 embedding 搭配 LLM 使用。
 
-In this section, we will:
-- Instantiate the Chroma client
-- Create collections for each class of embedding 
-- Query each collection 
+這一節會做：
+- 建立 Chroma client
+- 為每一類 embedding 建 collection
+- 查詢每個 collection
 
-### Instantiate the Chroma client
+### 建立 Chroma client
 
-Create the Chroma client. By default, Chroma is ephemeral and runs in memory. 
-However, you can easily set up a persistent configuration which writes to disk.
+建立 Chroma client。預設 Chroma 是暫時性的，跑在記憶體裡。
+不過你可以輕鬆設成持久化，把資料寫到磁碟。
 
 ```python
 chroma_client = chromadb.EphemeralClient() # Equivalent to chromadb.Client(), ephemeral.
@@ -233,12 +239,12 @@ chroma_client = chromadb.EphemeralClient() # Equivalent to chromadb.Client(), ep
 # chroma_client = chromadb.PersistentClient()
 ```
 
-### Create collections
+### 建立 collection
 
-Chroma collections allow you to store and filter with arbitrary metadata, making it easy to query subsets of the embedded data. 
+Chroma collection 可以儲存任意 metadata 並依它過濾，方便查詢 embed 資料的子集。
 
-Chroma is already integrated with OpenAI's embedding functions. The best way to use them is on construction of a collection, as follows.
-Alternatively, you can 'bring your own embeddings'. More information can be found [here](https://docs.trychroma.com/embeddings)
+Chroma 已經整合了 OpenAI 的 embedding function，最好的用法是在建立 collection 時指定，如下。
+你也可以改成 'bring your own embeddings'（自帶 embedding）。詳情看[這裡](https://docs.trychroma.com/embeddings)
 
 ```python
 from chromadb.utils.embedding_functions import OpenAIEmbeddingFunction
@@ -268,11 +274,11 @@ wikipedia_title_collection = chroma_client.create_collection(name='wikipedia_tit
     OPENAI_API_KEY is ready
     ```
 
-### Populate the collections
+### 填入 collection
 
-Chroma collections allow you to populate, and filter on, whatever metadata you like. Chroma can also store the text alongside the vectors, and return everything in a single `query` call, when this is more convenient. 
+Chroma collection 可以填入任何你想要的 metadata 並依它過濾。需要的話，Chroma 也能把文字跟向量一起存，並在單一個 `query` 呼叫裡一起回傳。
 
-For this use-case, we'll just store the embeddings and IDs, and use these to index the original dataframe. 
+這個用例我們只存 embedding 和 ID，再用 ID 去對回原本的 dataframe。
 
 ```python
 # Add the content vectors
@@ -288,9 +294,9 @@ wikipedia_title_collection.add(
 )
 ```
 
-### Search the collections
+### 搜尋 collection
 
-Chroma handles embedding queries for you if an embedding function is set, like in this example.
+如果有設定 embedding function（像這個範例），Chroma 會幫你處理 query 的 embedding。
 
 ```python
 def query_collection(collection, query, max_results, dataframe):
@@ -361,6 +367,16 @@ content_query_result.head()
     11702  William Wallace was a Scottish knight who foug...
     ```
 
-Now that you've got a basic embeddings search running, you can [hop over to the Chroma docs](https://docs.trychroma.com/usage-guide#using-where-filters) to learn more about how to add filters to your query, update/delete data in your collections, and deploy Chroma.
+現在你已經有一個基本的 embedding 搜尋了，可以[前往 Chroma 文件](https://docs.trychroma.com/usage-guide#using-where-filters)，學更多怎麼在 query 加過濾條件、更新 / 刪除 collection 裡的資料，以及怎麼部署 Chroma。
 
-<!-- tutor:summary -->
+## 重點整理
+- 向量資料庫專門存、管、搜 embedding，是 embedding 應用走向正式環境的關鍵元件。
+- Chroma 預設跑在記憶體，要保存資料就改成持久化設定。
+- collection 在建立時指定 OpenAI embedding function，query 時就不用自己算 embedding。
+- title 和 content 各建一個 collection，可以分別對不同欄位做語意搜尋。
+- collection 可以只存向量和 ID，再用 ID 回頭對原始 dataframe。
+
+## 練習
+1. 換一句自己的 query 搜尋 title collection，再搜 content collection，比較結果差異。
+2. 改 query 的結果筆數（`n_results`），看回傳數量和排序變化。
+3. 把 client 改成持久化設定，重跑兩次，確認第二次不用重建 collection 也能查。

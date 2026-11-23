@@ -1,49 +1,60 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.ipynb
 ---
 
-# How to evaluate LLMs for SQL generation
+# 如何評估 LLM 的 SQL 生成
 
 > 原文：[examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+示範一套評估 LLM 輸出的框架，用 natural language 轉 SQL 當例子：先用 unit test 檢查 JSON 格式和 SQL 語法，再用 `gpt-4o-mini` 評估 SQL 有沒有切題，最後把兩個 system prompt 的結果整理成報表比較。
+
+## 學完你會
+
+- 用 Pydantic 和 SQLite 寫 unit test，驗證 LLM 回傳的 JSON 和 SQL 能不能解析、能不能執行。
+- 寫一個 LLM 評估函式，判斷產生的 SQL 跟使用者問題的相關程度。
+- 把不同 system prompt 當作不同的 run，跑同一組測試後用 dataframe 和長條圖比較差異。
+
+## 開跑前
+
+需要 OpenAI API Key，另外會從 HuggingFace 下載 `b-mc2/sql-create-context` 資料集。
+
+LLM 本質上是 nondeterministic 的，所以回答有創意、有變化。但這也讓「一致性」很難達成，而一致性正是 LLM 上 production 的關鍵。
+
+要把 LLM 用在實際應用上，關鍵是持續而有系統地評估。這樣才能找出並修正不一致的地方，也能在應用演進時追蹤進度。
+
+## 這篇的範圍
+
+這篇要示範一個評估 LLM 的框架，包含：
+
+* **Unit Testing：** 評估應用裡各個獨立元件所必需。
+* **Evaluation Metrics：** 量化衡量模型表現的方法。
+* **Runbook Documentation：** 記錄歷次評估，追蹤進步和退步。
+
+這個例子是 natural language 轉 SQL。code generation 類的場景很適合這種做法，只要把 **code validation** 和 **code execution** 結合，應用就能在程式碼產生的當下真的跑跑看，確保一致。
+
+雖然這篇用 SQL 生成當例子，但這個做法是通用的，可以用在各種 LLM 應用。
+
+我們會用兩個版本的 prompt 來做 SQL 生成，再用 unit test 和評估函式比較它們的表現。具體會評估：
+
+1. JSON 回應的一致性。
+2. 回應裡 SQL 的語法正確性。
 
 
-LLMs are fundamentally nondeterministic. This attribute makes their responses creative and dynamic. However, this trait poses significant challenges in achieving consistency, a crucial aspect for integrating LLMs into production environments.
+## 目錄
 
-The key to harnessing the potential of LLMs in practical applications lies in consistent and systematic evaluation. This enables the identification and rectification of inconsistencies and helps with monitoring progress over time as the application evolves.
-
-## Scope of this notebook
-
-This notebook aims to demonstrate a framework for evaluating LLMs, particularly focusing on:
-
-* **Unit Testing:** Essential for assessing individual components of the application.
-* **Evaluation Metrics:** Methods to quantitatively measure the model's effectiveness.
-* **Runbook Documentation:** A record of historical evaluations to track progress and regression.
-
-This example focuses on a natural language to SQL use case - code generation use cases fit well with this approach when you combine **code validation** with **code execution**, so your application can test code for real as it is generated to ensure consistency.
-
-Although this notebook uses SQL generation use case to demonstrate the concept, the approach is generic and can be applied to a wide variety of LLM-driven applications.
-
-We will use two versions of a prompt to perform SQL generation.  We will then use the unit tests and evaluation functions to test the performance of the prompts.  Specifically, in this demonstration, we will evaluate:
-
-1. The consistency of JSON response.
-2. Syntactic correctness of SQL in response.
-
-
-## Table of contents
-
-1. **[Setup](#Setup):** Install required libraries, download data consisting of SQL queries and corresponding natural language translations.
-2. **[Test Development](#Test-development):** Create unit tests and define evaluation metrics for the SQL generation process.
-3. **[Evaluation](#Evaluation):** Conduct tests using different prompts to assess the impact on performance.
-4. **[Reporting](#Report):** Compile a report that succinctly presents the performance differences observed across various tests.
+1. **[Setup](#Setup)：** 安裝需要的套件，下載包含 SQL 查詢和對應自然語言描述的資料。
+2. **[Test Development](#Test-development)：** 為 SQL 生成流程建立 unit test 並定義評估指標。
+3. **[Evaluation](#Evaluation)：** 用不同的 prompt 跑測試，看對表現的影響。
+4. **[Reporting](#Report)：** 整理報表，簡潔呈現各測試的表現差異。
 
 ## Setup
 
-Import our libraries and the dataset we'll use, which is the natural language to SQL [b-mc2/sql-create-context](https://huggingface.co/datasets/b-mc2/sql-create-context) dataset from HuggingFace.
+匯入套件和資料集。資料集用 HuggingFace 上的 natural language 轉 SQL 資料集 [b-mc2/sql-create-context](https://huggingface.co/datasets/b-mc2/sql-create-context)。
 
 ```python
 # Uncomment this to install all necessary dependencies
@@ -81,17 +92,17 @@ print(dataset['train'].num_rows, "rows")
     78577 rows
     ```
 
-### Looking at the dataset
+### 看一下資料集
 
-We use Huggingface datasets library to download SQL create context dataset.  This dataset consists of:
+我們用 Huggingface 的 datasets 套件下載 SQL create context 資料集。資料集包含：
 
-1. Question, expressed in natural language
-2. Answer, expressed in SQL designed to answer the question in natural language.
-3. Context, expressed as a CREATE SQL statement, that describes the table that may be used to answer the question.
+1. Question：用自然語言寫的問題。
+2. Answer：用來回答該問題的 SQL。
+3. Context：一段 CREATE SQL 語句，描述回答問題可能用到的資料表。
 
-In our demonstration today, we will use LLM to attempt to answer the question (in natural language).  The LLM will be expected to generate a CREATE SQL statement to create a context suitable to answer the user question and a corresponding SELECT SQL query designed to answer the user question completely.
+這次示範會讓 LLM 嘗試回答（自然語言的）問題。LLM 要產生一段 CREATE SQL 語句建立適合回答問題的 context，以及一段能完整回答問題的 SELECT SQL query。
 
-The dataset looks like this:
+資料長這樣：
 
 ```python
 sql_df = dataset['train'].to_pandas()
@@ -125,17 +136,17 @@ sql_df.head()
 
 ## Test development
 
-To test the output of the LLM generations, we'll develop two unit tests and an evaluation, which will combine to give us a basic evaluation framework to grade the quality of our LLM iterations.
+為了測試 LLM 的輸出，我們會寫兩個 unit test 和一個 evaluation，組合成一個基本的評估框架，用來給每次 LLM 迭代的品質打分。
 
-To re-iterate, our purpose is to measure the correctness and consistency of LLM output given our questions.
+再強調一次，目的是衡量 LLM 針對我們的問題，輸出是否正確、是否一致。
 
 ### Unit tests
 
-Unit tests should test the most granular components of your LLM application.
+Unit test 應該測 LLM 應用裡最細的元件。
 
-For this section we'll develop unit tests to test the following:
-- `test_valid_schema` will check that a parseable `create` and `select` statement are returned by the LLM.
-- `test_llm_sql` will execute both the `create` and `select` statements on a `sqlite` database to ensure they are syntactically correct.
+這一節會寫 unit test 來測：
+- `test_valid_schema` 檢查 LLM 有沒有回傳可解析的 `create` 和 `select` 語句。
+- `test_llm_sql` 會在 `sqlite` 資料庫上執行 `create` 和 `select` 語句，確認語法正確。
 
 ```python
 from pydantic import BaseModel
@@ -150,9 +161,9 @@ class LLMResponse(BaseModel):
     select: str
 ```
 
-#### Prompting the LLM
+#### 對 LLM 下 prompt
 
-For this demonstration purposes, we use a fairly simple prompt requesting GPT to generate a `(context, answer)` pair. `context` is the `CREATE` SQL statement, and `answer` is the `SELECT` SQL statement. We supply the natural language question as part of the prompt.  We request the response to be in JSON format, so that it can be parsed easily.
+為了示範，我們用一個相當簡單的 prompt，請 GPT 產生一組 `(context, answer)`。`context` 是 `CREATE` SQL 語句，`answer` 是 `SELECT` SQL 語句。自然語言的問題放在 prompt 裡提供。我們要求回應用 JSON 格式，方便解析。
 
 ```python
 system_prompt = """Translate this natural language request into a JSON
@@ -189,13 +200,13 @@ print("Answer:", content)
     Answer: {"create":"CREATE TABLE DepartmentHeads (\n    id INT PRIMARY KEY,\n    name VARCHAR(100),\n    age INT,\n    department VARCHAR(100)\n);","select":"SELECT COUNT(*) AS NumberOfHeadsOlderThan56 \nFROM DepartmentHeads \nWHERE age > 56;"}
     ```
 
-#### Check JSON formatting
+#### 檢查 JSON 格式
 
-Our first simple unit test checks that the LLM response is parseable into the `LLMResponse` Pydantic class that we've defined.
+第一個簡單的 unit test 檢查 LLM 回應能不能解析成我們定義的 `LLMResponse` Pydantic class。
 
-We'll test that our first response passes, then create a failing example to check that the check fails. This logic will be wrapped in a simple function `test_valid_schema`.
+我們會先測第一個回應能通過，再造一個會失敗的例子，確認檢查真的會失敗。這段邏輯包在一個簡單的函式 `test_valid_schema` 裡。
 
-We expect GPT to respond with a valid SQL, we can validate this using LLMResponse base model.  `test_valid_schema` is designed to help us validate this.
+我們預期 GPT 回傳有效的 SQL，可以用 LLMResponse base model 來驗證。`test_valid_schema` 就是用來做這件事。
 
 ```python
 def test_valid_schema(content):
@@ -219,9 +230,9 @@ test_valid_schema(content)
     True
     ```
 
-#### Testing negative scenario
+#### 測試負面情境
 
-To simulate a scenario in which we get an invalid JSON response from GPT, we hardcode an invalid JSON as response.  We expect `test_valid_schema` function to throw an exception.
+為了模擬 GPT 回傳無效 JSON 的情況，我們把一段無效 JSON 寫死當作回應。預期 `test_valid_schema` 函式會丟出 exception。
 
 ```python
 failing_query = 'CREATE departments, select * from departments'
@@ -240,18 +251,18 @@ test_valid_schema(failing_query)
     False
     ```
 
-As expected, we get an exception thrown from the `test_valid_schema` function.
+如預期，`test_valid_schema` 函式丟出了 exception。
 
-### Test SQL queries
+### 測試 SQL query
 
-Next we'll validate the correctness of the SQL.  This test is designed to validate:
+接下來驗證 SQL 的正確性。這個測試要確認：
 
-1. The CREATE SQL returned in GPT response is syntactically correct.
-2. The SELECT SQL returned in the GPT response is syntactically correct.
+1. GPT 回應裡的 CREATE SQL 語法正確。
+2. GPT 回應裡的 SELECT SQL 語法正確。
 
-To achieve this, we will use a SQLite instance. We will send the returned SQL statements to the SQLite instance. If the statements are valid, SQLite will accept and execute them; otherwise we will expect an exception to be thrown.
+做法是用一個 SQLite instance。把回傳的 SQL 語句送給 SQLite，如果語句有效，SQLite 會接受並執行，否則預期會丟 exception。
 
-The `create_connection` function below will set up a SQLite instance (in-memory by default) and create a connection to be used later.
+下面的 `create_connection` 函式會建立 SQLite instance（預設在記憶體）並開一個連線，之後會用到。
 
 ```python
 # Set up SQLite to act as our test database
@@ -277,12 +288,12 @@ def close_connection(conn):
 conn = create_connection()
 ```
 
-Next, we will create the following functions to carry out the syntactical correctness checks.
+接著建立下面這些函式來做語法正確性檢查。
 
 
-- `test_create`: Function testing if the CREATE SQL statement succeeds.
-- `test_select`: Function testing if the SELECT SQL statement succeeds.
-- `test_llm_sql`: Wrapper function executing the two tests above.
+- `test_create`：測試 CREATE SQL 語句能否成功執行。
+- `test_select`：測試 SELECT SQL 語句能否成功執行。
+- `test_llm_sql`：包住上面兩個測試的 wrapper 函式。
 
 ```python
 def test_select(conn, cursor, select, should_log=True):
@@ -414,11 +425,11 @@ test_llm_sql(test_failure_query)
     False
     ```
 
-### Using an LLM to evaluate relevancy
+### 用 LLM 評估 relevancy
 
-Next, we **evaluate** whether the generated SQL actually answers the user's question. This test will be performed by `gpt-4o-mini`, and will assess how **relevant** the produced SQL query is when compared to the initial user request.
+接下來要**評估**產生的 SQL 是否真的回答了使用者的問題。這個測試由 `gpt-4o-mini` 執行，評估產生的 SQL query 跟原本使用者需求的**相關**程度。
 
-This is a simple example which adapts an approach outlined in the [G-Eval paper](https://arxiv.org/abs/2303.16634), and tested in one of our other [cookbooks](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/How_to_eval_abstractive_summarization.ipynb).
+這是一個簡單的例子，改編自 [G-Eval 論文](https://arxiv.org/abs/2303.16634)的做法，並在我們另一份 [cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/How_to_eval_abstractive_summarization.ipynb) 裡測試過。
 
 ```python
 EVALUATION_MODEL = "gpt-4o-mini"
@@ -538,15 +549,15 @@ for result in evaluation_results:
 
 ## Evaluation
 
-We will test these functions in combination including our unit test and evaluations to test out two system prompts.
+我們會把這些函式組合起來，包含 unit test 和評估，來測試兩個 system prompt。
 
-Each iteration of input/output and scores should be stored as a **run**. Optionally you can add GPT-4 annotation within your evaluations or as a separate step to review an entire run and highlight the reasons for errors.
+每一次的輸入、輸出和分數，都應該存成一個 **run**。你也可以選擇在評估中加入 GPT-4 標註，或另外用一個步驟檢視整個 run，標出錯誤原因。
 
-For this example, the second system prompt will include an extra line of clarification, so we can assess the impact of this for both SQL validity and quality of solution.
+這個例子裡，第二個 system prompt 會多一行說明，讓我們看看它對 SQL 有效性和解法品質的影響。
 
-### Building the test framework
+### 建立測試框架
 
-We want to build a function, `test_system_prompt`, which will run our unit tests and evaluation against a given system prompt.
+我們要寫一個函式 `test_system_prompt`，針對指定的 system prompt 跑 unit test 和評估。
 
 ```python
 def execute_unit_tests(input_df, output_list, system_prompt):
@@ -610,7 +621,7 @@ def test_system_prompt(test_df, system_prompt):
 
 ### System Prompt 1
 
-The system under test is the first system prompt as shown below.  This `run` will generate responses for this system prompt and evaluate the responses using the functions we've created so far.
+被測的系統是下面的第一個 system prompt。這個 `run` 會用這個 system prompt 產生回應，並用我們目前寫好的函式評估回應。
 
 ```python
 system_prompt = """Translate this natural language request into a JSON object
@@ -632,9 +643,9 @@ results_df = test_system_prompt(test_df, system_prompt)
       0%|          | 0/50 [00:00<?, ?it/s]
     ```
 
-We can now group the outcomes of:
-* the **unit tests**, which test the structure of response; and
-* the **evaluation**, which checks if the SQL is syntactically correct.
+現在可以把結果分成兩組：
+* **unit test**：測試回應的結構；
+* **evaluation**：檢查 SQL 語法是否正確。
 
 ```python
 results_df['unit_test_evaluation'].value_counts()
@@ -665,7 +676,7 @@ results_df['evaluation_score'].value_counts()
 
 ### System Prompt 2
 
-We now use a new system prompt to run same unit test and evaluation.
+現在換一個新的 system prompt，跑同樣的 unit test 和評估。
 
 ```python
 system_prompt_2 = """Translate this natural language request into a JSON
@@ -686,7 +697,7 @@ results_2_df = test_system_prompt(test_df, system_prompt)
       0%|          | 0/50 [00:00<?, ?it/s]
     ```
 
-As above, we can group the unit test and evaluation results.
+跟上面一樣，把 unit test 和評估結果分組。
 
 ```python
 results_2_df['unit_test_evaluation'].value_counts()
@@ -717,7 +728,7 @@ results_2_df['evaluation_score'].value_counts()
 
 ## Reporting
 
-We'll make a simple dataframe to store and display the run performance - this is where you can use tools like Weights & Biases Prompts or Gantry to store the results for analytics on your different iterations.
+我們做一個簡單的 dataframe 來存放並顯示各 run 的表現。這裡你可以改用 Weights & Biases Prompts 或 Gantry 這類工具，存下結果來分析不同迭代。
 
 ```python
 results_df['run'] = 1
@@ -755,9 +766,9 @@ run_df.head()
     4                5          SQL correct    1            gpt-4
     ```
 
-#### Plotting unit test results
+#### 畫出 unit test 結果
 
-We can create a simple bar chart to visualise the results of unit tests for both runs.
+我們可以畫一個簡單的長條圖，視覺化兩個 run 的 unit test 結果。
 
 ```python
 unittest_df_pivot = pd.pivot_table(
@@ -823,9 +834,9 @@ plt.show()
 
     ![](How_to_evaluate_LLMs_for_SQL_generation_files/out_47_0.png)
 
-#### Plotting evaluation results
+#### 畫出 evaluation 結果
 
-We can similarly plot the results of the evaluation.
+同樣可以畫出評估結果。
 
 ```python
 evaluation_df_pivot = pd.pivot_table(
@@ -903,10 +914,22 @@ plt.show()
 
     ![](How_to_evaluate_LLMs_for_SQL_generation_files/out_50_0.png)
 
-## Conclusion
+## 結論
 
-Now you have a framework to test SQL generation using LLMs, and with some tweaks this approach can be extended to many other code generation use cases. With GPT-4 and engaged human labellers you can aim to automate the evaluation of these test cases, making an iterative loop where new examples are added to the test set and this structure detects any performance regressions. 
+現在你有一套用 LLM 測試 SQL 生成的框架，稍微調整就能延伸到很多 code generation 的場景。搭配 GPT-4 和投入的人工標註員，可以把這些測試案例的評估自動化，形成一個迭代循環：新範例加進測試集，這個結構會偵測效能有沒有退步。
 
-We hope you find this useful, and please supply any feedback.
+希望這對你有幫助，也歡迎提供回饋。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- LLM 輸出不確定，要上 production 就得有系統地評估，才抓得到不一致和退步。
+- Code generation 可以結合 validation 和 execution，真的把產生的程式碼跑一遍來驗證。
+- Unit test 測結構（JSON 能不能解析）和語法（SQL 能不能在 SQLite 執行），LLM 評估則測語意相關度。
+- 每個 prompt 版本存成一個 run，用同一組測試比較，才知道改 prompt 到底有沒有幫助。
+- 這套做法不限於 SQL，換掉驗證邏輯就能用在其他 LLM 應用。
+
+## 練習
+
+1. 在 `test_valid_schema` 的負面情境裡，換一種壞掉的 JSON（例如少一個欄位），確認 exception 仍會被丟出。
+2. 改寫 System Prompt 2 多加的那行說明，重跑 `test_system_prompt`，比較兩個 run 的 unit test 通過率。
+3. 新增一個 unit test，檢查 `select` 語句執行後回傳的結果不是空的，並加進 `test_llm_sql`。

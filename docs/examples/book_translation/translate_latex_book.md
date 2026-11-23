@@ -1,22 +1,28 @@
 ---
-translated: false
+translated: true
 source: examples/book_translation/translate_latex_book.ipynb
 ---
 
-# Translate a book writen in LaTeX from Slovenian into English
+# 把斯洛維尼亞文的 LaTeX 書翻成英文
 
 > 原文：[examples/book_translation/translate_latex_book.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/book_translation/translate_latex_book.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇取得作者同意後，示範怎麼把 Milan Mitrović 用斯洛維尼亞文寫的《[Euclidean Plane Geometry](https://sites.google.com/site/projektivna/)》翻成英文，而且不動任何 LaTeX 指令。
+做法是先把整本書切成大約一頁長的 chunk，逐塊翻成英文，最後再拼回去。
 
+## 學完你會
+- 用 tokenizer 算每個 chunk 的 token 數，挑出合適的切分方式。
+- 把短 chunk 合併成接近 15000 token 的大塊，讓翻譯更連貫。
+- 用範例指令引導模型只翻文字、不動 LaTeX 指令，並批次翻完整本書。
 
-With permission of the author, we will demonstrate how to translate the book [Euclidean Plane Geometry](https://sites.google.com/site/projektivna/), written by Milan Mitrović from Slovenian into English, without modifying any of the LaTeX commands.
+## 開跑前
+- 需要 OpenAI API key。
+- 整本書依序送出請求，原文說大約要 2 到 3 小時，也會產生 API 費用。
 
-To achieve this, we will first split the book into chunks, each roughly a page long, then translate each chunk into English, and finally stitch them back together.
-
-## 1. Read in the data
+## 1. 讀入資料
 
 ```python
 from openai import OpenAI
@@ -31,7 +37,7 @@ with open("data/geometry_slovenian.tex", "r") as f:
     text = f.read()
 ```
 
-### 1.1 Count the tokens in each chunk
+### 1.1 計算每個 chunk 的 token 數
 
 ```python
 chunks = text.split('\n\n')
@@ -49,9 +55,9 @@ print("Number of chunks: ", len(chunks))
     Number of chunks:  5877
     ```
 
-It turns out that a double newline is a good separator in this case, in order not to break the flow of the text. Also no individual chunk is larger than 1211 tokens. The model we will use is gpt-4o, which has a limit of 16,384 tokens, so we don't need to worry about breaking the chunks down further.
+結果是用兩個換行當分隔符號最合適，不會打斷文章的流暢度，而且沒有任何一個 chunk 超過 1211 個 token。我們用的模型是 gpt-4o，輸出上限 16,384 token，所以不用再把 chunk 切更小。
 
-We will group the shorter chunks into chunks of around 15000 tokens, to increase the coherence of the text, and decrease the frequency of breaks within the text.
+接著把較短的 chunk 合併成約 15000 token 的大塊，這樣文字更連貫，中間斷開的次數也更少。
 
 ```python
 def group_chunks(chunks, ntokens, max_len=15000, hard_max_len=16000):
@@ -95,15 +101,15 @@ len(chunks)
     39
     ```
 
-Notice that adding a sample untranslated and translated first command, where only the content of the chapter name needs to be translated, helps to get more consistent results.
+注意，在 prompt 裡加一組「未翻譯與翻譯後」的範例指令（只有章節名稱的內容需要翻譯），能讓結果更一致。
 
-The format of the prompt sent to the model consists of:
-1. A high level instruction to translate only the text, but not commands into the desired language
-2. A sample untranslated command, where only the content of the chapter name needs to be translated
-3. The chunk of text to be translated
-4. The translated sample command from 2, which shows the model the beginning of the translation process
+送給模型的 prompt 格式如下：
+1. 一句高層指令：只翻譯文字，不翻譯指令，翻成指定語言
+2. 一個未翻譯的範例指令，其中只有章節名稱的內容需要翻譯
+3. 要翻譯的文字 chunk
+4. 第 2 點範例指令的翻譯版本，讓模型看到翻譯的開頭怎麼起
 
-The expected output is the translated chunk of text.
+預期輸出就是翻譯完的文字 chunk。
 
 ```python
 def translate_chunk(chunk, model='gpt-4o',
@@ -178,9 +184,9 @@ print(translate_chunk(chunks[2], model='gpt-4o', dest_language='English'))
     ... (省略 439 行)
     ```
 
-We can see here that this one chunk in particular translates only the text, but leaves LaTeX commands intact.
+可以看到這個 chunk 只翻了文字，LaTeX 指令都完整保留。
 
-Let's now translate all the chunks in the book - this will take 2-3 hours, as we're processing requests sequentially.
+現在來翻整本書的所有 chunk。因為請求是依序處理，這會跑 2 到 3 個小時。
 
 ```python
 dest_language = "English"
@@ -252,4 +258,13 @@ with open(f"data/geometry_{dest_language}.tex", "w") as f:
     Chunk 11 / 39 translated.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 長文件翻譯要先切 chunk，並用 token 數確認每塊都在模型上限內。
+- 合併成較大的 chunk 可以減少斷點，提高前後文一致性。
+- prompt 裡放一個「翻譯開頭」的範例，是讓模型守住格式（不動 LaTeX）的簡單有效做法。
+- 請求依序送出雖然慢，但實作單純；要加速可以改成平行請求，不過要自己處理順序和限流。
+
+## 練習
+1. 把分隔符號從兩個換行改成單一換行，重新算 token 數，看 chunk 數量和最大 token 數怎麼變。
+2. 改 prompt 裡的目標語言（例如翻成日文），只翻一個 chunk，檢查 LaTeX 指令有沒有被保留。
+3. 把合併 chunk 的 token 上限從 15000 改成 5000，比較翻譯的 chunk 數量和單塊翻譯結果的連貫程度。

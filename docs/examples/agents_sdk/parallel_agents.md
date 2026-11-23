@@ -1,31 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/parallel_agents.ipynb
 ---
 
-# Parallel Agents with the OpenAI Agents SDK
+# 用 OpenAI Agents SDK 做平行 agent
 
 > 原文：[examples/agents_sdk/parallel_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/parallel_agents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範怎麼讓多個專職的 agent 同時跑，最後把各自的輸出交給一個「meta」agent 整合成使用者看得懂的答案。用兩種方式實作：Python 的 `asyncio`，以及 Agents SDK 的「agent as tool」，並畫出時間軸比較延遲。
 
-Why would you want to do this?
-In many production workflows you must answer several independent questions about the same piece of content.
-Doing those analyses one-by-one increases latency and can increase total cost if any step fails and forces a retry.
-By "fanning out" multiple specialized agents at the same time and then "fanning in" their outputs to a final “meta” agent, you're able to reduce this latency.
+## 學完你會
 
-This notebook present a toy example that you likely wouldn't parallelize in the real world, but that shows:
-1. How to define several focused agents with the OpenAI Agents SDK.
-2. How to execute them concurrently using either Python [asyncio](https://docs.python.org/3/library/asyncio.html) for lower latency, lightweight parallelization or directly through the [Agents SDK](https://openai.github.io/openai-agents-python/tools/#agents-as-tools) for ease of management and dynamic tool call planning.
-3. How to gather their individual outputs and feed them into a downstream meta-agent that produces the final, user-ready answer.
-4. A simple timeline visualization so you can see the latency benefit of parallelization.
+- 用 OpenAI Agents SDK 定義幾個各管一件事的 agent
+- 用 `asyncio.gather` 平行執行它們，或把它們包成 tool 交給 planner 動態呼叫
+- 把各 agent 的輸出收集起來餵給下游的 meta agent，產生最終回答
 
-This same pattern can be adapted to real world scenarios such as customer-support triage, content moderation, or other scenarios where you might want to run multiple independent analyses on an input and merge them into a single outcome.
+## 開跑前
 
-1. Install dependencies
+- OpenAI API key（會呼叫多次模型，有費用）
+
+為什麼要這樣做？
+很多正式環境的流程需要對同一份內容回答好幾個彼此獨立的問題。
+一個一個做會拉長延遲，而且任何一步失敗需要重試時，總成本也可能增加。
+如果把多個專職 agent 同時「fan out」，再把它們的輸出「fan in」給最後的「meta」agent，就能降低延遲。
+
+這份 notebook 是個玩具範例，現實中你大概不會把它平行化，但它示範了：
+1. 如何用 OpenAI Agents SDK 定義幾個專注的 agent。
+2. 如何同時執行它們：可以用 Python 的 [asyncio](https://docs.python.org/3/library/asyncio.html)，延遲低、平行化輕量；也可以直接透過 [Agents SDK](https://openai.github.io/openai-agents-python/tools/#agents-as-tools)，好管理，還能動態規劃 tool 呼叫。
+3. 如何收集各自的輸出，餵給下游的 meta agent，產生最後給使用者的答案。
+4. 一個簡單的時間軸視覺化，讓你看出平行化帶來的延遲改善。
+
+同樣的模式可以套用到真實情境，像是客服分流、內容審核，或任何需要對同一份輸入跑多個獨立分析、再合併成單一結果的場景。
+
+1. 安裝相依套件
 
 ```python
 %pip install openai-agents asyncio matplotlib nest_asyncio
@@ -41,7 +52,7 @@ from agents import Agent, Runner
 nest_asyncio.apply()
 ```
 
-2. Define your Agents
+2. 定義你的 agent
 
 ```python
 # Agent focusing on product features
@@ -99,7 +110,7 @@ async def run_agent(agent, review_text: str):
     return result
 ```
 
-3. Create function for parallel execution
+3. 建立平行執行的函式
 
 ```python
 async def run_agents(review_text: str):
@@ -175,7 +186,7 @@ plot_timeline(starts, ends)
 
     ![](parallel_agents_files/out_10_1.png)
 
-The agents can also be parallelized directly through the SDK via the "agent as tool" route, adding convenience and the assistance of the planner dynamically deciding which tools to call at the expense of higher latency. This latency comes both from the additional planning API call up front, along with the higher overhead and context from the tool call objects.
+這些 agent 也可以直接透過 SDK 用「agent as tool」的方式平行化，好處是方便，而且由 planner 動態決定要呼叫哪些 tool，代價是延遲比較高。延遲來自兩方面：一開始多一次規劃用的 API 呼叫，以及 tool 呼叫物件帶來的額外開銷和更長的 context。
 
 ```python
 from agents import ModelSettings
@@ -234,15 +245,26 @@ plot_timeline(starts, ends)
 
     ![](parallel_agents_files/out_12_1.png)
 
-## Summary
+## 總結
 
-From the above, we can see two different patterns for parallelizing agents. Ultimately, the approach you use will depend on the balance you want between:
+從上面可以看到兩種平行化 agent 的模式。最後要選哪種，看你想在下面幾件事之間怎麼取捨：
 
-1. Convenience vs. customization
-    * If you prefer convenience, the agent as tool route is the way to go. If you want to customize how agents fan in and out across multiple layers, building a graph with `asyncio.gather` might make more sense
-1. Planning vs. determinism
-    * If you want your planner (in this case the meta agent) to dynamically decide which tools to call and the order, you should use agents as tools whereas `asyncio.gather` makes more sense if you want a deterministic order.
-1. Latency sensitivity
-    * If you're highly sensitive to latency, you may want to use `asyncio` to avoid the additional upfront cost of planning the parallel tools and the overhead of tool outputs and longer context windows.
+1. 方便 vs. 客製
+    * 想要方便，就用 agent as tool。想自己決定 agent 在多層之間怎麼 fan in、fan out，用 `asyncio.gather` 建一個圖會比較合適
+1. 規劃 vs. 確定性
+    * 想讓 planner（這裡是 meta agent）動態決定要呼叫哪些 tool 以及順序，用 agent as tool；想要固定的順序，`asyncio.gather` 比較合適
+1. 對延遲的敏感度
+    * 如果很在意延遲，可以用 `asyncio`，省掉規劃平行 tool 的前置成本，也避開 tool 輸出和較長 context window 的開銷
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 彼此獨立的分析適合 fan out 再 fan in，延遲約等於最慢的那個 agent，而不是全部加總。
+- `asyncio.gather` 流程固定、延遲低，但編排要自己寫。
+- agent as tool 讓 planner 動態決定呼叫誰，方便但多一次規劃呼叫，延遲較高。
+- meta agent 的工作是整合，它拿到的是各專職 agent 的輸出，所以每個 agent 的職責要切得清楚。
+
+## 練習
+
+1. 新增一個專職 agent（例如檢查語氣的），把它加進平行執行的清單，看時間軸多出什麼。
+2. 把平行版本改成逐個 `await` 的串行版本，比較總耗時。
+3. 修改 meta agent 的 instructions，讓它只輸出一句話結論，再比較兩種模式的延遲與輸出差異。

@@ -1,36 +1,46 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/migrate-from-claude-agent-sdk/README.md
 ---
 
-# Migrate from the Claude Agent SDK to the OpenAI Agents SDK
+# 從 Claude Agent SDK 遷移到 OpenAI Agents SDK
 
 > 原文：[examples/agents_sdk/migrate-from-claude-agent-sdk/README.md](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/migrate-from-claude-agent-sdk/README.md)
 
-Learn how to migrate Claude Agent SDK applications to the OpenAI Agents SDK, including tool mapping, guardrails, handoffs, approvals, and sandbox boundaries.
+教你把 Claude Agent SDK 的應用遷移到 OpenAI Agents SDK，包含 tool 對應、guardrails、handoffs、approvals 和 sandbox 邊界。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用一個訂機票助理當範例，把原本用 Claude Agent SDK 寫的 agent，一步步改寫成 OpenAI Agents SDK 版本。重點不只是換 API，而是理解兩邊在 harness、sandbox、權限和多 agent 歸屬上的架構差異。
 
+## 學完你會
 
-## Why migrate
+- 分得清楚 Claude 的「harness 在 sandbox 裡」和 OpenAI 的「harness 與 compute 分離」兩種架構，並決定哪些事放在受信任的 runtime、哪些放進 sandbox。
+- 把 `@tool` 自訂工具改成 `@function_tool`，把 hooks 與權限檢查對應到 guardrails、approvals 或 `RunHooks`。
+- 用 `agent.as_tool(...)` 或 `handoffs=[...]` 實作多 agent，並加上 human approval 與對話狀態策略。
 
-The updated [OpenAI Agents SDK](https://developers.openai.com/api/docs/guides/agents) gives teams a model-native harness for building agents that can coordinate across tools, files, memory, approvals, and sandbox compute. It's open source, so teams can inspect and customize runtime behavior. Instead of rebuilding these pieces around each model integration, you can use a standard SDK that keeps the core agent loop visible and customizable.
+## 開跑前
 
-Many Claude Agent SDK applications follow the Claude Code operating model: load project instructions, load skills, expose file/shell/web tools, optionally define subagents, and let the Claude harness operate inside a workspace. The new OpenAI Agents SDK gives teams a more explicit split between the agent harness and the compute environment.
+範例程式需要 Claude 與 OpenAI 的 API key，並且要把 `MODEL`、`GUARDRAIL_MODEL` 設成你帳號可用的模型。
 
-The most important architectural difference:
+## 為什麼要遷移
 
-- **Claude Agent SDK pattern:** the harness runs inside the sandbox. The sandbox contains the agent loop, MCP/tools, filesystem access, and the execution environment.
-- **New OpenAI Agents SDK pattern:** the harness is separate from compute. The trusted application runtime owns the agent loop, tools, approvals, secrets, guardrails, tracing, and business-system access.
+更新後的 [OpenAI Agents SDK](https://developers.openai.com/api/docs/guides/agents) 提供一個 model-native 的 harness，可以協調 tools、檔案、記憶、approvals 和 sandbox 運算。它是開源的，你可以自己看、自己改 runtime 的行為。不用每換一個模型就重做這些零件，直接用一套標準 SDK，agent loop 也一直是看得到、改得動的。
 
-By the end of the guide, you should have a migrated app that preserves the original Claude app behavior while making execution, safety, state, and ownership explicit.
+很多 Claude Agent SDK 的應用都遵循 Claude Code 的運作模式：載入專案指示、載入 skills、開放檔案/shell/web 工具、視需要定義 subagents，然後讓 Claude 的 harness 在 workspace 裡面運作。新的 OpenAI Agents SDK 把 agent harness 和運算環境分得更明確。
 
-## Architecture
+最重要的架構差異：
 
-### Sandbox as a tool
+- **Claude Agent SDK 的模式：** harness 跑在 sandbox 裡面。agent loop、MCP/tools、檔案存取、執行環境都在 sandbox 內。
+- **新的 OpenAI Agents SDK 模式：** harness 跟 compute 分開。受信任的應用 runtime 掌管 agent loop、tools、approvals、secrets、guardrails、tracing，還有業務系統的存取權。
 
-Claude Agent SDK applications follow the Claude Code operating model: the sandbox is the agent's main workspace. The agent loop, tools, filesystem, and execution environment often live together. A gateway may sit between the sandbox and internal systems so the sandbox can make controlled requests without directly holding sensitive credentials.
+讀完之後，你會有一個遷移好的應用，行為跟原本的 Claude 版一致，但執行、安全、狀態和責任歸屬都變得明確。
+
+## 架構
+
+### 把 sandbox 當成 tool
+
+Claude Agent SDK 的應用遵循 Claude Code 的模式：sandbox 就是 agent 的主要工作區。agent loop、tools、檔案系統和執行環境通常放在一起。sandbox 和內部系統之間可能有一層 gateway，讓 sandbox 能發出受控的請求，而不用直接持有敏感憑證。
 
 <figure>
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/agents_sdk/migrate-from-claude-agent-sdk/assets/claude-agent-sdk-pattern.png" alt="Diagram of a Claude Agent SDK pattern where the server starts a coding agent inside a sandbox that contains the harness, agent loop, tools, and filesystem, with gateway-mediated access to data, APIs, and the web." />
@@ -40,7 +50,7 @@ Claude Agent SDK applications follow the Claude Code operating model: the sandbo
   </figcaption>
 </figure>
 
-In the OpenAI Agents SDK pattern, the harness is separate from the compute (sandbox). The sandbox is a tool the harness can call when the agent needs scoped compute, filesystem access, code execution, artifacts, or executable skills.
+在 OpenAI Agents SDK 的模式裡，harness 跟 compute（sandbox）是分開的。sandbox 是 harness 可以呼叫的一個 tool，agent 需要限定範圍的運算、檔案存取、程式執行、artifacts 或可執行的 skills 時才用。
 
 <figure>
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/agents_sdk/migrate-from-claude-agent-sdk/assets/openai-agents-sdk-pattern.png" alt="Diagram of an OpenAI Agents SDK pattern where the trusted application runtime owns secrets, the harness, the agent loop, and tools, while sandbox compute handles shell commands and filesystem work." />
@@ -50,15 +60,15 @@ In the OpenAI Agents SDK pattern, the harness is separate from the compute (sand
   </figcaption>
 </figure>
 
-Keep trusted control in the host application, and use the sandbox only for workspace-centric execution.
+信任的控制權留在 host 應用裡，sandbox 只拿來做以 workspace 為中心的執行。
 
-This is safer and easier to operate because secrets, approval decisions, and business-system access stay outside the execution environment. The app controls the inputs, outputs, and approvals for the sandbox.
+這樣比較安全，也比較好維運，因為 secrets、approval 決定和業務系統存取都在執行環境之外。sandbox 的輸入、輸出和 approvals 都由應用掌控。
 
-### Skills and instruction files
+### Skills 和指示檔
 
-When migrating Claude Agent SDK projects, split instruction and skill files by responsibility.
+遷移 Claude Agent SDK 專案時，要依職責把指示檔和 skill 檔拆開。
 
-| Claude                                 | OpenAI                            | Migration rule                                                                                 |
+| Claude                                 | OpenAI                            | 遷移規則                                                                                 |
 | -------------------------------------- | --------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `CLAUDE.md` product behavior           | `Agent.instructions`              | Keep the agent role, task policy, tool-use rules, and response format here.                    |
 | `CLAUDE.md` repo or workspace guidance | `AGENTS.md`                       | Keep repo-wide conventions, test commands, output paths, and non-default workspace rules here. |
@@ -67,13 +77,13 @@ When migrating Claude Agent SDK projects, split instruction and skill files by r
 | Skill scripts or executables           | Sandbox-backed skill execution    | Run executable skill logic in a sandbox.                                                       |
 | `.claude/agents/*.md`                  | Explicit `Agent(...)` definitions | For each Claude subagent, create a named `Agent(...)` and clear instructions.                  |
 
-Separate the agent identity, reusable workflows, reference material, executable logic, and runtime configuration.
+Agent 身分、可重用的流程、參考資料、可執行邏輯、runtime 設定，這幾樣要分開放。
 
-### Lifecycle callbacks and permissions
+### Lifecycle callbacks 和權限
 
-A Claude lifecycle callback can inspect a tool call, decide whether it should continue, block it, or ask for permission. OpenAI lifecycle callbacks work differently. They tell your application what's happening during a run, but they're not the main place for approvals and permissions.
+Claude 的 lifecycle callback 可以檢查一次 tool call，決定要不要繼續、擋下來，或是請求權限。OpenAI 的 lifecycle callbacks 運作方式不同：它們是告訴你的應用「執行中發生了什麼」，不是處理 approvals 和權限的主要地方。
 
-Migrate read-only Claude callbacks (for example, logging or telemetry) to OpenAI callbacks. Migrate Claude callbacks that approve, or reshape execution to OpenAI guardrails or approvals.
+唯讀的 Claude callbacks（例如 logging 或 telemetry）遷到 OpenAI 的 callbacks。會批准或改變執行流程的 Claude callbacks，則遷到 OpenAI 的 guardrails 或 approvals。
 
 | Use of callback              | Claude pattern                     | Migration to OpenAI                    |
 | ---------------------------- | ---------------------------------- | -------------------------------------- |
@@ -81,17 +91,17 @@ Migrate read-only Claude callbacks (for example, logging or telemetry) to OpenAI
 | Block a risky tool call      | Callback returns a blocking result | Tool guardrail or approval             |
 | Ask a human before an action | Permission callback                | `needs_approval` and `RunState` resume |
 
-### Subagents and ownership
+### Subagents 和歸屬
 
-The OpenAI Agents SDK makes agent-ownership explicit.
+OpenAI Agents SDK 把 agent 的歸屬講得很明確。
 
-Use `agent.as_tool(...)` when the lead agent should stay in control, call specialists, combine their outputs, and produce the final answer.
+主 agent 要保持控制權、呼叫專家、整合結果並產生最終回答時，用 `agent.as_tool(...)`。
 
-Use `handoffs=[...]` when the specialist should take over the conversation and own the final response.
+專家要接手整個對話、負責最終回應時，用 `handoffs=[...]`。
 
-### What you migrate
+### 要遷移哪些東西
 
-Most migrations come down to ten decisions:
+大部分遷移歸結為十個決定：
 
 | Claude concept            | Migration                                                                                                        |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -106,28 +116,28 @@ Most migrations come down to ten decisions:
 | Approvals                 | Gate side effects behind human approval and resume from interruptions                                            |
 | Lifecycle callbacks       | Move logging/tracing to `RunHooks` or `AgentHooks`. Move blocking, approval, or execution-shaping logic to guardrails, approvals, or filters |
 
-Start by identifying the behavior each Claude capability provided, then choose the OpenAI surface that preserves that behavior with the right execution and safety boundary.
+先釐清每個 Claude 功能原本提供什麼行為，再挑 OpenAI 裡能保住這個行為、且執行與安全邊界正確的那個介面。
 
-## Running example: Flight booking assistant
+## 範例：訂機票助理
 
-This guide uses a sample flight-booking assistant as a running example.
+這份指南用一個訂機票助理當貫穿全文的範例。
 
-The baseline Claude app:
+原本的 Claude 應用會：
 
-- Searches available flights.
-- Checks travel policy.
-- Recommends a compliant option when available.
-- Recommends escalation when options are outside policy.
+- 搜尋可訂的航班。
+- 檢查差旅政策。
+- 有合規選項時推薦一個。
+- 選項都不合政策時建議升級處理（escalation）。
 
-Example user request:
+使用者請求範例：
 
 ```text
 Book SFO to JFK on 2026-05-10 under $700.
 ```
 
-### Shared domain behavior
+### 共用的領域行為
 
-The Claude and OpenAI examples below use this data and policy rule.
+下面 Claude 和 OpenAI 的範例都用這組資料和政策規則。
 
 ```python
 from dataclasses import asdict, dataclass
@@ -177,18 +187,18 @@ def policy_verdict(flight: Flight, max_price_usd: int) -> dict:
     }
 ```
 
-## Baseline Claude Agent SDK implementation
+## Claude Agent SDK 的基準實作
 
-In the Claude Agent SDK, `ClaudeAgentOptions` configures agent behavior.
+在 Claude Agent SDK 裡，用 `ClaudeAgentOptions` 設定 agent 行為。
 
-Tool exposure and tool approval are separate controls. `tools` selects the base set of built-in Claude Code tools, and `mcp_servers` adds MCP server tools to the session. `allowed_tools` is a permission allowlist: matching tool calls are automatically approved, but unlisted tools aren't removed from Claude's tool set.
+Tool 的開放與 tool 的核准是兩種獨立的控制。`tools` 選擇內建 Claude Code tools 的基本集合，`mcp_servers` 把 MCP server 的 tools 加進 session。`allowed_tools` 是權限白名單：符合的 tool call 會自動核准，但沒列在裡面的 tool 並不會從 Claude 的 tool 集合中移除。
 
-For this example, the Claude app adds one in-process MCP server with two custom business tools, then automatically approves those two tool calls so the demo can run without approval prompts:
+這個範例裡，Claude 應用加了一個 in-process MCP server，裡面有兩個自訂業務 tools，並自動核准這兩個 tool call，讓 demo 不用跳出核准提示就能跑：
 
-- `search_flights` - retrieves candidate flights by route, date, and budget.
-- `check_travel_policy` - evaluates a candidate flight against the budget and refund policy.
+- `search_flights` - 依路線、日期和預算找出候選航班。
+- `check_travel_policy` - 依預算和退票政策評估候選航班。
 
-### Claude custom tools
+### Claude 的自訂 tools
 
 ```python
 from typing import Any
@@ -268,7 +278,7 @@ async def check_travel_policy(args: dict[str, Any]) -> dict[str, Any]:
     return {"content": [{"type": "text", "text": json.dumps(verdict)}]}
 ```
 
-### Claude run loop
+### Claude 的 run loop
 
 ```python
 travel_tools = create_sdk_mcp_server(
@@ -313,9 +323,9 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-Expected result: The assistant should recommend AS-301 because it's SFO to JFK on the requested date, costs $642, and is refundable. It shouldn't recommend DL-441 even though it's under $700 because the policy requires refundable fares.
+預期結果：助理應該推薦 AS-301，因為它是要求日期的 SFO 到 JFK、票價 $642、可退票。它不該推薦 DL-441，雖然低於 $700，但政策要求可退票的票價。
 
-### What the Claude baseline establishes
+### Claude 基準版建立了哪些行為
 
 | Behavior                      | Claude implementation                                                                                                                                                                                     | Migration implementation                                                                                                                                                                             |
 | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -324,7 +334,7 @@ Expected result: The assistant should recommend AS-301 because it's SFO to JFK o
 | Tool exposure and permissions | `mcp_servers={...}` exposes the custom travel MCP tools. `tools=[...]` would select built-in Claude Code tools if needed. `allowed_tools=[...]` pre-approves matching calls; it doesn't hide other tools. | Put only the OpenAI tools the agent should see in `Agent.tools`. Use approval for side effects. Treat Claude automatic approval as a permission-policy decision, rather than tool-exposure decision. |
 | Agent loop                    | `ClaudeSDKClient.query(...)` and `receive_response()`                                                                                                                                                     | Use `Runner.run(...)` and preserve the built-in model/tool loop.                                                                                                                                     |
 
-## Migration path: Claude baseline to OpenAI
+## 遷移路徑：從 Claude 基準版到 OpenAI
 
 | Claude Agent SDK                          | OpenAI Agents SDK                                                         | Migration-safe rule                                                                                                                                                                            |
 | ----------------------------------------- | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -338,9 +348,9 @@ Expected result: The assistant should recommend AS-301 because it's SFO to JFK o
 | `query(...)` or `ClaudeSDKClient`         | `Runner.run(...)`                                                         | Keep the built-in SDK loop.                                                                                                                                                                    |
 | Claude sessions / client continuity       | `Session`, `previous_response_id`, `conversation_id`, or explicit history | Choose one continuation strategy per conversation.                                                                                                                                             |
 
-### OpenAI migrated custom tools
+### 遷移後的 OpenAI 自訂 tools
 
-The business actions become Python functions. The function name, type hints, documentation string, and return value become the model-facing tool contract.
+業務動作變成 Python 函式。函式名稱、type hints、docstring 和回傳值，就是模型看到的 tool 合約。
 
 ```python
 from agents import Agent, Runner, function_tool
@@ -373,9 +383,9 @@ def check_travel_policy(flight_id: str, max_price_usd: int) -> dict:
     return policy_verdict(flight, max_price_usd)
 ```
 
-### OpenAI migrated agent and run loop
+### 遷移後的 OpenAI agent 和 run loop
 
-Set `MODEL` and `GUARDRAIL_MODEL` to any current Responses-capable models that support the Agents SDK features your app uses.
+把 `MODEL` 和 `GUARDRAIL_MODEL` 設成任何目前支援 Responses、且支援你的應用所需 Agents SDK 功能的模型。
 
 ```python
 MODEL = "gpt-5.5"
@@ -402,37 +412,37 @@ result = await Runner.run(
 print(result.final_output)
 ```
 
-Expected result: The assistant should recommend AS-301 because it's SFO to JFK on the requested date, costs $642, and is refundable. It shouldn't recommend DL-441 even though it's under $700 because the policy requires refundable fares.
+預期結果：助理應該推薦 AS-301，因為它是要求日期的 SFO 到 JFK、票價 $642、可退票。它不該推薦 DL-441，雖然低於 $700，但政策要求可退票的票價。
 
-## Step-by-step migration
+## 逐步遷移
 
-### Step 1: Define the first OpenAI agent
+### Step 1：定義第一個 OpenAI agent
 
-If one Claude agent handled a single task end to end, that often maps to one OpenAI Agent.
+如果原本一個 Claude agent 從頭到尾處理單一任務，通常就對應一個 OpenAI Agent。
 
-For the flight booking example:
+以訂機票為例：
 
-- **Agent:** Flight Booking Assistant
-- **Responsibility:** Search flights, check policy, and recommend booking or escalation.
+- **Agent：** Flight Booking Assistant
+- **職責：** 搜尋航班、檢查政策，並建議訂票或升級處理。
 
-### Step 2: Port custom tools
+### Step 2：移植自訂 tools
 
-Port custom tools in this order:
+照這個順序移植自訂 tools：
 
-1. Keep the business action unchanged.
-2. Tighten the function signature.
-3. Write function documentation that explains when to use the tool.
-4. Return structured data the agent can inspect.
+1. 業務動作本身保持不變。
+2. 收緊函式簽章。
+3. 寫 docstring 說明什麼時候該用這個 tool。
+4. 回傳 agent 能檢視的結構化資料。
 
-Default rule:
+預設規則：
 
-Map custom tools by behavior. Domain actions such as `search_flights` or `check_travel_policy` become `@function_tool` functions. Don't port generic file or shell primitives as custom business tools.
+依行為對應自訂 tools。`search_flights`、`check_travel_policy` 這類領域動作變成 `@function_tool` 函式。通用的檔案或 shell 基本操作，不要移植成自訂業務 tools。
 
-### Step 3: Map built-in tools by execution boundary
+### Step 3：依執行邊界對應內建 tools
 
-Claude apps often expose file/bash tools. While migrating, don't create them as custom business tools.
+Claude 應用常會開放檔案/bash tools。遷移時不要把它們做成自訂業務 tools。
 
-Use `@function_tool` for business or domain actions. Use hosted tools for OpenAI-managed retrieval or execution. Use `ShellTool` or `ApplyPatchTool` for occasional local/runtime actions. Use `SandboxAgent` with sandbox capabilities when the task needs an isolated workspace.
+業務或領域動作用 `@function_tool`。OpenAI 代管的檢索或執行用 hosted tools。偶爾需要本機/runtime 動作時用 `ShellTool` 或 `ApplyPatchTool`。任務需要隔離的 workspace 時，用 `SandboxAgent` 搭配 sandbox capabilities。
 
 | Claude capability                              | OpenAI migration                                                                                                                                                |
 | ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -443,13 +453,13 @@ Use `@function_tool` for business or domain actions. Use hosted tools for OpenAI
 | File read, edit, or search                     | Use [`SandboxAgent`](https://developers.openai.com/api/docs/guides/agents/sandboxes) with `Shell()` and, when needed, `Filesystem()` for workspace file inspection, search, or generated artifacts.                               |
 | Patch or code edit                             | Use [`SandboxAgent`](https://developers.openai.com/api/docs/guides/agents/sandboxes) with `ApplyPatch()` and `Shell()` for sandbox code edits and validation. Use `ApplyPatchTool` when implementing outside a sandbox.           |
 
-Note: if the Claude app defines custom helpers such as `read_file`, `write_file`, `grep_files`, or `run_bash`, avoid porting them 1:1. Map file reads, edits, search, and shell commands to the closest built-in OpenAI tool with a sandbox workspace.
+注意：如果 Claude 應用自己定義了 `read_file`、`write_file`、`grep_files`、`run_bash` 這類 helper，不要 1:1 移植。把檔案讀取、編輯、搜尋和 shell 指令，對應到最接近的 OpenAI 內建 tool，並搭配 sandbox workspace。
 
-### Step 4: Move validation to the right guardrail boundary
+### Step 4：把驗證搬到對的 guardrail 邊界
 
-If your Claude app relies on hooks to block actions, require approval, or change execution behavior, map that logic to the right OpenAI pattern: guardrails, approvals, or hooks.
+如果你的 Claude 應用靠 hooks 來擋動作、要求核准或改變執行行為，就把這些邏輯對應到合適的 OpenAI 做法：guardrails、approvals 或 hooks。
 
-Use guardrails for validation that should happen before the run starts, the tool executes, or the final answer returns.
+在 run 開始前、tool 執行前、最終回答送出前需要做的驗證，用 guardrails。
 
 | Need                                                   | OpenAI boundary                |
 | ------------------------------------------------------ | ------------------------------ |
@@ -458,9 +468,9 @@ Use guardrails for validation that should happen before the run starts, the tool
 | Tool call must obey parameter constraints              | Tool guardrail.                |
 | Action changes production state or spends money        | Approval and run-state resume. |
 
-Example: require core booking fields before tools run.
+範例：在 tools 執行前，要求訂票的必要欄位都齊全。
 
-Define the guardrail first, then attach it to the flight-booking agent. Setting the guardrail to run in blocking mode checks the request before the main agent can call any tools. By default, input guardrails run in parallel with the main agent for lower latency. Here we set `run_in_parallel=False` because this validation must complete before the agent is allowed to begin tool use.
+先定義 guardrail，再掛到訂機票 agent 上。把 guardrail 設成 blocking 模式，就會在主 agent 能呼叫任何 tool 之前先檢查請求。input guardrails 預設是跟主 agent 平行跑，延遲比較低。這裡設 `run_in_parallel=False`，因為這個驗證必須先完成，agent 才能開始用 tool。
 
 ```python
 from pydantic import BaseModel
@@ -532,19 +542,18 @@ agent = Agent(
 )
 ```
 
-### Step 5: Choose multi-agent ownership
+### Step 5：決定多 agent 的歸屬
 
-Two canonical patterns:
+兩種典型模式：
 
-- Use `agent.as_tool(...)` when the manager agent should remain the final-response owner.
-- Use `handoffs=[...]` when the specialist should take over and own the final response.
+- manager agent 要保持最終回應的所有權時，用 `agent.as_tool(...)`。
+- 專家要接手並負責最終回應時，用 `handoffs=[...]`。
 
-The key question is ownership.
+關鍵問題是歸屬。
 
-#### Pattern A: Specialist as a tool
+#### 模式 A：專家當成 tool
 
-Use this pattern when the main orchestrator agent should stay in control. The specialist runs as a tool, returns a narrow result, and lets the orchestrator decide what to do next and how to answer the user.
-
+主 orchestrator agent 要保持控制權時用這個模式。專家以 tool 的形式執行，回傳一個精簡的結果，由 orchestrator 決定下一步以及怎麼回答使用者。
 ```python
 from agents import Agent, ModelSettings, Runner
 
@@ -573,9 +582,9 @@ manager = Agent(
 # Expected final owner: Travel Manager.
 ```
 
-#### Pattern B: Handoff to specialist
+#### 模式 B：handoff 給專家
 
-Use this pattern when the specialist agent should take over. The orchestrator hands off the conversation, and the specialist becomes responsible for the next steps and the final response.
+專家 agent 要接手時用這個模式。orchestrator 把對話 handoff 出去，專家接著負責後續步驟和最終回應。
 
 ```python
 booking_specialist = Agent(
@@ -595,7 +604,7 @@ triage = Agent(
 # Expected final owner: Booking Specialist.
 ```
 
-### Step 6: Choose one conversation-state strategy
+### Step 6：選一種對話狀態策略
 
 | Strategy               | Use when                                                                 |
 | ---------------------- | ------------------------------------------------------------------------ |
@@ -604,19 +613,19 @@ triage = Agent(
 | `conversation_id`      | You want server-managed durable conversation state.                      |
 | Explicit input history | You want your application to fully control which prior items to include. |
 
-Important distinction: conversation continuation carries context into new turns; run-state resume continues the same paused run after interruption.
+重要區別：對話延續是把 context 帶進新的一輪；run-state resume 是讓被中斷的同一個 run 接著跑。
 
-### Step 7: Add approvals for side effects with human review
+### Step 7：副作用動作加上人工 approval
 
-Use approvals when an action should require human approval, such as charging a card, deleting data, or changing production state.
+動作需要人工核准時用 approvals，例如刷卡、刪資料、改動 production 狀態。
 
-Approval lifecycle:
+Approval 的生命週期：
 
-1. Run reaches an approval point.
-2. Run pauses.
-3. Interruptions surface for review.
-4. App approves or rejects.
-5. Same run resumes from RunState.
+1. Run 跑到需要核准的地方。
+2. Run 暫停。
+3. 中斷事項（interruptions）浮現，等人審查。
+4. 應用核准或拒絕。
+5. 同一個 run 從 RunState 繼續。
 
 ```python
 @function_tool(needs_approval=True)
@@ -639,9 +648,9 @@ resumed = await Runner.run(agent, state)
 print("FINAL:", resumed.final_output)
 ```
 
-## Final validation checklist
+## 最終驗證清單
 
-Check the migration one building block at a time before composing the full app.
+組成完整應用之前，先一個一個積木檢查遷移結果。
 
 | Area                  | Pass condition                                                                                                                                                              |
 | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -658,36 +667,48 @@ Check the migration one building block at a time before composing the full app.
 | Subagents             | Each subagent maps to `agent.as_tool(...)` or `handoffs=[...]` with explicit ownership.                                                                                     |
 | End-to-end behavior   | The migrated app preserves original Claude business behavior.                                                                                                               |
 
-## Recommended test order
+## 建議的測試順序
 
-1. Run the baseline agent with migrated custom tools.
-2. Add input and output guardrails.
-3. Add tool-level checks only where needed.
-4. Add specialist agents.
-5. Check ownership with `agent.as_tool(...)` or `handoffs=[...]`.
-6. Add conversation continuation.
-7. Add side-effect approvals.
-8. Add sandboxing if the workflow needs isolation.
-9. Run Claude and OpenAI scenarios side by side.
-10. Compare the final answer quality, tool calls, safety behavior, and state handling.
+1. 用遷移好的自訂 tools 跑基準 agent。
+2. 加上 input 和 output guardrails。
+3. 只在需要的地方加 tool 層級的檢查。
+4. 加入專家 agents。
+5. 用 `agent.as_tool(...)` 或 `handoffs=[...]` 檢查歸屬。
+6. 加上對話延續。
+7. 加上副作用的 approvals。
+8. 如果流程需要隔離，再加 sandbox。
+9. 把 Claude 和 OpenAI 的情境並排跑。
+10. 比較最終回答品質、tool calls、安全行為和狀態處理。
 
-## Conclusion
+## 結論
 
-A successful migration preserves the business task and updates the execution model.
+成功的遷移會保留業務任務，只更新執行模型。
 
-- **Add sandboxing where isolation matters.**
-  OpenAI's Agents SDK separates the trusted application from the workspace where risky or stateful work happens. Use the sandbox when the agent needs scoped files, command execution, artifacts, or resumable workspace state.
+- **需要隔離的地方才加 sandbox。**
+  OpenAI 的 Agents SDK 把受信任的應用和執行風險或有狀態工作的 workspace 分開。agent 需要限定範圍的檔案、指令執行、artifacts 或可恢復的 workspace 狀態時，才用 sandbox。
 
-- **Migrate business actions as explicit tools.**
-  Actions such as searching flights or creating tickets should become clear business tools with typed inputs and predictable outputs. Don't rebuild generic shell or file access as business tools.
+- **業務動作遷移成明確的 tools。**
+  搜尋航班、建立 ticket 這類動作，要變成有型別輸入、輸出可預期的業務 tools。不要把通用的 shell 或檔案存取重建成業務 tools。
 
-- **Keep tool access and approvals separate.**
-  In Claude, tool selection and pre-approval can look related. In the OpenAI model, first decide which tools the agent can see. Then add approval checks for actions that need human review.
+- **tool 存取和 approvals 分開處理。**
+  在 Claude 裡，選 tool 和預先核准看起來有關聯。在 OpenAI 的模型裡，先決定 agent 看得到哪些 tools，再為需要人工審查的動作加 approval 檢查。
 
-- **Use guardrails and approvals appropriately.**
-  Use guardrails to check requests and outputs. Use approvals to pause risky side effects. Use lifecycle callbacks for logging, tracing, and audit events.
+- **guardrails 和 approvals 各司其職。**
+  guardrails 用來檢查請求和輸出。approvals 用來暫停有風險的副作用。lifecycle callbacks 用在 logging、tracing 和 audit 事件。
 
-- **For multi-agent ownership, use `agent.as_tool(...)` when the main agent should stay in charge.**
-  Use `handoffs=[...]` when a specialist should own the final response.
+- **多 agent 歸屬：主 agent 要繼續負責時用 `agent.as_tool(...)`。**
+  專家要負責最終回應時用 `handoffs=[...]`。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 最大的架構差異是 Claude 的 harness 在 sandbox 裡，OpenAI 的 harness 跟 compute 分離，secrets、approvals 和業務系統存取都留在受信任的 runtime。
+- 遷移是依行為對應，不是 1:1 翻譯：業務動作變 `@function_tool`，通用檔案/shell 操作改用 `ShellTool`、`ApplyPatchTool` 或 sandbox。
+- 工具開放和核准是兩件事。先決定 `Agent.tools` 讓 agent 看到什麼，再用 approvals 管副作用。
+- Claude hooks 要依用途拆開：logging 去 `RunHooks`/`AgentHooks`，要擋或核准的邏輯去 guardrails、approvals 或 filters。
+- 多 agent 的關鍵是歸屬：`as_tool` 讓主 agent 保留最終回應，`handoffs` 讓專家接手。
+
+## 練習
+
+1. 在範例的政策規則和資料裡，把預算上限改成 $600，跑一次看助理會推薦 AS-301 還是改成建議 escalation，確認結果符合預期。
+2. 在 `search_flights` 的 `@function_tool` 版本裡，修改 docstring，加上「預算沒給時不要呼叫」這類使用時機說明，觀察模型的 tool 呼叫有沒有變化。
+3. 把 Step 4 的 input guardrail 的 `run_in_parallel=False` 改成 `True`，比較兩種設定下，缺少日期的請求有沒有已經先呼叫了 tool。

@@ -1,26 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/Developing_hallucination_guardrails.ipynb
 ---
 
-# Developing Hallucination Guardrails
+# 開發 Hallucination Guardrail
 
 > 原文：[examples/Developing_hallucination_guardrails.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Developing_hallucination_guardrails.ipynb)
 
-Cookbook to build hallucination guardrails with evals for support agents.
+這份 cookbook 示範怎麼用 eval 為客服 agent 建立 hallucination guardrail。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+替客服 agent 做一個檢查模型輸出有沒有幻覺的 guardrail。先用 GPT-4o 生成政策和對話範例當 eval set，再設計評分標準，最後用 few-shot prompting 提升準確度。
 
-## Developing Hallucination Guardrails
+## 學完你會
+- 用模型合成客服政策與「符合／不符合政策」的對話，建立 eval set
+- 依「逐句評估加整體評估」等原則寫出 hallucination guardrail 的 prompt
+- 用 precision 和 recall 衡量 guardrail 的表現
 
-A guardrail is a set of rules and checks designed to ensure that the outputs of an LLM are accurate, appropriate, and aligned with user expectations. For more additional information on developing guardrails, you can refer to this [guide on developing guardrails](https://cookbook.openai.com/examples/how_to_use_guardrails).
+## 開跑前
+需要 OpenAI API key。生成資料和跑 guardrail 都會用到 GPT-4o，會產生 API 費用。
 
-In this notebook, we'll walk through the process of developing an output guardrail that specifically checks model outputs for hallucinations. 
+## 開發 Hallucination Guardrail
 
-This notebook will focus on:
-1. Building out a strong eval set
-2. Identifying specific criteria to measure hallucinations
-3. Improving the accuracy of our guardrail with few-shot prompting
+guardrail 是一組規則和檢查，目的是確保 LLM 的輸出準確、適當，並且符合使用者的期待。更多關於開發 guardrail 的資訊，可以參考這份 [guardrail 開發指南](https://cookbook.openai.com/examples/how_to_use_guardrails)。
+
+在這個 notebook 裡，我們會一步步開發一個輸出端 guardrail，專門檢查模型輸出有沒有 hallucination。 
+
+這個 notebook 會聚焦在：
+1. 建立強大的 eval set
+2. 找出衡量 hallucination 的具體標準
+3. 用 few-shot prompting 提升 guardrail 的準確度
 
 
 ```python
@@ -61,13 +70,13 @@ def display_dataframe(df):
     make_scrollable(df)
 ```
 
-## 1. Building out an eval set
+## 1. 建立 eval set
 
-Imagine we are a customer support team that is building out an automated support agent. We will be feeding the assistant information from our knowledge base about a specific set of policies for how to handle tickets such as returns, refunds, feedback, and expect the model to follow the policy when interacting with customers.
+想像我們是客服團隊，正在打造自動客服 agent。我們會把知識庫裡一組特定政策的資訊餵給 assistant，這些政策是處理退貨、退款、意見回饋等 ticket 的規則，並期待模型在跟客戶互動時遵守這些政策。
 
-The first thing we will do is use GPT-4o to build out a set of policies that we will want to follow.
+第一步，我們用 GPT-4o 生成一組想要遵守的政策。
 
-If you want to do deep dive into generating synthetic data, you can review our Synthetic Data Generation Cookbook [here](https://cookbook.openai.com/examples/sdg1)
+如果想深入了解合成資料的生成，可以看我們的 Synthetic Data Generation Cookbook，連結在[這裡](https://cookbook.openai.com/examples/sdg1)
 
 ```python
 system_input_prompt = """
@@ -142,7 +151,7 @@ def generate_policies() -> List[str]:
 policy_instructions = generate_policies()
 ```
 
-Next we'll take these policies and generate sample customer interactions that do or do not follow the instructions.
+接著用這些政策，生成「有遵守」或「沒遵守」指示的客戶互動範例。
 
 ```python
 system_input_prompt = """"
@@ -276,7 +285,7 @@ assistant_example_2 = """
 """
 ```
 
-Now let's iterate through the policies and generate some examples.
+現在逐一走過每個政策，生成一些範例。
 
 ```python
 customer_interactions = []
@@ -373,24 +382,24 @@ df.head(10)
     9  {'role': 'assistant', 'content': 'Thank you fo...
     ```
 
-## 2. Constructing our hallucination guardrail
+## 2. 建構 hallucination guardrail
 
-When building out our hallucination guardrail, here are some guiding principles:
+建立 hallucination guardrail 時，有幾個指導原則：
 
-1. Provide very descriptive metrics to evaluate whether a response is accurate
-- It is important to break down this idea of "truth" in easily identifiable metrics that we can measure
-- Metrics like truthfulness and relevance are difficult to measure. Giving concrete ways to score the statement can result in a more accurate guardrail
-2. Ensure consistency across key terminology
-- It is important to keep relevant terms such as knowledge base articles, assistants, and users consistent across the prompt
-- If we begin to use phrases such as assistant vs agent, the model could get confused
-3. Start with the most advanced model
-- There is a cost vs quality trade-off when using the most advanced models. Although GPT-4o may be more expensive, it is important to start with the most advanced model so we can ensure a high degree of accuracy
-- Once we have thoroughly tested out the guardrail and are confident in its performance, we can look to reducing cost by tuning it down to gpt-3.5-turbo
-4. Evaluate each sentence independently and the entire response as a whole
-- If the agent returns a long response, it can be useful to break down the response to individual sentences and evaluate them independently
-- In addition to that, evaluating the whole intent of the message as a whole can ensure that you don't lose important context
+1. 提供非常具體的指標，來評估回應是否準確
+- 重要的是把「真實性」這個概念拆成容易辨識、可以衡量的指標
+- 真實性和相關性這類指標很難衡量。給出具體的評分方式，能讓 guardrail 更準確
+2. 確保關鍵術語前後一致
+- 在整份 prompt 裡，知識庫文章、assistant、使用者這類相關詞彙要保持一致
+- 如果開始混用 assistant 和 agent 這類說法，模型可能會搞混
+3. 從最先進的模型開始
+- 使用最先進的模型時，成本和品質之間有取捨。GPT-4o 雖然可能比較貴，但一開始就用最先進的模型，才能確保高度準確
+- 等到徹底測試過 guardrail、對它的表現有信心之後，再考慮降級到 gpt-3.5-turbo 來降低成本
+4. 獨立評估每個句子，也評估整個回應
+- 如果 agent 的回應很長，把回應拆成一個個句子分別評估會很有用
+- 此外，從整體評估整則訊息的意圖，才不會漏掉重要的上下文
 
-With all of this in mind, let's build out a guardrail system and measure its performance.
+有了這些概念，我們來建構 guardrail 系統並衡量它的表現。
 
 ```python
 guardrail_system_message = """You are a highly specialized assistant tasked with reviewing chatbot responses to identify and flag any inaccuracies or hallucinations. For each user message, you must thoroughly analyze the response by considering:
@@ -714,6 +723,16 @@ else:
     Recall: 1.00 (Recall measures the proportion of correctly identified true positives out of all actual positive instances in the dataset.)
     ```
 
-From the results above we can see the program is performing well with a high precision and recall metric. This means that the guardrails are able to accurately identify hallucinations in the model outputs. 
+從上面的結果可以看到，這個程式表現不錯，precision 和 recall 都很高。這代表 guardrail 能準確辨識出模型輸出中的 hallucination。 
 
-<!-- tutor:summary -->
+## 重點整理
+- guardrail 的核心是把「有沒有幻覺」拆成可量測的具體標準。
+- 先有 eval set，才能知道 guardrail 到底準不準。
+- prompt 裡的術語要一致，並且同時做逐句和整體兩種評估。
+- 先用最強的模型驗證效果，確認可行後再考慮降級省成本。
+- precision 和 recall 兩個指標要一起看。
+
+## 練習
+1. 在政策生成的 prompt 裡新增一個政策類別（例如保固），重新生成範例。
+2. 修改 guardrail prompt，新增一條評分標準，看 precision 和 recall 有什麼變化。
+3. 把 guardrail 用的模型換成較便宜的 gpt-3.5-turbo，重跑 eval，比較兩者的 precision 和 recall，判斷是否值得降級。

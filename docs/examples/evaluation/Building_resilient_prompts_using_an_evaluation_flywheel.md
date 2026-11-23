@@ -1,195 +1,217 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md
 ---
-
 # Building resilient prompts using an evaluation flywheel
 
 > 原文：[examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-## Overview
+這篇教你在 OpenAI Platform 上，用「evaluation flywheel」的流程讓 prompt 變得耐用，也就是不管輸入什麼，都能穩定給出高品質回答。範例是一個公寓租賃助理，從標註失敗案例、建立 grader，到用 prompt optimizer 改進 prompt，走完一整圈。
 
-### Purpose of this cookbook
+## 學完你會
 
-This cookbook provides a practical guide on how to use the OpenAI Platform to easily build resilience into your prompts.
+- 用 open coding 和 axial coding 標註失敗的 trace，整理出失敗類型
+- 建立 LLM grader 自動評估格式與正確性，並用 TPR / TNR 檢驗 LLM judge 可不可信
+- 用 synthetic data（維度組合加 perturbation）擴充測試資料
 
-> A **resilient prompt** is one that provides high-quality responses across the full breadth of possible inputs. 
+## 開跑前
 
-Prompt resilience is an essential piece of deploying AI applications in production. Without this property, your prompts can produce unexpected results on edge cases, provide subpar responses in normal cases, and undermine the effectiveness of your AI application.
+- 需要 OpenAI Platform 帳號（用 Datasets、graders 和 prompt optimizer）
 
-To build resilience into your prompts, we recommend the **evaluation flywheel** process — a methodology that enables builders to continuously refine their AI applications over time in a measurable way.
+## 總覽
 
-### Target audience
+### 這份 cookbook 的目的
 
-This cookbook is designed for subject-matter experts, solutions architects, data scientists, and AI engineers who are looking to improve the general consistency and quality of their prompts, or address specific edge cases in their AI applications.
+這份 cookbook 提供實用指南，教你怎麼用 OpenAI Platform，輕鬆為 prompt 建立耐用性。
 
-## The evaluation flywheel
+> **耐用的 prompt** 指的是在各種可能的輸入下，都能給出高品質回應的 prompt。
 
-AI applications often feel brittle. A prompt that works well one day can produce unexpected and low-quality results the next. This happens because prompts can be sensitive to small changes in user input or context. To build reliable AI products, we need a systematic way to make prompts more resilient.
+Prompt 的耐用性是在 production 部署 AI 應用的關鍵。沒有這個特性，你的 prompt 在邊界案例可能產生意外的結果，在一般案例也可能給出不夠好的回應，削弱 AI 應用的效果。
 
-The solution is a continuous, iterative process called the **evaluation flywheel**. Instead of guessing what might improve a prompt ("prompt-and-pray"), this lifecycle provides a structured engineering discipline to diagnose, measure, and solve problems.
+要為 prompt 建立耐用性，我們建議用 **evaluation flywheel** 流程。這個方法讓開發者能持續、可衡量地改進 AI 應用。
 
-The flywheel consists of three phases:
+### 目標讀者
 
-1. **Analyze**:
-   Understand how and why your system is failing through qualitative review. Manually examine and annotate examples where the model behaves incorrectly to identify recurring failure modes.
+這份 cookbook 適合領域專家、solutions architect、data scientist 和 AI 工程師，如果你想改善 prompt 整體的一致性和品質，或處理 AI 應用中特定的邊界案例，這份就是為你寫的。
 
-2. **Measure**:
-   Quantify the identified failure modes and set a baseline. You can’t improve what you can’t measure. Create a test dataset and build automated evaluators (“graders”) to score your system’s performance at scale.
+## Evaluation flywheel
 
-3. **Improve**:
-   Make targeted improvements such as rewriting prompts, adding better examples, or adjusting system components. With measurement in place, you can immediately see the impact of changes and iterate until failure rates are acceptably low.
+AI 應用常常感覺很脆弱。一個 prompt 某天運作得很好，隔天可能就產生意外且品質低落的結果。這是因為 prompt 對使用者輸入或 context 的小變動可能很敏感。要打造可靠的 AI 產品，我們需要一個系統化的方法讓 prompt 更耐用。
 
-This is a continuous cycle. As you improve the system, new, subtler failure modes emerge — and the flywheel begins again. This process is the core methodology for building robust and reliable AI applications.
+解法是一個持續、反覆的流程，叫做 **evaluation flywheel**。它不再靠猜哪裡能改進 prompt（"prompt-and-pray"），而是提供一套結構化的工程方法來診斷、衡量並解決問題。
+
+這個 flywheel 有三個階段：
+
+1. **Analyze（分析）**：
+   透過質性檢視，了解你的系統怎麼失敗、為什麼失敗。手動檢查並標註模型行為不正確的範例，找出反覆出現的失敗模式。
+
+2. **Measure（衡量）**：
+   把找到的失敗模式量化並設定 baseline。無法衡量就無法改進。建立測試資料集，並建立自動化的評估器（"graders"），大規模地為系統表現打分數。
+
+3. **Improve（改進）**：
+   做有針對性的改進，例如改寫 prompt、加入更好的範例，或調整系統元件。有了衡量機制，你可以立刻看到改動的影響，反覆迭代，直到失敗率低到可以接受。
+
+這是持續的循環。隨著系統改進，更細微的新失敗模式會浮現，flywheel 就再轉一圈。這個流程是打造穩健、可靠 AI 應用的核心方法。
 
 ![Evaluation flywheel](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/evaluation-flywheel.png)
 > **Source:** Shankar, S., & Husain, H. (2025). *Application-Centric AI Evals for Engineers and Technical Product Managers*. AI Evals Course Reader.
 
-## An Example
+## 範例
 
-To illustrate the evaluation process, let’s use data from an **apartment leasing assistant** in production.
+為了說明評估流程，我們用一個 production 中的**公寓租賃助理**的資料。
 
-It answers questions from prospective renters, such as:
+它回答潛在租客的問題，例如：
 
 * “How large are the apartments?”
 * “When can I come in for a tour?”
 
-Suppose we have a specific prompt within our application that we’d like to analyze. We can get started in the OpenAI Platform by adding in our prompt and uploading our input and output data to our Dataset (learn more about how to do this in [our docs](https://platform.openai.com/docs/guides/evaluations-getting-started)).
+假設我們想分析應用中的某個特定 prompt。在 OpenAI Platform 上，可以先加入 prompt，並把輸入和輸出資料上傳到 Dataset（怎麼做請看[我們的文件](https://platform.openai.com/docs/guides/evaluations-getting-started)）。
 
 ![Leasing agent data](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/dataset.png)
 
-With our prompt and traces loaded in, we’re ready to analyze prompt effectiveness.
+prompt 和 trace 都載入後，就可以開始分析 prompt 的效果了。
 
-## Analyzing prompt effectiveness
+## 分析 prompt 效果
 
-To improve a system, you must first understand how it fails. While automated metrics are useful for tracking progress, they cannot reveal *why* a failure occurred. Manual analysis of model outputs is the most effective way to diagnose issues and gain insights for targeted improvements.
+要改進系統，必須先了解它怎麼失敗。自動化指標適合追蹤進度，但沒辦法告訴你失敗是*為什麼*發生的。手動分析模型輸出，是診斷問題並取得針對性改進洞察最有效的方法。
 
-The core of this analysis is **annotation** — applying structured labels to text to categorize and understand failure modes. This turns unstructured failures into an actionable roadmap for improvement. We recommend a two-step method drawn from qualitative research: open coding and axial coding.
+分析的核心是**標註（annotation）**，也就是對文字套用結構化的標籤，來分類並理解失敗模式。這會把雜亂的失敗變成可執行的改進路線圖。我們建議用質性研究的兩步驟方法：open coding 和 axial coding。
 
-### 1. Open Coding: Discovering failure modes
+### 1. Open Coding：發現失敗模式
 
-The first step is to read through a sample of failing traces (we recommend starting with around 50) and apply descriptive labels to each error you find. In this phase, do not worry about creating a perfect, structured taxonomy. The goal is discovery.
+第一步是讀一批失敗的 trace（建議先從約 50 筆開始），對你發現的每個錯誤標上描述性的標籤。這個階段不用煩惱建立完美、有結構的分類，目標是發現問題。
 
-On the OpenAI Platform, you can use annotation columns to open code your dataset. Here, we add a **Feedback**-type annotation column titled `open_coding` to capture our results.
+在 OpenAI Platform 上，可以用標註欄位對資料集做 open coding。這裡我們新增一個 **Feedback** 類型的標註欄位，叫 `open_coding`，用來記錄結果。
 
 ![Creating a feedback column](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/creating-feedback-column.png)
 
-For our apartment leasing assistant, our initial open codes might look like this:
+以我們的公寓租賃助理來說，最初的 open code 可能像這樣：
 
 * “bot suggested a tour time that wasn't available”
 * “the list of amenities was a single block of text”
 * “failed to cancel the original appointment when rescheduling”
 * “the link to the floorplan was broken”
 
-These specific, grounded-in-data labels become the raw material for the next step.
+這些具體、來自資料的標籤，是下一步的原始素材。
 
 ![Open coding](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/open-coding.png)
 
-Here's our dataset after open coding.
+這是 open coding 之後的資料集。
 
-### 2. Axial Coding: Structuring your insights
+### 2. Axial Coding：整理你的洞察
 
-Once you have a set of open codes, the next step is to group them into higher-level categories. This is axial coding—the process of identifying relationships between your initial labels to build a structured understanding of the core problems.
+有了一批 open code 之後，下一步是把它們歸成更高層的類別。這就是 axial coding，也就是找出最初標籤之間的關係，對核心問題建立結構化的理解。
 
-We can group our open codes into predefined axial codes:
+我們可以把 open code 歸進預先定義的 axial code：
 
-* **Tour scheduling/rescheduling issue:**
+* **Tour scheduling/rescheduling issue：**
   * Bot suggested a tour time that wasn't available
   * Failed to cancel the original appointment when rescheduling
-* **Formatting error with output:**
+* **Formatting error with output：**
   * The list of amenities was a single block of text
   * The link to the floorplan was broken
 
-We will add a new **Label**-type annotation column titled `axial_coding` to our dataset to capture this.
+我們會在資料集新增一個 **Label** 類型的標註欄位，叫 `axial_coding`，來記錄這些分類。
 
 ![Axial coding](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/axial-coding.png)
 
-This simple taxonomy gives us a clear, quantitative picture of our system's primary weaknesses. We might discover that 35% of failures are related to tour scheduling, while only 10% are formatting errors. This tells us exactly where to focus our improvement efforts. For more information on how to conduct error analysis, see [this walkthrough](https://youtu.be/qH1dZ8JLLdU?si=Sxczt-LpKVVnMEdG).
+這個簡單的分類，讓我們清楚、量化地看到系統主要的弱點。我們可能發現 35% 的失敗跟導覽排程有關，只有 10% 是格式錯誤。這告訴我們改進該把力氣放在哪裡。想了解更多怎麼做錯誤分析，請看[這份逐步示範](https://youtu.be/qH1dZ8JLLdU?si=Sxczt-LpKVVnMEdG)。
 
-## Adding robustness with automatic graders
+## 用自動 grader 增加穩健性
 
-Armed with our taxonomy and dataset, we’re now ready to start automating the evaluation flywheel. The OpenAI Platform supports [a variety of grader types](https://platform.openai.com/docs/guides/graders) (including Python graders and LLM graders) that can be run in bulk on our dataset (learn more [here](https://platform.openai.com/docs/guides/evaluation-getting-started#adding-graders)). For this example, we can build and run LLM graders for the following:
+有了分類和資料集，就可以開始把 evaluation flywheel 自動化了。OpenAI Platform 支援[多種 grader 類型](https://platform.openai.com/docs/guides/graders)（包括 Python grader 和 LLM grader），可以對資料集批次執行（詳見[這裡](https://platform.openai.com/docs/guides/evaluation-getting-started#adding-graders)）。這個範例可以建立並執行下列 LLM grader：
 
-* **Formatting grader:** assess whether the model's response matches the desired format
-* **Availability accuracy grader:** compares the availability returned by the model to a ground truth value you specify in your dataset
+* **Formatting grader：** 評估模型的回應是否符合期望的格式
+* **Availability accuracy grader：** 把模型回傳的可預約時間，跟你在資料集裡指定的 ground truth 值做比較
 
-Our formatting grader is a fairly straightforward directive.
+Formatting grader 的指令相當直接。
 ![Creating formatting grader](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/creating-formatting-grader.png)
 
-Our availability accuracy grader will reference additional input columns we’ve added to our dataset to capture business hours and day availability.
+Availability accuracy grader 會參考我們在資料集額外加的輸入欄位，裡面記錄營業時間和每天的可預約狀況。
 ![Creating availability grader](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/creating-availability-grader.png)
 ![Ground truth columns](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/ground-truth-columns.png)
 
-With automated graders in place, we can easily evaluate our performance on any change to our system — an updated prompt, updated model parameters, or newly discovered edge cases.
+有了自動 grader，系統不論怎麼改，不管是更新 prompt、模型參數，還是新發現的邊界案例，我們都能輕鬆評估表現。
 
-For more detail on how to get graders right, see our section on “Aligning your LLM judge” below.
+想知道怎麼把 grader 做對，請看下面「對齊你的 LLM judge」那節。
 
-## Optimizing the prompt
+## 最佳化 prompt
 
-We’ve now identified and classified our errors, and built out grading to automate our flywheel. At this stage, we could choose to use our data to inform manual changes to our prompt. However, the OpenAI Platform supports an automatic [prompt optimization tool](https://platform.openai.com/docs/guides/prompt-optimizer) that speeds up this process.
+我們已經找出並分類錯誤，也建好 grading 把 flywheel 自動化。這時可以選擇用資料來指導手動修改 prompt。不過 OpenAI Platform 支援自動的 [prompt optimization 工具](https://platform.openai.com/docs/guides/prompt-optimizer)，可以加快這個過程。
 
-The prompt optimizer takes our generated output, our custom annotation columns, and our graders into consideration to construct an improved prompt. We’ve constructed a fairly small example here, but with a full-fledged dataset (say, with the 50 rows we recommended earlier), the optimizer will produce a new prompt that solves many of our identified errors.
+Prompt optimizer 會同時考慮我們產生的輸出、自訂的標註欄位和 grader，來構造改進後的 prompt。這裡的範例規模很小，但如果有完整資料集（比如前面建議的 50 筆），optimizer 會產生能解決我們發現的許多錯誤的新 prompt。
 
-We may find ourselves wanting to iterate further, by re-annotating new model outputs, adding or refining graders, and re-optimizing. Graders and annotation column specifications are preserved across tabs, so we can continue to create additional prompt versions in new tabs as we work. The tabs also allow us to compare performance across different models, so we can use our graders to measure which model parameter configuration performs best.
+我們可能還想繼續迭代：重新標註新的模型輸出、新增或調整 grader，再重新最佳化。Grader 和標註欄位的設定會在各分頁間保留，所以工作時可以在新分頁持續建立更多 prompt 版本。分頁也讓我們比較不同模型的表現，因此可以用 grader 衡量哪種模型參數設定表現最好。
 
-This process enables us to improve our prompt over time, proactively responding to new errors or new model releases.
+這個流程讓我們能隨時間持續改進 prompt，主動回應新的錯誤或新的模型發布。
 
-## Advanced techniques
+## 進階技巧
 
-### Expanding datasets with synthetic data
+### 用 synthetic data 擴充資料集
 
-The core evaluation flywheel is your primary tool for improving your system. However, there are times when you may need more test data than you can gather from production logs. Synthetic data generation is a powerful, additional technique for these situations. It is particularly useful if you want to more extensively explore a specific failure mode, if you haven't shipped your product yet and need initial data, or if you have a hypothesis about a weakness but lack real-world examples to validate it.
-Simply asking an LLM to "generate N examples" often produces a homogenous set of test cases. A more structured approach is to define key dimensions of a query and generate data across combinations of them, forming tuples. This ensures greater diversity and coverage in your test set.
+核心的 evaluation flywheel 是改進系統的主要工具。但有時你需要的測試資料比 production log 能收集到的更多。在這些情況下，生成 synthetic data 是強大的補充技巧。特別適合：想更深入探索某個特定失敗模式、產品還沒上線需要初始資料，或你對某個弱點有假設但缺乏真實案例驗證。
+單純叫 LLM「生成 N 個範例」，常會得到同質性很高的測試案例。更有結構的做法是定義 query 的關鍵維度，再對各維度的組合（形成 tuple）生成資料。這樣測試集會更多元、涵蓋更廣。
 
-For our leasing assistant, you could define dimensions such as:
+以我們的租賃助理為例，可以定義這些維度：
 
-* **Channel:** Voice, Chat, Text
-* **Intent:** Tour Scheduling, Maintenance, General Info & Inquiries
-* **Persona:** Prospective Resident, Agency
+* **Channel：** Voice, Chat, Text
+* **Intent：** Tour Scheduling, Maintenance, General Info & Inquiries
+* **Persona：** Prospective Resident, Agency
 
-You can then combine these into a tuple like `(Text, Tour Scheduling, Prospective Resident)` and prompt an LLM to generate specific test cases that match this profile. This structured method creates challenging, realistic scenarios that a simpler generation process might miss.
+然後把它們組成像 `(Text, Tour Scheduling, Prospective Resident)` 這樣的 tuple，prompt LLM 生成符合這個設定的具體測試案例。這種結構化方法能產生有挑戰性又貼近現實的情境，是比較簡單的生成流程容易漏掉的。
 
-In addition to varying the core components of the query, you can apply **perturbations** to make test cases harder and more realistic. This involves slightly altering your generated examples to test the system's resilience. Common perturbations include adding irrelevant information, introducing mistakes, or using different slang.
+除了變化 query 的核心元件，你還可以套用 **perturbation（擾動）** 讓測試案例更難、更貼近現實。做法是稍微改動生成的範例，測試系統的耐用性。常見的 perturbation 包括加入不相關的資訊、引入錯誤，或使用不同的俚語。
 
-For a deeper dive into this topic, see [this discussion](https://hamel.dev/blog/posts/evals-faq/#q-what-is-the-best-approach-for-generating-synthetic-data).
+想深入了解這個主題，請看[這個討論](https://hamel.dev/blog/posts/evals-faq/#q-what-is-the-best-approach-for-generating-synthetic-data)。
 
-### Aligning your LLM judge
+### 對齊你的 LLM judge
 
-An automated LLM judge is only useful if its judgments are trustworthy. To ensure this, you must systematically measure its performance against a human subject-matter expert (SME) using a "gold standard" dataset.
+自動化的 LLM judge 只有在判斷值得信賴時才有用。為了確保這點，你必須用「gold standard」資料集，系統化地衡量它跟人類領域專家（SME）比起來的表現。
 
-However, most test sets are **imbalanced** — they contain far more "pass" examples than "fail" examples. This makes a simple accuracy score misleading. A judge that always guesses "pass" might be 95% accurate but will never find a single failure.
+不過大多數測試集是**不平衡的**，「pass」範例遠多於「fail」範例。這讓單純的 accuracy 分數有誤導性。一個永遠猜「pass」的 judge 可能有 95% accuracy，卻一個失敗都找不出來。
 
-* **True Positive Rate (TPR):** How well does the judge correctly identify the *failures*?
-* **True Negative Rate (TNR):** How well does the judge correctly identify the *passes*?
+* **True Positive Rate (TPR)：** judge 正確辨識出*失敗*的能力有多好？
+* **True Negative Rate (TNR)：** judge 正確辨識出*通過*的能力有多好？
 
-The goal is to achieve high scores on both TPR and TNR. This confirms the judge is effective at finding real problems without being overly critical. This measurement process uses a standard dataset split.
+目標是 TPR 和 TNR 都拿高分。這證明 judge 能有效找出真正的問題，又不會過度挑剔。這個衡量流程會用標準的資料集切分。
 
-1. **Train Set (~20%)**
-   This set's only job is to provide the "few-shot" examples for your judge's prompt. You will select a handful of clear pass/fail cases from this set and embed them directly into the prompt to give it a strong starting point.
+1. **Train Set（約 20%）**
+   這個集合唯一的任務，是為 judge 的 prompt 提供 "few-shot" 範例。你會從中挑幾個明確的 pass / fail 案例，直接放進 prompt，給它一個好的起點。
 
-2. **Validation Set (~40%)**
-   This is where you will iteratively improve your judge. You run the judge against this set and analyze the cases where its decision differs from the expert's. Tune the judge's prompt instructions to improve both its TPR and TNR.
+2. **Validation Set（約 40%）**
+   在這裡反覆改進你的 judge。對這個集合執行 judge，分析它的判斷跟專家不同的案例。調整 judge 的 prompt 指令，改善它的 TPR 和 TNR。
 
-3. **Test Set (~40%)**
-   This final, held-out set is your report card. After tuning, run the judge on this set one time. The final TPR and TNR scores confirm you haven't overfit and give you a trustworthy measure of your judge's performance.
+3. **Test Set（約 40%）**
+   這個最後保留的集合是你的成績單。調整完後，只對它執行一次 judge。最後的 TPR 和 TNR 分數可以確認你沒有 overfit，也給你一個可信的 judge 表現衡量。
 
-For more guidance on how to align an LLM judge with your SMEs, see [this discussion](https://hamel.dev/blog/posts/llm-judge/). For more guidance on what model you should use for judging your AI, see [this post](https://hamel.dev/blog/posts/evals-faq/#q-can-i-use-the-same-model-for-both-the-main-task-and-evaluation).
+想了解更多怎麼讓 LLM judge 跟你的 SME 對齊，請看[這個討論](https://hamel.dev/blog/posts/llm-judge/)。想知道評判你的 AI 該用哪種模型，請看[這篇文章](https://hamel.dev/blog/posts/evals-faq/#q-can-i-use-the-same-model-for-both-the-main-task-and-evaluation)。
 
-## Next steps
+## 下一步
 
-This cookbook provides a foundational workflow for building resilient prompts, but the evaluation flywheel doesn't stop after one cycle. The next step is to make this process a core part of your engineering practice by integrating your graders into a CI/CD pipeline and monitoring production data to discover new failure modes.
+這份 cookbook 提供了打造耐用 prompt 的基礎流程，但 evaluation flywheel 不會在一輪之後就停止。下一步是把這個流程變成工程實務的核心：把 grader 整合進 CI/CD pipeline，並監控 production 資料來發現新的失敗模式。
 
-In addition, the world of AI evaluations is deep and full of challenges we couldn't cover here. As you work to build out your eval strategy, you'll likely encounter more complex questions, such as:
-* How do I make the case for investing in evaluations to my team?
-* Why is a binary (pass/fail) evaluation often better than a 1-5 rating scale?
-* What is the best way to debug a complex, multi-turn conversation trace?
-* How should I approach evaluating my RAG system?
-* How does this workflow adapt to agentic systems?
+此外，AI 評估的世界很深，充滿我們沒辦法在這裡涵蓋的挑戰。在建立你的 eval 策略時，你可能會遇到更複雜的問題，例如：
+* 我要怎麼向團隊說明投資評估的必要性？
+* 為什麼二元（pass/fail）評估常常比 1-5 分的評分量表更好？
+* 除錯複雜的多輪對話 trace，最好的方法是什麼？
+* 我該怎麼評估我的 RAG 系統？
+* 這個工作流程要怎麼套用到 agentic 系統？
 
-We recommend exploring [this FAQ about Evals](https://hamel.dev/blog/posts/evals-faq/) for further study.
+建議看看[這份 Evals FAQ](https://hamel.dev/blog/posts/evals-faq/) 繼續深入研究。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 失敗要先靠人工標註看懂，open coding 找問題，axial coding 把問題歸類並量化，才知道該先改哪裡。
+- 自動化 grader 讓每次改 prompt、換模型都能立刻量到影響，這是 flywheel 能持續轉的關鍵。
+- 不平衡的測試集不能只看 accuracy，要同時看 TPR 和 TNR 才知道 LLM judge 可不可信。
+- Synthetic data 用維度組合加 perturbation 生成，比單純叫 LLM 生成 N 個範例更多元。
+
+## 練習
+
+1. 挑你自己某個應用的 20 筆失敗輸出，寫下 open code，再把它們歸成 2 到 3 個 axial code，算出每類佔幾成。
+2. 為其中一個失敗類型寫一個 LLM grader 的 prompt，用 pass / fail 二元輸出，並設計 2 個 few-shot 範例。
+3. 用 Channel、Intent、Persona 三個維度（或你自己的），列出 5 個 tuple，為每個 tuple 生成一則測試 query，並替其中兩則加上 perturbation，再依 20% / 40% / 40% 切成 train、validation、test。

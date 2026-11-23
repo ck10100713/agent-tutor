@@ -1,19 +1,28 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/SingleStoreDB/OpenAI_wikipedia_semantic_search.ipynb
 ---
 
-# Semantic search with SingleStoreDB
+# 用 SingleStoreDB 做語意搜尋
 
 > 原文：[examples/vector_databases/SingleStoreDB/OpenAI_wikipedia_semantic_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/SingleStoreDB/OpenAI_wikipedia_semantic_search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這本 notebook 示範怎麼用 SingleStoreDB 的向量儲存和函式，搭配 ChatGPT 做出互動式問答應用。
+流程是先直接問 ChatGPT（問一個超過 2021 年的事情，它答不出來），再把冬季奧運的資料存進 SingleStoreDB，語意搜尋找出相關內容，當作上下文送給 ChatGPT，得到更準確的答案。
 
-This notebook is an example on how you can use SingleStoreDB vector storage and functions to build an interactive Q&A application with ChatGPT. If you start a [Trial](https://www.singlestore.com/cloud-trial/) in SingleStoreDB, you can find the same notebook in our sample notebooks with native connection.
+## 學完你會
+- 看出 ChatGPT 在沒有上下文時，對超過訓練資料日期的問題怎麼答不準。
+- 把 CSV 資料整理後存進 SingleStoreDB，並用 JSON_ARRAY_PACK 壓縮向量。
+- 用語意搜尋找出相關內容，組成上下文送給 ChatGPT，拿到更準確的回答。
 
-## First let's talk directly to ChatGPT and try and get back a response
+## 開跑前
+- 需要 OpenAI API key。
+- 需要一個 SingleStoreDB 環境。如果在 SingleStoreDB 開啟[試用](https://www.singlestore.com/cloud-trial/)，可以在他們的範例 notebook 中找到同一本 notebook，並使用原生連線。
+
+## 先直接跟 ChatGPT 對話，看看會得到什麼回應
 
 ```python
 !pip install openai --quiet
@@ -34,7 +43,7 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 GPT_MODEL = "gpt-3.5-turbo"
 ```
 
-## Let's connect to OpenAI and see the result we get when asking for a date beyond 2021
+## 連接 OpenAI，看看問一個 2021 年之後的日期時會得到什麼結果
 
 ```python
 openai.api_key = 'OPENAI API KEY'
@@ -56,9 +65,9 @@ print(response['choices'][0]['message']['content'])
     I'm sorry, I cannot provide information about events that have not occurred yet. The Winter Olympics 2022 will be held in Beijing, China from February 4 to 20, 2022. The curling events will take place during this time and the results will not be known until after the competition has concluded.
     ```
 
-# Get the data about Winter Olympics and provide the information to ChatGPT as context
+# 取得冬季奧運的資料，並把資訊作為上下文提供給 ChatGPT
 
-## 1. Setup
+## 1. 設定
 
 ```python
 !pip install matplotlib plotly.express scikit-learn tabulate tiktoken wget --quiet
@@ -79,7 +88,7 @@ import wget
 import ast
 ```
 
-## Step 1 - Grab the data from CSV and prepare it
+## 步驟 1：從 CSV 取得資料並整理
 
 ```python
 # download pre-chunked text and pre-computed embeddings
@@ -131,7 +140,7 @@ df.info(show_counts=True)
     memory usage: 94.8+ KB
     ```
 
-## 2. Set up SingleStore DB
+## 2. 設定 SingleStore DB
 
 ```python
 import singlestoredb as s2
@@ -174,7 +183,7 @@ cur.execute(stmt)
     0
     ```
 
-## 3. Populate the Table with our dataframe df and use JSON_ARRAY_PACK to compact it
+## 3. 用 dataframe df 填入資料表，並用 JSON_ARRAY_PACK 壓縮
 
 ```python
 %%time
@@ -213,7 +222,7 @@ for i in range(0, len(record_arr), batch_size):
     Wall time: 11min 4s
     ```
 
-## 4. Do a semantic search with the same question from above and use the response to send to OpenAI again
+## 4. 用上面同一個問題做語意搜尋，並把結果再送給 OpenAI
 
 
 ```python
@@ -271,7 +280,7 @@ for string, relatedness in zip(strings, relatednesses):
     print(tabulate([[string]], headers=['Result'], tablefmt='fancy_grid'))
 ```
 
-## 5. Send the right context to ChatGPT for a more accurate answer
+## 5. 把正確的上下文送給 ChatGPT，得到更準確的答案
 
 ```python
 import tiktoken
@@ -329,7 +338,7 @@ def ask(
     return response_message
 ```
 
-## 6. Get an answer from Chat GPT
+## 6. 取得 ChatGPT 的答案
 
 ```python
 from pprint import pprint
@@ -352,4 +361,13 @@ pprint(answer)
      '- Mixed doubles: Italy (Stefania Constantini, Amos Mosaner)')
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 模型不知道訓練資料之後的事，這類問題要靠外部資料補上。
+- 做法是 RAG：先搜尋相關內容，再把它當上下文放進 prompt。
+- 向量存進資料庫前可以用 JSON_ARRAY_PACK 壓縮，查詢時用 SQL 函式算相似度。
+- 同一個問題，沒有上下文和有上下文的回答，差別一眼就看得出來，適合拿來驗證 RAG 有沒有效。
+
+## 練習
+1. 把範例問題換成另一個冬季奧運相關的問題，比較有無上下文的回答。
+2. 改語意搜尋回傳的筆數，看送給 ChatGPT 的上下文變多或變少時，答案有什麼變化。
+3. 把資料換成你自己的 CSV，重做整個建表、存向量、搜尋的流程。

@@ -1,49 +1,59 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/image-gen-models-prompting-guide.ipynb
 ---
-
-# GPT Image Generation Models Prompting Guide
+# GPT 圖像生成模型 Prompting 指南
 
 > 原文：[examples/multimodal/image-gen-models-prompting-guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/image-gen-models-prompting-guide.ipynb)
 
-Cookbook to prompt gpt-image models for reliable image generation results.
+教你怎麼下 prompt，讓 gpt-image 系列模型穩定產出想要的圖。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇是 gpt-image 模型的 prompting 手冊，整理了模型參數、寫 prompt 的基本原則，還有文字生圖、改圖兩大類共二十多種實際案例。每個案例都附完整程式碼和輸出的圖，可以直接拿去改。
+
+## 學完你會
+
+- 看得懂 `gpt-image-2` 跟舊模型的差別，知道 quality、size、透明背景這些參數怎麼選
+- 用「場景 → 主體 → 細節 → 限制」的結構寫 prompt，並且用引號、ALL CAPS 讓圖裡的文字更準
+- 用 `images.edit` 做風格轉換、換裝、去物件、多圖合成，並靠「只改 X、其他維持不變」避免畫面跑掉
+
+## 開跑前
+
+- 需要 OpenAI API key，圖像生成會產生 API 費用
+- 改圖範例需要把參考圖放進 `input_images/` 資料夾
+
+## 1. 簡介
+
+OpenAI 的 gpt-image 生成模型是為了正式上線等級的視覺內容和高度可控的創作流程設計的。專業設計工作和反覆修改的內容製作都適合，而且依需求可以選高品質輸出，也可以選低延遲。
+
+主要能力：
+
+- **高擬真的照片級畫面**，光線自然、材質準確、色彩豐富
+- **彈性的品質與延遲取捨**，用較低的設定可以更快生成，畫質仍然超過上一代圖像模型
+- **穩定的臉部與身分保留**，適合改圖、角色一致性和多步驟流程
+- **透明背景的 PNG 和 WebP 素材（preview）**，`gpt-image-2` 支援，可用在可重複使用的 logo、商品去背圖、貼圖和簡報圖形
+- **可靠的文字渲染**，字體清晰、版面一致、圖內對比度夠強
+- **複雜的結構化視覺**，包括資訊圖表、流程圖和多格構圖
+- **精準的風格控制與風格轉換**，只要很少的 prompt，從品牌設計系統到藝術風格都做得到
+- **對真實世界的知識與推理**，能正確畫出各種物件、環境和情境
+
+這份指南整理了 `gpt-image-2` 的 prompting 模式、最佳實踐和來自真實 production 案例的範例 prompt。`gpt-image-2` 是目前最強的圖像模型，畫質更好、改圖能力更強，也支援更多 production 流程。`low` quality 特別適合對延遲敏感的情境，要最高保真度時 `medium` 和 `high` 仍然適用。
 
 
+## 1.1 OpenAI 圖像模型參數
 
-## 1. Introduction
+這一節是本指南涵蓋的圖像模型參考資料，內容包括：
 
-OpenAI's gpt-image generation models are designed for production-quality visuals and highly controllable creative workflows. They are well-suited for both professional design tasks and iterative content creation, and support both high-quality rendering and lower-latency use cases depending on the workflow.
+- 模型名稱
+- 支援的 `outputQuality` 值
+- 支援的 `input_fidelity` 值
+- 支援的 `size` / 解析度規則
+- 產生透明素材所需的 `background` 和 `output_format`
+- 各種工作流程的建議用法
 
-Key Capabilities include: 
-
-- **High-fidelity photorealism** with natural lighting, accurate materials, and rich color rendering
-- **Flexible quality–latency tradeoffs**, allowing faster generation at lower settings while still exceeding the visual quality of prior-generation image models
-- **Robust facial and identity preservation** for edits, character consistency, and multi-step workflows
-- **Transparent-background PNG and WebP assets (preview)** with `gpt-image-2` for reusable logos, product cutouts, stickers, and presentation graphics
-- **Reliable text rendering** with crisp lettering, consistent layout, and strong contrast inside images
-- **Complex structured visuals**, including infographics, diagrams, and multi-panel compositions
-- **Precise style control and style transfer** with minimal prompting, supporting everything from branded design systems to fine-art styles
-- **Strong real-world knowledge and reasoning**, enabling accurate depictions of objects, environments, and scenarios
-
-This guide highlights prompting patterns, best practices, and example prompts drawn from real production use cases for `gpt-image-2`. It is our most capable image model, with stronger image quality, improved editing performance, and broader support for production workflows. The `low` quality setting is especially strong for latency-sensitive use cases, while `medium` and `high` remain good fits when maximum fidelity matters. 
-
-
-## 1.1 OpenAI Image Model Parameters 
-
-This section is a reference for the image models covered in this guide, focused on:
-
-- model name
-- supported `outputQuality` values
-- supported `input_fidelity` values
-- supported `size` / resolution behavior
-- `background` and `output_format` requirements for transparent assets
-- recommended use cases by workflow
-
-## Model summary
-As of April 21, 2026, OpenAI has the following image models available.
+## 模型總覽
+截至 2026 年 4 月 21 日，OpenAI 提供以下圖像模型。
 
 | Model | `outputQuality` | `input_fidelity` | Resolutions | Recommended use |
 | --- | --- | --- | --- | --- |
@@ -52,32 +62,32 @@ As of April 21, 2026, OpenAI has the following image models available.
 | `gpt-image-1` | `low`, `medium`, `high` | `low`, `high` | `1024x1024`, `1024x1536`, `1536x1024`, `auto` | Legacy compatibility only. If you are starting a new workflow or refreshing prompts, move to `gpt-image-2`; keep `gpt-image-1` only when you need short-term stability while validating the upgrade. |
 | `gpt-image-1-mini` | `low`, `medium`, `high` | `low`, `high` | `1024x1024`, `1024x1536`, `1536x1024`, `auto` | Use when cost and throughput are the main constraint: large batch variant generation, rapid ideation, previews, lightweight personalization, and draft assets that do not require the strongest generation or editing performance. |
 
-### Transparent backgrounds with `gpt-image-2` (preview)
+### 用 `gpt-image-2` 產生透明背景（preview）
 
-Transparent backgrounds are available in preview for `gpt-image-2`. To generate or edit an image with a transparent background:
+`gpt-image-2` 的透明背景目前是 preview。要生成或編輯透明背景的圖：
 
-- Set `background="transparent"`.
-- Set `output_format="png"` (the default) or `output_format="webp"`. Both support transparency; `jpeg` does not.
-- Omit `output_compression` for PNG output. WebP supports optional compression.
-- Explicitly request an isolated subject on a fully transparent background, with no scenery, solid backdrop, checkerboard, or unwanted shadows.
-- For edits, explicitly preserve the transparent background in each prompt so later steps do not introduce a new background.
-- Keep the returned image as a PNG or WebP file and preserve its alpha channel throughout downstream processing.
+- 設定 `background="transparent"`。
+- 設定 `output_format="png"`（預設）或 `output_format="webp"`。兩者都支援透明，`jpeg` 不支援。
+- PNG 輸出請不要帶 `output_compression`，WebP 可以選擇性壓縮。
+- 在 prompt 裡明確要求主體獨立在完全透明的背景上，不要有場景、純色底、棋盤格或多餘的陰影。
+- 編輯時，每個 prompt 都要明確要求保留透明背景，後面的步驟才不會又生出新背景。
+- 回傳的圖請維持 PNG 或 WebP 格式，後續處理過程都要保留 alpha channel。
 
-### `gpt-image-2` size options
+### `gpt-image-2` 的 size 選項
 
-`gpt-image-2` supports any resolution passed in the `size` parameter as long as all of these constraints are met:
+`size` 參數可以傳任意解析度，只要同時滿足這些限制：
 
-- Maximum edge length must be less than `3840px`
-- Both edges must be a multiple of `16`
-- Ratio between the long edge and short edge must not be greater than `3:1`
-- Total pixels must not exceed `8,294,400`
-- Total pixels must not be less than `655,360`
+- 最長邊必須小於 `3840px`
+- 兩個邊都必須是 `16` 的倍數
+- 長邊和短邊的比例不能大於 `3:1`
+- 總像素不能超過 `8,294,400`
+- 總像素不能少於 `655,360`
 
-If the output image exceeds `2560x1440` pixels (`3,686,400` total pixels), commonly referred to as 2K, treat it as experimental because results can be more variable above this size.
+如果輸出超過 `2560x1440`（`3,686,400` 總像素，一般稱 2K），請當成實驗性質，因為超過這個大小結果會比較不穩定。
 
-### Popular `gpt-image-2` sizes
+### 常用的 `gpt-image-2` 尺寸
 
-These are useful reference points that fit the constraints above:
+這些是符合上述限制的常用參考值：
 
 | Label | Resolution | Notes |
 | --- | --- | --- |
@@ -87,54 +97,53 @@ These are useful reference points that fit the constraints above:
 | 2K / QHD | `2560x1440` | Popular widescreen format and recommended upper reliability boundary for `gpt-image-2` |
 | 4K / UHD | `3840x2160` | Experimental upper-end target. If the max-edge rule is enforced literally as `< 3840`, round down to the nearest valid size such as `3824x2144` |
 
-### When to use which model
+### 該用哪個模型
 
-- Choose `gpt-image-2` as the default for most production workflows. It is the strongest overall model and the right upgrade target for teams currently using `gpt-image-1.5` or `gpt-image-1` for high-quality outputs.
-- Choose `gpt-image-2` with quality: low when speed and unit economics dominate the decision. This setting has good quality for a lot of use cases and it a strong fit for high-volume generation and experimentation. You can also try `gpt-image-1-mini` for these use cases, but we have seen quality: low works just as well.
-- Keep `gpt-image-1.5` or `gpt-image-1` only for backward compatibility while you validate prompt migrations, regression-test outputs, or maintain older workflows that are not yet ready to move.
+- 大多數 production 流程直接用 `gpt-image-2`。它整體最強，目前用 `gpt-image-1.5` 或 `gpt-image-1` 跑高品質輸出的團隊也該升級到它。
+- 速度和單位成本最重要時，用 `gpt-image-2` 搭配 quality: low。這個設定對很多用途畫質已經夠好，很適合大量生成和實驗。你也可以試 `gpt-image-1-mini`，不過我們發現 quality: low 的效果一樣好。
+- `gpt-image-1.5` 或 `gpt-image-1` 只在向下相容時保留，例如還在驗證 prompt 遷移、做輸出的 regression 測試，或維護還沒準備好升級的舊流程。
 
-### Recommended upgrade path from `gpt-image-1.5` and `gpt-image-1`
+### 從 `gpt-image-1.5` 和 `gpt-image-1` 升級的建議路徑
 
-For workflows currently using `gpt-image-1.5` or `gpt-image-1`, the recommendation is:
+目前用 `gpt-image-1.5` 或 `gpt-image-1` 的流程，建議這樣做：
 
-- Upgrade to `gpt-image-2` for customer-facing assets, photorealistic generation, editing-heavy flows, brand-sensitive creative, text-in-image work, and any workflow where better first-pass quality reduces manual review or reruns.
-- Consider `gpt-image-1-mini` instead of legacy models only when the main goal is lowering cost for large batches of exploratory or lower-stakes images.
-- During migration, keep prompts largely the same at first, then retune only after you have compared output quality, latency, and retry rates on your real workload.
+- 面向客戶的素材、照片級生成、大量編輯的流程、對品牌敏感的創意、圖內文字，還有任何「第一次生成品質好就能少人工檢查、少重跑」的流程，都升級到 `gpt-image-2`。
+- 只有主要目標是壓低大量探索性、低風險圖片的成本時，才考慮用 `gpt-image-1-mini` 取代舊模型。
+- 遷移時先讓 prompt 大致維持不變，等在真實工作量上比較過輸出品質、延遲和重試率之後，再微調。
 
-## 2. Prompting Fundamentals
+## 2. Prompting 基本原則
 
-The following prompting fundamentals are applicable to GPT image generation models. They are based on patterns that showed up repeatedly in alpha testing across generation, edits, infographics, ads, human images, UI mockups, and compositing workflows.
+下面這些原則適用於 GPT 圖像生成模型，來自 alpha 測試中反覆出現的模式，涵蓋生成、編輯、資訊圖表、廣告、人像、UI mockup 和合成流程。
 
-* **Structure + goal:** Write prompts in a consistent order (background/scene → subject → key details → constraints) and include the intended use (ad, UI mock, infographic) to set the “mode” and level of polish. For complex requests, use short labeled segments or line breaks instead of one long paragraph.
+* **結構 + 目標：** prompt 用固定順序寫（背景/場景 → 主體 → 關鍵細節 → 限制），並寫明用途（廣告、UI mock、資訊圖表），這樣可以設定「模式」和精緻程度。需求複雜時，用簡短的標籤段落或換行，不要塞成一大段。
 
-* **Prompt format:** Use the format that is easiest to maintain. Minimal prompts, descriptive paragraphs, JSON-like structures, instruction-style prompts, and tag-based prompts can all work well as long as the intent and constraints are clear. For production systems, prioritize a skimmable template over clever prompt syntax.
+* **Prompt 格式：** 選最好維護的格式。極簡 prompt、描述性段落、類 JSON 結構、指令式 prompt、標籤式 prompt 都可以，只要意圖和限制講清楚。production 系統優先選好掃讀的模板，不要追求花俏的語法。
 
-* **Specificity + quality cues:** Be concrete about materials, shapes, textures, and the visual medium (photo, watercolor, 3D render), and add targeted “quality levers” only when needed (e.g., *film grain*, *textured brushstrokes*, *macro detail*). For photorealism, include the word “photorealistic” directly in the prompt to strongly engage the model’s photorealistic mode. Similar phrases like “real photograph,” “taken on a real camera,” “professional photography,” or “iPhone photo” can also help, but detailed camera specs may be interpreted loosely, so use them mainly for high-level look and composition rather than exact physical simulation.
+* **具體程度 + 品質提示：** 材質、形狀、質感和視覺媒介（照片、水彩、3D render）要具體，只有需要時才加針對性的「品質調味料」（例如 *film grain*、*textured brushstrokes*、*macro detail*）。要照片級擬真，直接在 prompt 裡寫 “photorealistic”，會強烈啟動模型的擬真模式。“real photograph”、“taken on a real camera”、“professional photography”、“iPhone photo” 這類說法也有幫助，但詳細的相機規格會被模型鬆散解讀，所以主要用在整體風格和構圖，不要期待精確的物理模擬。
 
-* **Latency vs fidelity:** For latency-sensitive or high-volume use cases, start with `quality="low"` and evaluate whether it meets your visual requirements. In many cases, it provides sufficient fidelity with significantly faster generation. For small or dense text, detailed infographics, close-up portraits, identity-sensitive edits, and high-resolution outputs, compare `medium` or `high` before shipping.
+* **延遲 vs 保真度：** 對延遲敏感或大量生成的情境，先從 `quality="low"` 開始，看符不符合視覺需求。很多時候它的保真度已經夠用，生成快很多。小字或密集文字、細節多的資訊圖表、人像特寫、重視身分的編輯和高解析度輸出，上線前請比較 `medium` 或 `high`。
 
-* **Composition:** Specify framing and viewpoint (close-up, wide, top-down), perspective/angle (eye-level, low-angle), and lighting/mood (soft diffuse, golden hour, high-contrast) to control the shot. If layout matters, call out placement (e.g., “logo top-right,” “subject centered with negative space on left”). For wide, cinematic, low-light, rain, or neon scenes, add extra detail about scale, atmosphere, and color so the model does not trade mood for surface realism.
+* **構圖：** 指定取景和視角（特寫、廣角、俯視）、角度（平視、低角度）和光線氛圍（柔和漫射、黃金時刻、高對比）來控制畫面。版面重要的話，要寫出位置（例如 “logo top-right”、“subject centered with negative space on left”）。寬幅、電影感、低光、下雨或霓虹場景，要多描述尺度、氛圍和色彩，模型才不會為了表面的真實感犧牲氣氛。
 
-* **People, pose, and action:** For people in scenes, describe scale, body framing, gaze, and object interactions. Examples: “full body visible, feet included,” “child-sized relative to the table,” “looking down at the open book, not at the camera,” or “hands naturally gripping the handlebars.” These details help with body proportion, action geometry, and gaze alignment.
+* **人物、姿勢與動作：** 畫面有人時，描述比例、身體取景、視線和跟物件的互動。例如 “full body visible, feet included”、“child-sized relative to the table”、“looking down at the open book, not at the camera”、“hands naturally gripping the handlebars”。這些細節能改善身體比例、動作幾何和視線方向。
 
-* **Constraints (what to change vs preserve):** State exclusions and invariants explicitly (e.g., “no watermark,” “no extra text,” “no logos/trademarks,” “preserve identity/geometry/layout/brand elements”). For edits, use “change only X” + “keep everything else the same,” and repeat the preserve list on each iteration to reduce drift. If the edit should be surgical, also say not to alter saturation, contrast, layout, arrows, labels, camera angle, or surrounding objects.
+* **限制（改什麼 vs 保留什麼）：** 明確寫出排除項目和不能變的東西（例如 “no watermark”、“no extra text”、“no logos/trademarks”、“preserve identity/geometry/layout/brand elements”）。編輯時用 “change only X” + “keep everything else the same”，並且每次迭代都重複保留清單，減少漂移。如果要做精準修改，也要說明不要改飽和度、對比、版面、箭頭、標籤、鏡頭角度或周圍物件。
 
-* **Transparent backgrounds:** For `gpt-image-2`, transparency is available in preview. Pair `background="transparent"` with `output_format="png"` (the default) or `output_format="webp"`; `jpeg` does not support transparency. Describe the subject as isolated on a fully transparent background and explicitly exclude scenery, solid backdrops, checkerboards, and unwanted shadows. For edits, repeat “preserve the transparent background” so the workflow does not introduce or preserve an opaque scene. Omit `output_compression` for PNG; WebP supports optional compression.
+* **透明背景：** `gpt-image-2` 的透明背景是 preview。`background="transparent"` 要搭配 `output_format="png"`（預設）或 `output_format="webp"`，`jpeg` 不支援透明。把主體描述成獨立在完全透明的背景上，並明確排除場景、純色底、棋盤格和多餘陰影。編輯時重複寫 “preserve the transparent background”，流程才不會產生或保留不透明的場景。PNG 不要帶 `output_compression`，WebP 可以選擇性壓縮。
 
-* **Text in images:** Put literal text in **quotes** or **ALL CAPS** and specify typography details (font style, size, color, placement) as constraints. For tricky words (brand names, uncommon spellings), spell them out letter-by-letter to improve character accuracy. Use `medium` or `high` quality for small text, dense information panels, and multi-font layouts.
+* **圖內文字：** 要出現的文字放在**引號**裡或用 **ALL CAPS**，並把字體細節（字型風格、大小、顏色、位置）當成限制寫出來。冷僻的字（品牌名、少見拼法）可以逐字母拼出來，提高字元準確度。小字、密集資訊面板和多字型版面請用 `medium` 或 `high` quality。
+* **多圖輸入：** 用**編號加描述**來指稱每張輸入圖（“Image 1: product photo… Image 2: style reference…”），並說明它們怎麼互動（“apply Image 2’s style to Image 1”）。做合成時，要明確說哪個元素移到哪裡（“put the bird from Image 1 on the elephant in Image 2”）。
 
-* **Multi-image inputs:** Reference each input by **index and description** (“Image 1: product photo… Image 2: style reference…”) and describe how they interact (“apply Image 2’s style to Image 1”). When compositing, be explicit about which elements move where (“put the bird from Image 1 on the elephant in Image 2”).
+* **逐步迭代，不要一次塞太多：** 長 prompt 也可以有好結果，但先從乾淨的基礎 prompt 開始，再用小而單一的修改來調整（“make lighting warmer”、“remove the extra tree”、“restore the original background”），debug 會容易很多。可以用 “same style as before” 或 “the subject” 這類說法利用上下文，但關鍵細節開始漂移時要重新寫清楚。
 
-* **Iterate instead of overloading:** Long prompts can work well, but debugging is easier when you start with a clean base prompt and refine with small, single-change follow-ups (“make lighting warmer,” “remove the extra tree,” “restore the original background”). Use references like “same style as before” or “the subject” to leverage context, but re-specify critical details if they start to drift.
+## 3. 環境設定
 
-## 3. Setup
+只要跑一次。它會：
+- 建立 API client
+- 在 images 資料夾裡建立 `output_images/`
+- 加一個小 helper 來存 base64 圖片
 
-Run this once. It:
-- creates the API client
-- creates `output_images/` in the images folder. 
-- adds a small helper to save base64 images
-
-Put any reference images used for edits into `input_images/` (or update the paths in the examples). When saving transparent outputs, use a `.png` or `.webp` extension matching the selected output format and preserve the returned image bytes; converting an RGBA image to RGB discards its transparent background.
+改圖用的參考圖請放進 `input_images/`（或自己改範例裡的路徑）。存透明輸出時，副檔名要用 `.png` 或 `.webp`，跟選的 output format 一致，並且保留回傳的圖片 bytes。把 RGBA 圖轉成 RGB 會丟掉透明背景。
 
 ```python
 import os
@@ -171,12 +180,12 @@ def display_image_grid(items, width=240):
     display(HTML('<div style="display:flex;flex-wrap:wrap;gap:16px;align-items:flex-start">' + ''.join(cards) + '</div>'))
 ```
 
-The examples below uses our most capable image model `gpt-image-2`
+以下範例都使用最強的圖像模型 `gpt-image-2`。
 
-## 4. Use Cases — Generate (text → image)
+## 4. 使用案例：生成（文字 → 圖片）
 
-## 4.1 Infographics
-Use infographics to explain structured information for a specific audience: students, executives, customers, or the general public. Examples include explainers, posters, labeled diagrams, timelines, and “visual wiki” assets. For dense layouts or heavy in-image text, it's recommended to set output generation quality to "high".
+## 4.1 資訊圖表
+資訊圖表用來向特定對象（學生、主管、客戶或一般大眾）說明結構化資訊，例如解說圖、海報、標註圖、時間軸和「視覺化 wiki」素材。版面密集或圖內文字很多時，建議把輸出品質設為 "high"。
 
 ```python
 prompt = """
@@ -195,13 +204,13 @@ result = client.images.generate(
 save_image(result, "infographic_coffee_machine_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/infographic_coffee_machine_gpt-image-2.png)
 
-## 4.2 Translation in Images
+## 4.2 圖片內文字翻譯
 
-Used for localizing existing designs (ads, UI screenshots, packaging, infographics) into another language without rebuilding the layout from scratch. The key is to preserve everything except the text—keep typography style, placement, spacing, and hierarchy consistent—while translating verbatim and accurately, with no extra words, no reflow unless necessary, and no unintended edits to logos, icons, or imagery.
+用來把現有設計（廣告、UI 截圖、包裝、資訊圖表）在地化成另一種語言，不用從頭重做版面。重點是除了文字之外全部保留：字體風格、位置、間距和層級都要一致，翻譯要逐字準確，不多加字，非必要不重排，也不能動到 logo、圖示或圖像。
 
 ```python
 prompt = """
@@ -222,13 +231,13 @@ result = client.images.edit(
 save_image(result, "infographic_coffee_machine_sp_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/infographic_coffee_machine_sp_gpt-image-2.png)
 
-## 4.3 Photorealistic Images that Feel “natural”
+## 4.3 看起來「自然」的照片級圖片
 
-To get believable photorealism, prompt the model as if a real photo is being captured in the moment. Use photography language (lens, lighting, framing) and explicitly ask for real texture (pores, wrinkles, fabric wear, imperfections). Avoid words that imply studio polish or staging. When detail matters, set quality="high".
+要得到可信的擬真效果，prompt 要寫得像是在當下拍一張真實照片。用攝影的語言（鏡頭、光線、取景），並明確要求真實的質感（毛孔、皺紋、衣物磨損、瑕疵）。避免暗示棚拍精修或刻意擺拍的字眼。細節重要時，設定 quality="high"。
 
 ```python
 prompt = """
@@ -249,13 +258,13 @@ result = client.images.generate(
 save_image(result, "photorealism-gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/photorealism-gpt-image-2.png)
 
-## 4.4 World knowledge
+## 4.4 世界知識
 
-GPT image generation models can pair strong reasoning with world knowledge. For example, when asked to generate a scene set in Bethel, New York in August 1969, they can infer Woodstock and produce an accurate, context-appropriate image without being explicitly told about the event. 
+GPT 圖像生成模型能結合強大的推理和世界知識。例如要它生成 1969 年 8 月紐約 Bethel 的場景，它能推斷出是 Woodstock，畫出正確且符合情境的圖，不需要你明說這個活動。
 
 ```python
 prompt = """
@@ -273,15 +282,15 @@ result = client.images.generate(
 save_image(result, "world_knowledge-gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/world_knowledge-gpt-image-2.png)
 
-## 4.5 Logo Generation
+## 4.5 Logo 生成
 
-Strong logo generation comes from clear brand constraints and simplicity. Describe the brand’s personality and use case, then ask for a clean, original mark with strong shape, balanced negative space, and scalability across sizes. Use a transparent-background PNG or WebP file when the logo needs to be reused across different website, campaign, or presentation backgrounds.
+好的 logo 來自清楚的品牌限制和簡潔。描述品牌個性和使用情境，然後要求乾淨、原創的標誌，形狀強、留白平衡、各種尺寸都能縮放。logo 需要放在不同網站、活動或簡報背景上重複使用時，用透明背景的 PNG 或 WebP。
 
-You can specify parameter "n" to denote the number of variations you would like to generate. 
+你可以用參數 "n" 指定要生成幾個變體。
 
 ```python
 prompt = """
@@ -309,17 +318,17 @@ for i, item in enumerate(result.data, start=1):
         f.write(image_bytes)
 ```
 
-Output Images: 
+輸出圖片：
 
 | Option 1 | Option 2 | Option 3 | Option 4 |
 |:--------:|:--------:|:--------:|:--------:|
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/logo_generation_1_gpt-image-2.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/logo_generation_2_gpt-image-2.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/logo_generation_3_gpt-image-2.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/logo_generation_4_gpt-image-2.png)|
 
-## 4.6 Ads Generation
+## 4.6 廣告生成
 
-Ad generation works best when the prompt is written like a creative brief rather than a purely technical image spec. Describe the brand, audience, culture, concept, composition, and exact copy, then let the model make taste-driven creative decisions inside those boundaries. This is useful for early campaign exploration because the model can interpret audience cues, infer art direction, and propose visual details that make the ad feel considered rather than merely rendered.
+廣告生成的 prompt 寫得像創意 brief 效果最好，不要只是技術性的圖像規格。描述品牌、受眾、文化、概念、構圖和確切文案，然後讓模型在這些邊界內做有品味的創意決定。這很適合早期的活動探索，因為模型會解讀受眾線索、推斷美術方向，並提出細節，讓廣告看起來有被用心設計，而不只是被渲染出來。
 
-For stronger results, include the brand positioning, desired vibe, target audience, scene, and tagline in the same prompt. If the text must appear in the image, quote it exactly and ask for clean, legible typography.
+要更好的結果，把品牌定位、想要的氛圍、目標受眾、場景和標語寫在同一個 prompt 裡。文字必須出現在圖裡的話，要精確引用，並要求乾淨好讀的字體。
 
 ```python
 prompt = """
@@ -341,14 +350,14 @@ result = client.images.generate(
 save_image(result, "thread_ad_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/thread_ad_gpt-image-2.png)
 
 
-## 4.7 Story-to-Comic Strip
+## 4.7 故事轉漫畫
 
-For story-to-comic generation, define the narrative as a sequence of clear visual beats, one per panel. Keep descriptions concrete and action-focused so the model can translate the story into readable, well-paced panels.
+故事轉漫畫時，把劇情定義成一連串清楚的視覺節拍，一格一個。描述要具體、聚焦在動作，模型才能把故事轉成好讀、節奏好的分格。
 
 ```python
 prompt = """
@@ -369,13 +378,13 @@ result = client.images.generate(
 save_image(result, "comic_reel-gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/comic_reel-gpt-image-2.png)
 
-## 4.8 UI Mockups
+## 4.8 UI Mockup
 
-UI mockups work best when you describe the product as if it already exists. Focus on layout, hierarchy, spacing, and real interface elements, and avoid concept art language so the result looks like a usable, shipped interface rather than a design sketch.
+UI mockup 的 prompt 要把產品寫得像已經存在。重點放在版面、層級、間距和真實的介面元素，避免概念藝術的語言，這樣結果看起來才像可用、已上線的介面，而不是設計草圖。
 
 ```python
 prompt = """
@@ -396,15 +405,15 @@ result = client.images.generate(
 save_image(result, "ui_farmers_market_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/ui_farmers_market_gpt-image-2.png)
 
-## 4.9 Scientific / Educational Visuals
+## 4.9 科學 / 教育圖像
 
-Scientific and educational visuals are strong fits for biology, chemistry, classroom explainers, flat scientific icon systems, diagrams, and learning assets. Prompt them like an instructional design brief: define the audience, lesson objective, visual format, required labels, and scientific constraints. For best results, ask for a clean, flat visual system with consistent icon style, clear arrows, readable labels, and enough white space for students to scan the concept quickly.
+科學和教育圖像很適合生物、化學、課堂講解、扁平科學圖示系統、圖解和學習素材。prompt 寫得像教學設計 brief：定義受眾、教學目標、視覺格式、必要的標籤和科學上的限制。要好結果的話，要求乾淨的扁平視覺系統，圖示風格一致、箭頭清楚、標籤好讀，並留足空白讓學生快速掃過概念。
 
-When accuracy matters, list the required components explicitly and say what should not be included. Use `quality="high"` for dense labels, diagrams, or assets that will be used in slides or course materials.
+準確度重要時，明確列出必要的元件，並說明哪些不該出現。標籤密集的圖、圖解，或要用在簡報和課程教材的素材，請用 `quality="high"`。
 
 ```python
 prompt = """
@@ -427,15 +436,15 @@ result = client.images.generate(
 save_image(result, "scientific_educational_cellular_respiration_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/scientific_educational_cellular_respiration_gpt-image-2.png)
 
-## 4.10 Slides, Diagrams, Charts, and Productivity Images
+## 4.10 簡報、圖表、流程圖與生產力圖像
 
-Productivity visuals work best when the prompt is written like an artifact spec rather than an illustration request. Name the exact deliverable (slide, workflow diagram, chart, page image), define the canvas and hierarchy, provide the real text or data, and describe the visual language. These prompts should include practical constraints: readable typography, polished spacing, no decorative clutter, and no generic stock-photo treatment.
+生產力類的視覺，prompt 要寫得像「產出物規格」，不要像插畫需求。指名確切的交付物（簡報頁、流程圖、圖表、頁面圖片），定義畫布和層級，提供真實的文字或數據，並描述視覺語言。這類 prompt 要包含實際的限制：字體好讀、間距精緻、沒有多餘裝飾、不要一般圖庫照片的感覺。
 
-For slides, charts, and diagram-heavy assets, include the numbers and labels directly in the prompt. Use a landscape size for deck-style outputs and `quality="high"` when the image contains small text, legends, axes, or footnotes.
+簡報、圖表和圖解類素材，要把數字和標籤直接寫進 prompt。簡報風格的輸出用橫向尺寸，圖裡有小字、圖例、座標軸或註腳時用 `quality="high"`。
 
 ```python
 prompt = """
@@ -468,15 +477,15 @@ result = client.images.generate(
 save_image(result, "market_opportunity_slide_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/market_opportunity_slide_gpt-image-2.png)
 
-## 5. Use cases — Edit (text + image → image)
+## 5. 使用案例：編輯（文字 + 圖片 → 圖片）
 
-## 5.1 Style Transfer
+## 5.1 風格轉換
 
-Style transfer is useful when you want to keep the *visual language* of a reference image (palette, texture, brushwork, film grain, etc.) while changing the subject or scene. For best results, describe what must stay consistent (style cues) and what must change (new content), and add hard constraints like background, framing, and “no extra elements” to prevent drift.
+想保留參考圖的*視覺語言*（色調、質感、筆觸、film grain 等），同時換掉主體或場景時，就用風格轉換。要有好結果，描述哪些必須維持一致（風格線索）、哪些要改（新內容），再加上背景、取景和 “no extra elements” 這類硬限制，防止畫面漂移。
 
 ```python
 prompt = """
@@ -496,18 +505,17 @@ result = client.images.edit(
 save_image(result, "motorcycle_gpt-image-2.png")
 ```
 
-Input Image:
+輸入圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pixels.png)
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/motorcycle_gpt-image-2.png)
 
-## 5.2 Virtual Clothing Try-On
+## 5.2 虛擬試穿
 
-
-Virtual try-on is ideal for ecommerce previews where identity preservation is critical. The key is to explicitly lock the person (face, body shape, pose, hair, expression) and allow changes *only* to garments, then require realistic fit (draping, folds, occlusion) plus consistent lighting/shadows so the outfit looks naturally worn—not pasted on.
+虛擬試穿很適合電商預覽，身分保留是關鍵。重點是明確鎖定人物（臉、體型、姿勢、髮型、表情），只允許改動衣物，再要求合理的穿著效果（垂墜、褶皺、遮擋），以及一致的光線和陰影，讓衣服看起來是自然穿上去的，不是貼上去的。
 
 ```python
 prompt = """
@@ -531,7 +539,7 @@ result = client.images.edit(
 save_image(result, "outfit_gpt-image-2.png")
 ```
 
-Input Images:
+輸入圖片：
 
 | Full Body | Item 1 |
 |:------------:|:--------------:|
@@ -539,14 +547,13 @@ Input Images:
 | Item 2 | Item 3 |
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/tank_top.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/boots.png) |
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/outfit_gpt-image-2.png)
 
-## 5.3 Drawing → Image (Rendering)
+## 5.3 草圖 → 擬真圖（Rendering）
 
-
-Sketch-to-render workflows are great for turning rough drawings into photorealistic concepts while keeping the original intent. Treat the prompt like a spec: preserve layout and perspective, then *add realism* by specifying plausible materials, lighting, and environment. Include “do not add new elements/text” to avoid creative reinterpretations.
+草圖轉擬真圖，很適合把粗略的手繪變成照片級概念圖，同時保留原本的意圖。prompt 當成規格來寫：保留版面和透視，再用合理的材質、光線和環境來*增加真實感*。加上 “do not add new elements/text” 避免模型自己創意重新詮釋。
 
 ```python
 prompt = """
@@ -569,18 +576,17 @@ result = client.images.edit(
 save_image(result, "realistic_valley_gpt-image-2.png")
 ```
 
-Input Image:
+輸入圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/drawings.png)
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/realistic_valley_gpt-image-2.png)
 
-## 5.4 Product Mockups (transparent background + label integrity)
+## 5.4 商品 Mockup（透明背景 + 標籤完整性）
 
-
-Product extraction and mockup prep is commonly used for catalogs, marketplaces, and design systems. Success depends on edge quality (clean silhouette, no fringing/halos) and label integrity (text stays sharp and unchanged). Transparent backgrounds are available in preview for `gpt-image-2`; request `background="transparent"` with `output_format="png"` (the default) or `output_format="webp"` to create a reusable product cutout directly. `jpeg` does not support transparent backgrounds. Ask for an isolated subject, preserve the existing product geometry and label, and omit solid backdrops, checkerboards, and unnecessary shadows. Omit `output_compression` for PNG output; WebP supports optional compression.
+商品去背和 mockup 前置處理常用在型錄、電商平台和設計系統。成功的關鍵是邊緣品質（輪廓乾淨、沒有毛邊或光暈）和標籤完整性（文字維持清晰、不被改動）。`gpt-image-2` 的透明背景是 preview，請求 `background="transparent"` 搭配 `output_format="png"`（預設）或 `output_format="webp"`，就能直接產出可重複使用的商品去背圖。`jpeg` 不支援透明背景。要求獨立主體，保留現有商品的形狀和標籤，並且不要純色底、棋盤格和不必要的陰影。PNG 不要帶 `output_compression`，WebP 可以選擇性壓縮。
 
 ```python
 prompt = """
@@ -606,18 +612,17 @@ result = client.images.edit(
 save_image(result, "extract_product_gpt-image-2.png")
 ```
 
-Input Image:
+輸入圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/shampoo.png)
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/extract_product_gpt-image-2.png)
 
-## 5.5 Marketing Creatives with Real Text In-Image
+## 5.5 圖內有真實文字的行銷素材
 
-
-Marketing creatives with real in-image text are great for rapid ad concepting, but typography needs explicit constraints. Put the exact copy in quotes, demand verbatim rendering (no extra characters), and describe placement and font style. If text fidelity is imperfect, keep the prompt strict and iterate—small wording/layout tweaks usually improve legibility.
+圖內有真實文字的行銷素材很適合快速做廣告概念，但字體需要明確的限制。確切文案放在引號裡，要求逐字呈現（不多出字元），並描述位置和字型風格。文字保真度不完美的話，維持嚴格的 prompt 再迭代，小幅調整用字或版面通常就能改善易讀性。
 
 ```python
 prompt = """
@@ -642,18 +647,17 @@ result = client.images.edit(
 save_image(result, "billboard_gpt-image-2.png")
 ```
 
-Input Image:
+輸入圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/shampoo.png)
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/billboard_gpt-image-2.png)
 
-## 5.6 Lighting and Weather Transformation
+## 5.6 光線與天氣轉換
 
-
-Used to re-stage a photo for different moods, seasons, or time-of-day variants (e.g., sunny → overcast, daytime → dusk, clear → snowy) while keeping the scene composition intact. The key is to change only environmental conditions—lighting direction/quality, shadows, atmosphere, precipitation, and ground wetness—while preserving identity, geometry, camera angle, and object placement so it still reads as the same original photo.
+用來把一張照片重新佈置成不同的氛圍、季節或時段版本（例如晴天 → 陰天、白天 → 黃昏、晴朗 → 下雪），同時保持場景構圖不變。重點是只改環境條件，包括光線方向和品質、陰影、大氣、降水和地面濕度，並保留人物身分、幾何、鏡頭角度和物件位置，讓它看起來還是同一張原始照片。
 
 ```python
 prompt = """
@@ -674,15 +678,14 @@ result = client.images.edit(
 save_image(result, "billboard_winter_gpt-image-2.png")
 ```
 
-Output Image: 
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/billboard_winter_gpt-image-2.png)
 
 
-## 5.7 Object Removal
+## 5.7 物件移除
 
-
-Person-in-scene compositing is useful for storyboards, campaigns, and “what if” scenarios where facial/identity preservation matters. Anchor realism by specifying a grounded photographic look (natural lighting, believable detail, no cinematic grading), and lock what must not change about the subject. When available, higher input fidelity helps maintain likeness during larger scene edits.
+人物融入場景的合成，很適合分鏡、活動和「如果⋯會怎樣」的情境，臉部和身分保留是重點。用寫實的攝影風格（自然光線、可信的細節、不要電影調色）來鞏固真實感，並鎖定主體不能變的部分。如果有提供的話，較高的 input fidelity 有助於在大幅度場景編輯時維持長相。
 
 ```python
 prompt = """
@@ -704,17 +707,17 @@ result = client.images.edit(
 save_image(result, "man_with_no_flower_gpt-image-2.png")
 ```
 
-Input and output images:
+輸入與輸出圖片：
 
 | Original Input | Output Image |
 |:------------:|:--------------:|
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/man_with_blue_hat.png)  |  ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/man_with_no_flower_gpt-image-2.png) |
 
 
-## 5.8 Insert the Person Into a Scene
+## 5.8 把人物放進場景
 
 
-Person-in-scene compositing is useful for storyboards, campaigns, and “what if” scenarios where facial/identity preservation matters. Anchor realism by specifying a grounded photographic look (natural lighting, believable detail, no cinematic grading), and lock what must not change about the subject. When available, higher input fidelity helps maintain likeness during larger scene edits.
+人物融入場景的合成，很適合分鏡、活動和「如果⋯會怎樣」的情境，臉部和身分保留是重點。用寫實的攝影風格（自然光線、可信的細節、不要電影調色）來鞏固真實感，並鎖定主體不能變的部分。如果有提供的話，較高的 input fidelity 有助於在大幅度場景編輯時維持長相。
 
 ```python
 prompt = """
@@ -737,7 +740,7 @@ result = client.images.edit(
 save_image(result, "scene_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 
 ```python
@@ -745,10 +748,10 @@ from IPython.display import Image, display
 display(Image(filename="../../images/output_images/scene_gpt-image-2.png", width=500))
 ```
 
-## 5.9 Multi-Image Referencing and Compositing
+## 5.9 多圖參照與合成
 
 
-Used to combine elements from multiple inputs into a single, believable image—great for “insert this object/person into that scene” workflows without re-generating everything. The key is to clearly specify what to transplant (the dog from image 2), where it should go (right next to the woman in image 1), and what must remain unchanged (scene, background, framing), while matching lighting, perspective, scale, and shadows so the composite looks naturally captured in the original photo.
+用來把多張輸入圖的元素合成一張可信的圖，很適合「把這個物件/人物放進那個場景」的流程，不用整張重新生成。重點是清楚指定要移植什麼（圖 2 的狗）、放在哪裡（圖 1 女子的旁邊）、什麼必須維持不變（場景、背景、取景），同時匹配光線、透視、比例和陰影，讓合成結果看起來像在原始照片裡自然拍到的。
 
 ```python
 prompt = """
@@ -771,16 +774,16 @@ result = client.images.edit(
 save_image(result, "test_woman_with_dog_gpt-image-2.png")
 ```
 
-Input and output images:
+輸入與輸出圖片：
 
 | Original Input | Remove Red Stripes | Change Hat Color |
 |:--------------:|:------------------:|:----------------:|
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/test_woman.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/test_woman_2.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/test_woman_with_dog_gpt-image-2.png) |
 
-## 6. Additional High-Value Use Cases
+## 6. 其他高價值使用案例
 
-## 6.1 Interior design “swap” (precision edits)
-Used for visualizing furniture or decor changes in real spaces without re-rendering the entire scene. The goal is surgical realism: swap a single object while preserving camera angle, lighting, shadows, and surrounding context so the edit looks like a real photograph, not a redesign.
+## 6.1 室內設計「換物」（精準編輯）
+用來預覽真實空間裡家具或擺設的改變，不用重新渲染整個場景。目標是手術刀等級的真實感：只換一個物件，同時保留鏡頭角度、光線、陰影和周圍環境，讓編輯結果像真實照片，不像重新設計。
 
 ```python
 prompt = """
@@ -803,14 +806,14 @@ result = client.images.edit(
 save_image(result, "kitchen-chairs_gpt-image-2.png")
 ```
 
-Input and output images:
+輸入與輸出圖片：
 
 | Input Image | Output Image |
 |------------|--------------|
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/kitchen.jpeg) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/kitchen-chairs_gpt-image-2.png) |
 
-## 6.2 3D pop-up holiday card (product-style mock)
-Ideal for seasonal marketing concepts and print previews. Emphasizes tactile realism—paper layers, fibers, folds, and soft studio lighting—so the result reads as a photographed physical product rather than a flat illustration.
+## 6.2 3D 立體節慶賀卡（產品風格 mock）
+適合季節性行銷概念和印刷預覽。強調觸感的真實：紙層、纖維、摺痕和柔和的攝影棚光線，讓結果看起來像拍下來的實體商品，不像平面插畫。
 
 ```python
 scene_description = (
@@ -855,13 +858,13 @@ result = client.images.generate(
 save_image(result, "christmas_holiday_card_teddy_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/christmas_holiday_card_teddy_gpt-image-2.png)
 
-## 6.3 Collectible Action Figure / Plush Keychain (merch concept)
+## 6.3 收藏公仔 / 絨毛鑰匙圈（周邊概念）
 
-Used for early merch ideation and pitch visuals. Focuses on premium product photography cues (materials, packaging, print clarity) while keeping designs original and non-infringing. Works well for testing multiple character or packaging variants quickly.
+用在早期的周邊發想和提案視覺。著重高質感商品攝影的線索（材質、包裝、印刷清晰度），同時保持設計原創、不侵權。很適合快速測試多種角色或包裝變體。
 
 
 ```python
@@ -908,17 +911,17 @@ result = client.images.generate(
 save_image(result, "christmas_collectible_toy_airplane_gpt-image-2.png")
 ```
 
-Output Image: 
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/christmas_collectible_toy_airplane_gpt-image-2.png)
 
-## 6.4 Children’s Book Art with Character Consistency (multi-image workflow)
-Designed for multi-page illustration pipelines where character drift is unacceptable. A reusable “character anchor” ensures visual continuity across scenes, poses, and pages while allowing environmental and narrative variation.
+## 6.4 角色一致的兒童繪本（多圖流程）
+為多頁插畫流程設計，角色不能走樣的情況。可重複使用的「角色錨點」讓角色在不同場景、姿勢和頁面之間視覺連貫，同時允許環境和劇情變化。
 
 
-1️⃣ Character Anchor — establish the reusable main character
+1️⃣ 角色錨點：建立可重複使用的主角
 
-Goal: Lock the character’s appearance, proportions, outfit, and tone.
+目標：鎖定角色的外觀、比例、服裝和調性。
 
 ```python
 # ---- Inputs ----
@@ -957,14 +960,14 @@ result = client.images.generate(
 save_image(result, "childrens_book_illustration_1_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/childrens_book_illustration_1_gpt-image-2.png)
 
-2️⃣ Story continuation — reuse character, advance the narrative
+2️⃣ 劇情延續：重用角色，推進故事
 
-Goal: Same character, new scene + action.
-Character appearance must remain unchanged.
+目標：同一個角色，新的場景和動作。
+角色外觀必須維持不變。
 
 ```python
 # ---- Inputs ----
@@ -1005,12 +1008,24 @@ result = client.images.edit(
 save_image(result, "childrens_book_illustration_2_gpt-image-2.png")
 ```
 
-Output Image:
+輸出圖片：
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/childrens_book_illustration_2_gpt-image-2.png)
 
-## Conclusion 
+## 結論
 
-In this notebook, we demonstrate how to use gpt-image generation models to build high-quality, controllable image generation and editing workflows that hold up in real production settings. The cookbook emphasizes prompt structure, explicit constraints, and small iterative changes as the primary tools for controlling realism, layout, text accuracy, and identity preservation. We cover both generation and editing patterns, ranging from infographics, photorealism, UI mockups, and logos to translation, style transfer, virtual try-on, compositing, and lighting changes. Throughout the examples, the cookbook reinforces the importance of clearly separating what should change from what must remain invariant, and of restating those invariants on every iteration to prevent drift. We also highlight how quality and input-fidelity settings enable deliberate tradeoffs between latency and visual precision depending on the use case. Together, these examples form a practical, repeatable playbook for applying gpt-image generation models in production image workflows.
+這份 notebook 示範了怎麼用 gpt-image 生成模型，建立在真實 production 環境撐得住的高品質、可控的圖像生成與編輯流程。重點是 prompt 結構、明確的限制和小幅迭代，這三個是控制真實感、版面、文字準確度和身分保留的主要工具。內容涵蓋生成和編輯兩類模式，從資訊圖表、擬真照片、UI mockup、logo，到翻譯、風格轉換、虛擬試穿、合成和光線轉換。每個範例都在強調：把「要改的」和「必須不變的」清楚分開，並在每次迭代重述不變項目，防止漂移。我們也說明了 quality 和 input fidelity 設定怎麼讓你依用途在延遲和視覺精準度之間取捨。這些範例合起來，就是一套可重複使用、可實際套用在 production 圖像流程的 gpt-image 做法。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Prompt 用固定結構寫（場景 → 主體 → 細節 → 限制），並寫明用途，模型會抓到對應的精緻程度。
+- 改圖時要明確分開「只改 X」和「其他維持不變」，而且每次迭代都重複保留清單，才不會漂移。
+- 先用 `quality="low"` 評估，小字、密集版面、人像特寫和高解析度再比較 `medium` / `high`。
+- 圖內文字用引號或 ALL CAPS 指定，冷僻字逐字母拼出來。
+- 透明背景要 `background="transparent"` 搭配 PNG 或 WebP，並且全程保留 alpha channel。
+
+## 練習
+
+1. 把 4.3 照片級圖片的 `quality` 從原本的值改成 `low`，跑一次，再改成 `high` 跑一次，比較細節和生成時間差多少。
+2. 4.5 的 logo 範例改成加上透明背景（`background="transparent"`、`output_format="png"`），並把 `n` 改成 2，確認輸出的圖真的是去背的。
+3. 5.1 風格轉換的 prompt，改成只換主體但在 prompt 裡加上完整的保留清單（背景、取景、色調），然後故意拿掉清單再跑一次，看看畫面漂移的程度。

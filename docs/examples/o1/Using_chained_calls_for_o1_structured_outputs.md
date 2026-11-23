@@ -1,32 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/o1/Using_chained_calls_for_o1_structured_outputs.ipynb
 ---
 
-# Using chained calls for o1 structured outputs
+# 用串接呼叫讓 o1 輸出 structured output
 
 > 原文：[examples/o1/Using_chained_calls_for_o1_structured_outputs.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/o1/Using_chained_calls_for_o1_structured_outputs.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+最初發布的 o1 reasoning 模型（2024 年 9 月）不支援 structured outputs。這篇示範兩種方式讓 `o1-preview` 回傳有效的 JSON：直接在 prompt 裡要求，以及把 o1 的回應接給 `gpt-4o-mini`，用它的 structured outputs 功能整理格式。
 
+## 學完你會
 
-The initially released versions (September 2024) of [o1](https://openai.com/index/introducing-openai-o1-preview/) reasoning models have advanced capabilities but do not have [structured outputs](https://platform.openai.com/docs/guides/structured-outputs/examples) support. 
+- 用 prompt 讓 `o1-preview` 回傳 JSON，並知道它的限制
+- 把 `o1-preview` 的輸出串到 `gpt-4o-mini`，取得符合 schema 的結果
+- 判斷什麼時候值得多花一次呼叫換型別安全
 
-This means that requests with o1 don't have reliable type-safety and rely on the prompt itself to return a useful JSON. 
+## 開跑前
 
-In this guide, we'll explore two methods to prompt o1 models, specifically `o1-preview`, to return a valid JSON format when using the OpenAI API.
+- OpenAI API key，帳號能使用 `o1-preview` 和 `gpt-4o-mini`
+
+最初發布的版本（2024 年 9 月）的 [o1](https://openai.com/index/introducing-openai-o1-preview/) reasoning 模型能力很強，但不支援 [structured outputs](https://platform.openai.com/docs/guides/structured-outputs/examples)。
+
+這代表用 o1 發出的請求沒有可靠的型別安全，要靠 prompt 本身讓它回傳可用的 JSON。
+
+在這份指南裡，我們會探討兩種方法，在使用 OpenAI API 時，引導 o1 模型（特別是 `o1-preview`）回傳有效的 JSON 格式。
 
 # Prompting
 
-The simplest way to return a JSON response using `o1-preview` is to explicitly prompt it. 
+用 `o1-preview` 回傳 JSON 最簡單的方式，就是在 prompt 裡明確要求。
 
-Let's run through an example of:
-- Fetching a wikipedia page of companies
-- Determining which could benefit the most from AI capabilities
-- Returning them in a JSON format, which could then be ingested by other systems
+我們來跑一個範例：
+- 抓一個公司清單的 wikipedia 頁面
+- 判斷哪些公司最能從 AI 能力獲益
+- 用 JSON 格式回傳，這樣其他系統就能接著處理
 
 ```python
 import requests
@@ -98,13 +108,13 @@ print(o1_response.choices[0].message.content)
     }
     ```
 
-Note that the response is already quite good - it returns the JSON with the appropriate responses. However, it runs into the same pitfalls as existing use-cases of prompt-only JSON inference: 
-- You must manually process this JSON into your type-safe structure
-- Model refusals are not [explicitly returned from the API as a separate structure](https://platform.openai.com/docs/guides/structured-outputs/refusals)
+注意回應已經相當不錯，它回傳了有適當內容的 JSON。不過，它碰到的問題跟現有只靠 prompt 推出 JSON 的用法一樣：
+- 你得手動把這個 JSON 處理成你的型別安全結構
+- 模型的拒絕（refusal）不會[由 API 以獨立的結構明確回傳](https://platform.openai.com/docs/guides/structured-outputs/refusals)
 
 # Structured Outputs
 
-Let's now do this with [structured outputs](https://platform.openai.com/docs/guides/structured-outputs). To enable this functionality, we’ll link the `o1-preview` response with a follow-up request to `gpt-4o-mini`, which can effectively process the data returned from the initial o1-preview response.
+現在改用 [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) 來做。要啟用這個功能，我們會把 `o1-preview` 的回應接到另一個發給 `gpt-4o-mini` 的後續請求，它可以有效處理 o1-preview 初次回應回傳的資料。
 
 ```python
 from pydantic import BaseModel
@@ -187,10 +197,21 @@ pprint(response.choices[0].message.parsed)
     )
     ```
 
-# Conclusion
+# 結論
 
-Structured outputs allow your code to have reliable type-safety and simpler prompting. In addition, it allows you to reuse your object schemas for easier integration into your existing workflows.
+Structured outputs 讓你的程式有可靠的型別安全，prompt 也更簡單。此外，它讓你可以重用物件 schema，更容易整合進現有的工作流程。
 
-The o1 class of models currently doesn't have structured outputs support, but we can reuse existing structured outputs functionality from `gpt-4o-mini` by chaining two requests together. This flow currently requires two calls, but the second `gpt-4o-mini` call cost should be minimal compared to the `o1-preview`/`o1-mini` calls.
+o1 系列模型目前沒有 structured outputs 支援，但我們可以把兩個請求串在一起，重用 `gpt-4o-mini` 現有的 structured outputs 功能。這個流程目前需要兩次呼叫，但第二次 `gpt-4o-mini` 呼叫的成本，相較於 `o1-preview`/`o1-mini` 的呼叫應該很低。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 只靠 prompt 要 JSON，沒有型別保證，refusal 也不會單獨回傳。
+- structured outputs 用 schema 約束輸出，程式碼可以直接拿到型別安全的物件。
+- 串接模式是讓推理強的模型負責思考，再讓支援 structured outputs 的便宜模型負責整理格式。
+- 多一次便宜的呼叫，換到可靠的格式，通常划算。
+
+## 練習
+
+1. 換掉 prompt 裡的主題（例如改成評估別種產業的公司），看 JSON 結構是否仍然穩定。
+2. 在第二次呼叫的 schema 多加一個欄位（例如理由的簡短摘要），重跑看看輸出。
+3. 比較兩種方式的輸出，並檢查 prompt-only 的結果是否真的總是能被 `json.loads` 解析。

@@ -1,47 +1,53 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/gpt-5-2_prompting_guide.ipynb
 ---
-
-# GPT-5.2 Prompting Guide
+# GPT-5.2 Prompting 指南
 
 > 原文：[examples/gpt-5/gpt-5-2_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5-2_prompting_guide.ipynb)
 
-Cookbook to prompt GPT-5.2 for accurate, concise enterprise workflows.
+用 prompt 讓 GPT-5.2 在企業 workflow 裡做到準確又簡潔。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+整理 GPT-5.2 的行為特性，和在正式環境裡最有效的 prompt 寫法：控制長度、避免範圍亂擴、處理長 context、降低幻覺，到 compaction、tool calling、結構化擷取、網路搜尋。最後還有從 GPT-4o、GPT-5、GPT-5.1 遷移到 GPT-5.2 的步驟。
+
+## 學完你會
+
+- 用具體的長度與範圍限制 prompt，讓 GPT-5.2 的輸出簡潔、不做多餘的功能。
+- 在長時間、很多 tool call 的 agent 流程裡，用 `/responses/compact` 延長有效 context。
+- 照遷移對照表選 `reasoning_effort`，並用「先換模型、不動 prompt、跑 eval」的流程安全升級。
+
+GPT-5.2 是我們最新的企業與 agent 工作負載旗艦模型，設計目標是在複雜 workflow 中提供更高的準確度、更強的指令遵循和更有紀律的執行。它承接 GPT-5.1，在中等到複雜任務上提升 token 效率、輸出的格式更乾淨、廢話更少，在結構化 reasoning、tool 落地（grounding）和多模態理解上也有明顯進步。
+
+## 1. 介紹
+
+GPT-5.2 特別適合重視可靠性、可評估性和行為一致性的正式環境 agent。它在 coding、文件分析、財務和多 tool 的 agentic 情境表現強勁，在任務完成率上常常追平或超越領先的模型。同時，它仍然對 prompt 敏感，語氣、長度和輸出形狀都很容易引導，所以明確的 prompt 是成功部署的重要一環。
+
+GPT-5.2 在很多使用情境下開箱即用就很好，這份指南則專注在能讓真實正式系統效能最大化的 prompt 模式和遷移實務。這些建議來自內部測試和客戶回饋：prompt 結構、長度限制和 reasoning 設定的小改動，往往能換來正確性、延遲和開發者信任度的大幅提升。
+
+## 2. 主要的行為差異
+
+**跟前幾代模型（例如 GPT-5 和 GPT-5.1）相比，GPT-5.2 帶來：**
+
+- **更審慎的 scaffolding：** 預設會建立更清楚的計畫和中間結構；明確的範圍和長度限制對它有幫助。
+- **整體較不囉嗦：** 更簡潔、更聚焦任務，但仍然對 prompt 敏感，偏好需要在 prompt 裡說清楚。
+- **更強的指令遵循：** 較少偏離使用者意圖；格式和理由的呈現也有改進。
+- **Tool 效率的取捨：** 在互動流程中比 GPT-5.1 多做一些 tool 動作，可以再用 prompt 最佳化。
+- **保守的 grounding 傾向：** 傾向重視正確性和明確的推理；用釐清的 prompt 可以改善對模糊情況的處理。
 
 
-## 1. Introduction
+這份指南專注於用 prompt 讓 GPT-5.2 發揮它的強項（更高的智慧、準確度、grounding 和紀律），同時減輕剩下的低效率。既有的 GPT-5 / GPT-5.1 prompting 指引大致上仍然適用。
 
-GPT-5.2 is our newest flagship model for enterprise and agentic workloads, designed to deliver higher accuracy, stronger instruction following, and more disciplined execution across complex workflows. Building on GPT-5.1, GPT-5.2 improves token efficiency on medium-to-complex tasks, produces cleaner formatting with less unnecessary verbosity, and shows clear gains in structured reasoning, tool grounding, and multimodal understanding.
+## 3. Prompting 模式
 
-GPT-5.2 is especially well-suited for production agents that prioritize reliability, evaluability, and consistent behavior. It performs strongly across coding, document analysis, finance, and multi-tool agentic scenarios, often matching or exceeding leading models on task completion. At the same time, it remains prompt-sensitive and highly steerable in tone, verbosity, and output shape, making explicit prompting an important part of successful deployments.
+把下面這些主題改寫進你的 prompt，更能引導 GPT-5.2
 
-While GPT-5.2 works well out of the box for many use cases, this guide focuses on prompt patterns and migration practices that maximize performance in real production systems. These recommendations are drawn from internal testing and customer feedback, where small changes to prompt structure, verbosity constraints, and reasoning settings often translate into large gains in correctness, latency, and developer trust.
+### 3.1 控制長度與輸出形狀
 
-## 2. Key behavioral differences 
+給出**清楚且具體的長度限制**，在企業和 coding agent 裡尤其重要。
 
-**Compared with previous generation models (e.g. GPT-5 and GPT-5.1), GPT-5.2 delivers:**
-
-- **More deliberate scaffolding:** Builds clearer plans and intermediate structure by default; benefits from explicit scope and verbosity constraints.
-- **Generally lower verbosity:** More concise and task-focused, though still prompt-sensitive and preference needs to be articulated in the prompt.
-- **Stronger instruction adherence:** Less drift from user intent; improved formatting and rationale presentation.
-- **Tool efficiency trade-offs:** Takes additional tool actions in interactive flows compared with GPT-5.1, can be further optimized via prompting. 
-- **Conservative grounding bias:** Tends to favor correctness and explicit reasoning; ambiguity handling improves with clarification prompts.
-
-
-This guide focuses on prompting GPT-5.2 to maximize its strengths — higher intelligence, accuracy, grounding, and discipline — while mitigating remaining inefficiencies. Existing GPT-5 / GPT-5.1 prompting guidance largely carries over and remains applicable.
-
-## 3. Prompting patterns  
-
-Adapt following themes into your prompts for better steer on GPT-5.2
-
-### 3.1 Controlling verbosity and output shape
-
-Give **clear and concrete length constraints** especially in enterprise and coding agents.  
-
-Example clamp adjust based on desired verbosity:  
+下面是一個範例限制，可依想要的長度調整：
 
 ```
 <output_verbosity_spec>
@@ -57,9 +63,9 @@ Example clamp adjust based on desired verbosity:
 ```
 
 
-### 3.2 Preventing Scope drift (e.g., UX / design in frontend tasks)  
+### 3.2 防止範圍偏移（例如前端任務裡的 UX / 設計）
 
-GPT-5.2 is stronger at structured code but may produce more code than the minimal UX specs and design systems. To stay within the scope, explicitly forbid extra features and uncontrolled styling. 
+GPT-5.2 在結構化程式碼上更強，但可能產出比最小 UX 規格和 design system 更多的程式碼。想控制在範圍內，就明確禁止額外功能和不受控的樣式。
 
 ```
 <design_and_scope_constraints>
@@ -72,11 +78,11 @@ GPT-5.2 is stronger at structured code but may produce more code than the minima
 </design_and_scope_constraints>
 ```
 
-For design system enforcement, reuse your 5.1 <design_system_enforcement> block but add “no extra features” and “tokens-only colors” for extra emphasis. 
+要強制執行 design system，可以重用你 5.1 的 <design_system_enforcement> 區塊，再加上 “no extra features” 和 “tokens-only colors” 來加強。
 
-### 3.3 Long-context and recall  
+### 3.3 長 context 與記憶召回
 
-For long-context tasks, the prompt may benefit from **force summarization and re-grounding**. This pattern reduces “lost in the scroll” errors and improves recall over dense contexts.  
+長 context 的任務，prompt 可以考慮**強制摘要和重新 grounding**。這個模式能減少「在長文裡迷路」的錯誤，並改善在密集 context 裡的召回。
 
 ```
 <long_context_handling>
@@ -89,11 +95,11 @@ For long-context tasks, the prompt may benefit from **force summarization and re
 ```
 
 
-### 3.4 Handling ambiguity & hallucination risk
+### 3.4 處理模糊與幻覺風險
 
-Configure the prompt for overconfident hallucinations on ambiguous queries (e.g., unclear requirements, missing constraints, or questions that need fresh data but no tools are called).  
+針對模糊的查詢（例如需求不清楚、缺少限制條件，或需要最新資料但沒有呼叫 tool 的問題）出現過度自信的幻覺，要在 prompt 裡設定對策。
 
-Mitigation prompt:  
+緩解用的 prompt：
 
 ```
 <uncertainty_and_ambiguity>
@@ -107,7 +113,7 @@ Mitigation prompt:
 </uncertainty_and_ambiguity>
 ```
 
-You can also add a short self-check step for high-risk outputs:
+高風險的輸出也可以加一個簡短的自我檢查步驟：
 
 ```
 <high_risk_self_check>
@@ -120,44 +126,44 @@ Before finalizing an answer in legal, financial, compliance, or safety-sensitive
 </high_risk_self_check>
 ```
 
-## 4. Compaction (Extending Effective Context)
+## 4. Compaction（延長有效 context）
 
-For long-running, tool-heavy workflows that exceed the standard context window, GPT-5.2 with Reasoning supports response compaction via the /responses/compact endpoint. Compaction performs a loss-aware compression pass over prior conversation state, returning encrypted, opaque items that preserve task-relevant information while dramatically reducing token footprint. This allows the model to continue reasoning across extended workflows without hitting context limits.
+在超過標準 context window 的長時間、大量 tool 的 workflow 裡，GPT-5.2 搭配 Reasoning 支援透過 /responses/compact endpoint 做 response compaction。Compaction 會對先前的對話狀態做一次有損意識的壓縮，回傳加密、不透明的 item，保留跟任務有關的資訊，同時大幅降低 token 用量。這讓模型能在長時間 workflow 中持續 reasoning 而不撞到 context 上限。
 
-**When to use compaction**
-- Multi-step agent flows with many tool calls
-- Long conversations where earlier turns must be retained
-- Iterative reasoning beyond the maximum context window
+**什麼時候用 compaction**
+- 有很多 tool call 的多步驟 agent 流程
+- 必須保留較早輪次的長對話
+- 超過最大 context window 的反覆 reasoning
 
 
-**Key properties**
-- Produces opaque, encrypted items (internal logic may evolve)
-- Designed for continuation, not inspection
-- Compatible with GPT-5.2 and Responses API
-- Safe to run repeatedly in long sessions
+**主要特性**
+- 產生不透明、加密的 item（內部邏輯可能會演進）
+- 設計用來延續，不是用來檢視
+- 相容 GPT-5.2 和 Responses API
+- 在長 session 裡可以安全地重複執行
 
-**Compact a Response**
+**Compact 一個 Response**
 
 Endpoint
 ```
 POST https://api.openai.com/v1/responses/compact
 ```
 
-**What it does** 
+**它做什麼**
 
-Runs a compaction pass over a conversation and returns a compacted response object. Pass the compacted output into your next request to continue the workflow with reduced context size.
+對一段對話執行 compaction，回傳壓縮後的 response 物件。把壓縮後的輸出傳進下一個請求，就能用更小的 context 繼續 workflow。
 
 
-**Best practices**  
+**最佳實務**
 
-- Monitor context usage and plan ahead to avoid hitting context window limits
-- Compact after major milestones (e.g., tool-heavy phases), not every turn
-- Keep prompts functionally identical when resuming to avoid behavior drift
-- Treat compacted items as opaque; don’t parse or depend on internals
+- 監控 context 用量，提前規劃，避免撞到 context window 上限
+- 在重大里程碑之後（例如 tool 密集的階段）再 compact，不要每一輪都 compact
+- 恢復時保持 prompt 功能上完全相同，避免行為飄移
+- 把 compact 後的 item 當成不透明的東西，不要解析它或依賴它的內部結構
 
-For guidance on when and how to compact in production, see the [Conversation State](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses) guide and [Compact a Response](https://platform.openai.com/docs/api-reference/responses/compact) page.
+在正式環境裡什麼時候該 compact、怎麼 compact，請看 [Conversation State](https://platform.openai.com/docs/guides/conversation-state?api-mode=responses) 指南和 [Compact a Response](https://platform.openai.com/docs/api-reference/responses/compact) 頁面。
 
-Here is an example: 
+範例如下：
 
 ```python
 from openai import OpenAI
@@ -197,15 +203,15 @@ compacted_response = client.responses.compact(
 print(json.dumps(compacted_response.model_dump(), indent=2))
 ```
 
-## 5. Agentic steerability & user updates  
+## 5. Agentic 的可引導性與使用者更新
 
-GPT-5.2 is strong on agentic scaffolding and multi-step execution when prompted well. You can reuse your GPT-5.1 <user_updates_spec> and <solution_persistence> blocks. 
+GPT-5.2 在 prompt 寫得好時，對 agentic scaffolding 和多步驟執行很強。你可以重用 GPT-5.1 的 <user_updates_spec> 和 <solution_persistence> 區塊。
 
-Two key tweaks could be added to further push the performance of GPT-5.2:  
-- Clamp verbosity of updates (shorter, more focused).
-- Make scope discipline explicit (don’t expand problem surface area).  
+可以再加兩個關鍵調整，進一步提升 GPT-5.2 的表現：
+- 限制更新的長度（更短、更聚焦）。
+- 明確要求範圍紀律（不要擴大問題的涵蓋面）。
 
-Example updated spec:
+更新後的 spec 範例：
 
 ```
 <user_updates_spec>
@@ -218,15 +224,15 @@ Example updated spec:
 </user_updates_spec>
 ```
 
-## 6. Tool-calling and parallelism
+## 6. Tool calling 與平行化
 
-GPT-5.2 improves on 5.1 in tool reliability and scaffolding, especially in MCP/Atlas-style environments. 
-Best practices as applicable to GPT-5 / 5.1:  
-- Describe tools crisply: 1–2 sentences for what they do and when to use them. 
-- Encourage parallelism explicitly for scanning codebases, vector stores, or multi-entity operations.  
-- Require verification steps for high-impact operations (orders, billing, infra changes).
+GPT-5.2 在 tool 可靠性和 scaffolding 上比 5.1 更好，尤其是在 MCP/Atlas 風格的環境。
+適用於 GPT-5 / 5.1 的最佳實務：
+- 精簡地描述 tool：用 1 到 2 句說明它做什麼、什麼時候用。
+- 在掃描程式碼庫、vector store 或多實體操作時，明確鼓勵平行化。
+- 對高影響的操作（訂單、帳務、基礎設施變更）要求驗證步驟。
 
-Example tool usage section:  
+Tool 使用段落的範例：
 
 ```
 <tool_usage_rules>
@@ -242,15 +248,15 @@ Example tool usage section:
 ```
 
 
-## 7. Structured extraction, PDF, and Office workflows
+## 7. 結構化擷取、PDF 與 Office workflow
 
-This is an area where GPT-5.2 clearly shows strong improvements. To get the most out of it:
+這是 GPT-5.2 進步很明顯的領域。想發揮到最好：
 
-- Always provide a schema or JSON shape for the output. You can use structured outputs for strict schema adherence. 
-- Distinguish between required and optional fields.
-- Ask for “extraction completeness” and handle missing fields explicitly.
+- 輸出一定要提供 schema 或 JSON 形狀。可以用 structured outputs 來嚴格遵守 schema。
+- 區分必填和選填欄位。
+- 要求「擷取完整性」，並明確處理缺少的欄位。
 
-Example: 
+範例：
 ```
 <extraction_spec>
 You will extract structured data from tables/PDFs/emails into JSON.
@@ -267,17 +273,17 @@ You will extract structured data from tables/PDFs/emails into JSON.
 </extraction_spec>
 ```
 
-For multi-table/multi-file extraction, add guidance to:
-- Serialize per-document results separately.  
-- Include a stable ID (filename, contract title, page range).  
+多表格／多檔案擷取時，再加上這些指引：
+- 把每份文件的結果分開序列化。
+- 附上穩定的 ID（檔名、合約標題、頁碼範圍）。
 
 
-## 8. Prompt Migration Guide to GPT 5.2  
+## 8. 遷移到 GPT 5.2 的 Prompt 指南
 
-This section helps you migrate prompts and model configs to GPT-5.2 while keeping behavior stable and cost/latency predictable. GPT-5-class models support a reasoning_effort knob (e.g., none|minimal|low|medium|high|xhigh) that trades off speed/cost vs. deeper reasoning. 
+這一節幫你把 prompt 和模型設定遷移到 GPT-5.2，同時維持行為穩定，成本和延遲也可預期。GPT-5 等級的模型支援 reasoning_effort 這個旋鈕（例如 none|minimal|low|medium|high|xhigh），在速度／成本和更深入的 reasoning 之間取捨。
 
-Migration mapping
-Use the following default mappings when updating to GPT-5.2
+遷移對照
+更新到 GPT-5.2 時，使用下列預設對照
 
 | Current model | Target model | Target reasoning_effort | Notes |
 |--------------|--------------|-------------------------|-------|
@@ -286,28 +292,28 @@ Use the following default mappings when updating to GPT-5.2
 | GPT-5        | GPT-5.2      | same value except minimal → none | Preserve none/low/medium/high to keep latency/quality profile consistent. |
 | GPT-5.1      | GPT-5.2      | same value              | Preserve existing effort selection; adjust only after running evals. |
 
-*Note that default reasoning level for GPT-5 is medium, and for GPT-5.1 and GPT-5.2 is none. 
+*注意 GPT-5 的預設 reasoning 等級是 medium，GPT-5.1 和 GPT-5.2 是 none。
 
 
-We introduced the [Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true) in the Playground to help users quickly improve existing prompts and migrate them across GPT-5 and other OpenAI models. General steps to migrate to a new model are as follows: 
+我們在 Playground 推出了 [Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true)，幫使用者快速改進既有的 prompt，並在 GPT-5 和其他 OpenAI 模型之間遷移。遷移到新模型的一般步驟如下：
 
-- Step 1: Switch models, don’t change prompts yet. Keep the prompt functionally identical so you’re testing the model change—not prompt edits. Make one change at a time.
-- Step 2: Pin reasoning_effort. Explicitly set GPT-5.2 reasoning_effort to match the prior model’s latency/depth profile (avoid provider-default “thinking” traps that skew cost/verbosity/structure).
-- Step 3: Run Evals for a baseline. After model + effort are aligned, run your eval suite. If results look good (often better at med/high), you’re ready to ship.
-- Step 4: If regressions, tune the prompt. Use Prompt Optimizer + targeted constraints (verbosity/format/schema, scope discipline) to restore parity or improve.
-- Step 5: Re-run Evals after each small change. Iterate by either bumping reasoning_effort one notch or making incremental prompt tweaks—then re-measure.
+- 步驟 1：換模型，先不要改 prompt。讓 prompt 在功能上完全一樣，這樣你測的是模型的改變，不是 prompt 的修改。一次只改一件事。
+- 步驟 2：固定 reasoning_effort。明確設定 GPT-5.2 的 reasoning_effort，去配合前一個模型的延遲／深度特性（避免 provider 預設的「thinking」陷阱，它會讓成本、長度、結構偏掉）。
+- 步驟 3：跑 eval 建立 baseline。模型和 effort 對齊之後，跑你的 eval 套件。如果結果不錯（通常在 med/high 會更好），就可以上線。
+- 步驟 4：如果退步，調整 prompt。用 Prompt Optimizer 加上針對性的限制（長度／格式／schema、範圍紀律）來恢復持平或進一步改進。
+- 步驟 5：每做一個小改動就重跑 eval。反覆進行：要不就把 reasoning_effort 調高一級，要不就做小幅的 prompt 微調，然後重新衡量。
 
-## 9. Web search and research
+## 9. Web search 與研究
 
-GPT-5.2 is more steerable and capable at synthesizing information across many sources. 
+GPT-5.2 更容易引導，也更擅長整合多個來源的資訊。
 
-Best practices to follow:  
+要遵循的最佳實務：
 
-- Specify the research bar up front: Tell the model how you want to perform search. Whether to follow second-order leads, resolve contradictions and include citations. Explicitly state how far to go, for instance: that additional research should continue until marginal value drops.
+- 一開始就說明研究的標準：告訴模型你希望怎麼搜尋。要不要追蹤二階線索、化解互相矛盾的資訊、附上引用。明確說明要做到什麼程度，例如：持續研究直到邊際價值下降為止。
 
-- Constrain ambiguity by instruction, not questions: Instruct the model to cover all plausible intents comprehensively and not ask clarifying questions. Require breadth and depth when uncertainty exists.   
+- 用指示而不是提問來限制模糊性：指示模型全面涵蓋所有合理的意圖，不要問釐清問題。有不確定性時要求廣度和深度。
 
-- Dictate output shape and tone: Set expectations for structure (Markdown, headers, tables for comparisons), clarity (define acronyms, concrete examples) and voice (conversational, persona-adaptive, non-sycophantic)
+- 規定輸出的形狀與語氣：設定對結構的期待（Markdown、標題、用表格做比較）、清晰度（定義縮寫、具體例子）和聲音（口語、能依角色調整、不諂媚）
 
 ```
 <web_search_rules>
@@ -321,13 +327,13 @@ Best practices to follow:
 
 
 
-## 10. Conclusion  
+## 10. 結論
 
-GPT-5.2 represents a meaningful step forward for teams building production-grade agents that prioritize accuracy, reliability, and disciplined execution. It delivers stronger instruction following, cleaner output, and more consistent behavior across complex, tool-heavy workflows. Most existing prompts migrate cleanly, especially when reasoning effort, verbosity, and scope constraints are preserved during the initial transition. Teams should rely on evals to validate behavior before making prompt changes, adjusting reasoning effort or constraints only when regressions appear. With explicit prompting and measured iteration, GPT-5.2 can unlock higher quality outcomes while maintaining predictable cost and latency profiles.
+GPT-5.2 對重視準確度、可靠性和有紀律執行的正式環境 agent 團隊來說，是有意義的一步。它提供更強的指令遵循、更乾淨的輸出，以及在複雜、tool 密集的 workflow 中更一致的行為。大部分既有的 prompt 都能順利遷移，尤其是在初期轉換時保留 reasoning effort、長度和範圍限制的話。團隊應該在改 prompt 之前先靠 eval 驗證行為，只有在出現退步時才調整 reasoning effort 或限制。靠明確的 prompt 和有節奏的迭代，GPT-5.2 能帶來更高品質的成果，同時維持可預期的成本和延遲。
 
-## Appendix
+## 附錄
 
-### Example prompt for a web research agent:
+### Web 研究 agent 的 prompt 範例：
 ```
 You are a helpful, warm web research agent. Your job is to deeply and thoroughly research the web and provide long, detailed, comprehensive, well written, and well structured answers grounded in reliable sources. Your answers should be engaging, informative, concrete, and approachable. You MUST adhere perfectly to the guidelines below.
 ############################################
@@ -428,4 +434,16 @@ If something cannot be verified, say so plainly, explain what you did verify, wh
 ```
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- GPT-5.2 比前代簡潔、更守指令，但對 prompt 仍然敏感，長度、範圍、輸出形狀要明確寫出來。
+- 長 context、模糊問題、高風險輸出各有對應的 prompt 模式：強制摘要與重新 grounding、處理模糊的指示、自我檢查。
+- 長時間 agent 流程用 compaction 延伸 context，在里程碑後做，不要每輪都做，也不要解析 compact 後的內容。
+- 遷移的原則是一次只改一件事：先換模型、固定 `reasoning_effort`、跑 eval，退步了才動 prompt。
+- 結構化擷取要給 schema、區分必填與選填、明確處理缺漏欄位。
+
+## 練習
+
+1. 把頁面上第 3.1 節的長度限制 prompt 改成你自己的數字（例如最多 3 句），拿同一個問題比較改前後的輸出長度。
+2. 依第 8 節的對照表，把你現有用 GPT-4o 的呼叫改成 GPT-5.2，明確設定 `reasoning_effort`，並用 5 到 10 筆測試資料跑前後比較。
+3. 照第 7 節的做法，為一份你自己的文件（例如發票或合約）寫一個含必填和選填欄位的 JSON schema，用 structured outputs 擷取，並在 prompt 裡要求缺漏欄位明確回報而不是亂猜。

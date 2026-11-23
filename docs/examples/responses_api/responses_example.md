@@ -1,32 +1,41 @@
 ---
-translated: false
+translated: true
 source: examples/responses_api/responses_example.ipynb
 ---
 
-# Web Search and States with Responses API
+# 用 Responses API 做 web search 與狀態管理
 
 > 原文：[examples/responses_api/responses_example.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/responses_api/responses_example.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+介紹 Responses API 的幾個核心特色：有狀態的對話、內建 hosted tool（例如 web search），以及原生支援多模態。最後用一次 API 呼叫完成「看圖加搜尋網路」。
 
-## What is the Responses API?
+## 學完你會
+- 用 Responses API 發出請求，並用前一個 response 接續（或分岔）對話
+- 把 `web_search` 這類 hosted tool 直接傳給 API，讓它自己決定要不要用
+- 在一次呼叫裡結合圖片輸入和 web search，省下 Chat Completions 需要的多次往返
 
-The Responses API is a new way to interact with OpenAI models, designed to be simpler and more flexible than previous APIs. It makes it easy to build advanced AI applications that use multiple tools, handle multi-turn conversations, and work with different types of data (not just text).
+## 開跑前
+需要 OpenAI API key。
 
-Unlike older APIs—such as Chat Completions, which were built mainly for text, or the Assistants API, which can require a lot of setup—the Responses API is built from the ground up for:
+## 什麼是 Responses API？
 
-- Seamless multi-turn interactions (carry on a conversation across several steps in a single API call)
-- Easy access to powerful hosted tools (like file search, web search, and code interpreter)
-- Fine-grained control over the context you send to the model
+Responses API 是跟 OpenAI 模型互動的新方式，設計上比以前的 API 更簡單、更有彈性。它讓你容易建立進階的 AI 應用，可以使用多個 tool、處理多輪對話，並處理不同類型的資料（不只是文字）。
 
-As AI models become more capable of complex, long-running reasoning, developers need an API that is both asynchronous and stateful. The Responses API is designed to meet these needs.
+不像舊的 API，例如主要為文字設計的 Chat Completions，或需要大量設定的 Assistants API，Responses API 是從頭開始為以下目標打造：
 
-In this guide, you'll see some of the new features the Responses API offers, along with practical examples to help you get started.
+- 流暢的多輪互動（在單一 API 呼叫裡，跨多個步驟延續對話）
+- 輕鬆使用強大的 hosted tool（像是 file search、web search 和 code interpreter）
+- 對送給模型的上下文有細緻的控制
 
-## Basics
-By design, on the surface, the Responses API is very similar to the Completions API.
+隨著 AI 模型越來越有能力做複雜、長時間的 reasoning，開發者需要一個既非同步又有狀態的 API。Responses API 就是為了滿足這些需求而設計。
+
+在這份指南裡，你會看到 Responses API 提供的一些新功能，以及幫助你上手的實用範例。
+
+## 基礎
+就設計來說，從表面上看，Responses API 跟 Completions API 很像。
 
 ```python
 from openai import OpenAI
@@ -53,7 +62,7 @@ print(response.output[0].content[0].text)
     Because he was outstanding in his field!
     ```
 
-One key feature of the Response API is that it is stateful. This means that you do not have to manage the state of the conversation by yourself, the API will handle it for you. For example, you can retrieve the response at any time and it will include the full conversation history.
+Response API 的一個關鍵特色是有狀態。這代表你不用自己管理對話的狀態，API 會幫你處理。例如，你隨時可以取回某個 response，它會包含完整的對話歷史。
 
 ```python
 fetched_response = client.responses.retrieve(
@@ -70,7 +79,7 @@ print(fetched_response.output[0].content[0].text)
     Because he was outstanding in his field!
     ```
 
-You can continue the conversation by referring to the previous response.
+你可以引用前一個 response 來繼續對話。
 
 ```python
 response_two = client.responses.create(
@@ -92,7 +101,7 @@ print(response_two.output[0].content[0].text)
     They don't have the guts!
     ```
 
-You can of course manage the context yourself. But one benefit of OpenAI maintaining the context for you is that you can fork the response at any point and continue the conversation from that point.
+你當然也可以自己管理上下文。不過讓 OpenAI 幫你維護上下文的一個好處，是你可以在任何一點分岔 response，從那個點繼續對話。
 
 ```python
 response_two_forked = client.responses.create(
@@ -117,11 +126,11 @@ print(output_text)
     **Difference:** The first joke plays on a pun involving "outstanding" in a literal sense versus being exceptional, while the second joke relies on a play on words about atoms "making up" matter versus fabricating stories. Each joke uses wordplay, but they target different concepts (farming vs. science).
     ```
 
-## Hosted Tools
+## Hosted Tool
 
-Another benefit of the Responses API is that it adds support for hosted tools like `file_search` and `web_search`. Instead of manually calling the tools, simply pass in the tools and the API will decide which tool to use and use it.
+Responses API 的另一個好處，是新增了對 `file_search` 和 `web_search` 這類 hosted tool 的支援。你不用手動呼叫 tool，只要把 tool 傳進去，API 就會決定要用哪個 tool 並使用它。
 
-Here is an example of using the `web_search` tool to incorporate web search results into the response.
+下面是用 `web_search` tool 把網路搜尋結果納入回應的範例。
 
 ```python
 response = client.responses.create(
@@ -186,10 +195,10 @@ print(json.dumps(response.output, default=lambda o: o.__dict__, indent=2))
     ... (省略 11 行)
     ```
 
-## Multimodal, Tool-augmented conversation
+## 多模態、tool 加持的對話
 
-The Responses API natively supports text, images, and audio modalities. 
-Tying everything together, we can build a fully multimodal, tool-augmented interaction with one API call through the responses API.
+Responses API 原生支援文字、圖片和音訊模態。 
+把所有東西結合起來，我們可以透過 responses API，用一次 API 呼叫做出完整多模態、有 tool 加持的互動。
 
 ```python
 import base64
@@ -276,16 +285,21 @@ print(json.dumps(response_multimodal.__dict__, default=lambda o: o.__dict__, ind
     ... (省略 72 行)
     ```
 
-In the above example, we were able to use the `web_search` tool to search the web for news related to the image in one API call instead of multiple round trips that would be required if we were using the Chat Completions API.
+在上面的例子裡，我們可以用 `web_search` tool，在一次 API 呼叫中搜尋跟圖片相關的新聞，而如果用 Chat Completions，就需要多次往返。
 
-With the Responses API, one request can analyze an image, call hosted web search, and summarize the results. The same workflow with Chat Completions requires the application to execute the tool call and submit its result in another request.
+用 Responses API，一個請求就能分析圖片、呼叫 hosted web search，並摘要結果。同樣的流程用 Chat Completions，則需要應用程式自己執行 tool call，並在另一個請求裡送出結果。
 
-The diagram below compares the two flows.
+下圖比較了兩種流程。
 
 ![Responses vs Completions](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/comparisons.png)
 
+## 重點整理
+- Responses API 是有狀態的，用 response id 就能接續對話，不用自己維護完整歷史。
+- 可以從任何一個 response 分岔出不同的對話分支。
+- hosted tool 只要傳給 API，由它決定要不要用、怎麼用，不用自己處理 tool call 迴圈。
+- 一次請求就能同時處理圖片輸入和 web search，比 Chat Completions 少很多往返。
 
-
-
-
-<!-- tutor:summary -->
+## 練習
+1. 把基礎範例的問題換成你自己的，確認能取回 response 和對話歷史。
+2. 從同一個 response 分岔出兩條不同的追問，比較兩條分支的回答。
+3. 修改 web search 範例的 prompt，改成查詢你關心的主題的最新消息，並檢查回應中引用的來源。

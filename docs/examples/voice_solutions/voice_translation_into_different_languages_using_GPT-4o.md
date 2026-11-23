@@ -1,57 +1,69 @@
 ---
-translated: false
+translated: true
 source: examples/voice_solutions/voice_translation_into_different_languages_using_GPT-4o.ipynb
 ---
-
 # Voice Translation into Different Languages
 
 > 原文：[examples/voice_solutions/voice_translation_into_different_languages_using_GPT-4o.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/voice_solutions/voice_translation_into_different_languages_using_GPT-4o.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-### Voice Translation of Audio Files into Different Languages Using Gpt-4o
+用 GPT-4o 的 audio-in、audio-out 能力，把一段英文音檔直接配音成印地語，一次 API 呼叫就好。後面再用 BLEU 和 ROUGE 評估翻譯品質。
 
-Have you ever wanted to translate a podcast into your native language? Translating and dubbing audio content can make it more accessible to audiences worldwide. With GPT-4o's new audio-in and audio-out modality, this process is now easier than ever.
+## 學完你會
 
-This guide will walk you through translating an English audio file into Hindi using OpenAI's GPT-4o audio modality API.
+- 寫一個把 base64 音檔送進 `gpt-4o-audio-preview` 的函式，並依 output modality 拿到文字或音訊。
+- 一次呼叫就同時拿到目標語言的逐字稿和配音音檔。
+- 把配音結果轉寫回原語言，用 BLEU、ROUGE 算分，並知道分數不好時該調哪裡。
 
-GPT-4o simplifies the dubbing process for audio content. Previously, you had to convert the audio to text and then translate the text into the target language before converting it back into audio. Now, with GPT-4o’s voice-to-voice capability, you can achieve this in a single step with audio input and output.  
+## 開跑前
 
-A note on semantics used in this Cookbook regarding **Language** and written **Script**. These words are generally used interchangeably, though it's important to understand the distinction, given the task at hand.  
- 
-**- Language** refers to the spoken or written system of communication. For instance, Hindi and Marathi are different languages, but both use the Devanagari script. Similarly, English and French are different languages, but are written in Latin script.  
-   
-**- Script** refers to the set of characters or symbols used to write the language. For example, Serbian language traditionally written in Cyrillic Script, is also written in Latin script.
+- 設好 `OPENAI_API_KEY` 環境變數。
+- 需要有一個 WAV 音檔，跟 code cell 裡用到的套件（例如播放用的 `pydub`）。
+
+### 用 GPT-4o 做音檔的語音翻譯
+
+有沒有想過把 podcast 翻成自己的母語？翻譯並配音能讓音訊內容被全世界更多人接觸。有了 GPT-4o 新的 audio-in 和 audio-out 模態，這件事變得比以往簡單。
+
+這份指南會帶你用 OpenAI 的 GPT-4o audio modality API，把一個英文音檔翻成印地語。
+
+GPT-4o 簡化了音訊內容的配音流程。以前你得先把音訊轉成文字，再翻成目標語言，再轉回音訊。現在有了 GPT-4o 的 voice-to-voice 能力，輸入音訊、輸出音訊，一步就搞定。
+
+先說明一下這份 cookbook 裡「**語言（Language）**」和書寫「**文字系統（Script）**」的用法。這兩個詞常被混用，但在這個任務裡要分清楚。
+
+**- Language** 指的是口說或書寫的溝通系統。例如印地語和馬拉地語是不同的語言，但都用天城文（Devanagari）書寫。同樣地，英語和法語是不同語言，但都用拉丁字母書寫。
+
+**- Script** 指的是用來書寫某個語言的字元或符號集合。例如塞爾維亞語傳統上用西里爾字母書寫，也會用拉丁字母書寫。
 
 
-GPT-4o audio-in and audio-out modality makes it easier to dub the audio from one language to another with one API call.  
+GPT-4o 的 audio-in、audio-out 讓你只要一次 API 呼叫，就能把音訊從一種語言配音成另一種。
 
-**1. Transcribe** the source audio file into source language script using GPT-4o. This is an optional step that can be skipped if you already have the transcription of source audio content.  
- 
-**2. Dub** the audio file from source language directly to the target language.  
-   
-**3. Obtain Translation Benchmarks** using BLEU or ROUGE.   
- 
-**4. Interpret and improve** scores by adjusting prompting parameters in steps 1-3 as needed.   
+**1. 轉寫（Transcribe）**：用 GPT-4o 把來源音檔轉成來源語言的文字。如果你已經有來源音訊的逐字稿，可以跳過這步。
+
+**2. 配音（Dub）**：直接把音檔從來源語言配成目標語言。
+
+**3. 取得翻譯 benchmark**：用 BLEU 或 ROUGE。
+
+**4. 解讀並改善**：依分數調整步驟 1 到 3 的 prompt 參數。
 
 
-Before we get started, make sure you have your OpenAI API key configured as an environment variable, and necessary packages installed as outlined in the code cells below. 
+開始之前，請確認你已經把 OpenAI API key 設成環境變數，並照下面 code cell 的說明裝好需要的套件。
 
-### Step 1: Transcribe the Audio to Source Language Script using GPT-4o 
+### Step 1：用 GPT-4o 把音訊轉成來源語言的文字
 
-Let's start by creating a function that sends an audio file to OpenAI's GPT-4o API for processing, using the chat completions API endpoint.
+先寫一個函式，用 chat completions API endpoint 把音檔送到 OpenAI 的 GPT-4o API 處理。
 
-The function `process_audio_with_gpt_4o` takes three inputs:
+`process_audio_with_gpt_4o` 函式接收三個輸入：
 
-1. A base64-encoded audio file (base64_encoded_audio) that will be sent to the GPT-4o model.
-2. Desired output modalities (such as text, or both text and audio). 
-3. A system prompt that instructs the model on how to process the input.
+1. 一個 base64 編碼的音檔（base64_encoded_audio），會送給 GPT-4o 模型。
+2. 想要的輸出模態（例如 text，或 text 加 audio）。
+3. 一個 system prompt，指示模型怎麼處理輸入。
 
-The function sends an API request to OpenAI's chat/completions endpoint. The request headers include the API key for authorization. The data payload contains the model type (`gpt-4o-audio-preview`), the selected output modalities, and audio details, such as the voice type and format (in this case, "alloy" and "wav"). It also includes the system prompt and the base64-encoded audio file as part of the "user" message. If the API request is successful (HTTP status 200), the response is returned as JSON. If an error occurs (non-200 status), it prints the error code and message.
+這個函式會對 OpenAI 的 chat/completions endpoint 發出 API 請求。request header 帶有授權用的 API key。data payload 包含模型類型（`gpt-4o-audio-preview`）、選擇的輸出模態，以及音訊細節，例如聲音類型和格式（這裡是 "alloy" 和 "wav"）。payload 也把 system prompt 和 base64 編碼的音檔放在 "user" 訊息裡。如果 API 請求成功（HTTP 200），就回傳 JSON 回應；如果出錯（非 200），就印出錯誤碼和訊息。
 
-This function enables audio processing through OpenAI's GPT-4o API, allowing tasks like dubbing, transcription, or translation to be performed based on the input provided.
+這個函式讓你能透過 OpenAI 的 GPT-4o API 做音訊處理，依輸入內容完成配音、轉寫或翻譯等任務。
 
 ```python
 # Make sure requests package is installed  
@@ -109,13 +121,13 @@ def process_audio_with_gpt_4o(base64_encoded_audio, output_modalities, system_pr
         return
 ```
 
-Using the function `process_audio_with_gpt_4o`, we will first get an English transcription of the source audio. You can skip this step if you already have a transcription in the source language. 
+用 `process_audio_with_gpt_4o` 函式，我們先取得來源音訊的英文逐字稿。如果你已經有來源語言的逐字稿，可以跳過這步。
 
-In this step, we: 
-1. Read the WAV file and convert it into base64 encoding.
-2. Set the output modality to ["text"], as we only need a text transcription.
-3. Provide a system prompt to instruct the model to focus on transcribing the speech and to ignore background noises like applause.
-4. Call the process_audio_with_gpt_4o function to process the audio and return the transcription.
+這一步我們做的事：
+1. 讀取 WAV 檔並轉成 base64 編碼。
+2. 把 output modality 設成 ["text"]，因為我們只需要文字逐字稿。
+3. 提供 system prompt，指示模型專注轉寫語音，忽略掌聲之類的背景雜音。
+4. 呼叫 process_audio_with_gpt_4o 函式處理音訊並回傳逐字稿。
 
 ```python
 import base64
@@ -142,11 +154,11 @@ print(english_transcript)
     Hello and welcome to our first ever OpenAI DevDay. Today, we are launching a new model, GPT-4 Turbo. GPT-4 Turbo supports up to 128,000 tokens of context. We have a new feature called JSON mode, which ensures that the model will respond with valid JSON. You can now call many functions at once. And it will do better at following instructions in general. You want these models to be able to access better knowledge about the world, so do we. So we're launching retrieval in the platform. You can bring knowledge from outside documents or databases into whatever you're building. GPT-4 Turbo has knowledge about the world up to April of 2023, and we will continue to improve that over time. DALL-E 3, GPT-4 Turbo with Vision, and the new text-to-speech model are all going into the API today. Today, we're launching a new program called Custom Models. With Custom Models, our researchers will work closely with a company to help them make a great custom model, especially for them and their use case using our tools. Higher rate limits. We're doubling the tokens per minute for all of our established GPT-4 customers so that it's easier to do more, and you'll be able to request changes to further rate limits and quotas directly in your API account settings. And GPT-4 Turbo is considerably cheaper than GPT-4, by a factor of 3x for prompt tokens and 2x for completion tokens starting today. We're thrilled to introduce GPTs. GPTs are tailored versions of ChatGPT for a specific purpose. And because they combine instructions, expanded knowledge, and actions, they can be more helpful to you. They can work better in many contexts, and they can give you better control. We know that many people who want to build a GPT don't know how to code. We've made it so that you can program the GPT just by having a conversation. You can make private GPTs. You can share your creations publicly with a link for anyone to use. Or, if you're on ChatGPT Enterprise, you can make GPTs just for your company. And later this month, we're going to launch the GPT Store. So those are GPTs, and we can't wait to see what you'll build. We're bringing the same concept to the API. The Assistant API includes persistent threads so they don't have to figure out how to deal with long conversation history, built-in retrieval, code interpreter, a working Python interpreter in a sandbox environment, and, of course, the improved function calling. As intelligence gets integrated everywhere, we will all have superpowers on demand. We're excited to see what you all will do with this technology and to discover the new future that we're all going to architect together. We hope when you come back next year, what we launch today is going to look very quaint relative to what we're busy creating for you now. Thank you for all you do. Thanks for coming here today.
     ```
 
-This English transcript will serve as our ground truth as we benchmark the Hindi language dubbing of the audio in Step 3. 
+這份英文逐字稿會當作 ground truth，在 Step 3 拿來對印地語配音做 benchmark。
 
-### Step 2. Dub the Audio from the Source Language to the Target Language using GPT-4o
+### Step 2：用 GPT-4o 把音訊從來源語言配音成目標語言
 
-With GPT-4o, we can directly dub the audio file from English to Hindi and get the Hindi transcription of the audio in one API call. For this, we set the output modality to `["text", "audio"] `
+用 GPT-4o，我們可以一次 API 呼叫，直接把音檔從英文配成印地語，同時拿到印地語逐字稿。做法是把 output modality 設成 `["text", "audio"] `
 
 ```python
 glossary_of_terms_to_keep_in_original_language = "Turbo, OpenAI, token, GPT, Dall-e, Python"
@@ -159,7 +171,7 @@ response_json = process_audio_with_gpt_4o(english_audio_base64, modalities, prom
 message = response_json['choices'][0]['message']
 ```
 
-In the following code snippet, we will retrieve both the Hindi transcription and the dubbed audio from the GPT-4o response. Previously, this would have been a multistep process, involving several API calls to first transcribe, then translate, and finally produce the audio in the target language. With GPT-4o, we can now accomplish this in a single API call.
+下面的程式會從 GPT-4o 的回應取出印地語逐字稿和配音音訊。以前這會是多步驟流程，要好幾次 API 呼叫，先轉寫、再翻譯、最後產生目標語言的音訊。現在用 GPT-4o，一次 API 呼叫就能完成。
 
 ```python
 # Make sure pydub is installed 
@@ -192,7 +204,7 @@ hindi_audio_data_base64 = message['audio']['data']
     हम आशा करते हैं कि आप अगले साल फिर आएंगे क्योंकि आज हमने जो लॉन्च किया है, वह उस परिप्रेक्ष्य से बहुत मामूली लगेगा जो हम अब आपके लिए बना रहे हैं। आप सभी के तरीके लिए धन्यवाद। आज यहां आने के लिए धन्यवाद।
     ```
 
-The transcribed text is a combination of Hindi and English, represented in their respective scripts: Devanagari for Hindi and Latin for English. This approach ensures more natural-sounding speech with the correct pronunciation of both languages' words. We will use the `pydub` module to play the audio as demonstrated in the code below. 
+轉出來的文字是印地語和英語混合，各自用自己的文字系統表示：印地語用天城文，英語用拉丁字母。這樣做能讓兩種語言的字都唸得正確，聽起來比較自然。我們用 `pydub` 模組來播放音訊，程式如下。
 
 ```python
 # Play the audio 
@@ -202,17 +214,17 @@ audio_segment = AudioSegment.from_file(BytesIO(audio_data_bytes), format="wav")
 play(audio_segment)
 ```
 
-### Step 3. Obtain Translation Benchmarks (e.g., BLEU or ROUGE) 
+### Step 3：取得翻譯 benchmark（例如 BLEU 或 ROUGE）
 
-We can assess the quality of the translated text by comparing it to a reference translation using evaluation metrics like BLEU and ROUGE. 
+我們可以用 BLEU 和 ROUGE 這類評估指標，把翻譯文字和參考譯文比較，來評估翻譯品質。
 
-**BLEU (Bilingual Evaluation Understudy)**: Measures the overlap of n-grams between the candidate and reference translations. Scores range from 0 to 100, with higher scores indicating better quality.
+**BLEU (Bilingual Evaluation Understudy)**：衡量候選譯文和參考譯文之間 n-gram 的重疊程度。分數範圍 0 到 100，越高代表品質越好。
 
-**ROUGE (Recall-Oriented Understudy for Gisting Evaluation)**: Commonly used for summarization evaluation. Measures the overlap of n-grams and the longest common subsequence between the candidate and reference texts.
+**ROUGE (Recall-Oriented Understudy for Gisting Evaluation)**：常用在摘要評估。衡量候選文字和參考文字之間 n-gram 的重疊，以及最長共同子序列。
 
-Ideally, a reference translation (a human-translated version) of the original text is needed for an accurate evaluation. However, developing such evaluations can be challenging, as it requires time and effort from bilingual humans proficient in both languages.
+理想上，要準確評估需要一份參考譯文（人工翻譯的版本）。不過要建立這種評估不容易，因為需要精通兩種語言的雙語人員花時間花力氣。
 
-An alternative is to transcribe the output audio file from the target language back into the original language to assess the quality of the translation using GPT-4o. 
+另一個做法是把目標語言的輸出音檔轉寫回原語言，再用 GPT-4o 來評估翻譯品質。
 
 ```python
 # Translate the audio output file generated by the model back into English and compare with the reference text 
@@ -240,7 +252,7 @@ print(re_translated_english_text)
     We're excited to see what you'll be able to build with this technology and explore this new future that we're all creating together. We hope you come back next year because what we're building for you now will make today seem very humble in that context. Thank you all for your approach. Thank you for being here today.
     ```
 
-With the text transcribed back into English language script from the Hindi audio, we can run the evaluation metrics by comparing it to the original English transcription.
+拿到從印地語音訊轉回英文文字的結果後，就可以跟原本的英文逐字稿比較，跑評估指標。
 
 ```python
 # Make sure scarebleu package is installed 
@@ -272,57 +284,68 @@ print(f"ROUGE-L Score: {scores['rougeL'].fmeasure}")
     ROUGE-L Score: 0.6934156378600822
     ```
 
-### Step 4. Interpret and improve scores by adjusting prompting parameters in steps 1-3 as needed
+### Step 4：解讀分數，並依需要調整步驟 1 到 3 的 prompt 參數
 
-In this example, both BLEU and ROUGE scores indicate that the quality of the voice translation is between very good and excellent.
+這個例子裡，BLEU 和 ROUGE 的分數都顯示語音翻譯的品質介於非常好到優秀之間。
 
-**Interpreting BLEU Scores:** While there is no universally accepted scale, some interpretations suggest:
+**BLEU 分數怎麼解讀：** 雖然沒有通用的標準，一種常見的解讀如下：
 
-0 to 10: Poor quality translation; significant errors and lack of fluency.
+0 到 10：品質差，有明顯錯誤、不流暢。
 
-10 to 20: Low quality; understandable in parts but contains many errors.
+10 到 20：品質低，部分能懂，但錯誤很多。
 
-20 to 30: Fair quality; conveys the general meaning but lacks precision and fluency.
+20 到 30：普通，能傳達大致意思，但不夠精確流暢。
 
-30 to 40: Good quality; understandable and relatively accurate with minor errors.
+30 到 40：好，能懂也相對準確，只有小錯誤。
 
-40 to 50: Very good quality; accurate and fluent with very few errors.
+40 到 50：非常好，準確流暢，幾乎沒錯。
 
-50 and above: Excellent quality; closely resembles human translation.
+50 以上：優秀，非常接近人工翻譯。
 
-**Interpreting ROUGE scores:** The interpretation of a "good" ROUGE score can vary depending on the task, dataset, and domain. The following guidelines indicate a good outcome:
+**ROUGE 分數怎麼解讀：** 「好」的 ROUGE 分數會因任務、資料集和領域而不同。下面的準則可以當作好結果的參考：
 
-ROUGE-1 (unigram overlap): Scores between 0.5 to 0.6 are generally considered good for abstractive summarization tasks.
+ROUGE-1（unigram 重疊）：對 abstractive summarization 任務，0.5 到 0.6 通常算好。
 
-ROUGE-L (Longest Common Subsequence): Scores around 0.4 to 0.5 are often regarded as good, reflecting the model's ability to capture the structure of the reference text.
+ROUGE-L（最長共同子序列）：0.4 到 0.5 左右通常算好，代表模型能抓到參考文字的結構。
 
-If the score for your translation is unsatisfactory, consider the following questions:
+如果你的翻譯分數不理想，可以想想下面的問題：
 
-#### 1. Is the source audio accurately transcribed? 
-If the transcription contains errors, such as confusing similar-sounding words, you can provide a glossary of such terms in the system prompt during step 1. This helps the model avoid misinterpretations and ensures accurate transcription of specific terms.
+#### 1. 來源音訊有沒有被正確轉寫？
+如果逐字稿有錯，例如把發音相近的字搞混，你可以在 Step 1 的 system prompt 裡提供一份這類詞彙的 glossary，幫模型避開誤解，正確轉寫特定術語。
 
-#### 2. Is the source audio free of grammatical errors? 
-If the source audio contains grammatical errors, consider using a post-processing step with the GPT model to refine the transcription by removing grammatical mistakes and adding appropriate punctuation. After this, instead of using GPT-4o’s audio-in and audio-out modality, you can use the corrected transcription with GPT-4o’s text-in and audio-out modality to generate the audio in the target language.
+#### 2. 來源音訊有沒有文法錯誤？
+如果來源音訊有文法錯誤，可以加一個後處理步驟，用 GPT 模型修正逐字稿，去掉文法錯誤並加上適當標點。之後不用 GPT-4o 的 audio-in、audio-out 模態，而是把修正後的逐字稿，用 GPT-4o 的 text-in、audio-out 模態產生目標語言的音訊。
 
-#### 3. Are there words that make sense to keep in the original language?  
-Certain terms or concepts may not have a suitable translation in the target language or may be better understood in their original form. Revisit your `glossary_of_terms_to_keep_in_original_language` and include any such terms to maintain clarity and context.
+#### 3. 有沒有些詞適合保留原語言？
+有些術語或概念在目標語言裡可能沒有合適的翻法，或是用原文反而比較好懂。回頭檢查你的 `glossary_of_terms_to_keep_in_original_language`，把這類詞加進去，維持清晰度跟上下文。
 
-### Conclusion
+### 結論
 
-In summary, this cookbook offers a clear, step-by-step process for translating and dubbing audio, making content more accessible to a global audience. Using GPT-4o’s audio input and output capabilities, translating and dubbing audio files from one language to another becomes much simpler. Our example focused on translating an audio file from English to Hindi.
+總結來說，這份 cookbook 提供了一個清楚、一步一步的翻譯和配音流程，讓內容更容易被全球觀眾接觸。用 GPT-4o 的音訊輸入輸出能力，把音檔從一種語言翻譯配音成另一種變得簡單很多。我們的範例是把音檔從英文翻成印地語。
 
-The process can be broken down into the following steps:
+整個流程可以拆成下面這些步驟：
 
-**1. Transcription:** Obtain transcription of the source language audio into source language script using GPT-4o text modality.   
+**1. 轉寫：** 用 GPT-4o 的 text modality，把來源語言音訊轉成來源語言的文字。
 
-**2. Dub:** Directly dub the audio file into the target language using GPT-4o's audio modality.  
+**2. 配音：** 用 GPT-4o 的 audio modality，直接把音檔配成目標語言。
 
-**3. Benchmark Translation Quality:** Evaluate the translation’s accuracy using BLEU or ROUGE scores compared to reference text.
+**3. 評估翻譯品質：** 用 BLEU 或 ROUGE 分數，跟參考文字比較，評估翻譯的準確度。
 
-**4. Optimize the Process:** If needed, adjust the prompting parameters to improve the transcription and dubbing results.  
+**4. 優化流程：** 需要的話，調整 prompt 參數來改善轉寫和配音結果。
 
-This guide also highlights the crucial distinction between "language" and "script"—terms that are often confused but are essential in translation work. Language refers to the system of communication, either spoken or written, while script is the set of characters used to write a language. Grasping this difference is vital for effective translation and dubbing.
+這份指南也強調了「language」和「script」的差別。這兩個詞常被搞混，但在翻譯工作裡很重要。Language 是口說或書寫的溝通系統，script 是用來書寫語言的字元集合。弄懂這個差別，對有效翻譯和配音很關鍵。
 
-By following the techniques in this cookbook, you can translate and dub a wide range of content—from podcasts and training videos to full-length films—into multiple languages. This method applies across industries such as entertainment, education, business, and global communication, empowering creators to extend their reach to diverse linguistic audiences.
+照這份 cookbook 的技巧，你可以翻譯並配音各種內容，從 podcast、教學影片到長片電影，翻成多種語言。這個方法適用於娛樂、教育、商業和全球傳播等各種產業，幫創作者觸及不同語言的觀眾。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- GPT-4o 的 audio-in、audio-out 把「轉寫、翻譯、合成語音」三步壓成一次 API 呼叫，差別只在 output modality 設 `["text"]` 還是 `["text", "audio"]`。
+- Language 和 script 是兩回事，混合語言的輸出會各自用自己的文字系統，唸起來才自然。
+- 沒有人工參考譯文時，可以把配音結果轉寫回原語言，再跟原逐字稿算 BLEU、ROUGE。
+- 分數不好先查三件事：來源轉寫對不對、來源有沒有文法錯誤、有沒有該保留原文的詞，調整的位置都在 prompt 的 glossary 或前處理。
+
+## 練習
+
+1. 把 Step 2 的目標語言從印地語換成別的語言，重跑並比較 BLEU 分數。
+2. 在 Step 1 的 system prompt 加一份 glossary，放幾個容易聽錯的專有名詞，看轉寫結果有沒有變好。
+3. 照「來源音訊有文法錯誤」的建議，在中間加一個文字修正步驟，改用 text-in、audio-out 產生配音，比較跟原本直接 audio-in 的分數差異。

@@ -1,19 +1,30 @@
 ---
-translated: false
+translated: true
 source: examples/Clustering.ipynb
 ---
-
 # Clustering
 
 > 原文：[examples/Clustering.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Clustering.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-## K-means Clustering in Python using OpenAI
+拿已經算好的評論 embedding 丟進 k-means，把相似的評論自動分成幾群，再把每群的畫在 2D 圖上看。最後從每群隨機抽 5 則評論，請 gpt-4 幫這一群取名字。
 
-We use a simple k-means algorithm to demonstrate how clustering can be done. Clustering can help discover valuable, hidden groupings within the data. The dataset is created in the [Get_embeddings_from_dataset Notebook](Get_embeddings_from_dataset.md).
+## 學完你會
+
+- 用 k-means 對 embedding 做分群，並自己決定群數
+- 把高維 embedding 投影到 2D 畫出分群結果
+- 從每群抽樣文字，用 LLM 幫群集命名
+
+## 開跑前
+
+需要先跑過 [Get_embeddings_from_dataset Notebook](Get_embeddings_from_dataset.md) 產生資料集，命名那段要用 OpenAI API key。
+
+## 用 OpenAI embedding 做 K-means 分群
+
+這裡用最簡單的 k-means 示範分群怎麼做。分群可以幫你找出資料裡有價值、但原本看不出來的群組。資料集是在 [Get_embeddings_from_dataset Notebook](Get_embeddings_from_dataset.md) 裡建立的。
 
 ```python
 # imports
@@ -36,9 +47,9 @@ matrix.shape
     (1000, 1536)
     ```
 
-### 1. Find the clusters using K-means
+### 1. 用 K-means 找出群集
 
-We show the simplest use of K-means. You can pick the number of clusters that fits your use case best.
+這裡只示範 K-means 最簡單的用法。群數可以依你的情境自己挑。
 
 ```python
 from sklearn.cluster import KMeans
@@ -98,11 +109,11 @@ plt.title("Clusters identified visualized in language 2d using t-SNE")
     Text(0.5, 1.0, 'Clusters identified visualized in language 2d using t-SNE')
     ```
 
-Visualization of clusters in a 2d projection. In this run, the green cluster (#1) seems quite different from the others. Let's see a few samples from each cluster.
+這是分群結果投影到 2D 的視覺化。這次跑的結果裡，綠色那群（#1）跟其他群看起來差蠻多。我們來看看每一群的幾個樣本。
 
-### 2. Text samples in the clusters & naming the clusters
+### 2. 各群的文字樣本與群集命名
 
-Let's show random samples from each cluster. We'll use gpt-4 to name the clusters, based on a random sample of 5 reviews from that cluster.
+從每個群集隨機抽幾則樣本出來看。我們用 gpt-4 根據每群隨機抽出的 5 則評論來幫該群命名。
 
 ```python
 from openai import OpenAI
@@ -180,6 +191,18 @@ for i in range(n_clusters):
     ----------------------------------------------------------------------------------------------------
     ```
 
-It's important to note that clusters will not necessarily match what you intend to use them for. A larger number of clusters will focus on more specific patterns, whereas fewer clusters will usually focus on the largest discrepancies in the data.
+要注意，分出來的群不一定符合你原本想拿它做什麼。群數多的話，會抓到比較細的特徵；群數少的話，通常只會抓到資料裡最大的差異。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- k-means 直接對 embedding 做分群，不需要標籤。
+- 群數要自己選，多就分得細，少就只分出最大的差異。
+- 分群結果不一定符合你想要的用途，要看樣本確認。
+- 2D 投影只是方便看，不代表真實的群集邊界。
+- 可以讓 LLM 讀每群的樣本幫忙命名，快速理解群的意思。
+
+## 練習
+
+1. 把 k-means 的群數改成不同的值（例如 3 跟 8），比較分群結果跟 2D 圖有什麼不同。
+2. 把抽樣數量從 5 則改成 10 則，看 gpt-4 取的群名有沒有變得更準。
+3. 把命名用的 prompt 改成要求輸出「群名加一句描述」，並對每一群都跑一次。

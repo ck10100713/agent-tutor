@@ -1,71 +1,81 @@
 ---
-translated: false
+translated: true
 source: examples/fine-tuned_qa/ft_retrieval_augmented_generation_qdrant.ipynb
 ---
-
-# Fine-Tuning for retrieval augmented generation (RAG) with Qdrant
+# 用 Qdrant 為 RAG 做 Fine-Tuning
 
 > 原文：[examples/fine-tuned_qa/ft_retrieval_augmented_generation_qdrant.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/ft_retrieval_augmented_generation_qdrant.ipynb)
 
+## 這篇在做什麼
 
+拿 SQuADv2 資料集，先對 gpt-3.5-turbo 做一般 fine-tuning，再用 Qdrant 撈出相似問題當 few-shot 範例再 fine-tune 一次。最後比較三種模型在「答對、說不知道、幻覺」上的差別。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 SQuADv2 準備 fine-tuning 資料、跑 fine-tuning job，並呼叫微調後的模型回答問題。
+- 用 embedding 加 Qdrant 找出最相似的問題，組成 few-shot prompt。
+- 把回答分成答對、略過、答錯、幻覺、說不知道五類來評估 RAG，並理解怎麼用訓練資料調整「保守」和「自信」的取捨。
 
-The aim of this notebook is to walk through a comprehensive example of how to fine-tune OpenAI models for Retrieval Augmented Generation (RAG). 
+## 開跑前
 
-We will also be integrating Qdrant and Few-Shot Learning to boost the model's performance and reduce hallucinations. This could serve as a practical guide for ML practitioners, data scientists, and AI Engineers interested in leveraging the power of OpenAI models for specific use-cases. 🤩
+- 需要 `OPENAI_API_KEY`。
+- 需要 Qdrant 的 key 和 URL（可在 Qdrant Cloud 建免費 cluster）。
+- fine-tuning 要付費且要等，embedding 全部訓練問題最久可能要 3 小時。
 
-Note: This notebook uses the gpt-3.5-turbo model. Fine-tuning on the SQuAD dataset with this setup yields only minimal gains for more advanced models such as gpt-4o or gpt-4.1. As such, this notebook is primarily intended as a guide for fine-tuning workflows and retrieval-augmented generation (RAG) practices
+這份 notebook 帶你完整走一遍怎麼為 Retrieval Augmented Generation (RAG) fine-tune OpenAI 模型。
 
-## Why should you read this blog?
+我們也會整合 Qdrant 和 Few-Shot Learning 來提升模型表現、減少 hallucination。對想用 OpenAI 模型處理特定用途的 ML 工程師、資料科學家和 AI 工程師，這可以當實作指南。🤩
 
-You want to learn how to 
-- [Fine-tune OpenAI models](https://platform.openai.com/docs/guides/fine-tuning/) for specific use-cases
-- Use [Qdrant](https://qdrant.tech/documentation/) to improve the performance of your RAG model
-- Use fine-tuning to improve the correctness of your RAG model and reduce hallucinations
+注意：這份 notebook 用的是 gpt-3.5-turbo。在這個設定下對 SQuAD 資料集做 fine-tuning，對 gpt-4o 或 gpt-4.1 這類更進階的模型只有很小的提升。所以這份 notebook 主要是 fine-tuning 工作流程和 retrieval-augmented generation (RAG) 實務的指南。
 
-To begin, we've selected a dataset where we've a guarantee that the retrieval is perfect. We've selected a subset of the [SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) dataset, which is a collection of questions and answers about Wikipedia articles. We've also included samples where the answer is not present in the context, to demonstrate how RAG handles this case.
+## 為什麼值得讀
 
-## Table of Contents
-1. Setting up the Environment
+你會學到
+- 針對特定用途 [fine-tune OpenAI 模型](https://platform.openai.com/docs/guides/fine-tuning/)
+- 用 [Qdrant](https://qdrant.tech/documentation/) 提升 RAG 模型表現
+- 用 fine-tuning 提高 RAG 模型的正確性並減少 hallucination
 
-### Section A: Zero-Shot Learning
-2. Data Preparation: SQuADv2 Dataset
-3. Answering using Base gpt-3.5-turbo-0613 model
-4. Fine-tuning and Answering using Fine-tuned model
-5. **Evaluation**: How well does the model perform?
+一開始我們選了一個能保證 retrieval 完美的資料集：[SQuAD](https://rajpurkar.github.io/SQuAD-explorer/) 的一個子集，內容是關於 Wikipedia 文章的問答。我們也放進了 context 裡沒有答案的樣本，來展示 RAG 怎麼處理這種情況。
 
-### Section B: Few-Shot Learning
+## 目錄
+1. 設定環境
 
-6. Using Qdrant to Improve RAG Prompt
-7. Fine-Tuning OpenAI Model with Qdrant
-8. Evaluation
+### Section A：Zero-Shot Learning
+2. 資料準備：SQuADv2 資料集
+3. 用 base gpt-3.5-turbo-0613 模型回答
+4. Fine-tuning 並用微調後的模型回答
+5. **評估**：模型表現如何？
 
-9. **Conclusion**
-    - Aggregate Results
-    - Observations
+### Section B：Few-Shot Learning
 
-## Terms, Definitions, and References
+6. 用 Qdrant 改善 RAG prompt
+7. 用 Qdrant 對 OpenAI 模型做 Fine-Tuning
+8. 評估
 
-**Retrieval Augmented Generation (RAG)?**
-The phrase Retrieval Augmented Generation (RAG) comes from a [recent paper](https://arxiv.org/abs/2005.11401) by Lewis et al. from Facebook AI. The idea is to use a pre-trained language model (LM) to generate text, but to use a separate retrieval system to find relevant documents to condition the LM on. 
+9. **結論**
+    - 彙總結果
+    - 觀察
 
-**What is Qdrant?**
-Qdrant is an open-source vector search engine that allows you to search for similar vectors in a large dataset. It is built in Rust and here we'll use the Python client to interact with it. This is the Retrieval part of RAG.
+## 名詞、定義與參考
 
-**What is Few-Shot Learning?**
-Few-shot learning is a type of machine learning where the model is "improved" via training or fine-tuning on a small amount of data. In this case, we'll use it to fine-tune the RAG model on a small number of examples from the SQuAD dataset. This is the Augmented part of RAG.
+**什麼是 Retrieval Augmented Generation (RAG)？**
+Retrieval Augmented Generation (RAG) 這個詞來自 Facebook AI 的 Lewis 等人的[一篇論文](https://arxiv.org/abs/2005.11401)。概念是用預訓練的語言模型 (LM) 來生成文字，但另外用一個 retrieval 系統找出相關文件，讓 LM 以它們為條件。
 
-**What is Zero-Shot Learning?**
-Zero-shot learning is a type of machine learning where the model is "improved" via training or fine-tuning without any dataset specific information. 
+**什麼是 Qdrant？**
+Qdrant 是開源的 vector search engine，可以在大型資料集裡搜尋相似的向量。它用 Rust 寫成，這裡我們用 Python client 操作。這是 RAG 的 Retrieval 部分。
 
-**What is Fine-Tuning?**
-Fine-tuning is a type of machine learning where the model is "improved" via training or fine-tuning on a small amount of data. In this case, we'll use it to fine-tune the RAG model on a small number of examples from the SQuAD dataset. The LLM is what makes the Generation part of RAG.
+**什麼是 Few-Shot Learning？**
+Few-shot learning 是一種機器學習方式，用少量資料訓練或 fine-tune 來「改善」模型。這裡我們用它在少量 SQuAD 範例上 fine-tune RAG 模型。這是 RAG 的 Augmented 部分。
 
-## 1. Setting Up the Environment
+**什麼是 Zero-Shot Learning？**
+Zero-shot learning 是不使用任何資料集專屬資訊，就透過訓練或 fine-tuning 來「改善」模型的方式。
 
-### Install and Import Dependencies
+**什麼是 Fine-Tuning？**
+Fine-tuning 是一種機器學習方式，用少量資料訓練或 fine-tune 來「改善」模型。這裡我們用它在少量 SQuAD 範例上 fine-tune RAG 模型。LLM 就是 RAG 的 Generation 部分。
+
+## 1. 設定環境
+
+### 安裝並匯入套件
 
 ```python
 !pip install pandas openai tqdm tenacity scikit-learn tiktoken python-dotenv seaborn --upgrade --quiet
@@ -96,8 +106,8 @@ tqdm.pandas()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-### Set your keys
-Get your OpenAI keys [here](https://platform.openai.com/account/api-keys) and Qdrant keys after making a free cluster [here](https://cloud.qdrant.io/login).
+### 設定 key
+到[這裡](https://platform.openai.com/account/api-keys)取得 OpenAI key，並在[這裡](https://cloud.qdrant.io/login)建立免費 cluster 後取得 Qdrant key。
 
 ```python
 os.environ["QDRANT_URL"] = "https://xxx.cloud.qdrant.io:6333"
@@ -106,13 +116,13 @@ os.environ["QDRANT_API_KEY"] = "xxx"
 
 ## Section A
 
-## 2. Data Preparation: SQuADv2 Data Subsets
+## 2. 資料準備：SQuADv2 資料子集
 
-For the purpose of demonstration, we'll make small slices from the train and validation splits of the [SQuADv2](https://rajpurkar.github.io/SQuAD-explorer/) dataset. This dataset has questions and contexts where the answer is not present in the context, to help us evaluate how LLM handles this case.
+為了示範，我們從 [SQuADv2](https://rajpurkar.github.io/SQuAD-explorer/) 資料集的 train 和 validation split 各切一小段。這個資料集有一些問題的 context 裡沒有答案，可以用來評估 LLM 怎麼處理這種情況。
 
-We'll read the data from the JSON files and create a dataframe with the following columns: `question`, `context`, `answer`, `is_impossible`.
+我們會從 JSON 檔讀資料，建立一個有這些欄位的 dataframe：`question`、`context`、`answer`、`is_impossible`。
 
-### Download the Data
+### 下載資料
 
 ```python
 # !mkdir -p local_cache
@@ -120,7 +130,7 @@ We'll read the data from the JSON files and create a dataframe with the followin
 # !wget https://rajpurkar.github.io/SQuAD-explorer/dataset/dev-v2.0.json -O local_cache/dev.json
 ```
 
-### Read JSON to DataFrame
+### 把 JSON 讀進 DataFrame
 
 ```python
 def json_to_dataframe_with_titles(json_data):
@@ -166,15 +176,15 @@ val_df = json_to_dataframe_with_titles(json.load(open('local_cache/dev.json')))
 df = get_diverse_sample(val_df, sample_size=100, random_state=42)
 ```
 
-## 3. Answering using Base gpt-3.5-turbo-0613 model
+## 3. 用 Base gpt-3.5-turbo-0613 模型回答
 
 ### 3.1 Zero Shot Prompt
 
-Let's start by using the base gpt-3.5-turbo-0613 model to answer the questions. This prompt is a simple concatenation of the question and context, with a separator token in between: `\n\n`. We've a simple instruction part of the prompt: 
+先用 base 的 gpt-3.5-turbo-0613 回答問題。這個 prompt 就是把問題和 context 串在一起，中間用分隔符 `\n\n`。prompt 的指令部分很簡單：
 
 > Answer the following Question based on the Context only. Only answer from the Context. If you don't know the answer, say 'I don't know'.
 
-Other prompts are possible, but this is a good starting point. We'll use this prompt to answer the questions in the validation set. 
+也可以用其他 prompt，但這是個不錯的起點。我們會用這個 prompt 回答 validation set 的問題。
 
 ```python
 # Function to get prompt messages
@@ -191,9 +201,9 @@ def get_prompt(row):
     ]
 ```
 
-### 3.2 Answering using Zero Shot Prompt
+### 3.2 用 Zero Shot Prompt 回答
 
-Next, you'll need some reusable functions which make an OpenAI API Call and return the answer. You'll use the `ChatCompletion.create` endpoint of the API, which takes a prompt and returns the completed text.
+接著需要一些可重複使用的 function，負責呼叫 OpenAI API 並回傳答案。你會用 API 的 `ChatCompletion.create` endpoint，它接收 prompt 並回傳完成的文字。
 
 ```python
 # Function with tenacity for retries
@@ -215,7 +225,7 @@ def answer_question(row, prompt_func=get_prompt, model="gpt-3.5-turbo"):
     return response.choices[0].message.content
 ```
 
-⏰ **Time to run: ~3 min**, 🛜 Needs Internet Connection
+⏰ **執行時間：約 3 分鐘**，🛜 需要網路連線
 
 ```python
 # Use progress_apply with tqdm for progress bar
@@ -273,15 +283,15 @@ df
     [100 rows x 5 columns]
     ```
 
-## 4. Fine-tuning and Answering using Fine-tuned model
+## 4. Fine-tuning 並用微調後的模型回答
 
-For the complete fine-tuning process, please refer to the [OpenAI Fine-Tuning Docs](https://platform.openai.com/docs/guides/fine-tuning/use-a-fine-tuned-model).
+完整的 fine-tuning 流程請參考 [OpenAI Fine-Tuning 文件](https://platform.openai.com/docs/guides/fine-tuning/use-a-fine-tuned-model)。
 
-### 4.1 Prepare the Fine-Tuning Data
+### 4.1 準備 Fine-Tuning 資料
 
-We need to prepare the data for fine-tuning. We'll use a few samples from train split of same dataset as before, but we'll add the answer to the context. This will help the model learn to retrieve the answer from the context. 
+我們要準備 fine-tuning 用的資料。用跟前面同一個資料集 train split 的幾個樣本，但會把答案加進 context。這能幫助模型學會從 context 裡找出答案。
 
-Our instruction prompt is the same as before, and so is the system prompt. 
+指令 prompt 跟前面一樣，system prompt 也一樣。
 
 ```python
 def dataframe_to_jsonl(df):
@@ -309,13 +319,13 @@ with open("local_cache/100_train.jsonl", "w") as f:
     f.write(dataframe_to_jsonl(train_sample))
 ```
 
-**Tip: 💡 Verify the Fine-Tuning Data**
+**提示：💡 驗證 Fine-Tuning 資料**
 
-You can see this [cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/Chat_finetuning_data_prep.ipynb) for more details on how to prepare the data for fine-tuning.
+準備 fine-tuning 資料的更多細節，可以看這份 [cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/Chat_finetuning_data_prep.ipynb)。
 
-### 4.2 Fine-Tune OpenAI Model
+### 4.2 Fine-Tune OpenAI 模型
 
-If you're new to OpenAI Model Fine-Tuning, please refer to the [How to finetune Chat models](https://github.com/openai/openai-cookbook/blob/448a0595b84ced3bebc9a1568b625e748f9c1d60/examples/How_to_finetune_chat_models.ipynb) notebook. You can also refer to the [OpenAI fine-tuning docs](https://developers.openai.com/api/docs/guides/model-optimization) for more details.
+如果你剛接觸 OpenAI 模型的 fine-tuning，請看 [How to finetune Chat models](https://github.com/openai/openai-cookbook/blob/448a0595b84ced3bebc9a1568b625e748f9c1d60/examples/How_to_finetune_chat_models.ipynb) notebook。也可以參考 [OpenAI fine-tuning 文件](https://developers.openai.com/api/docs/guides/model-optimization)了解更多。
 
 ```python
 class OpenAIFineTuner:
@@ -376,16 +386,16 @@ fine_tuner = OpenAIFineTuner(
     )
 ```
 
-⏰ **Time to run: ~10-20 minutes**, 🛜 Needs Internet Connection
+⏰ **執行時間：約 10-20 分鐘**，🛜 需要網路連線
 
 ```python
 model_id = fine_tuner.fine_tune_model()
 model_id
 ```
 
-#### 4.2.1 Try out the Fine-Tuned Model
+#### 4.2.1 試用微調後的模型
 
-Let's try out the fine-tuned model on the same validation set as before. You'll use the same prompt as before, but you will use the fine-tuned model instead of the base model. Before you do that, you can make a simple call to get a sense of how the fine-tuned model is doing.
+我們在跟前面同一個 validation set 上試試微調後的模型。你會用跟前面一樣的 prompt，但改用微調後的模型而不是 base model。在這之前，可以先簡單呼叫一次，感受一下微調後的模型表現如何。
 
 ```python
 completion = client.chat.completions.create(
@@ -404,30 +414,30 @@ completion = client.chat.completions.create(
 print(completion.choices[0].message)
 ```
 
-### 4.3 Answer Using the Fine-Tuned Model
+### 4.3 用微調後的模型回答
 
-This is the same as before, but you'll use the fine-tuned model instead of the base model.
+跟前面一樣，只是改用微調後的模型而不是 base model。
 
-⏰ **Time to run: ~5 min**, 🛜 Needs Internet Connection
+⏰ **執行時間：約 5 分鐘**，🛜 需要網路連線
 
 ```python
 df["ft_generated_answer"] = df.progress_apply(answer_question, model=model_id, axis=1)
 ```
 
-## 5. Evaluation: How well does the model perform?
+## 5. 評估：模型表現如何？
 
-To evaluate the model's performance, compare the predicted answer to the actual answers -- if any of the actual answers are present in the predicted answer, then it's a match. We've also created error categories to help you understand where the model is struggling.
+評估模型表現的方法是把預測答案跟實際答案比對，只要任何一個實際答案出現在預測答案裡，就算吻合。我們也建立了錯誤類別，幫你了解模型卡在哪裡。
 
-When we know that a correct answer exists in the context, we can measure the model's performance, there are 3 possible outcomes:
+當我們知道 context 裡有正確答案時，可以衡量模型表現，有 3 種可能的結果：
 
-1. ✅ **Answered Correctly**: The model responded the correct answer. It may have also included other answers that were not in the context.
-2. ❎ **Skipped**: The model responded with "I don't know" (IDK) while the answer was present in the context. It's better than giving the wrong answer. It's better for the model say "I don't know" than giving the wrong answer. In our design, we know that a true answer exists and hence we're able to measure it -- this is not always the case. *This is a model error*. We exclude this from the overall error rate. 
-3. ❌ **Wrong**: The model responded with an incorrect answer. **This is a model ERROR.**
+1. ✅ **答對 (Answered Correctly)**：模型回答了正確答案，也可能同時包含 context 裡沒有的其他答案。
+2. ❎ **略過 (Skipped)**：答案明明在 context 裡，模型卻回答「I don't know」(IDK)。這比給錯答案好，模型說「I don't know」比給錯答案好。在我們的設計裡知道正確答案存在，所以能衡量這件事，但現實不一定是這樣。*這算模型的錯誤*，但我們把它排除在整體錯誤率之外。
+3. ❌ **答錯 (Wrong)**：模型回答了錯誤的答案。**這是模型的錯誤。**
 
-When we know that a correct answer does not exist in the context, we can measure the model's performance, there are 2 possible outcomes:
+當我們知道 context 裡沒有正確答案時，也能衡量模型表現，有 2 種可能的結果：
 
-4. ❌ **Hallucination**: The model responded with an answer, when "I don't know" was expected. **This is a model ERROR.** 
-5. ✅ **I don't know**: The model responded with "I don't know" (IDK) and the answer was not present in the context. **This is a model WIN.**
+4. ❌ **幻覺 (Hallucination)**：應該回答「I don't know」，模型卻給了答案。**這是模型的錯誤。**
+5. ✅ **I don't know**：答案不在 context 裡，模型回答了「I don't know」(IDK)。**這是模型的勝利。**
 
 ```python
 import pandas as pd
@@ -554,7 +564,7 @@ evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer"], sce
 
     ![](ft_retrieval_augmented_generation_qdrant_files/out_33_0.png)
 
-Notice that the fine-tuned model skips questions more often -- and makes fewer mistakes. This is because the fine-tuned model is more conservative and skips questions when it's not sure.
+注意微調後的模型更常略過問題，也更少犯錯。這是因為微調後的模型比較保守，沒把握時就會略過。
 
 ```python
 evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer"], scenario="idk_expected", nice_names=["Baseline", "Fine-Tuned"])
@@ -564,44 +574,44 @@ evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer"], sce
 
     ![](ft_retrieval_augmented_generation_qdrant_files/out_35_0.png)
 
-Notice that the fine-tuned model has learnt to say "I don't know" a lot better than the prompt. Or, the model has gotten good at skipping questions.
+注意微調後的模型學會說「I don't know」的能力比光靠 prompt 好很多。也可以說模型變得很會略過問題。
 
-### Observations
+### 觀察
 
-1. The fine-tuned model is better at saying "I don't know"
-2. Hallucinations drop from 100% to 15% with fine-tuning
-3. Wrong answers drop from 17% to 6% with fine-tuning
+1. 微調後的模型更會說「I don't know」
+2. Fine-tuning 讓幻覺從 100% 降到 15%
+3. Fine-tuning 讓答錯從 17% 降到 6%
 
-**Correct answers also drop from 83% to 60% with fine-tuning** - this is because the fine-tuned model is **more conservative** and says "I don't know" more often. This is a good thing because it's better to say "I don't know" than to give a wrong answer.
+**Fine-tuning 後答對也從 83% 降到 60%**，這是因為微調後的模型**更保守**，更常說「I don't know」。這是好事，因為說「I don't know」比給錯答案好。
 
-That said, we want to improve the correctness of the model, even if that increases the hallucinations. We're looking for a model that is both correct and conservative, striking a balance between the two. We'll use Qdrant and Few-Shot Learning to achieve this.
+話雖如此，我們還是想提高模型的正確性，就算這樣會增加幻覺。我們要找的是既正確又保守的模型，在兩者之間取得平衡。接下來會用 Qdrant 和 Few-Shot Learning 來達成。
 
-**💪 You're 2/3rds of the way there! Keep reading!**
+**💪 你已經完成三分之二了！繼續讀下去！**
 
-# Section B: Few Shot Learning
+# Section B：Few Shot Learning
 
-We'll select a few examples from the dataset, including cases where the answer is not present in the context. We'll then use these examples to create a prompt that we can use to fine-tune the model. We'll then measure the performance of the fine-tuned model.
+我們會從資料集挑幾個範例，包含 context 裡沒有答案的情況，用這些範例組成一個 prompt 來 fine-tune 模型，然後衡量微調後模型的表現。
 
-**What is next?**
+**接下來是什麼？**
 
-6. Fine-Tuning OpenAI Model with Qdrant
-    6.1 Embed the Fine-Tuning Data
-    6.2 Embedding the Questions
-7. Using Qdrant to Improve RAG Prompt
-8. Evaluation
+6. 用 Qdrant 對 OpenAI 模型做 Fine-Tuning
+    6.1 嵌入 Fine-Tuning 資料
+    6.2 嵌入問題
+7. 用 Qdrant 改善 RAG prompt
+8. 評估
 
 
-## 6. Fine-Tuning OpenAI Model with Qdrant
+## 6. 用 Qdrant 對 OpenAI 模型做 Fine-Tuning
 
-So far, we've been using the OpenAI model to answer questions without using examples of the answer. The previous step made it work better on in-context examples, while this one helps it generalize to unseen data, and attempt to learn when to say "I don't know" and when to give an answer.
+到目前為止，我們都是在不提供答案範例的情況下，用 OpenAI 模型回答問題。前一步讓它在 in-context 範例上表現更好，這一步則幫它泛化到沒看過的資料，並試著學會什麼時候該說「I don't know」、什麼時候該給答案。
 
-This is where few-shot learning comes in!
+這就是 few-shot learning 派上用場的地方！
 
-Few-shot learning is a type of transfer learning that allows us to answer questions where the answer is not present in the context. We can do this by providing a few examples of the answer we're looking for, and the model will learn to answer questions where the answer is not present in the context.
+Few-shot learning 是一種 transfer learning，讓我們能回答 context 裡沒有答案的問題。做法是給幾個我們要的答案範例，模型就會學會回答 context 裡沒有答案的問題。
 
-### 5.1 Embed the Training Data
+### 5.1 嵌入訓練資料
 
-Embeddings are a way to represent sentences as an array of floats. We'll use the embeddings to find the most similar questions to the ones we're looking for.
+Embedding 是把句子表示成一組浮點數的方式。我們會用 embedding 找出跟目標問題最相似的問題。
 
 ```python
 import os
@@ -611,7 +621,7 @@ from qdrant_client.http.models import PointStruct
 from qdrant_client.http.models import Distance, VectorParams
 ```
 
-Now that we've the Qdrant imports in place, 
+現在 Qdrant 的 import 都備好了，
 
 ```python
 qdrant_client = QdrantClient(
@@ -639,21 +649,20 @@ tqdm.pandas()
 embedding_model = DefaultEmbedding()
 ```
 
-### 5.2 Embedding the Questions
+### 5.2 嵌入問題
 
-Next, you'll embed the entire training set questions. You'll use the question to question similarity to find the most similar questions to the question we're looking for. This is a workflow which is used in RAG to leverage the OpenAI model ability of incontext learning with more examples. This is what we call Few Shot Learning here.
+接著你要把整個訓練集的問題做 embedding。你會用問題對問題的相似度，找出跟目標問題最相似的問題。這是 RAG 裡用來發揮 OpenAI 模型 in-context learning 能力、並提供更多範例的流程，我們在這裡稱為 Few Shot Learning。
 
-**❗️⏰ Important Note: This step can take up to 3 hours to complete. Please be patient. If you see Out of Memory errors or Kernel Crashes, please reduce the batch size to 32, restart the kernel and run the notebook again. This code needs to be run only ONCE.**
+**❗️⏰ 重要提醒：這一步最久可能要 3 小時，請耐心等候。如果看到 Out of Memory 錯誤或 Kernel 當掉，請把 batch size 降到 32，重啟 kernel 再重跑 notebook。這段程式碼只需要執行一次。**
 
-## Function Breakdown for `generate_points_from_dataframe`
+## `generate_points_from_dataframe` 的函式拆解
+1. **初始化**：`batch_size = 512` 和 `total_batches` 決定一次處理多少問題，目的是避免記憶體問題。如果你的機器扛得住更多，可以調高 batch size。如果 kernel 當掉，把它降到 32 再試一次。
+2. **進度條**：`tqdm` 給你一個漂亮的進度條，免得你等到睡著。
+3. **Batch 迴圈**：for 迴圈逐個 batch 跑。`start_idx` 和 `end_idx` 定義要處理的 DataFrame 切片。
+4. **產生 Embedding**：`batch_embeddings = embedding_model.embed(batch, batch_size=batch_size)` 是關鍵所在，你的問題在這裡被轉成 embedding。
+5. **產生 PointStruct**：用 `.progress_apply` 把每一列轉成 `PointStruct` 物件，內含 ID、embedding 向量和其他 metadata。
 
-1. **Initialization**: `batch_size = 512` and `total_batches` set the stage for how many questions will be processed in one go. This is to prevent memory issues. If your machine can handle more, feel free to increase the batch size. If your kernel crashes, reduce the batch size to 32 and try again.
-2. **Progress Bar**: `tqdm` gives you a nice progress bar so you don't fall asleep.
-3. **Batch Loop**: The for-loop iterates through batches. `start_idx` and `end_idx` define the slice of the DataFrame to process.
-4. **Generate Embeddings**: `batch_embeddings = embedding_model.embed(batch, batch_size=batch_size)` - This is where the magic happens. Your questions get turned into embeddings.
-5. **PointStruct Generation**: Using `.progress_apply`, it turns each row into a `PointStruct` object. This includes an ID, the embedding vector, and other metadata.
-
-Returns the list of `PointStruct` objects, which can be used to create a collection in Qdrant.
+回傳 `PointStruct` 物件的 list，可以用來在 Qdrant 建立 collection。
 
 ```python
 def generate_points_from_dataframe(df: pd.DataFrame) -> List[PointStruct]:
@@ -705,9 +714,9 @@ def generate_points_from_dataframe(df: pd.DataFrame) -> List[PointStruct]:
 points = generate_points_from_dataframe(train_df)
 ```
 
-#### Upload the Embeddings to Qdrant
+#### 把 Embedding 上傳到 Qdrant
 
-Note that configuring Qdrant is outside the scope of this notebook. Please refer to the [Qdrant](https://qdrant.tech) for more information. We used a timeout of 600 seconds for the upload, and grpc compression to speed up the upload.
+注意設定 Qdrant 不在這份 notebook 的範圍內，請參考 [Qdrant](https://qdrant.tech) 了解更多。上傳時我們設了 600 秒的 timeout，並用 grpc compression 加快上傳。
 
 ```python
 operation_info = qdrant_client.upsert(
@@ -716,17 +725,17 @@ operation_info = qdrant_client.upsert(
 print(operation_info)
 ```
 
-## 6. Using Qdrant to Improve RAG Prompt
+## 6. 用 Qdrant 改善 RAG Prompt
 
-Now that we've uploaded the embeddings to Qdrant, we can use Qdrant to find the most similar questions to the question we're looking for. We'll use the top 5 most similar questions to create a prompt that we can use to fine-tune the model. We'll then measure the performance of the fine-tuned model on the same validation set, but with few shot prompting!
+embedding 上傳到 Qdrant 後，就能用 Qdrant 找出跟目標問題最相似的問題。我們會取前 5 個最相似的問題，組成一個 prompt 拿來 fine-tune 模型。然後在同一個 validation set 上衡量微調後模型的表現，只是這次用 few shot prompting！
 
-Our main function `get_few_shot_prompt` serves as the workhorse for generating prompts for few-shot learning. It does this by retrieving similar questions from Qdrant - a vector search engine, using an embeddings model. Here is the high-level workflow:
+主要函式 `get_few_shot_prompt` 是產生 few-shot learning prompt 的主力。它用 embedding model 從 Qdrant（一個 vector search engine）撈出相似的問題。高階流程如下：
 
-1. Retrieve similar questions from Qdrant where the **answer is present** in the context
-2. Retrieve similar questions from Qdrant where the **answer is IMPOSSIBLE** i.e. the expected answer is "I don't know" to find in the context
-3. Create a prompt using the retrieved questions
-4. Fine-tune the model using the prompt
-5. Evaluate the fine-tuned model on the validation set with the same prompting technique
+1. 從 Qdrant 撈出相似的問題，條件是 context 裡**有答案**
+2. 從 Qdrant 撈出相似的問題，條件是答案**不可能**找到，也就是期望答案是「I don't know」
+3. 用撈出來的問題組成 prompt
+4. 用這個 prompt fine-tune 模型
+5. 用同樣的 prompting 技巧，在 validation set 上評估微調後的模型
 
 ```python
 def get_few_shot_prompt(row):
@@ -816,9 +825,9 @@ def get_few_shot_prompt(row):
 train_sample["few_shot_prompt"] = train_sample.progress_apply(get_few_shot_prompt, axis=1)
 ```
 
-## 7. Fine-Tuning OpenAI Model with Qdrant
+## 7. 用 Qdrant 對 OpenAI 模型做 Fine-Tuning
 
-### 7.1 Upload the Fine-Tuning Data to OpenAI
+### 7.1 把 Fine-Tuning 資料上傳到 OpenAI
 
 ```python
 # Prepare the OpenAI File format i.e. JSONL from train_sample
@@ -834,9 +843,9 @@ with open("local_cache/100_train_few_shot.jsonl", "w") as f:
     f.write(dataframe_to_jsonl(train_sample))
 ```
 
-### 7.2 Fine-Tune the Model
+### 7.2 Fine-Tune 模型
 
-⏰ **Time to run: ~15-30 minutes**
+⏰ **執行時間：約 15-30 分鐘**
 
 ```python
 fine_tuner = OpenAIFineTuner(
@@ -889,16 +898,16 @@ print("Correct Answer: Rajasthan\nModel Answer:")
 print(completion.choices[0].message)
 ```
 
-⏰ **Time to run: 5-15 min**
+⏰ **執行時間：5-15 分鐘**
 
 ```python
 df["ft_generated_answer_few_shot"] = df.progress_apply(answer_question, model=model_id, prompt_func=get_few_shot_prompt, axis=1)
 df.to_json("local_cache/100_val_ft_few_shot.json", orient="records", lines=True)
 ```
 
-## 8. Evaluation
+## 8. 評估
 
-But how well does the model perform? Let's compare the results from the 3 different models we've looked at so far:
+那模型表現到底如何？我們來比較目前看過的 3 個不同模型的結果：
 
 ```python
 evaluator = Evaluator(df)
@@ -909,15 +918,15 @@ evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer", "ft_
 
     ![](ft_retrieval_augmented_generation_qdrant_files/out_58_0.png)
 
-This is quite amazing -- we're able to get the best of both worlds! We're able to get the model to be both correct and conservative: 
+這相當驚人，我們兩邊的好處都拿到了！我們讓模型既正確又保守：
 
-1. The model is correct 83% of the time -- this is the same as the base model
-2. The model gives the wrong answer only 8% of the time -- down from 17% with the base model
+1. 模型答對 83% 的時間，跟 base model 一樣
+2. 模型只有 8% 的時間答錯，比 base model 的 17% 低
 
-Next, let's look at the hallucinations. We want to reduce the hallucinations, but not at the cost of correctness. We want to strike a balance between the two. We've struck a good balance here:
+接著看幻覺。我們想減少幻覺，但不能犧牲正確性，要在兩者之間取得平衡。這裡的平衡不錯：
 
-1. The model hallucinates 53% of the time -- down from 100% with the base model
-2. The model says "I don't know" 47% of the time -- up from NEVER with the base model
+1. 模型 53% 的時間會幻覺，比 base model 的 100% 低
+2. 模型 47% 的時間說「I don't know」，base model 則是從來不說
 
 ```python
 evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer", "ft_generated_answer_few_shot"], scenario="idk_expected", nice_names=["Baseline", "Fine-Tuned", "Fine-Tuned with Few-Shot"])
@@ -927,22 +936,21 @@ evaluator.plot_model_comparison(["generated_answer", "ft_generated_answer", "ft_
 
     ![](ft_retrieval_augmented_generation_qdrant_files/out_61_0.png)
 
-Few Shot Fine-Tuning with Qdrant is a great way to control and steer the performance of your RAG system. Here, we made the model less conservative compared to zero shot and more confident by using Qdrant to find similar questions. 
+用 Qdrant 做 Few Shot Fine-Tuning，是控制和引導 RAG 系統表現的好方法。這裡我們用 Qdrant 找出相似的問題，讓模型比 zero shot 沒那麼保守，也更有自信。
 
-You can also use Qdrant to make the model more conservative. We did this by giving examples of questions where the answer is not present in the context.  
-This is biasing the model to say "I don't know" more often. 
+你也可以用 Qdrant 讓模型更保守。做法是提供 context 裡沒有答案的問題範例，讓模型偏向更常說「I don't know」。
 
-Similarly, one can also use Qdrant to make the model more confident by giving examples of questions where the answer is present in the context. This biases the model to give an answer more often. The trade-off is that the model will also hallucinate more often.
+同樣地，也可以用 Qdrant 讓模型更有自信，做法是提供 context 裡有答案的問題範例，讓模型偏向更常給出答案。代價是模型也會更常幻覺。
 
-You can make this trade off by adjusting the training data: distribution of questions and examples, as well as the kind and number of examples you retrieve from Qdrant.
+你可以透過調整訓練資料來做這個取捨：問題和範例的分布，以及從 Qdrant 撈出的範例種類和數量。
 
-## 9. Conclusion
+## 9. 結論
 
-In this notebook, we've demonstrated how to fine-tune OpenAI models for specific use-cases. We've also demonstrated how to use Qdrant and Few-Shot Learning to improve the performance of the model.
+這份 notebook 示範了怎麼針對特定用途 fine-tune OpenAI 模型，也示範了怎麼用 Qdrant 和 Few-Shot Learning 提升模型表現。
 
-### Aggregate Results
+### 彙總結果
 
-So far, we've looked at the results for each scenario separately, i.e. each scenario summed to 100. Let's look at the results as an aggregate to get a broader sense of how the model is performing:
+到目前為止，我們是分開看每個情境的結果，也就是每個情境加起來是 100。現在把結果彙總起來，看模型整體表現：
 
 | Category | Base | Fine-Tuned | Fine-Tuned with Qdrant |
 | --- | --- | --- | --- |
@@ -952,23 +960,35 @@ So far, we've looked at the results for each scenario separately, i.e. each scen
 | Hallucination | 47% | 7% | 25% |
 | I don't know | 0% | 40% | 22% |
 
-### Observations
+### 觀察
 
-#### Compared to base model
-1. The few shot fine-tuned with Qdrant model is as good as the base model at answering questions where the answer is present in the context. 
-2. The few shot fine-tuned with Qdrant model is better at saying "I don't know" when the answer is not present in the context.
-3. The few shot fine-tuned with Qdrant model is better at reducing hallucinations.
-
-
-#### Compared to fine-tuned model
-1. The few shot fine-tuned with Qdrant model gets more correct answers than the fine-tuned model: **83% of the questions are answered correctly vs 60%** for the fine-tuned model
-2. The few shot fine-tuned with Qdrant model is better at deciding when to say "I don't know" when the answer is not present in the context. **34% skip rate for the plain fine-tuning mode, vs 9% for the few shot fine-tuned with Qdrant model**
+#### 跟 base model 比
+1. 用 Qdrant 做 few shot fine-tuning 的模型，在 context 有答案時回答問題的能力跟 base model 一樣好。
+2. 用 Qdrant 做 few shot fine-tuning 的模型，在答案不在 context 時更會說「I don't know」。
+3. 用 Qdrant 做 few shot fine-tuning 的模型更能減少幻覺。
 
 
-Now, you should be able to:
+#### 跟 fine-tuned model 比
+1. 用 Qdrant 做 few shot fine-tuning 的模型比一般 fine-tuned model 答對更多：**83% 的問題答對，對比 fine-tuned model 的 60%**
+2. 用 Qdrant 做 few shot fine-tuning 的模型，更能判斷答案不在 context 時該不該說「I don't know」。**一般 fine-tuning 的略過率是 34%，用 Qdrant 的 few shot fine-tuned 模型是 9%**
 
-1. Notice the trade-offs between number of correct answers and hallucinations -- and how training dataset choice influences that!
-2. Fine-tune OpenAI models for specific use-cases and use Qdrant to improve the performance of your RAG model
-3. Get started on how to evaluate the performance of your RAG model
 
-<!-- tutor:summary -->
+現在你應該能夠：
+
+1. 注意到答對數量和幻覺之間的取捨，以及訓練資料的選擇怎麼影響這個取捨！
+2. 針對特定用途 fine-tune OpenAI 模型，並用 Qdrant 提升 RAG 模型的表現
+3. 開始評估 RAG 模型的表現
+
+## 重點整理
+
+- RAG 的三個部分各有對應：Qdrant 負責 Retrieval，few-shot 範例負責 Augmented，LLM 負責 Generation。
+- 評估 RAG 不能只看答對率，要把略過、答錯、幻覺、說不知道分開看。
+- 一般 fine-tuning 讓模型變保守，幻覺大降，但答對率也跟著掉。
+- 用 Qdrant 撈相似問題當 few-shot 範例，可以同時拿回答對率並壓低幻覺。
+- 保守與自信的取捨可以靠訓練資料調：給「沒答案」的範例偏保守，給「有答案」的範例偏自信。
+
+## 練習
+
+1. 把 `batch_size` 從 512 改成 32，觀察 embedding 的進度條速度和記憶體用量有什麼變化。
+2. 在 `get_few_shot_prompt` 裡把撈出相似問題的數量從 5 改成 3 或 8，重跑評估，看答對率和幻覺率怎麼動。
+3. 調整 `get_few_shot_prompt` 裡「答案存在」和「答案不可能」兩種範例的撈取比例（例如全部撈有答案的），重新 fine-tune 並評估，驗證模型是否變得更有自信但更常幻覺。

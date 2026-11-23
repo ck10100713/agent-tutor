@@ -1,74 +1,86 @@
 ---
-translated: false
+translated: true
 source: examples/partners/agentic_governance_guide/agentic_governance_cookbook.ipynb
 ---
-
-# Building Governed AI Agents - A Practical Guide to Agentic Scaffolding
+# 打造有治理機制的 AI Agent：Agentic Scaffolding 實戰指南
 
 > 原文：[examples/partners/agentic_governance_guide/agentic_governance_cookbook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/agentic_governance_guide/agentic_governance_cookbook.ipynb)
 
-A practical guide to building governed AI agents with OpenAI Agents SDK and Guardrails.
+用 OpenAI Agents SDK 和 Guardrails 打造有治理機制的 AI agent 的實戰指南。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇用 Agents SDK 做一個私募股權（PE）公司的 AI 助理：多個專業 agent，加一個用 handoff 分流的 triage agent。再一層層加上 tracing、agent 層級的 guardrail，和用 OpenAI Guardrails 做的集中式政策，最後把政策打包成可以 `pip install` 的套件，並用 eval 驗證防護有沒有用。重點是讓治理變成基礎設施，而不是上線前才補的檢查。
 
-**A cookbook for enabling safe, scalable AI agent adoption in your organization**
+## 學完你會
 
----
+- 用 `@function_tool`、specialist agent 和 triage agent 的 handoff 組出多 agent 系統。
+- 用 `trace()` 做 tracing，並在 Zero Data Retention 的環境下關掉 tracing 或用自訂 trace processor 把資料導到內部系統。
+- 用 input guardrail 和 `GuardrailsOpenAI` 加上集中式政策，並把政策包成套件給各團隊安裝。
 
-## The Shift in Mindset
+## 開跑前
 
-Every enterprise faces the same tension: the pressure to adopt AI is immense, but so is the fear of getting it wrong. Teams want to build, legal wants to review, security wants to audit, and promising pilots stall because no one can answer: *"Is this safe to deploy?"*
+- Python 3.9 以上。
+- OpenAI API key。
+- GitHub 帳號（用來放政策 repo）。
 
-Organizations have moved past *"Should we experiment with AI?"* and now ask *"How do we get this into production safely?"* The prototypes worked, the demos impressed the board, and now there's real pressure to deliver AI that touches real customers and handles real data. But production demands answers that pilots never required: What happens when it fails? Who's accountable? How do we prove it's compliant?
-
-The organizations winning at AI have discovered something counterintuitive: **governance drives delivery.** When guardrails are clear and automated, teams build with confidence. When policies travel with the code, security reviews become approvals instead of interrogations. When compliance is infrastructure rather than inspection, pilots graduate to production in weeks, not quarters.
-
-The goal is to build the scaffolding that lets you move fast *because* you're safe.
-
-### What This Cookbook Delivers
-
-This guide shows you how to make governance part of core infrastructure from day one, instead of a launch-time afterthought.
-
-You'll learn to:
-
-- **Define policies as code** that version, travel, and deploy alongside your applications
-- **Apply guardrails automatically** to every AI call - no manual review bottlenecks
-- **Evaluate your defenses** with precision and recall metrics, so you know they actually work
-- **Package governance for distribution** so any team can `pip install` instant compliance
-- **Build agentic systems** with proper handoffs, observability, and oversight from day one
-
-Each section pairs a concrete governance objective with a practical implementation pattern, including example configurations, code snippets, and integration points you can adapt to your own environment.
-
-By the end, you'll have a working blueprint for governed AI that scales across your organization and turns governance from a friction point into a competitive advantage.
+**這是一份讓組織能安全、可擴展地採用 AI agent 的 cookbook**
 
 ---
 
-## What We'll Build
+## 心態的轉變
 
-We'll create a **Private Equity firm AI assistant** with:
+每家企業都面臨同樣的拉扯：導入 AI 的壓力很大，搞砸的恐懼也一樣大。團隊想開發，法務想審查，資安想稽核，很多有前景的 pilot 就卡住了，因為沒人能回答：*「這個可以安全上線嗎？」*
 
-1. **Multiple specialist agents** that handle different domains
-2. **A triage agent** that routes queries via handoffs
-3. **Built-in guardrails** that validate queries before processing
-4. **Tracing** for full observability of agent behavior
-5. **Centralized policy enforcement** via an installable package
-6. **Eval-driven** system design for reliability & scalability 
+組織已經不再問*「我們該不該試試 AI？」*，而是問*「怎麼把它安全地放進 production？」*。原型能跑、demo 讓董事會印象深刻，現在的壓力是交付會接觸真實客戶、處理真實資料的 AI。但 production 要回答的問題，是 pilot 從來不需要面對的：失敗時會怎樣？誰負責？怎麼證明合規？
 
-The architecture looks like this:
+在 AI 上做得好的組織發現了一件反直覺的事：**治理反而加速交付。** 當 guardrail 清楚又自動化，團隊會有信心去做。當政策跟著程式碼走，資安審查就變成核准，而不是盤問。當合規是基礎設施，而不是事後檢查，pilot 幾週就能上 production，不用等好幾季。
+
+目標是建好鷹架，讓你能因為安全而跑得快。
+
+### 這份 Cookbook 帶來什麼
+
+這份指南教你從第一天就把治理做成核心基礎設施的一部分，而不是上線前才想到的補丁。
+
+你會學到：
+
+- **用程式碼定義政策**，讓政策能跟應用程式一起版本管理、搬移和部署
+- **自動對每一次 AI 呼叫套用 guardrail**，不會有人工審查的瓶頸
+- **用 precision 和 recall 指標評估你的防護**，確認它們真的有效
+- **把治理打包成可散布的套件**，任何團隊都能 `pip install` 就得到合規
+- **從第一天就建好 agentic 系統**，具備適當的 handoff、observability 和監督
+
+每一節都把一個具體的治理目標配上一個實作模式，包括範例設定、程式碼片段和整合點，你可以依自己的環境調整。
+
+讀完之後，你會有一份可運作的藍圖，讓有治理的 AI 能在組織內擴展，把治理從阻力變成競爭優勢。
+
+---
+
+## 我們要做什麼
+
+我們要做一個**私募股權公司的 AI 助理**，包含：
+
+1. **多個專業 agent**，各處理不同領域
+2. **一個 triage agent**，透過 handoff 分流查詢
+3. **內建 guardrail**，在處理前先驗證查詢
+4. **Tracing**，完整觀察 agent 的行為
+5. **集中式政策執行**，透過可安裝的套件
+6. **以 eval 驅動**的系統設計，兼顧可靠度和擴展性 
+
+架構如下：
 
 ![PE Agent Architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/01_alti_agent_governance.png)
 
-The pipeline treats red team (adversarial) inputs the same way as user queries: they flow through pre-flight, input guardrails, orchestration, and output guardrails. GuardrailEval and the feedback loop use results from both normal and adversarial runs to tune policy and harden defenses.
+這條 pipeline 對待 red team（對抗性）輸入的方式跟一般使用者查詢一樣：都會經過 pre-flight、input guardrail、orchestration 和 output guardrail。GuardrailEval 和回饋迴圈會用一般和對抗性執行的結果，來調整政策、強化防禦。
 
-## Prerequisites
+## 先決條件
 
-Before we begin, you'll need:
+開始之前你需要：
 - Python 3.9+
-- An OpenAI API key
-- A GitHub account (for the policy repo)
+- OpenAI API key
+- GitHub 帳號（放政策 repo 用）
 
-Let's set up our environment.
+先把環境設定好。
 
 ```python
 # Create and activate a virtual environment (run once)
@@ -177,23 +189,23 @@ print("API key configured.")
 
 ---
 
-## Building the System
+## 建立系統
 
-In this section we'll build a PE firm AI assistant from scratch: define tools, create specialist agents, and wire up handoffs between them.
+這一節我們從零開始打造 PE 公司的 AI 助理：定義 tool、建立 specialist agent，再把它們之間的 handoff 串起來。
 
-### Understanding Agents and Tools
+### 了解 Agent 和 Tool
 
-An **agent** is an AI system that can:
-- Receive instructions that define its role and behavior
-- Use **tools** to take actions (search databases, create records, call APIs)
-- **Hand off** to other agents when a task is outside its expertise
-- Maintain context across a conversation
+**Agent** 是一個 AI 系統，它可以：
+- 接收定義角色和行為的 instructions
+- 用 **tool** 採取行動（搜尋資料庫、建立紀錄、呼叫 API）
+- 當任務超出自己的專長時，**handoff** 給其他 agent
+- 在對話中維持 context
 
-Think of agents like employees with specific job descriptions. A receptionist (triage agent) knows who to route calls to, while specialists (domain agents) have deep expertise in specific areas.
+把 agent 想成有明確職務說明的員工。接待人員（triage agent）知道電話該轉給誰，專家（領域 agent）則在特定領域有深厚專業。
 
-### Why Use Tools?
+### 為什麼要用 Tool？
 
-Tools extend what agents can do beyond just generating text:
+Tool 讓 agent 的能力超越單純產生文字：
 
 | Without Tools | With Tools |
 |--------------|------------|
@@ -201,11 +213,11 @@ Tools extend what agents can do beyond just generating text:
 | "You should check your portfolio metrics" | "Acme Corp: Revenue $50M (+15% YoY), EBITDA $8M" |
 | "Consider creating a deal memo" | "Deal memo created for TechCorp in your system" |
 
-**Important**: OpenAI doesn't execute tools for you - it tells your application which tools to call and with what parameters. Your code executes the actual logic.
+**重要**：OpenAI 不會幫你執行 tool，它只會告訴你的應用程式要呼叫哪些 tool、帶什麼參數。實際的邏輯由你的程式碼執行。
 
-### Step 1: Define Tools
+### 步驟 1：定義 Tool
 
-Tools are Python functions decorated with `@function_tool`. The docstring becomes the tool's description that the agent sees.
+Tool 是用 `@function_tool` 裝飾的 Python 函式。docstring 會變成 agent 看到的 tool 描述。
 
 ```python
 from agents import function_tool
@@ -257,17 +269,17 @@ print(" - create_deal_memo: Document deal findings")
 
 ---
 
-### Multi-Agent System with Handoffs
+### 用 Handoff 做多 Agent 系統
 
-Real-world tasks rarely fit into a single agent's expertise. Consider a PE firm:
+真實的任務很少剛好落在單一 agent 的專長裡。以 PE 公司為例：
 
-- **Deal questions** need investment criteria knowledge
-- **Portfolio questions** need operational metrics expertise
-- **LP questions** need compliance awareness and fund knowledge
+- **Deal 問題**需要投資標準的知識
+- **Portfolio 問題**需要營運指標的專業
+- **LP 問題**需要合規意識和基金知識
 
-You could build one massive agent with all this knowledge, but instructions become unwieldy, the agent struggles to stay "in character", and you can't easily update one domain without affecting others.
+你可以做一個包山包海的大 agent，但 instructions 會變得難以掌控，agent 很難維持「角色」，而且你也沒辦法只更新一個領域而不影響其他領域。
 
-**Handoffs** solve this by letting agents delegate to specialists:
+**Handoff** 讓 agent 可以把工作委派給專家，解決這個問題：
 
 ```
 User: "What's our IRR on Fund II?"
@@ -279,14 +291,14 @@ Triage Agent: "This is an LP/investor question"
 IR Agent: "Fund II IRR is 22.5% net as of Q3..."
 ```
 
-The user sees one seamless conversation, but behind the scenes, the right expert is answering.
+使用者看到的是一段順暢的對話，但背後是由對的專家在回答。
 
-### Step 2: Create Specialist Agents
+### 步驟 2：建立 Specialist Agent
 
-Each specialist has:
-- **name**: Identifier for the agent
-- **handoff_description**: Tells the triage agent WHEN to route here (critical!)
-- **instructions**: Defines HOW the agent should behave
+每個專家有：
+- **name**：agent 的識別名稱
+- **handoff_description**：告訴 triage agent 什麼時候該轉給它（很關鍵！）
+- **instructions**：定義 agent 該怎麼表現
 
 ```python
 from agents import Agent
@@ -354,14 +366,14 @@ for agent in [deal_screening_agent, portfolio_agent, investor_relations_agent]:
         Routes when: Handles LP inquiries, fund performance questions, and capital calls. Route here ...
     ```
 
-### Step 3: Create the Triage Agent
+### 步驟 3：建立 Triage Agent
 
-The triage agent is the "front door". It:
-1. Receives all incoming queries
-2. Decides which specialist should handle it (using `handoff_description`)
-3. Hands off the conversation seamlessly
+Triage agent 是「前門」。它會：
+1. 接收所有進來的查詢
+2. 決定該由哪個專家處理（依據 `handoff_description`）
+3. 順暢地 handoff 對話
 
-The `handoffs` parameter tells the agent which specialists it can delegate to.
+`handoffs` 參數告訴 agent 可以委派給哪些專家。
 
 ```python
 pe_concierge = Agent(
@@ -476,13 +488,13 @@ print(f"Response: {result.final_output[:500]}...")
 
 ---
 
-## Basic Observability & Guardrails
+## 基本 Observability 與 Guardrail
 
-With the agent system built, we now add observability (tracing) and basic guardrails to make it production-ready.
+agent 系統建好後，我們要加上 observability（tracing）和基本 guardrail，讓它達到 production 水準。
 
-### Tracing - Observability for Agents
+### Tracing：Agent 的 Observability
 
-With multi-agent systems, a single user query can trigger multiple LLM calls, tool executions, handoffs between agents, and guardrail checks. **Tracing** captures all of this in a structured way, giving you:
+在多 agent 系統裡，一個使用者查詢可能觸發多次 LLM 呼叫、tool 執行、agent 之間的 handoff，以及 guardrail 檢查。**Tracing** 會用結構化的方式記錄這一切，帶來：
 
 | Benefit | Description |
 |---------|-------------|
@@ -491,9 +503,9 @@ With multi-agent systems, a single user query can trigger multiple LLM calls, to
 | **Auditing** | Review what agents did and why |
 | **Optimization** | Find opportunities to improve prompts or reduce calls |
 
-### Using the `trace()` Context Manager
+### 使用 `trace()` Context Manager
 
-The `trace()` function wraps operations under a named trace, linking all spans together. After running, you can view the complete trace - including every LLM call, tool execution, and handoff - in the **OpenAI Traces Dashboard**.
+`trace()` 函式會把多個操作包在同一個具名 trace 底下，把所有 span 串在一起。執行後，你可以在 **OpenAI Traces Dashboard** 看到完整的 trace，包含每次 LLM 呼叫、tool 執行和 handoff。
 
 ```python
 from agents import trace
@@ -527,9 +539,9 @@ print("\n✓ Trace captured! View it at: https://platform.openai.com/traces")
     ✓ Trace captured! View it at: https://platform.openai.com/traces
     ```
 
-### Trace Naming Best Practices
+### Trace 命名的最佳實務
 
-Good trace names help you find and analyze specific workflows:
+好的 trace 名稱能幫你找到並分析特定的 workflow：
 
 ```python
 # ❌ Bad: Generic names
@@ -547,13 +559,13 @@ with trace(f"Portfolio Review - {company} - Q{quarter}"):
     ...
 ```
 
-### Tracing for Compliant Industries (Zero Data Retention)
+### 合規產業的 Tracing（Zero Data Retention）
 
-Some organizations have **Zero Data Retention (ZDR)** agreements with OpenAI, meaning:
-- Data is not stored or retained after processing
-- The built-in tracing dashboard **cannot be used** (it stores traces in OpenAI's systems)
+有些組織跟 OpenAI 簽了 **Zero Data Retention (ZDR)** 協議，意思是：
+- 資料處理完後不會被儲存或保留
+- 內建的 tracing dashboard **不能使用**（它把 trace 存在 OpenAI 的系統裡）
 
-This is common in financial services, healthcare (HIPAA), government, and organizations with strict data residency rules.
+這在金融服務、醫療（HIPAA）、政府，以及有嚴格資料落地規定的組織很常見。
 
 | Org Type | Built-in Dashboard | What to Do |
 |----------|-------------------|------------|
@@ -561,9 +573,9 @@ This is common in financial services, healthcare (HIPAA), government, and organi
 | **ZDR (strict)** | ❌ Not allowed | Disable tracing entirely |
 | **ZDR (needs observability)** | ❌ Not allowed | Use trace processors to stream to your internal systems |
 
-### Option 1: Disable Tracing Entirely
+### 選項 1：完全關閉 Tracing
 
-For strict ZDR compliance, disable tracing globally or per-run.
+要嚴格符合 ZDR，可以全域或每次 run 單獨關閉 tracing。
 
 ```python
 # Option B: Disable per-run using RunConfig
@@ -593,14 +605,14 @@ print("\n✓ No trace data sent to OpenAI for this run.")
     ✓ No trace data sent to OpenAI for this run.
     ```
 
-### Option 2: Custom Trace Processors (Internal Observability)
+### 選項 2：自訂 Trace Processor（內部 Observability）
 
-If you need observability but can't use OpenAI's dashboard, you can **export traces to your own systems**.
+如果你需要 observability，但又不能用 OpenAI 的 dashboard，可以**把 trace 匯出到自己的系統**。
 
-This keeps traces:
-- Within your infrastructure
-- Under your data retention policies
-- Integrated with your existing monitoring stack
+這樣 trace 會：
+- 留在你的基礎設施內
+- 受你自己的資料保留政策管理
+- 跟你現有的監控體系整合
 
 ![ZDR Tracing Architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/02_alti_stack.png)
 
@@ -702,21 +714,21 @@ print("ZDR-compliant tracing pattern demonstrated.")
     ZDR-compliant tracing pattern demonstrated.
     ```
 
-### Best Practices for ZDR Tracing
+### ZDR Tracing 的最佳實務
 
-1. **Use trace processors** to maintain visibility while keeping data internal
-2. **Redact PII** in your processor before storing spans
-3. **Set retention policies** that match your compliance requirements
-4. **Audit access** to trace data in your internal systems
-5. **Document your approach** for compliance reviews
+1. **用 trace processor**，在資料留在內部的同時保有可見度
+2. 在 processor 裡**遮蔽 PII**，再儲存 span
+3. **設定保留政策**，符合你的合規要求
+4. **稽核存取**內部系統中的 trace 資料
+5. **記錄你的做法**，以備合規審查
 
 ---
 
-### Adding Built-in Guardrails
+### 加入內建 Guardrail
 
-The Agents SDK has built-in guardrails that run at the agent level. These are useful for agent-specific validation.
+Agents SDK 有內建的 guardrail，在 agent 層級執行，適合做 agent 專屬的驗證。
 
-Let's add a guardrail that ensures queries are relevant to PE operations.
+我們來加一個 guardrail，確保查詢跟 PE 業務相關。
 
 ```python
 # Re-enable tracing for the rest of the notebook
@@ -822,18 +834,18 @@ except InputGuardrailTripwireTriggered:
 
 ---
 
-## Centralizing Governance
+## 集中式治理
 
-Built-in guardrails are great, but they require configuration on each agent. For organization-wide governance, we want to:
+內建 guardrail 很好用，但每個 agent 都要各自設定。要做全組織的治理，我們想要：
 
-1. **Define policy once** in a central location
-2. **Apply automatically** to all OpenAI calls
-3. **Version control** the policy like code
-4. **Install via pip** in any project
+1. **在中央位置定義一次政策**
+2. **自動套用**到所有 OpenAI 呼叫
+3. 像程式碼一樣對政策做**版本控制**
+4. 在任何專案都能**用 pip 安裝**
 
-This is where the **OpenAI Guardrails** library comes in.
+這就是 **OpenAI Guardrails** 函式庫的用途。
 
-### Centralized Policy with OpenAI Guardrails
+### 用 OpenAI Guardrails 做集中式政策
 
 | Aspect | Built-in (Agents SDK) | Centralized (Guardrails Library) |
 |--------|----------------------|----------------------------------|
@@ -842,7 +854,7 @@ This is where the **OpenAI Guardrails** library comes in.
 | Best for | Domain-specific rules | Universal policies |
 | Example | "Is this a PE question?" | "Block prompt injection everywhere" |
 
-### Available Guardrails
+### 可用的 Guardrail
 
 ```python
 from guardrails import default_spec_registry
@@ -872,20 +884,20 @@ for name in sorted(default_spec_registry._guardrailspecs.keys()):
       • URL Filter
     ```
 
-### Creating a Policy Config
+### 建立政策設定
 
-The config has two stages:
-- **input**: Runs BEFORE the LLM call (block bad inputs)
-- **output**: Runs AFTER the LLM response (redact sensitive outputs)
+設定有兩個階段：
+- **input**：在 LLM 呼叫之前執行（擋掉不好的輸入）
+- **output**：在 LLM 回應之後執行（遮蔽敏感輸出）
 
-> **💡 Tip: Use the OpenAI Guardrails Wizard**
+> **💡 小技巧：使用 OpenAI Guardrails Wizard**
 >
-> Instead of writing the config JSON by hand, you can use the [OpenAI Guardrails Wizard](https://guardrails.openai.com/) to:
-> 1. **Select guardrails** from an interactive UI (PII detection, moderation, prompt injection, etc.)
-> 2. **Configure thresholds** and categories visually
-> 3. **Export the config JSON** and integration code directly
+> 你不用手寫設定 JSON，可以用 [OpenAI Guardrails Wizard](https://guardrails.openai.com/)：
+> 1. 在互動式 UI 裡**選擇 guardrail**（PII 偵測、moderation、prompt injection 等）
+> 2. 用視覺化方式**設定門檻**和類別
+> 3. 直接**匯出設定 JSON** 和整合程式碼
 >
-> This is the fastest way to generate a production-ready policy config. The wizard produces the same JSON format used below - you can paste it directly into your policy package.
+> 這是產生 production 等級政策設定最快的方法。Wizard 產出的 JSON 格式跟下面用的一樣，可以直接貼進你的政策套件。
 
 ```python
 # Define the policy as a Python dict
@@ -992,9 +1004,9 @@ print(f"  Output guardrails: {[g['name'] for g in PE_FIRM_POLICY['output']['guar
       Output guardrails: ['Contains PII']
     ```
 
-### Using GuardrailsOpenAI
+### 使用 GuardrailsOpenAI
 
-The `GuardrailsOpenAI` client wraps the standard OpenAI client and automatically applies guardrails.
+`GuardrailsOpenAI` client 會包住標準的 OpenAI client，並自動套用 guardrail。
 
 ```python
 from guardrails import GuardrailsOpenAI, GuardrailTripwireTriggered
@@ -1066,25 +1078,25 @@ except GuardrailTripwireTriggered:
 
 ---
 
-### Creating a Reusable Policy Package
+### 建立可重用的政策套件
 
-Package your policy for organization-wide use. Any team can:
+把你的政策打包成全組織可用的套件。任何團隊都可以：
 ```bash
 pip install git+https://github.com/yourorg/policies.git
 ```
 
-And immediately have governance:
+然後立刻就有治理：
 ```python
 from your_policies import GUARDRAILS_CONFIG
 client = GuardrailsOpenAI(config=GUARDRAILS_CONFIG)
 # All calls are now governed!
 ```
 
-Key benefits: consistency across projects, easy updates via `pip upgrade`, full audit trail via Git history, and a single compliance reference point.
+主要好處：跨專案一致、用 `pip upgrade` 輕鬆更新、有 Git 歷史可完整稽核，以及單一的合規參考點。
 
-### Step-by-Step: Creating the Policy Repo
+### 逐步建立政策 Repo
 
-#### 1. Create a new GitHub repository
+#### 1. 建立新的 GitHub repository
 
 ```bash
 mkdir pe-policies
@@ -1092,7 +1104,7 @@ cd pe-policies
 git init
 ```
 
-#### 2. Create the package structure
+#### 2. 建立套件結構
 
 ```
 pe-policies/
@@ -1104,7 +1116,7 @@ pe-policies/
 └── POLICY.md            # Human-readable policy document
 ```
 
-#### 3. Create `pe_policies/__init__.py`
+#### 3. 建立 `pe_policies/__init__.py`
 
 ```python
 import json
@@ -1118,9 +1130,8 @@ with open(_config_path) as f:
 __all__ = ["GUARDRAILS_CONFIG"]
 ```
 
-#### 4. Create `pe_policies/config.json`
-
-Use the same policy structure defined in `PE_FIRM_POLICY` above. Here's a condensed view:
+#### 4. 建立 `pe_policies/config.json`
+沿用上面 `PE_FIRM_POLICY` 定義的政策結構。這是精簡版：
 
 ```json
 {
@@ -1148,11 +1159,11 @@ Use the same policy structure defined in `PE_FIRM_POLICY` above. Here's a conden
 }
 ```
 
-See `PE_FIRM_POLICY` in the Centralized Policy section for the full configuration with all entities and categories.
+完整設定（含所有 entity 和 category）請看集中式政策那一節的 `PE_FIRM_POLICY`。
 
-**Note**: The `"block": true` setting is required for the PII guardrail in the output stage. Without it, PII will be detected and masked but won't trigger a block.
+**注意**：output 階段的 PII guardrail 一定要設 `"block": true`。沒設的話，PII 會被偵測並遮蔽，但不會觸發封鎖。
 
-#### 5. Create `pyproject.toml`
+#### 5. 建立 `pyproject.toml`
 
 ```toml
 [build-system]
@@ -1173,7 +1184,7 @@ include = ["pe_policies*"]
 pe_policies = ["*.json"]
 ```
 
-#### 6. Push to GitHub
+#### 6. 推到 GitHub
 
 ```bash
 git add .
@@ -1182,7 +1193,7 @@ git remote add origin https://github.com/yourorg/pe-policies.git
 git push -u origin main
 ```
 
-#### 7. Install and use from any project
+#### 7. 在任何專案安裝並使用
 
 ```bash
 pip install git+https://github.com/yourorg/pe-policies.git
@@ -1198,9 +1209,9 @@ client = GuardrailsOpenAI(config=GUARDRAILS_CONFIG)
 
 ---
 
-## Putting It All Together
+## 全部組起來
 
-Here's the complete pattern for a governed agent system:
+這是有治理機制的 agent 系統完整的做法：
 
 ```python
 from guardrails import GuardrailAgent
@@ -1353,13 +1364,13 @@ for query, label in test_queries:
 
 ---
 
-## Improving & Optimizing
+## 改進與優化
 
-With the governed system running, we now evaluate, tune, and stress-test it.
+有治理機制的系統跑起來後，接下來要評估、調整，並做壓力測試。
 
-### Evaluating Your Guardrails
+### 評估你的 Guardrail
 
-Building guardrails is only half the battle - you need to know they actually work. The OpenAI Guardrails library includes a built-in evaluation framework that measures precision, recall, and F1 scores against labeled test data.
+建好 guardrail 只是一半，你還要知道它們真的有用。OpenAI Guardrails 函式庫內建評估框架，可以用標註過的測試資料量測 precision、recall 和 F1 score。
 
 | Metric | What It Measures | Why It Matters |
 |--------|------------------|----------------|
@@ -1367,16 +1378,16 @@ Building guardrails is only half the battle - you need to know they actually wor
 | **Recall** | Of all bad queries, how many did we catch? | High recall = few false negatives (threats getting through) |
 | **F1 Score** | Harmonic mean of precision and recall | Balanced measure of overall performance |
 
-The trade-off: high precision with low recall means threats slip through; high recall with low precision blocks legitimate queries. Adjust `confidence_threshold` to find the right balance.
+這裡有取捨：precision 高但 recall 低，威脅會漏網；recall 高但 precision 低，正常的查詢會被擋。調整 `confidence_threshold` 來找到平衡點。
 
-### Step 1: Load the Test Dataset
+### 步驟 1：載入測試資料集
 
-The evaluation framework expects a JSONL file where each line contains:
-- `id`: Unique identifier for the test case
-- `data`: The input text (plain string or multi-turn JSON)
-- `expected_triggers`: Dict mapping each guardrail name to `true`/`false`
+評估框架需要一個 JSONL 檔，每一行包含：
+- `id`：測試案例的唯一識別碼
+- `data`：輸入文字（純字串或多輪對話的 JSON）
+- `expected_triggers`：把每個 guardrail 名稱對應到 `true`/`false` 的 dict
 
-The full dataset (21 samples covering PII, moderation, jailbreak, off-topic, and mixed cases) is in [`eval_data/guardrail_test_data.jsonl`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/agentic_governance_guide/eval_data/guardrail_test_data.jsonl). Below we load it and inspect the coverage.
+完整資料集（21 筆樣本，涵蓋 PII、moderation、jailbreak、離題和混合案例）放在 [`eval_data/guardrail_test_data.jsonl`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/agentic_governance_guide/eval_data/guardrail_test_data.jsonl)。下面我們載入並檢視涵蓋範圍。
 
 ```python
 import json
@@ -1465,9 +1476,9 @@ print(json.dumps(eval_dataset[0], indent=2))
     }
     ```
 
-### Step 2: Create the Eval Config
+### 步驟 2：建立 Eval 設定
 
-We use `PE_FIRM_POLICY` directly as the eval config - **evaluate what you deploy**. This covers all three stages: pre-flight (PII, Moderation), input (Jailbreak, Off Topic), and output (PII).
+我們直接用 `PE_FIRM_POLICY` 當 eval 設定，**評估你實際部署的東西**。這涵蓋三個階段：pre-flight（PII、Moderation）、input（Jailbreak、Off Topic）和 output（PII）。
 
 ```python
 # Use the same PE_FIRM_POLICY as the eval config - evaluate what you deploy
@@ -1494,9 +1505,9 @@ print(f"  Output:     {[g['name'] for g in PE_FIRM_POLICY['output']['guardrails'
       Output:     ['Contains PII']
     ```
 
-### Step 3: Run the Evaluation
+### 步驟 3：執行評估
 
-You can run evals via CLI or programmatically. Here's both approaches:
+可以用 CLI 或程式碼執行 eval。兩種做法如下：
 
 ```python
 # Option 1: CLI (run in terminal)
@@ -1647,13 +1658,13 @@ else:
     ... (省略 6 行)
     ```
 
-### Eval Best Practices
+### Eval 最佳實務
 
-1. **Build diverse test sets**: Include edge cases, adversarial examples, and legitimate queries
-2. **Balance your dataset**: Ensure roughly equal positive and negative examples per guardrail
-3. **Run evals on policy changes**: Before deploying updated `confidence_threshold` values
-4. **Benchmark across models**: Use `--mode benchmark` to compare `gpt-5.2-mini` vs `gpt-5.2` for LLM-based guardrails
-5. **Automate in CI/CD**: Run evals on every policy repo change to catch regressions
+1. **建立多樣的測試集**：包含邊界案例、對抗性範例和正常查詢
+2. **讓資料集平衡**：每個 guardrail 的正負樣本數量大致相等
+3. **政策變更時跑 eval**：在部署更新後的 `confidence_threshold` 之前先跑
+4. **跨模型比較**：用 `--mode benchmark` 比較 LLM-based guardrail 用 `gpt-5.2-mini` 和 `gpt-5.2` 的差異
+5. **在 CI/CD 自動化**：政策 repo 每次變更都跑 eval，抓出退步
 
 ```bash
 # Benchmark mode compares models and generates ROC curves
@@ -1666,21 +1677,21 @@ guardrails-evals \
 
 ---
 
-### Automated Feedback Loop for Threshold Tuning
+### 自動化回饋迴圈調整門檻
 
-Manually tuning `confidence_threshold` values based on eval results is tedious. The **Guardrail Feedback Loop** automates this: it runs evals, analyzes precision/recall gaps, adjusts thresholds, re-validates, and saves the tuned config when metrics improve.
+手動依 eval 結果調 `confidence_threshold` 很麻煩。**Guardrail Feedback Loop** 把它自動化：執行 eval、分析 precision/recall 的落差、調整門檻、重新驗證，指標改善時就儲存調整後的設定。
 
-The loop includes oscillation prevention — if threshold adjustments keep flip-flopping, it reduces step size and eventually stops tuning that guardrail.
+這個迴圈有防震盪機制：如果門檻調整一直來回擺盪，就縮小步長，最後停止調整那個 guardrail。
 
-### Step 1: Create a Tunable Configuration
+### 步驟 1：建立可調整的設定
 
-We derive the tunable config directly from `PE_FIRM_POLICY` - the same config our `GuardrailAgent` uses - so we're tuning the **actual production guardrails**. The only change is overriding `confidence_threshold` values to an intentionally high starting point.
+我們直接從 `PE_FIRM_POLICY`（`GuardrailAgent` 用的同一份設定）衍生出可調整的設定，所以調的是**實際在 production 用的 guardrail**。唯一的改動是把 `confidence_threshold` 蓋成刻意偏高的起始值。
 
-LLM-based guardrails like **Jailbreak** and **Off Topic Prompts** use confidence thresholds to decide when to trigger. The threshold controls the trade-off:
-- **Higher threshold** (e.g., 0.95): More conservative, fewer false positives, but may miss some threats
-- **Lower threshold** (e.g., 0.5): More sensitive, catches more threats, but may block legitimate queries
+**Jailbreak** 和 **Off Topic Prompts** 這類 LLM-based guardrail 用 confidence threshold 決定何時觸發。門檻控制的是這個取捨：
+- **較高的門檻**（例如 0.95）：比較保守，false positive 少，但可能漏掉一些威脅
+- **較低的門檻**（例如 0.5）：比較敏感，抓到更多威脅，但可能擋到正常查詢
 
-For this demo, we'll start with an **intentionally high threshold (0.95)** so you can see the tuner detect low recall and automatically decrease it.
+這個 demo 我們從**刻意偏高的門檻（0.95）**開始，讓你看到 tuner 偵測到 recall 太低，並自動調降。
 
 ```python
 # Derive the tunable config from PE_FIRM_POLICY - same structure, but with
@@ -1722,13 +1733,13 @@ print("\nNote: Thresholds set intentionally high (0.95) to demonstrate tuning.")
     Note: Thresholds set intentionally high (0.95) to demonstrate tuning.
     ```
 
-### Step 2: Create a Test Dataset
+### 步驟 2：建立測試資料集
 
-The feedback loop needs labeled test data to measure guardrail performance. Each test case specifies:
-- **data**: The text to evaluate - for conversation-aware guardrails (Jailbreak, Prompt Injection), we use **multi-turn format** with the agent's system prompt included so the guardrail evaluates in the same context as production
-- **expected_triggers**: Which guardrails should fire (true) or not (false)
+回饋迴圈需要標註好的測試資料，來衡量 guardrail 的表現。每個測試案例指定：
+- **data**：要評估的文字。對具備對話感知的 guardrail（Jailbreak、Prompt Injection），我們用**多輪格式**並帶入 agent 的 system prompt，讓 guardrail 在跟 production 相同的 context 下評估
+- **expected_triggers**：哪些 guardrail 應該觸發（true）或不該觸發（false）
 
-Include both positive examples (should trigger) and negative examples (should not trigger) for precision/recall measurement. We also include adversarial PE-domain-camouflaged attacks and borderline-but-legitimate queries to stress-test false positive/negative rates.
+要同時包含正例（應該觸發）和反例（不該觸發），才能量測 precision/recall。我們也加入偽裝成 PE 領域的對抗性攻擊，以及邊界但合法的查詢，來對 false positive/negative 比例做壓力測試。
 
 ```python
 # Input guardrails test dataset (jailbreak detection)
@@ -1764,19 +1775,19 @@ print(f" - Multi-turn format: each entry includes the agent's system prompt")
      - Multi-turn format: each entry includes the agent's system prompt
     ```
 
-### Step 3: Run the Feedback Loop
+### 步驟 3：執行回饋迴圈
 
-Now we run the automated tuning process. The `GuardrailFeedbackLoop` will:
+現在執行自動調整流程。`GuardrailFeedbackLoop` 會：
 
-1. Run an initial evaluation to get baseline metrics
-2. Compare precision/recall against our targets (90% each)
-3. Adjust thresholds based on which metric is underperforming
-4. Re-run evals to measure the impact
-5. Repeat until targets are met or max iterations reached
+1. 先跑一次初始評估，取得 baseline 指標
+2. 把 precision/recall 跟我們的目標（各 90%）比較
+3. 依哪個指標表現不佳來調整門檻
+4. 重新跑 eval 量測影響
+5. 重複到達成目標或達到最大迭代次數
 
-**What to expect**: With our intentionally high threshold (0.95), the initial eval will show low recall (the guardrail misses some jailbreak attempts). The tuner will detect this and decrease the threshold until recall meets the 90% target.
+**預期結果**：因為我們刻意把門檻設得很高（0.95），初始 eval 會顯示 recall 偏低（guardrail 漏掉一些 jailbreak 嘗試）。tuner 偵測到後會往下調門檻，直到 recall 達到 90% 的目標。
 
-Watch the logs to see the loop's decision-making in action.
+看 log 就能看到迴圈的決策過程。
 
 ```python
 # Run the automated feedback loop
@@ -1838,15 +1849,15 @@ print("Tuning complete!")
     Tuning complete!
     ```
 
-### Step 4: Review the Results
+### 步驟 4：檢視結果
 
-After tuning completes, we can inspect what changes were made:
+調整完成後，可以檢視做了哪些改動：
 
-- **Threshold changes**: How the `confidence_threshold` was adjusted
-- **Metric improvements**: Changes in precision, recall, and F1 score
-- **Convergence status**: Whether targets were achieved or tuning stopped early
+- **門檻變化**：`confidence_threshold` 怎麼被調整
+- **指標改善**：precision、recall 和 F1 score 的變化
+- **收斂狀態**：目標是否達成，或調整提早停止
 
-The tuned configuration is automatically saved for use in production.
+調整後的設定會自動儲存，供 production 使用。
 
 ```python
 # Review the tuning results
@@ -1900,9 +1911,9 @@ print(f"Tuned config saved to: tuning_results/eval_config_tuned.json")
     Tuned config saved to: tuning_results/eval_config_tuned.json
     ```
 
-### CLI Usage
+### CLI 用法
 
-You can also run the feedback loop from the command line:
+你也可以從命令列執行回饋迴圈：
 
 ```bash
 # Basic usage
@@ -1922,15 +1933,15 @@ python tune_guardrails.py \
     --verbose
 ```
 
-Output files include `tuning_results/eval_config_tuned.json` (optimized config), `tuning_results/tuning_report_*.md` (detailed report), and backups of original configs.
+輸出檔包括 `tuning_results/eval_config_tuned.json`（優化後的設定）、`tuning_results/tuning_report_*.md`（詳細報告）和原始設定的備份。
 
 ---
 
-### Red Teaming Your Guardrails with Promptfoo
+### 用 Promptfoo 對你的 Guardrail 做 Red Teaming
 
-Evals measured guardrail **detection accuracy** — "Did the guardrail fire correctly on known test cases?" But there's a harder question: **"Can an attacker bypass your guardrails?"**
+Eval 衡量的是 guardrail 的**偵測準確度**，也就是「guardrail 在已知的測試案例上有沒有正確觸發？」但還有一個更難的問題：**「攻擊者能繞過你的 guardrail 嗎？」**
 
-[Promptfoo](https://github.com/promptfoo/promptfoo) is an open-source red teaming tool that auto-generates hundreds of adversarial inputs across 50+ vulnerability types — jailbreaks, prompt injections, PII extraction, off-topic hijacking, and more. Instead of writing test cases by hand, Promptfoo creates sophisticated, adaptive attacks and tests them against your actual application.
+[Promptfoo](https://github.com/promptfoo/promptfoo) 是開源的 red teaming 工具，能自動產生數百個對抗性輸入，涵蓋 50 多種漏洞類型，包括 jailbreak、prompt injection、PII 擷取、離題劫持等。你不用手寫測試案例，Promptfoo 會產生精密、會適應的攻擊，直接測試你實際的應用。
 
 | OpenAI Guardrails Eval | Promptfoo Red Team |
 |---|---|
@@ -1939,11 +1950,11 @@ Evals measured guardrail **detection accuracy** — "Did the guardrail fire corr
 | Static dataset | Adaptive attacks that evolve based on responses |
 | "Did the guardrail fire?" | "Can an attacker get through?" |
 
-Together they form a complete testing strategy: guardrails eval ensures detection quality, Promptfoo ensures resilience against real-world attacks.
+兩者合起來就是完整的測試策略：guardrails eval 確保偵測品質，Promptfoo 確保能抵擋真實世界的攻擊。
 
-### How It Works Under the Hood
+### 運作原理
 
-Promptfoo uses your existing `OPENAI_API_KEY` to power a three-phase process:
+Promptfoo 用你現有的 `OPENAI_API_KEY`，跑三階段流程：
 
 ```
 Your OPENAI_API_KEY
@@ -1960,38 +1971,38 @@ Your OPENAI_API_KEY
   Red Team Report
 ```
 
-1. **Generate**: An LLM (defaults to `gpt-5`) generates adversarial prompts tailored to your application's `purpose` and selected plugins
-2. **Attack**: Each generated prompt is sent to your Python target script, which runs it through the governed agent (`Runner.run`)
-3. **Grade**: Another LLM call evaluates whether the response indicates a successful bypass or a proper block
+1. **Generate**：LLM（預設是 `gpt-5`）依你應用的 `purpose` 和選定的 plugin 產生對抗性 prompt
+2. **Attack**：每個產生的 prompt 送到你的 Python target script，由它交給有治理機制的 agent 執行（`Runner.run`）
+3. **Grade**：另一次 LLM 呼叫判斷回應是否代表成功繞過，還是被正確擋下
 
-### Prerequisites and Cost
+### 先決條件與成本
 
-- **Promptfoo**: Free, open source ([MIT license](https://github.com/promptfoo/promptfoo))
-- **Email verification**: One-time free email check on first run (spam prevention, not a subscription)
-- **LLM cost**: Your standard OpenAI API usage for attack generation + grading. With `numTests: 10` across ~9 plugins, expect ~100-200 API calls (a few dollars)
-- **No subscription required** -- your existing `OPENAI_API_KEY` is all you need
+- **Promptfoo**：免費、開源（[MIT license](https://github.com/promptfoo/promptfoo)）
+- **Email 驗證**：第一次執行時做一次免費的 email 檢查（防垃圾訊息，不是訂閱）
+- **LLM 成本**：產生攻擊和評分用的是你標準的 OpenAI API 用量。`numTests: 10`、約 9 個 plugin 的情況下，預期約 100 到 200 次 API 呼叫（幾美元）
+- **不需訂閱**，有你現有的 `OPENAI_API_KEY` 就夠了
 
-### Step 1: Install Promptfoo
+### 步驟 1：安裝 Promptfoo
 
 ```bash
 pip install promptfoo
 ```
 
-> **Note**: The pip package is a lightweight wrapper that requires **Node.js 20+** installed on your system. Install Node via `brew install node` (macOS), `sudo apt install nodejs npm` (Ubuntu), or from [nodejs.org](https://nodejs.org/).
+> **注意**：這個 pip 套件是輕量的 wrapper，系統需要先裝好 **Node.js 20+**。Node 可以用 `brew install node`（macOS）、`sudo apt install nodejs npm`（Ubuntu）安裝，或到 [nodejs.org](https://nodejs.org/) 下載。
 
-### Step 2: The Target Script
+### 步驟 2：Target Script
 
-Promptfoo needs a way to talk to your governed agent. The file `promptfoo/promptfoo_target.py` bridges Promptfoo to your `GuardrailAgent`:
+Promptfoo 需要一個方式跟你有治理機制的 agent 溝通。`promptfoo/promptfoo_target.py` 這個檔案把 Promptfoo 接到你的 `GuardrailAgent`：
 
-- Receives each adversarial prompt from Promptfoo
-- Runs it through `Runner.run(pe_concierge_governed, prompt)` - the full agent with handoffs, tools, and centralized guardrails
-- Returns the response, or `[BLOCKED]` if any guardrail fires
+- 接收 Promptfoo 送來的每個對抗性 prompt
+- 用 `Runner.run(pe_concierge_governed, prompt)` 執行，也就是完整的 agent，含 handoff、tool 和集中式 guardrail
+- 回傳回應，如果有任何 guardrail 觸發就回傳 `[BLOCKED]`
 
-The script recreates the same agent stack from the notebook: specialist agents, tools, custom `pe_guardrail`, `PE_FIRM_POLICY`, and the `GuardrailAgent` triage agent.
+這個腳本重建了 notebook 裡同一套 agent：specialist agent、tool、自訂的 `pe_guardrail`、`PE_FIRM_POLICY`，以及 `GuardrailAgent` 的 triage agent。
 
-### Step 3: The Red Team Config
+### 步驟 3：Red Team 設定
 
-The file `promptfoo/promptfooconfig.yaml` defines what to attack and how:
+`promptfoo/promptfooconfig.yaml` 這個檔案定義要攻擊什麼、怎麼攻擊：
 
 ```yaml
 targets:
@@ -2020,9 +2031,9 @@ redteam:
    - crescendo                # Gradually escalating attacks
 ```
 
-**Plugins** generate adversarial inputs targeting specific vulnerabilities. **Strategies** wrap those inputs in evasion techniques (jailbreak patterns, encoding, translation) to test whether guardrails can be bypassed beyond simple text matching. See the [full plugin list](https://www.promptfoo.dev/docs/red-team/plugins/) for 131 available plugins.
+**Plugin** 針對特定漏洞產生對抗性輸入。**Strategy** 則把這些輸入包上規避技巧（jailbreak 模式、編碼、翻譯），測試 guardrail 能不能擋住超出單純文字比對的繞過手法。完整清單見[所有 plugin](https://www.promptfoo.dev/docs/red-team/plugins/)，共有 131 個。
 
-### Step 4: Run the Red Team
+### 步驟 4：執行 Red Team
 
 ```bash
 # Navigate to the promptfoo directory
@@ -2035,31 +2046,31 @@ promptfoo redteam run
 promptfoo redteam report
 ```
 
-The report shows:
-- **Pass/fail rate** per vulnerability category
-- **Severity levels** for each finding
-- **Concrete examples** of inputs that bypassed guardrails
-- **Suggested mitigations** for each vulnerability
+報告會顯示：
+- 每個漏洞類別的**通過/失敗率**
+- 每項發現的**嚴重程度**
+- 繞過 guardrail 的輸入的**具體範例**
+- 每個漏洞的**建議緩解方式**
 
-### Sample Report
+### 範例報告
 
-Here's what a successful red team report looks like -- **0 vulnerabilities across all categories, 33/33 tests defended**:
+成功的 red team 報告長這樣：**所有類別都是 0 個漏洞，33/33 個測試都防住了**：
 
 ![Promptfoo Red Team Report](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/03_alti_promptfoo_dash.png)
 
-The report breaks results into **Risk Categories** (Security & Access Control, Brand) and individual tests (Resource Hijacking, System Prompt Override, PII via Direct Exposure, Off-Topic Manipulation). Our `GuardrailAgent` with `PE_FIRM_POLICY` blocked 100% of the adversarial inputs.
+報告把結果分成**風險類別**（Security & Access Control、Brand）和個別測試（Resource Hijacking、System Prompt Override、PII via Direct Exposure、Off-Topic Manipulation）。我們搭配 `PE_FIRM_POLICY` 的 `GuardrailAgent` 擋下了 100% 的對抗性輸入。
 
-### Going Deeper
+### 更深入
 
-This demo used 5 plugins with `numTests: 3` for a quick 33-probe scan. For production-grade assessments, increase the depth to 50+ probes per plugin and enable preset collections like `owasp:llm` (OWASP LLM Top 10), `nist:ai:measure` (NIST AI RMF), or `mitre:atlas` -- Promptfoo supports 131 plugins across security, compliance, trust & safety, and brand categories.
+這個 demo 用 5 個 plugin、`numTests: 3`，快速掃了 33 次探測。要做 production 等級的評估，可以把每個 plugin 的探測數提高到 50 次以上，並啟用預設集合，例如 `owasp:llm`（OWASP LLM Top 10）、`nist:ai:measure`（NIST AI RMF）或 `mitre:atlas`。Promptfoo 支援 131 個 plugin，涵蓋安全、合規、trust & safety 和品牌等類別。
 
-### Interpreting Results
+### 解讀結果
 
-Any failures reveal gaps in your `PE_FIRM_POLICY` that need attention -- whether that's lowering thresholds, adding guardrails, or refining system prompts.
+任何失敗都代表 `PE_FIRM_POLICY` 有需要處理的缺口，可能是降低門檻、加 guardrail，或調整 system prompt。
 
-### CI/CD Integration
+### CI/CD 整合
 
-Add red teaming to your deployment pipeline so guardrail changes are validated automatically:
+把 red teaming 加進部署 pipeline，讓 guardrail 的變更自動被驗證：
 
 ```yaml
 # .github/workflows/redteam.yml
@@ -2085,42 +2096,41 @@ jobs:
 
 ---
 
-## Key Takeaways
+## 重點心得
 
-### 1. Governance enables adoption
-By establishing clear guardrails upfront, you remove the fear and uncertainty that slows AI adoption. Teams can build confidently knowing policies are enforced automatically. Governance becomes an execution system that keeps adoption moving securely and at scale.
+### 1. 治理促成採用
+事先建立清楚的 guardrail，就能消除拖慢 AI 採用的恐懼和不確定。團隊知道政策會自動執行，就能放心開發。治理成為一個讓採用持續、安全、規模化推進的執行系統。
 
-### 2. Use handoffs for specialization
-Avoid one massive agent. Create specialists and let them collaborate. The `handoff_description` is key to good routing.
+### 2. 用 handoff 做專業分工
+避免做一個包山包海的 agent。建立專家，讓它們協作。`handoff_description` 是好的路由的關鍵。
+### 3. 分層防禦
+- **OpenAI Guardrails**（client 層級）：適用所有呼叫的通用政策
+- **Agents SDK guardrails**（agent 層級）：領域專屬的驗證
 
-### 3. Layer your defenses
-- **OpenAI Guardrails** (client-level): Universal policies for all calls
-- **Agents SDK guardrails** (agent-level): Domain-specific validation
+### 4. 全部都 trace（ZDR 則是都不 trace）
+- 用 `trace()` 把操作分組，方便 debug
+- 要符合 ZDR：關閉 tracing，或用自訂 processor
 
-### 4. Trace everything (or nothing, for ZDR)
-- Use `trace()` to group operations for debugging
-- For ZDR compliance: disable tracing or use custom processors
-
-### 5. Centralize policy, distribute capability
-The policy-as-a-package pattern lets you:
-- Maintain governance in one place
-- Update policies without changing application code
-- Audit compliance across all projects
+### 5. 集中政策，分散能力
+把政策做成套件的模式讓你可以：
+- 在一個地方維護治理
+- 不用改應用程式碼就能更新政策
+- 稽核所有專案的合規狀況
 
 ---
 
-## Next Steps
+## 後續步驟
 
-### Initial Setup
-1. **Create your policy repo** using the template above
-2. **Customize guardrails** for your industry and compliance requirements
-3. **Add custom trace processors** if you need ZDR-compliant observability
-4. **Document your policy** alongside the code
-5. **Set up CI/CD** to test policy changes before deployment
+### 初始設定
+1. 用上面的範本**建立你的政策 repo**
+2. 依你的產業和合規要求**客製 guardrail**
+3. 如果需要符合 ZDR 的 observability，**加上自訂 trace processor**
+4. 把政策跟程式碼放在一起，**寫好文件**
+5. **設定 CI/CD**，在部署前測試政策變更
 
-### Scaling AI Across Your Organization
+### 在組織內擴大 AI 的使用
 
-When moving from prototype to production, consider how different user groups will interact with AI:
+從原型走向 production 時，要考慮不同的使用者群體會怎麼跟 AI 互動：
 
 | Role | What They Build | Governance Approach |
 |------|-----------------|---------------------|
@@ -2128,61 +2138,61 @@ When moving from prototype to production, consider how different user groups wil
 | **Power Users** | Configured assistants, automated workflows | Pre-approved patterns, governed portals |
 | **End Users** | Content generation, data analysis | Curated tools with embedded guardrails |
 
-This approach ensures everyone, from engineers to analysts, can leverage AI safely within appropriate boundaries.
+這個做法確保從工程師到分析師，每個人都能在適當的界線內安全地運用 AI。
 
-### Enabling Citizen Developers
+### 賦能 Citizen Developer
 
-Empower non-technical teams to build safely:
+讓非技術團隊也能安全地開發：
 
-- **Provide templates** for prompt packs, tool configurations, and evaluation checks
-- **Create review lanes** and publishing workflows that make it easy to build and deploy
-- **Offer guardrailed sandboxes** for experimentation without risking sensitive data
-- **Establish clear promotion paths** from prototype to production with governance checkpoints
+- **提供範本**，包括 prompt pack、tool 設定和評估檢查
+- **建立審查通道**和發布流程，讓建置和部署更容易
+- **提供有 guardrail 的沙盒**，讓人實驗時不會冒敏感資料的風險
+- **建立清楚的升級路徑**，從原型到 production，中間有治理檢查點
 
-### Registries for Visibility
+### 用 Registry 保持可見度
 
-Treat AI assets as first-class governed resources by maintaining registries:
+把 AI 資產當成一等公民的受治理資源，維護 registry：
 
-- **Agent Registry**: Register all agents with owner, purpose, risk tier, and evaluation status
-- **Tool Registry**: Document MCP tools with authentication scopes, data access, and approval authority
-- **Prompt Registry**: Version and govern prompts like code, with lineage, rollback policies, and change controls
+- **Agent Registry**：登記所有 agent，記錄 owner、用途、風險等級和評估狀態
+- **Tool Registry**：記錄 MCP tool 的驗證範圍、資料存取和核准權責
+- **Prompt Registry**：像管理程式碼一樣對 prompt 做版本管理和治理，含溯源、回滾政策和變更控管
 
-Registry metadata enables discoverability, auditing, and lifecycle management across your AI ecosystem.
+Registry 的 metadata 讓整個 AI 生態系可以被探索、稽核，並做生命週期管理。
 
-### Risk-Proportionate Controls
+### 依風險調整控管
 
-Not all AI use cases carry the same risk. Differentiate your controls:
+不是所有 AI 使用情境的風險都一樣。控管要有差異：
 
-- **Low-risk** (internal productivity, non-sensitive data): Fast-track approval, minimal logging
-- **Moderate-risk** (customer-facing, operational data): Standard guardrails, audit trails
-- **High-risk** (PII, financial, regulated): Enhanced logging, human-in-the-loop, isolated environments
+- **低風險**（內部生產力、非敏感資料）：快速核准，最少的 logging
+- **中風險**（面對客戶、營運資料）：標準 guardrail、稽核軌跡
+- **高風險**（PII、金融、受法規管制）：強化 logging、human-in-the-loop、隔離環境
 
-Apply proportionate controls, approvals, review, and detailed logging, only where necessary, keeping lightweight adoption fast and frictionless.
+只在必要的地方套用相稱的控管、核准、審查和詳細 logging，讓輕量的採用維持快速、順暢。
 
-### Preventing Shadow AI
+### 防止 Shadow AI
 
-Centralized governance helps prevent unauthorized AI tools from proliferating:
+集中式治理有助於防止未經授權的 AI 工具氾濫：
 
-- **Make governed options easier** than ungoverned alternatives
-- **Provide clear adoption paths** for different skill levels and use cases
-- **Incorporate discovery mechanisms** to detect and catalog unsanctioned AI activity
-- **Offer support and training** so teams don't go around the system
+- **讓受治理的選項比不受治理的替代品更好用**
+- **針對不同技能程度和使用情境，提供清楚的採用路徑**
+- **加入探索機制**，偵測並登錄未經核准的 AI 活動
+- **提供支援和訓練**，讓團隊不會繞過系統
 
-Early visibility allows governance teams to close gaps before they become systemic risks.
+及早看見，治理團隊就能在缺口變成系統性風險之前補起來。
 
-### Standards Alignment
+### 對齊標準
 
-Align your governance practices with recognized frameworks:
+讓你的治理做法對齊公認的框架：
 
-- **NIST AI RMF** - Risk management framework for AI systems
-- **ISO/IEC 42001** - AI management system standard
-- **Industry-specific requirements** (HIPAA, SOX, GDPR, etc.)
+- **NIST AI RMF**：AI 系統的風險管理框架
+- **ISO/IEC 42001**：AI 管理系統標準
+- **特定產業的要求**（HIPAA、SOX、GDPR 等）
 
-Building on established standards creates external credibility alongside internal control.
+建立在既有標準上，能在內部控管之外，贏得外部的信任。
 
 ---
 
-## Resources
+## 資源
 
 - [OpenAI Agents SDK Documentation](https://openai.github.io/openai-agents-python/)
 - [OpenAI Guardrails Documentation](https://openai.github.io/openai-guardrails-python/)
@@ -2194,11 +2204,23 @@ Building on established standards creates external credibility alongside interna
 
 ---
 
-## Contributors
-This cookbook serves as a joint collaboration effort between OpenAI and Altimetrik.
+## 貢獻者
+這份 cookbook 是 OpenAI 和 Altimetrik 的合作成果。
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 - [Pavan Kumar Muthozu](https://www.linkedin.com/in/pavan-kumar-muthozu-38550556/)
 - [Frankie LaCarrubba](https://www.linkedin.com/in/frankie-lacarrubba-1551b6168/)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 治理做成基礎設施（政策即程式碼、自動套用），反而讓 AI 更快從 pilot 走到 production。
+- 防禦分層：client 層級的 OpenAI Guardrails 管通用政策，agent 層級的 guardrail 管領域規則。
+- 多 agent 靠 triage agent 加 `handoff_description` 分流，比一個大 agent 好維護。
+- Guardrail 要用 precision/recall 量測，再用 feedback loop 調 `confidence_threshold`，並用 Promptfoo red team 檢查會不會被繞過。
+- ZDR 環境不能用內建 tracing dashboard，要關掉或用自訂 trace processor 導到內部系統。
+
+## 練習
+
+1. 在 PE 助理再加一個 specialist agent（例如 `fund_ops_agent`），寫好 `handoff_description`，並加進 triage agent 的 `handoffs`，用一個查詢測試有沒有被正確分流。
+2. 把 `PE_FIRM_POLICY` 裡 Jailbreak 的 `confidence_threshold` 改成 0.5，重跑 eval，比較 precision 和 recall 跟原本差多少。
+3. 在 eval 資料集 JSONL 加 3 筆你自己設計的對抗性案例（偽裝成 PE 問題的 prompt injection），跑 feedback loop，看 tuner 會不會因此調整門檻。

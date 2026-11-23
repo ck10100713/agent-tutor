@@ -1,24 +1,33 @@
 ---
-translated: false
+translated: true
 source: examples/File_Search_Responses.ipynb
 ---
 
-# Doing RAG on PDFs using File Search in the Responses API
+# 用 Responses API 的 File Search 對 PDF 做 RAG
 
 > 原文：[examples/File_Search_Responses.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/File_Search_Responses.ipynb)
 
-Cookbook to search PDFs with the Responses API file search tool.
+用 Responses API 的 file search tool 搜尋 PDF。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把一批 PDF 上傳到 OpenAI 的 vector store，再用 Responses API 的 `file_search` tool 一次呼叫就完成檢索加回答。最後還會自動產生評估資料集，量測檢索的 recall、precision、MRR 和 MAP。
 
+## 學完你會
+- 建立 vector store 並上傳 PDF，直接用 vector search API 查詢內容。
+- 在 Responses API 裡掛上 `file_search` tool，讓模型根據檢索到的內容回答。
+- 自己產生評估資料集，算出檢索的 precision、recall、MRR、MAP。
 
-Although RAG can be overwhelming, searching amongst PDF file shouldn't be complicated. One of the most adopted options as of now is parsing your PDF, defining your chunking strategies, uploading those chunks to a storage provider, running embeddings on those chunks of texts and storing those embeddings in a vector database. And that's only the setup — retrieving content in our LLM workflow also requires multiple steps.
+## 開跑前
+- 需要 OpenAI API key。
+- 需要準備一批本機 PDF（範例用的是 OpenAI 部落格文章匯出的 PDF）。
 
-This is where file search — a hosted tool you can use in the Responses API — comes in. It allows you to search your knowledge base and generate an answer based on the retrieved content. In this cookbook, we'll upload those PDFs to a vector store on OpenAI and use file search to fetch additional context from this vector store to answer the questions we generated in the first step. Then, we'll initially create a small set of questions based on PDFs extracted from OpenAI's blog ([openai.com/news](https://openai.com/news)).
+RAG 常常讓人覺得很複雜，但搜尋 PDF 其實不該那麼麻煩。目前最常見的做法是：解析 PDF、決定 chunking 策略、把 chunk 上傳到儲存服務、對文字 chunk 跑 embedding、把 embedding 存進 vector database。這還只是前置作業，在 LLM 流程裡取回內容也要好幾個步驟。
 
-_File search was previously available on the Assistants API. It's now available on the new Responses API, an API that can be stateful or stateless, and with from new features like metadata filtering_
+這時候就輪到 file search 了。它是 Responses API 裡的 hosted tool，可以搜尋你的知識庫，並根據檢索到的內容產生答案。這份教學會把 PDF 上傳到 OpenAI 的 vector store，用 file search 從中取出額外脈絡，來回答我們一開始產生的問題。我們先根據 OpenAI 部落格（[openai.com/news](https://openai.com/news)）匯出的 PDF 建立一小批問題。
 
-# Creating Vector Store with our PDFs
+_File search 以前在 Assistants API 上提供，現在移到新的 Responses API，這個 API 可以有狀態也可以無狀態，並多了像 metadata filtering 這類新功能_
+
+# 用 PDF 建立 Vector Store
 
 ```python
 !pip install PyPDF2 pandas tqdm openai -q
@@ -39,7 +48,7 @@ dir_pdfs = 'openai_blog_pdfs' # have those PDFs stored locally here
 pdf_files = [os.path.join(dir_pdfs, f) for f in os.listdir(dir_pdfs)]
 ```
 
-We will create a Vector Store on OpenAI API and upload our PDFs to the Vector Store. OpenAI will read those PDFs, separate the content into multiple chunks of text, run embeddings on those and store those embeddings and the text in the Vector Store. It will enable us to query this Vector Store to return relevant content based on a query.
+我們會在 OpenAI API 上建立 Vector Store，並把 PDF 上傳進去。OpenAI 會讀取 PDF、把內容切成多個文字 chunk、對它們跑 embedding，再把 embedding 和文字存進 Vector Store。之後就能查詢這個 Vector Store，依 query 回傳相關內容。
 
 ```python
 def upload_single_pdf(file_path: str, vector_store_id: str):
@@ -113,9 +122,9 @@ upload_pdf_files_to_vector_store(vector_store_details["id"])
      'errors': []}
     ```
 
-# Standalone vector search
+# 單獨使用 vector search
 
-Now that our vector store is ready, we are able to query the Vector Store directly and retrieve relevant content for a specific query. Using the new [vector search API](https://platform.openai.com/docs/api-reference/vector-stores/search), we're able to find relevant items from our knowledge base without necessarily integrating it in an LLM query.
+Vector store 準備好後，我們可以直接查詢它，針對某個 query 取回相關內容。用新的 [vector search API](https://platform.openai.com/docs/api-reference/vector-stores/search)，不用接進 LLM 呼叫，也能從知識庫找出相關項目。
 
 ```python
 query = "What's Deep Research?"
@@ -145,11 +154,11 @@ for result in search_results.data:
     2721 of character of content from Introducing deep research _ OpenAI.pdf with a relevant score of 0.734033360849088
     ```
 
-We can see that different size (and under-the-hood different texts) have been returned from the search query. They all have different relevancy score that are calculated by our ranker which uses hybrid search.
+可以看到搜尋結果回傳了不同大小（底層也是不同文字）的內容。每筆都有各自的相關性分數，由我們的 ranker 計算，它使用 hybrid search。
 
-# Integrating search results with LLM in a single API call
+# 在單一 API 呼叫裡整合搜尋結果和 LLM
 
-However instead of querying the vector store and then passing the data into the Responses or Chat Completion API call, an even more convenient way to use this search results in an LLM query would be to plug use file_search tool as part of OpenAI Responses API.
+不過比起先查 vector store、再把資料丟進 Responses 或 Chat Completion API，更方便的做法是在 OpenAI Responses API 裡直接掛上 file_search tool。
 
 ```python
 query = "What's Deep Research?"
@@ -193,15 +202,15 @@ print(response.output[1].content[0].text) # 0 being the filesearch call
     Overall, Deep Research marks a significant advancement toward automated general intelligence (AGI) by improving access to thorough and precise research outputs.
     ```
 
-We can see that `gpt-4o-mini` was able to answer a query that required more recent, specialised knowledge about OpenAI's Deep Research. It used content from the file `Introducing deep research _ OpenAI.pdf` that had chunks of texts that were the most relevant. If we want to go even deeper in the analysis of chunk of text retrieved, we can also analyse the different texts that were returned by the search engine by adding `include=["output[*].file_search_call.search_results"]` to our query.
+可以看到 `gpt-4o-mini` 能回答一個需要較新、較專門知識（關於 OpenAI Deep Research）的問題。它用到的是檔案 `Introducing deep research _ OpenAI.pdf` 裡最相關的文字 chunk。如果想更深入分析檢索到的文字，可以在 query 加上 `include=["output[*].file_search_call.search_results"]`，就能看到搜尋引擎回傳的各段文字。
 
-# Evaluating performance
+# 評估效能
 
-What is key for those information retrieval system is to also measure the relevance & quality of files retrieved for those answers. The following steps of this cookbook will consist in generating an evaluation dataset and calculating different metrics over this generated dataset. This is an imperfect approach and we'll always recommend to have a human-verified evaluation dataset for your own use-cases, but it will show you the methodology to evaluate those.  It will be imperfect because some of the questions generated might be generic (e.g: What's said by the main stakeholder in this document) and our retrieval test will have a hard time to figure out which document that question was generated for.
+這類資訊檢索系統很關鍵的一點，是要衡量檢索到的檔案相關性和品質。這份教學接下來會產生評估資料集，並在上面計算各種指標。這個做法不完美，我們一向建議用人工驗證過的評估資料集，但它能讓你看到評估的方法。不完美的原因是，產生的問題有些很籠統（例如「這份文件裡主要關係人說了什麼」），檢索測試很難判斷這個問題是從哪份文件產生的。
 
-## Generating evaluations
+## 產生評估資料
 
-We will create functions that will read through the PDFs we have locally and generate a question that can only be answered by this document. Therefore it'll create our evaluation dataset that we can use after.
+我們會寫函式讀取本機的 PDF，並產生只有這份文件能回答的問題，這就是之後要用的評估資料集。
 
 ```python
 def extract_text_from_pdf(pdf_path):
@@ -235,7 +244,7 @@ def generate_questions(pdf_path):
     return question
 ```
 
-If we run the function generate_question for the first PDF file we will be able to see the kind of question it generates.
+對第一份 PDF 執行 generate_question，就能看到它產生的是什麼樣的問題。
 
 ```python
 generate_questions(pdf_files[0])
@@ -247,7 +256,7 @@ generate_questions(pdf_files[0])
     'What new capabilities will ChatGPT have as a result of the partnership between OpenAI and Schibsted Media Group?'
     ```
 
-We can now generate all the questions for all the PDFs we've got stored locally.
+接著為本機所有 PDF 產生問題。
 
 ```python
 # Generate questions for each PDF and store in a dictionary
@@ -287,11 +296,11 @@ questions_dict
      'Introducing deep research _ OpenAI.pdf': 'What specific model powers the "deep research" capability in ChatGPT that is discussed in this document, and what are its main features designed for?'}
     ```
 
-We now have a dictionary of `filename:question` that we can loop through and ask gpt-4o(-mini) about without providing the document, and gpt-4o should be able to find the relevant document in the Vector Store.
+現在有了一個 `filename:question` 的字典，可以逐一迴圈去問 gpt-4o(-mini)，過程中不提供文件，gpt-4o 應該要能在 Vector Store 裡找到相關文件。
 
-## Evaluating
+## 評估
 
-We'll convert our dictionary into a dataframe and process it using gpt-4o-mini. We will look out for the expected file 
+我們把字典轉成 dataframe，用 gpt-4o-mini 處理，並檢查預期的檔案有沒有被找到。
 
 ```python
 rows = []
@@ -373,9 +382,9 @@ process_query(rows[0])
     (True, 1.0, 1.0)
     ```
 
-Recall & Precision are at 1 for this example, and our file ranked first so we're having a MRR and MAP = 1 on this example.
+這個例子的 Recall 和 Precision 都是 1，而且目標檔案排第一，所以 MRR 和 MAP 都是 1。
 
-We can now execute this processing on our set of questions.
+接著對整組問題執行同樣的處理。
 
 ```python
 with ThreadPoolExecutor() as executor:
@@ -429,7 +438,7 @@ map_score = sum(average_precisions) / total_queries
     100%|███████████████████████████████| 21/21 [00:15<00:00,  1.38it/s]
     ```
 
-The outputs logged above would either show that a file wasn't ranked first when our evaluation dataset expected it to rank first or that it wasn't found at all. As we can see from our imperfect evaluation dataset, some questions were generic and expected another doc, which our retrieval system didn't specifically retrieved for this question.
+上面記錄的輸出會顯示：評估資料集預期某個檔案排第一但實際沒有，或是完全沒找到。從這份不完美的評估資料集可以看到，有些問題太籠統、預期的是另一份文件，而我們的檢索系統沒有針對這個問題特別取回它。
 
 ```python
 # Print the metrics with k
@@ -450,14 +459,23 @@ print(f"Mean Average Precision (MAP): {map_score:.4f}")
     Mean Average Precision (MAP): 0.8954
     ```
 
-With this cookbook we were able to see how to:
-- Generate a dataset of evaluations using PDF context-stuffing (leveraging vision modality of 4o) and traditional PDF readers
-- Create a vector store and populate it with PDF
-- Get an LLM answer to a query, leveraging a RAG system available out-of-the-box with `file_search` tool call in OpenAI's Response API
-- Understand how chunks of texts are retrieved, ranked and used as part of the Response API
-- Measure accuracy, precision, retrieval, MRR and MAP on the dataset of evaluations previously generated
+這份教學我們學到：
+- 用 PDF context-stuffing（利用 4o 的視覺能力）和傳統 PDF 讀取器產生評估資料集
+- 建立 vector store 並放入 PDF
+- 利用 OpenAI Responses API 內建的 `file_search` tool call，直接得到 RAG 系統產生的 LLM 答案
+- 了解文字 chunk 在 Responses API 裡如何被檢索、排序和使用
+- 在先前產生的評估資料集上衡量 accuracy、precision、recall、MRR 和 MAP
 
-By using file search with Responses, you can simplify RAG architecture and leverage this in a single API call using the new Responses API. File storage, embeddings, retrieval all integrated in one tool!
+用 Responses 搭配 file search，一次 API 呼叫就能簡化 RAG 架構。檔案儲存、embedding、檢索全部整合在一個 tool 裡！
 
 
-<!-- tutor:summary -->
+## 重點整理
+- file search 把切 chunk、embedding、存 vector database、檢索都包成 hosted tool，不用自己搭 RAG pipeline。
+- vector search API 可以單獨用，不一定要接 LLM；掛在 Responses API 的 `file_search` tool 則一次呼叫就能檢索加回答。
+- 檢索系統要量測：用 recall、precision、MRR、MAP 看目標文件有沒有被找到、排第幾。
+- 自動產生的評估問題可能太籠統，真正上線建議用人工驗證過的資料集。
+
+## 練習
+1. 換一個問題去查 vector search，比較不同 query 回傳的 chunk 和相關性分數。
+2. 在 `file_search` 的呼叫加上 `include=["output[*].file_search_call.search_results"]`，印出模型實際參考了哪些 chunk。
+3. 修改 generate_question 的 prompt，要求問題要包含文件裡的具體細節，再重跑評估，看 MRR 和 MAP 有沒有提升。

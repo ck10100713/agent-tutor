@@ -1,21 +1,32 @@
 ---
-translated: false
+translated: true
 source: examples/Creating_slides_with_Assistants_API_and_DALL-E3.ipynb
 ---
-
-# Creating slides with the Assistants API and DALL·E 3
+# 用 Assistants API 和 DALL·E 3 做投影片
 
 > 原文：[examples/Creating_slides_with_Assistants_API_and_DALL-E3.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Creating_slides_with_Assistants_API_and_DALL-E3.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Assistants API 的 Code Interpreter 讀財務 CSV、算利潤並畫圖，再讓 Assistant 針對圖產出重點和標題，用 DALL·E-3 生成封面圖，最後用 `python-pptx` 模板把所有內容組成一份 pptx 簡報。全程不用打開 PowerPoint 或 Google Slides。
+
+## 學完你會
+
+- 上傳檔案並建立帶 Code Interpreter 的 Assistant，讓它自己寫程式算數據、畫圖
+- 在同一個 thread 追加 message，讓 Assistant 根據前面的圖產生重點和標題
+- 把圖片、標題、重點餵給 Assistant，並用 `python-pptx` 模板產出 pptx 檔
+
+## 開跑前
+
+需要 OpenAI API key（呼叫 GPT-4、DALL·E-3 和 Code Interpreter 都會計費）。
 
 
-This notebook illustrates the use of the new [Assistants API](https://platform.openai.com/docs/assistants/overview) (GPT-4), and DALL·E-3 in crafting informative and visually appealing slides. <br>
-Creating slides is a pivotal aspect of many jobs, but can be laborious and time-consuming. Additionally, extracting insights from data and articulating them effectively on slides can be challenging. <br><br> This cookbook recipe will demonstrate how you can utilize the new Assistants API to facilitate the end to end slide creation process for you without you having to touch Microsoft PowerPoint or Google Slides, saving you valuable time and effort!
+這份 notebook 示範怎麼用新的 [Assistants API](https://platform.openai.com/docs/assistants/overview)（GPT-4）和 DALL·E-3，做出資訊豐富又好看的投影片。<br>
+做投影片是很多工作的重要環節，但很費工又花時間。另外，從資料中找出洞見並在投影片上有效表達，也不容易。<br><br> 這份 cookbook 會示範怎麼用新的 Assistants API 協助你完成整個投影片製作流程，不用碰 Microsoft PowerPoint 或 Google Slides，省下寶貴的時間和精力！
 
-## 0. Setup
+## 0. 環境設定
 
 ```python
 from IPython.display import display, Image
@@ -54,9 +65,9 @@ def get_response(thread):
     return client.beta.threads.messages.list(thread_id=thread.id)
 ```
 
-## 1. Creating the content
+## 1. 建立內容
 
-In this recipe, we will be creating a brief fictional presentation for the quarterly financial review of our company, NotReal Corporation. We want to highlight some key trends we are seeing that are affecting the profitability of our company.<br> Let's say we have the some financial data at our disposal. Let's load in the data, and take a look...
+這份範例要為我們公司 NotReal Corporation 的季度財務檢討，做一份虛構的簡短簡報。我們想強調一些正在影響公司獲利的關鍵趨勢。<br> 假設手上有一些財務資料。來載入資料看看⋯⋯
 
 ```python
 financial_data_path = 'data/NotRealCorp_financial_data.json'
@@ -82,10 +93,9 @@ financial_data.head(5)
     4             153  2021 Q2
     ```
 
-As you can see, this data has quarterly revenue, costs and customer data across different distribution channels. Let's create an Assistant
-that can act as a personal analyst and make a nice visualization for our PowerPoint!
+可以看到這份資料有跨不同通路的季度營收、成本和客戶資料。來建立一個能當個人分析師的 Assistant，幫我們的 PowerPoint 做出漂亮的視覺化圖表！
 
-First, we need to upload our file so our Assistant can access it.
+首先要上傳檔案，讓 Assistant 能存取。
 
 ```python
 file = client.files.create(
@@ -94,7 +104,7 @@ file = client.files.create(
 )
 ```
 
-Now, we're ready to create our Assistant. We can instruct our assistant to act as a data scientist, and take any queries we give it and run the necessary code to output the proper data visualization. The instructions parameter here is akin to system instructions in the Chat Completions API, and can help guide the assistant. We can also turn on the tool of Code Interpreter, so our Assistant will be able to code. Finally, we can specify any files we want to use, which in this case is just the `financial_data` file we created above.
+現在可以建立 Assistant 了。我們可以指示 assistant 扮演資料科學家，接受我們給的任何查詢，並執行必要的程式碼，輸出正確的資料視覺化。這裡的 instructions 參數類似 Chat Completions API 的 system instructions，可以引導 assistant。我們也可以開啟 Code Interpreter 這個 tool，讓 Assistant 能寫程式。最後，可以指定要用的檔案，這裡就是前面建立的 `financial_data` 檔。
 
 ```python
 assistant = client.beta.assistants.create(
@@ -105,7 +115,7 @@ assistant = client.beta.assistants.create(
 )
 ```
 
-Let's create a thread now, and as our first request ask the Assistant to calculate quarterly profits, and then plot the profits by distribution channel over time. The assistant will automatically calculate the profit for each quarter, and also create a new column combining quarter and year, without us having to ask for that directly. We can also specify the colors of each line.
+現在建立一個 thread，第一個請求是請 Assistant 計算季度利潤，然後畫出各通路利潤隨時間變化的圖。assistant 會自動計算每季的利潤，也會自己建立一個合併季度和年份的新欄位，不用我們直接要求。我們也可以指定每條線的顏色。
 
 ```python
 thread = client.beta.threads.create(
@@ -119,7 +129,7 @@ thread = client.beta.threads.create(
 )
 ```
 
-No we can execute the run of our thread
+現在可以執行 thread 的 run
 
 ```python
 
@@ -129,7 +139,7 @@ run = client.beta.threads.runs.create(
 )
 ```
 
-We can now start a loop that will check if the image has been created. Note: This may take a few minutes
+接著可以開始一個迴圈，檢查圖片是不是已經產生了。注意：這可能要幾分鐘
 
 ```python
 messages = client.beta.threads.messages.list(thread_id=thread.id)
@@ -175,7 +185,7 @@ while True:
     Plot created!
     ```
 
-Let's see the messages the Assistant added.
+來看看 Assistant 加了哪些 messages。
 
 ```python
 messages = client.beta.threads.messages.list(thread_id=thread.id)
@@ -196,7 +206,7 @@ messages = client.beta.threads.messages.list(thread_id=thread.id)
      MessageContentText(text=Text(annotations=[], value='Calculate profit (revenue minus cost) by quarter and year, and visualize as a line plot across the distribution channels, where the colors of the lines are green, light red, and light blue'), type='text')]
     ```
 
-We can see that the last message (latest message is shown first) from the assistant contains the image file we are looking for. An interesting note here is that the Assistant was able to attempt several times to parse the JSON data, as the first parsing was unsuccessful, demonstrating the assistant's adaptability.
+可以看到 assistant 的最後一則 message（最新的會排在最前面）包含我們要找的圖片檔。有個有趣的地方：Assistant 試了好幾次解析 JSON 資料，因為第一次解析失敗了，這顯示出 assistant 的應變能力。
 
 ```python
 # Quick helper function to convert our output file to a png
@@ -219,17 +229,16 @@ plot_file = client.files.create(
 )
 ```
 
-Let's load in the plot!
+來載入圖表吧！
 
 ![The Image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/NotRealCorp_chart.png)
 
-Nice! So, with just one sentence, we were able to have our assistant use code interpreter to
-calculate the profitability, and graph the three lineplots of the various distribution channels.<br><br>
-Now we have a nice visual for our slide, but we want some insights to go along with it.
+很棒！只用一句話，我們就讓 assistant 用 code interpreter 計算獲利，並畫出三個通路的折線圖。<br><br>
+現在投影片有漂亮的視覺圖了，但我們還想要搭配一些洞見。
 
-## 2. Generating insights
+## 2. 產生洞見
 
-To get insights from our image, we simply need to add a new message to our thread. Our Assistant will know to use the message history to give us some concise takeaways from the visual provided. 
+要從圖片取得洞見，只需要在 thread 加一則新的 message。我們的 Assistant 會知道用訊息歷史，針對提供的視覺圖給出簡潔的重點。
 
 ```python
 submit_message(assistant.id,thread,"Give me two medium length sentences (~20-30 words per sentence) of the \
@@ -245,7 +254,7 @@ submit_message(assistant.id,thread,"Give me two medium length sentences (~20-30 
     Run(id='run_NWoygMcBfHUr58fCE4Cn6rxN', assistant_id='asst_3T362kLlTyAq0FUnkvjjQczO', cancelled_at=None, completed_at=None, created_at=1701827074, expires_at=1701827674, failed_at=None, file_ids=['file-piTokyHGllwGITzIpoG8dok3'], instructions='You are a data scientist assistant. When given data and a query, write the proper code and create the proper visualization', last_error=None, metadata={}, model='gpt-4-1106-preview', object='thread.run', required_action=None, started_at=None, status='queued', thread_id='thread_73TgtFoJMlEJvb13ngjTnAo3', tools=[ToolAssistantToolsCode(type='code_interpreter')])
     ```
 
-Now, once the run has completed, we can see the latest message
+等 run 完成後，就能看到最新的 message
 
 ```python
 # Hard coded wait for a response, as the assistant may iterate on the bullets.
@@ -261,7 +270,7 @@ print(bullet_points)
     The plot reveals a consistent upward trend in profits for all distribution channels, indicating successful business growth over time. Particularly, 'Online Sales' shows a notable increase, underscoring the importance of digital presence in revenue generation.
     ```
 
-Cool! So our assistant was able to identify the noteworthy growth in Online Sales profit, and infer that this shows the importance of a large digital presence. Now let's get a compelling title for the slide.
+很酷！我們的 assistant 看出 Online Sales 利潤明顯成長，並推論這代表擁有大型數位通路的重要性。接下來幫投影片想一個吸引人的標題。
 
 ```python
 submit_message(assistant.id,thread,"Given the plot and bullet points you created,\
@@ -275,7 +284,7 @@ submit_message(assistant.id,thread,"Given the plot and bullet points you created
     Run(id='run_q6E85J31jCw3QkHpjJKl969P', assistant_id='asst_3T362kLlTyAq0FUnkvjjQczO', cancelled_at=None, completed_at=None, created_at=1701827084, expires_at=1701827684, failed_at=None, file_ids=['file-piTokyHGllwGITzIpoG8dok3'], instructions='You are a data scientist assistant. When given data and a query, write the proper code and create the proper visualization', last_error=None, metadata={}, model='gpt-4-1106-preview', object='thread.run', required_action=None, started_at=None, status='queued', thread_id='thread_73TgtFoJMlEJvb13ngjTnAo3', tools=[ToolAssistantToolsCode(type='code_interpreter')])
     ```
 
-And the title is:
+標題是：
 
 ```python
 #Wait as assistant may take a few steps
@@ -291,11 +300,11 @@ print(title)
     "Ascending Profits & Digital Dominance"
     ```
 
-## 3. DALL·E-3 title image
+## 3. DALL·E-3 標題圖
 
-Nice, now we have a title, a plot and two bullet points. We're almost ready to put this all on a slide, but as a final step, let's have DALL·E-3 come up with an image to use as the title slide of the presentation. <br><br>
-*Note:* DALL·E-3 is not yet available within the assistants API but is coming soon! <br> <br>
-We'll feed in a brief description of our company (NotRealCorp) and have DALL·E-3 do the rest!
+很好，現在有標題、圖表和兩個重點了。快可以把這些放上投影片了，不過最後一步，讓 DALL·E-3 想一張圖，當作簡報的標題頁圖片。<br><br>
+*注意：* DALL·E-3 還不能在 assistants API 裡使用，但即將推出！<br> <br>
+我們會給它一段公司（NotRealCorp）的簡短描述，剩下的交給 DALL·E-3！
 
 ```python
 company_summary = "NotReal Corp is a prominent hardware company that manufactures and sells processors, graphics cards and other essential computer hardware."
@@ -314,7 +323,7 @@ response = client.images.generate(
 image_url = response.data[0].url
 ```
 
-Cool, now we can add this image to our thread. First, we can save the image locally, then upload it to the assistants API using the `File` upload endpoint. Let's also take a look at our image
+很好，現在可以把這張圖加進 thread。首先，把圖存到本機，再用 `File` 上傳 endpoint 上傳到 assistants API。順便看一下我們的圖
 
 ```python
 dalle_img_path = '../images/dalle_image.png'
@@ -334,9 +343,9 @@ dalle_file = client.files.create(
   
 ![Image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/dalle_image.png)
 
-## 4. Creating the slides
+## 4. 製作投影片
 
-We now have all the content we need to create the slides. We could simply add a message asking for slides, but let's instead give the assistant a slide template to use with the `python-pptx` library. This will ensure we get a deck in the style we want. See the `Extensions` section at the end of the notebook for notes on creating the template.
+現在我們有製作投影片需要的所有內容了。可以直接加一則 message 要求做投影片，但我們改成給 assistant 一個搭配 `python-pptx` library 使用的投影片模板，這樣能確保做出的簡報是我們要的風格。建立模板的說明請看 notebook 最後的 `Extensions` 一節。
 
 ```python
 title_template = """
@@ -463,16 +472,16 @@ bullet_p.line_spacing = 1.5
 """
 ```
 
-Let's set a few variables for our slides. We want the company name, NotRealCorp, on the title slide, and the presentation should be titled 'Quarterly financial planning meeting, Q3, 2023'.
+設定幾個投影片用的變數。我們要在標題頁放公司名稱 NotRealCorp，簡報標題是 'Quarterly financial planning meeting, Q3, 2023'。
 
 ```python
 title_text = "NotRealCorp"
 subtitle_text = "Quarterly financial planning meeting, Q3 2023"
 ```
 
-And for the data slide, we have:
+資料頁的部分，我們有：
 
-Here we have a template to create a Title Slide. The template below was created by uploading the image of a desirable title slide to GPT-V, and asking for the `python-pptx` code to create that template. The inputs to the template are the image_path, title_text, and subtitle_text.
+這裡有一個建立標題頁的模板。下面的模板是把一張理想標題頁的圖片上傳給 GPT-V，請它產生建立該模板的 `python-pptx` 程式碼而來。模板的輸入是 image_path、title_text 和 subtitle_text。
 
 ```python
 submit_message(assistant.id,thread,f"Use the included code template to create a PPTX slide that follows the template format, but uses the image, company name/title, and document name/subtitle included:\
@@ -528,27 +537,39 @@ with open("data/created_slides.pptx", "wb") as f:
     f.write(file_obj.getbuffer())
 ```
 
-Now, we have a PPTX file saved with all of our created content!. <br>
+現在，我們有一個存好所有生成內容的 PPTX 檔了！<br>
 
-Let's look at the screenshots of the .pptx we just created using JUST the assistants API and DALL·E-3. We don't have a `seed` parameter yet in the Assistants API, so the DALL·E-3 image and wordings will be slightly different from what you see when you run this notebook, due to the non-determinism of LLMs, but the outputs should be directionally the same.
+來看看剛剛只用 assistants API 和 DALL·E-3 做出的 .pptx 截圖。Assistants API 目前還沒有 `seed` 參數，所以因為 LLM 的非確定性，DALL·E-3 的圖片和文字會跟你執行這份 notebook 看到的略有不同，不過輸出的大方向應該一樣。
 
-The title slide:
+標題頁：
 
 ![Title Slide](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/title_slide.png)
 
-And the data slide:
+資料頁：
 
 ![Data Slide](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/data_vis_slide.png)
 
-## 5. Conclusion
+## 5. 結論
 
-Woo! While these slides could use some formatting tweaks, we have made some great content using the Assistants API, GPT-4 and DALL·E-3. We were able to take a `.csv` file with financial data, and use our assistant to calculate profit by quarter across distribution channels, plot the results, identify insights and key takeaways from the visualization, and create a summary title. And, given just a description of our company, NotRealCorp, we used DALL·E-3 to make an awesome title image. <br><br>
-While we are still a ways away from entirely automating this process without a human in the loop, hopefully this notebook can make the slide creation process a bit easier for you. More importantly, this notebook can ideally give you a glimpse into the potential of the assistants API! We're excited to see what you build.
+太棒了！雖然這些投影片還需要調整一下格式，但我們用 Assistants API、GPT-4 和 DALL·E-3 做出了很棒的內容。我們拿一份含財務資料的 `.csv` 檔，用 assistant 計算各通路每季的利潤，把結果畫成圖，從視覺圖找出洞見和重點，並產生摘要標題。而且只給公司 NotRealCorp 的描述，就用 DALL·E-3 做出很棒的標題圖。<br><br>
+雖然要完全自動化這個流程、不需要人類介入，還有一段距離，但希望這份 notebook 能讓你做投影片稍微輕鬆一點。更重要的是，希望它能讓你一窺 assistants API 的潛力。我們很期待看到你做出什麼！
 
-## 6. Extensions
+## 6. 延伸方向
 
-- When  DALL·E-3 is incorporated in the Assistants API, we will have the ability to request the generated title image within the thread. 
-- GPT-4-Vision is not yet supported in the Assistants API, but could have been used to gather insights from the line plot image.
-- GPT-4-Vision was used to generate the `python-pptx` template included in this recipe, so a potential extension project could be demonstrating best practices around converting images to slide templates.
+- 當 DALL·E-3 整合進 Assistants API 之後，就能直接在 thread 裡要求生成標題圖。
+- Assistants API 目前還不支援 GPT-4-Vision，但它本來可以用來從折線圖圖片取得洞見。
+- 這份範例裡的 `python-pptx` 模板是用 GPT-4-Vision 產生的，所以一個可能的延伸專案，是示範把圖片轉成投影片模板的最佳做法。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Code Interpreter 讓 Assistant 能自己寫程式讀檔、計算和畫圖，你只要用自然語言下指令。
+- 同一個 thread 會保留訊息歷史，後續的洞見和標題可以直接追加 message 取得，不用重傳圖。
+- instructions 參數的作用類似 system instructions，用來決定 Assistant 的角色。
+- 先給模板再要求生成，比直接叫它做投影片更能控制成品風格。
+- LLM 輸出不是確定的，每次跑的圖和文字會略有不同，流程仍需要人工檢查。
+
+## 練習
+
+1. 把畫圖請求裡指定的線條顏色改掉，或改成要求長條圖，重跑確認 Assistant 產生的圖有跟著變。
+2. 在 thread 多追加一則 message，請 Assistant 針對圖產生三個重點而不是兩個，並調整標題的要求長度。
+3. 修改 `python-pptx` 模板的變數（標題文字、公司名稱），再試著新增第三頁投影片，放另一組你自己的資料圖。

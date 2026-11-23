@@ -1,35 +1,47 @@
 ---
-translated: false
+translated: true
 source: examples/Named_Entity_Recognition_to_enrich_text.ipynb
 ---
 
-# Named Entity Recognition to Enrich Text
+# 用 Named Entity Recognition 豐富文字內容
 
 > 原文：[examples/Named_Entity_Recognition_to_enrich_text.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Named_Entity_Recognition_to_enrich_text.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-## Named Entity Recognition (NER) to Enrich Text
+用 chat completion 加 function calling 做 NER（命名實體辨識），把一段文字裡的人名、地名、事件等抓出來，再幫它們補上 Wikipedia 連結。最後還會教你怎麼從 response 算出這次呼叫花了多少錢。
 
-`Named Entity Recognition` (NER) is a `Natural Language Processing` task that identifies and classifies named entities (NE) into predefined semantic categories (such as persons, organizations, locations, events, time expressions, and quantities). By converting raw text into structured information, NER makes data more actionable, facilitating tasks like information extraction, data aggregation, analytics, and social media monitoring.
+## 學完你會
 
-This notebook demonstrates how to carry out NER with [chat completion](https://platform.openai.com/docs/api-reference/chat) and [functions-calling](https://platform.openai.com/docs/guides/gpt/function-calling) to enrich a text with links to a knowledge base such as Wikipedia:
+- 用 function calling 讓模型直接回傳符合 JSON schema 的結構化結果。
+- 用 system、assistant、user 三種 message 組出 one-shot 的 NER prompt。
+- 從 response 的 `usage` 欄位估算 token 用量和 API 成本。
 
-**Text:**
+## 開跑前
+
+需要 `OPENAI_API_KEY`，呼叫 OpenAI API 會產生費用。
+
+## Named Entity Recognition (NER) 豐富文字
+
+`Named Entity Recognition` (NER) 是 `Natural Language Processing` 的一種任務，把文字裡的命名實體（NE）找出來，分到預先定義好的語意類別，例如人物、組織、地點、事件、時間表達和數量。把原始文字轉成結構化資訊之後，資料更好用，資訊抽取、資料彙整、分析、社群媒體監控這類工作都會比較容易。
+
+這個 notebook 示範怎麼用 [chat completion](https://platform.openai.com/docs/api-reference/chat) 和 [functions-calling](https://platform.openai.com/docs/guides/gpt/function-calling) 做 NER，把文字加上指向 Wikipedia 這類知識庫的連結：
+
+**原文：**
 
 *In Germany, in 1440, goldsmith Johannes Gutenberg invented the movable-type printing press. His work led to an information revolution and the unprecedented mass-spread of literature throughout Europe. Modelled on the design of the existing screw presses, a single Renaissance movable-type printing press could produce up to 3,600 pages per workday.*
 
-**Text enriched with Wikipedia links:**
+**加上 Wikipedia 連結後：**
 
 *In [Germany](https://en.wikipedia.org/wiki/Germany), in 1440, goldsmith [Johannes Gutenberg]() invented the [movable-type printing press](https://en.wikipedia.org/wiki/Movable_Type). His work led to an [information revolution](https://en.wikipedia.org/wiki/Information_revolution) and the unprecedented mass-spread of literature throughout [Europe](https://en.wikipedia.org/wiki/Europe). Modelled on the design of the existing screw presses, a single [Renaissance](https://en.wikipedia.org/wiki/Renaissance) [movable-type printing press](https://en.wikipedia.org/wiki/Movable_Type) could produce up to 3,600 pages per workday.*
 
-**Inference Costs:** The notebook also illustrates how to estimate OpenAI API costs.
+**推論成本：** 這個 notebook 也會示範怎麼估算 OpenAI API 的費用。
 
-### 1. Setup
+### 1. 環境設定
 
-#### 1.1 Install/Upgrade Python packages
+#### 1.1 安裝/升級 Python 套件
 
 ```python
 %pip install --upgrade openai --quiet
@@ -45,11 +57,11 @@ This notebook demonstrates how to carry out NER with [chat completion](https://p
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-#### 1.2 Load packages and OPENAI_API_KEY
+#### 1.2 載入套件和 OPENAI_API_KEY
 
-You can generate an API key in the OpenAI web interface. See https://platform.openai.com/account/api-keys for details.
+API key 可以在 OpenAI 網頁介面產生，細節看 https://platform.openai.com/account/api-keys 。
 
-This notebook works with the latest OpeanAI models `gpt-3.5-turbo-0613` and `gpt-4-0613`.
+這個 notebook 使用最新的 OpenAI 模型 `gpt-3.5-turbo-0613` 和 `gpt-4-0613`。
 
 ```python
 import json
@@ -70,9 +82,9 @@ OPENAI_MODEL = 'gpt-3.5-turbo-0613'
 client = openai.OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-### 2. Define the NER labels to be Identified
+### 2. 定義要辨識的 NER 標籤
 
-We define a standard set of NER labels to showcase a wide range of use cases. However, for our specific task of enriching text with knowledge base links, only a subset is practically required.
+我們先定義一組標準的 NER 標籤，展示各種使用情境。不過這次的任務是替文字補知識庫連結，實際上只會用到其中一部分。
 
 ```python
 labels = [
@@ -94,15 +106,15 @@ labels = [
 ]
 ```
 
-### 3. Prepare messages
+### 3. 準備 messages
 
-The [chat completions API](https://platform.openai.com/docs/guides/gpt/chat-completions-api) takes a list of messages as input and delivers a model-generated message as an output. While the chat format is primarily designed for facilitating multi-turn conversations, it is equally efficient for single-turn tasks without any preceding conversation. For our purposes, we will specify a message for the system, assistant, and user roles.
+[chat completions API](https://platform.openai.com/docs/guides/gpt/chat-completions-api) 的輸入是一串 message，輸出是模型產生的 message。chat 格式主要是為多輪對話設計的，但拿來做沒有前文的單輪任務也一樣好用。這裡我們會分別準備 system、assistant、user 三種角色的 message。
 
 #### 3.1 System Message
 
-The `system message` (prompt) sets the assistant's behavior by defining its desired persona and task. We also delineate the specific set of entity labels we aim to identify.
+`system message`（prompt）定義 assistant 的角色和任務，決定它的行為。我們也在這裡列出想辨識的實體標籤。
 
-Although one can instruct the model to format its response, it has to be noted that both `gpt-3.5-turbo-0613` and `gpt-4-0613` have been fine-tuned to discern when a function should be invoked, and to reply with `JSON` formatted according to the function's signature. This capability streamlines our prompt and enables us to receive structured data directly from the model.
+雖然也可以直接用 prompt 要求模型指定輸出格式，但 `gpt-3.5-turbo-0613` 和 `gpt-4-0613` 都經過 fine-tuning，會判斷什麼時候該呼叫 function，並且回傳符合 function signature 的 `JSON`。這讓 prompt 可以寫得更短，也能直接拿到結構化資料。
 
 ```python
 def system_message(labels):
@@ -113,7 +125,7 @@ The possible common Named Entities (NER) types are exclusively: ({", ".join(labe
 
 #### 3.2 Assistant Message
 
-`Assistant messages` usually store previous assistant responses. However, as in our scenario, they can also be crafted to provide examples of the desired behavior. While OpenAI is able to execute `zero-shot` Named Entity Recognition, we have found that a `one-shot` approach produces more precise results.
+`Assistant messages` 通常放之前 assistant 的回覆。不過像這個情境，也可以拿來寫範例，示範想要的行為。OpenAI 的模型可以做 `zero-shot` 的 NER，但我們發現 `one-shot` 的結果比較準。
 
 ```python
 def assisstant_message():
@@ -135,7 +147,7 @@ EXAMPLE:
 
 #### 3.3 User Message
 
-The `user message` provides the specific text for the assistant task:
+`user message` 放這次任務要處理的文字：
 
 ```python
 def user_message(text):
@@ -145,11 +157,11 @@ TASK:
 """
 ```
 
-### 4. OpenAI Functions (and Utils)
+### 4. OpenAI Functions（和工具函式）
 
-In an OpenAI API call, we can describe `functions` to `gpt-3.5-turbo-0613` and `gpt-4-0613` and have the model intelligently choose to output a `JSON` object containing arguments to call those `functions`. It's important to note that the [chat completions API](https://platform.openai.com/docs/guides/gpt/chat-completions-api) doesn't actually execute the `function`. Instead, it provides the `JSON` output, which can then be used to call the `function` in our code. For more details, refer to the [OpenAI Function Calling Guide](https://platform.openai.com/docs/guides/function-calling).
+呼叫 OpenAI API 時，可以把 `functions` 描述給 `gpt-3.5-turbo-0613` 和 `gpt-4-0613`，模型會自己判斷要不要輸出一個 `JSON` 物件，裡面是呼叫那些 `functions` 的參數。要注意 [chat completions API](https://platform.openai.com/docs/guides/gpt/chat-completions-api) 不會真的執行 `function`，它只回傳 `JSON`，再由你的程式拿去呼叫 `function`。更多細節看 [OpenAI Function Calling Guide](https://platform.openai.com/docs/guides/function-calling)。
 
-Our function, `enrich_entities(text, label_entities)` gets a block of text and a dictionary containing identified labels and entities as parameters. It then associates the recognized entities with their corresponding links to the Wikipedia articles.
+我們的 function `enrich_entities(text, label_entities)` 接收一段文字，以及一個放了標籤和實體的 dictionary，然後把辨識出的實體對應到 Wikipedia 文章連結。
 
 ```python
 @retry(wait=wait_random_exponential(min=1, max=10), stop=stop_after_attempt(5))
@@ -197,19 +209,19 @@ def enrich_entities(text: str, label_entities: dict) -> str:
 
 ### 4. ChatCompletion
 
-As previously highlighted, `gpt-3.5-turbo-0613` and `gpt-4-0613` have been fine-tuned to detect when a `function` should to be called. Moreover, they can produce a `JSON` response that conforms to the `function` signature. Here's the sequence we follow:
+前面提過，`gpt-3.5-turbo-0613` 和 `gpt-4-0613` 經過 fine-tuning，會偵測什麼時候該呼叫 `function`，也能產生符合 `function` signature 的 `JSON`。流程如下：
 
-1. Define our `function` and its associated `JSON` Schema.
-2. Invoke the model using the `messages`, `tools` and `tool_choice` parameters.
-3. Convert the output into a `JSON` object, and then call the `function` with the `arguments` provided by the model.
+1. 定義 `function` 和對應的 `JSON` Schema。
+2. 用 `messages`、`tools` 和 `tool_choice` 參數呼叫模型。
+3. 把輸出轉成 `JSON` 物件，再用模型給的 `arguments` 呼叫 `function`。
 
-In practice, one might want to re-invoke the model again by appending the `function` response as a new message, and let the model summarize the results back to the user. Nevertheless, for our purposes, this step is not needed.
+實際應用中，你可能會把 `function` 的結果當成新的 message 加回去，再呼叫一次模型，讓它對使用者總結結果。這裡不需要這一步。
 
-*Note that in a real-case scenario it is strongly recommended to build in user confirmation flows before taking actions.*
+*注意：真實情境下，強烈建議在執行動作之前加上使用者確認流程。*
 
-#### 4.1 Define our Function and JSON schema
+#### 4.1 定義 Function 和 JSON schema
 
-Since we want the model to output a dictionary of labels and recognized entities:
+我們要的是模型輸出一個「標籤對應辨識實體」的 dictionary：
 
 ```python
 {   
@@ -222,7 +234,7 @@ Since we want the model to output a dictionary of labels and recognized entities
     "time": ["workday"]   
 }   
 ```
-we need to define the corresponding `JSON` schema to be passed to the `tools` parameter: 
+所以要定義對應的 `JSON` schema，傳給 `tools` 參數：
 
 ```python
 def generate_functions(labels: dict) -> list:
@@ -252,7 +264,7 @@ def generate_functions(labels: dict) -> list:
 
 #### 4.2 Chat Completion
 
-Now, we invoke the model. It's important to note that we direct the API to use a specific function by setting the `tool_choice` parameter to `{"type": "function", "function" : {"name": "enrich_entities"}}`.
+接著呼叫模型。這裡把 `tool_choice` 參數設成 `{"type": "function", "function" : {"name": "enrich_entities"}}`，強制 API 使用指定的 function。
 
 ```python
 @retry(wait=wait_random_exponential(min=1, max=10), stop=stop_after_attempt(5))
@@ -292,9 +304,9 @@ def run_openai_task(labels, text):
             "function_response": function_response}
 ```
 
-### 5. Let's Enrich a Text with Wikipedia links
+### 5. 實際替文字加上 Wikipedia 連結
 
-#### 5.1 Run OpenAI Task
+#### 5.1 執行 OpenAI 任務
 
 ```python
 text = """The Beatles were an English rock band formed in Liverpool in 1960, comprising John Lennon, Paul McCartney, George Harrison, and Ringo Starr."""
@@ -309,7 +321,7 @@ result = run_openai_task(labels, text)
      2023-10-20 18:06:09,858 - INFO - entity_link_dict: {'John Lennon': 'https://en.wikipedia.org/wiki/John_Lennon', 'Paul McCartney': 'https://en.wikipedia.org/wiki/Paul_McCartney', 'George Harrison': 'https://en.wikipedia.org/wiki/George_Harrison', 'Ringo Starr': 'https://en.wikipedia.org/wiki/Ringo_Starr', 'The Beatles': 'https://en.wikipedia.org/wiki/The_Beatles', 'Liverpool': 'https://en.wikipedia.org/wiki/Liverpool'}
     ```
 
-#### 5.2 Function Response
+#### 5.2 Function 回傳結果
 
 ```python
 display(Markdown(f"""**Text:** {text}   
@@ -322,9 +334,9 @@ display(Markdown(f"""**Text:** {text}
     <IPython.core.display.Markdown object>
     ```
 
-#### 5.3 Token Usage
+#### 5.3 Token 用量
 
-To estimate the inference costs, we can parse the response's "usage" field. Detailed token costs per model are available in the [OpenAI Pricing Guide](https://openai.com/pricing):
+要估算推論成本，可以解析 response 裡的 "usage" 欄位。各模型的 token 價格看 [OpenAI Pricing Guide](https://openai.com/pricing)：
 
 ```python
 # estimate inference cost assuming gpt-3.5-turbo (4K context)
@@ -349,4 +361,16 @@ print(f"""Token Usage
         Cost estimation: $0.00059
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- NER 把非結構化文字變成結構化資料，標籤集合可以只留任務用得到的部分。
+- 想拿穩定的 JSON，用 function calling 加 `tool_choice` 強制指定 function，比單靠 prompt 要求格式可靠。
+- chat API 不會執行 function，只回傳參數，執行是你的程式的事，真實場景要先做使用者確認。
+- assistant message 可以拿來放範例，one-shot 比 zero-shot 準。
+- response 的 `usage` 欄位直接告訴你 token 數，乘上單價就是成本。
+
+## 練習
+
+1. 把 `usage` 裡的 prompt token 和 completion token 分開，用目前模型價格算出這次呼叫的費用。
+2. 修改 NER 標籤清單，只留 `PERSON` 和 `GPE` 之類兩三個標籤，觀察輸出的連結有什麼變化。
+3. 把 assistant 的 one-shot 範例拿掉改成 zero-shot，換一段自己的文字，比較兩種做法抓到的實體差在哪。

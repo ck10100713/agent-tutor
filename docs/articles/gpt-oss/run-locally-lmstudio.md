@@ -1,42 +1,51 @@
 ---
-translated: false
+translated: true
 source: articles/gpt-oss/run-locally-lmstudio.md
 ---
 
-# How to run gpt-oss locally with LM Studio
+# 用 LM Studio 在本機執行 gpt-oss
 
 > 原文：[articles/gpt-oss/run-locally-lmstudio.md](https://github.com/openai/openai-cookbook/blob/main/articles/gpt-oss/run-locally-lmstudio.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你用 LM Studio 這個桌面應用，在自己的電腦上跑 gpt-oss-20b 或 gpt-oss-120b。包含聊天、接 MCP server，以及透過 LM Studio 的本機 API 和 SDK 呼叫模型。
 
+## 學完你會
+- 用 `lms` 指令下載並載入 gpt-oss 模型
+- 把 OpenAI SDK 的 base URL 指到本機，直接用 Chat Completions 跟模型對話
+- 用 LM Studio SDK 的 `.act()` 讓模型自己呼叫 tool（例如建立檔案）
 
-[LM Studio](https://lmstudio.ai) is a performant and friendly desktop application for running large language models (LLMs) on local hardware. This guide will walk you through how to set up and run **gpt-oss-20b** or **gpt-oss-120b** models using LM Studio, including how to chat with them, use MCP servers, or interact with the models through LM Studio's local development API.
+## 開跑前
+- 安裝 LM Studio
+- 20b 模型至少要 16GB VRAM，120b 建議 60GB 以上
 
-Note that this guide is meant for consumer hardware, like running gpt-oss on a PC or Mac. For server applications with dedicated GPUs like NVIDIA's H100s, [check out our vLLM guide](https://cookbook.openai.com/articles/gpt-oss/run-vllm).
+[LM Studio](https://lmstudio.ai) 是一個效能好又好上手的桌面應用，可以在本機硬體跑大型語言模型 (LLM)。這份教學帶你用 LM Studio 設定並執行 **gpt-oss-20b** 或 **gpt-oss-120b**，包含怎麼聊天、使用 MCP server，或是透過 LM Studio 的本機開發 API 跟模型互動。
 
-## Pick your model
+這份教學針對一般消費級硬體，例如在 PC 或 Mac 上跑 gpt-oss。如果是用 NVIDIA H100 這類專用 GPU 的伺服器，請看 [vLLM 教學](https://cookbook.openai.com/articles/gpt-oss/run-vllm)。
 
-LM Studio supports both model sizes of gpt-oss:
+## 選模型
+
+LM Studio 兩種大小的 gpt-oss 都支援：
 
 - [**`openai/gpt-oss-20b`**](https://lmstudio.ai/models/openai/gpt-oss-20b)
-  - The smaller model
-  - Only requires at least **16GB of VRAM**
-  - Perfect for higher-end consumer GPUs or Apple Silicon Macs
+  - 較小的模型
+  - 至少需要 **16GB VRAM**
+  - 適合高階消費級 GPU 或 Apple Silicon Mac
 - [**`openai/gpt-oss-120b`**](https://lmstudio.ai/models/openai/gpt-oss-120b)
-  - Our larger full-sized model
-  - Best with **≥60GB VRAM**
-  - Ideal for multi-GPU or beefy workstation setup
+  - 完整大小的較大模型
+  - 建議 **≥60GB VRAM**
+  - 適合多 GPU 或高規格工作站
 
-LM Studio ships both a [llama.cpp](https://github.com/ggml-org/llama.cpp) inferencing engine (running GGUF formatted models), as well as an [Apple MLX](https://github.com/ml-explore/mlx) engine for Apple Silicon Macs.
+LM Studio 內建 [llama.cpp](https://github.com/ggml-org/llama.cpp) 推論引擎（跑 GGUF 格式模型），也有給 Apple Silicon Mac 用的 [Apple MLX](https://github.com/ml-explore/mlx) 引擎。
 
-## Quick setup
+## 快速設定
 
-1. **Install LM Studio**
-   LM Studio is available for Windows, macOS, and Linux. [Get it here](https://lmstudio.ai/download).
+1. **安裝 LM Studio**
+   LM Studio 支援 Windows、macOS 和 Linux。[到這裡下載](https://lmstudio.ai/download)。
 
-2. **Download the gpt-oss model** → 
+2. **下載 gpt-oss 模型** → 
 
 ```shell
 # For 20B
@@ -45,8 +54,8 @@ lms get openai/gpt-oss-20b
 lms get openai/gpt-oss-120b
 ``` 
 
-3. **Load the model in LM Studio** 
-  → Open LM Studio and use the model loading interface to load the gpt-oss model you downloaded. Alternatively, you can use the command line:
+3. **在 LM Studio 載入模型** 
+  → 打開 LM Studio，用模型載入介面載入剛下載的 gpt-oss 模型。也可以用指令列：
 
 ```shell
 # For 20B
@@ -55,21 +64,21 @@ lms load openai/gpt-oss-20b
 lms load openai/gpt-oss-120b
 ```
 
-4. **Use the model** → Once loaded, you can interact with the model directly in LM Studio's chat interface or through the API.
+4. **開始使用** → 載入後，你可以直接在 LM Studio 的聊天介面使用，或透過 API 呼叫。
 
-## Chat with gpt-oss
+## 跟 gpt-oss 聊天
 
-Use LM Studio's chat interface to start a conversation with gpt-oss, or use the `chat` command in the terminal:
+用 LM Studio 的聊天介面開始對話，或在終端機用 `chat` 指令：
 
 ```shell
 lms chat openai/gpt-oss-20b
 ```
 
-Note about prompt formatting: LM Studio utilizes OpenAI's [Harmony](https://cookbook.openai.com/articles/openai-harmony) library to construct the input to gpt-oss models, both when running via llama.cpp and MLX.
+關於 prompt 格式：不管是用 llama.cpp 還是 MLX 跑，LM Studio 都是用 OpenAI 的 [Harmony](https://cookbook.openai.com/articles/openai-harmony) 函式庫來組出 gpt-oss 模型的輸入。
 
-## Use gpt-oss with a local /v1/chat/completions endpoint
+## 用本機的 /v1/chat/completions endpoint 呼叫 gpt-oss
 
-LM Studio exposes a **Chat Completions-compatible API** so you can use the OpenAI SDK without changing much. Here’s a Python example:
+LM Studio 提供 **相容 Chat Completions 的 API**，所以你幾乎不用改什麼就能用 OpenAI SDK。下面是 Python 範例：
 
 ```python
 from openai import OpenAI
@@ -90,25 +99,25 @@ result = client.chat.completions.create(
 print(result.choices[0].message.content)
 ```
 
-If you’ve used the OpenAI SDK before, this will feel instantly familiar and your existing code should work by changing the base URL.
+如果你以前用過 OpenAI SDK，這會很眼熟，現有的程式碼只要換 base URL 就能跑。
 
-## How to use MCPs in the chat UI
+## 在聊天介面使用 MCP
 
-LM Studio is an [MCP client](https://lmstudio.ai/docs/app/plugins/mcp), which means you can connect MCP servers to it. This allows you to provide external tools to gpt-oss models.
+LM Studio 是一個 [MCP client](https://lmstudio.ai/docs/app/plugins/mcp)，可以連接 MCP server，替 gpt-oss 模型提供外部 tool。
 
-LM Studio's mcp.json file is located in:
+LM Studio 的 mcp.json 檔案位置在：
 
 ```shell
 ~/.lmstudio/mcp.json
 ```
 
-## Local tool use with gpt-oss in Python or TypeScript
+## 用 Python 或 TypeScript 做本機 tool use
 
-LM Studio's SDK is available in both [Python](https://github.com/lmstudio-ai/lmstudio-python) and [TypeScript](https://github.com/lmstudio-ai/lmstudio-js). You can leverage the SDK to implement tool calling and local function execution with gpt-oss.
+LM Studio 的 SDK 有 [Python](https://github.com/lmstudio-ai/lmstudio-python) 和 [TypeScript](https://github.com/lmstudio-ai/lmstudio-js) 兩個版本。你可以用 SDK 讓 gpt-oss 做 tool calling 和本機函式執行。
 
-The way to achieve this is via the `.act()` call, which allows you to provide tools to the gpt-oss and have it go between calling tools and reasoning, until it completes your task.
+做法是呼叫 `.act()`，把 tool 交給 gpt-oss，它會在呼叫 tool 和 reasoning 之間來回，直到完成你的任務。
 
-The example below shows how to provide a single tool to the model that is able to create files on your local filesystem. You can use this example as a starting point, and extend it with more tools. See docs about tool definitions here for [Python](https://lmstudio.ai/docs/python/agent/tools) and [TypeScript](https://lmstudio.ai/docs/typescript/agent/tools).
+下面的範例給模型一個 tool，可以在本機檔案系統建立檔案。你可以拿它當起點，再加更多 tool。tool 定義的說明文件在這裡：[Python](https://lmstudio.ai/docs/python/agent/tools) 和 [TypeScript](https://lmstudio.ai/docs/typescript/agent/tools)。
 
 ```shell
 uv pip install lmstudio
@@ -161,7 +170,7 @@ while True:
     print()
 ```
 
-For TypeScript developers who want to utilize gpt-oss locally, here's a similar example using `lmstudio-js`:
+想在本機用 TypeScript 的開發者，這裡有用 `lmstudio-js` 寫的類似範例：
 
 ```shell
 npm install @lmstudio/sdk
@@ -209,4 +218,14 @@ while (true) {
 }
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- LM Studio 把本機模型包成 Chat Completions 相容的 API，換 base URL 就能沿用現有程式。
+- 20b 適合一般高階消費級硬體，120b 需要大量 VRAM。
+- LM Studio 用 Harmony 格式組 gpt-oss 的輸入，你不用自己處理。
+- `.act()` 讓模型在 tool 呼叫和 reasoning 之間自動循環，直到任務完成。
+- LM Studio 本身是 MCP client，用 mcp.json 就能接外部 tool。
+
+## 練習
+1. 改 Python 範例的 prompt 內容，確認本機 endpoint 真的回應你的新問題。
+2. 在 `.act()` 範例裡，把建立檔案的 tool 改成只允許寫進某個固定資料夾。
+3. 再加一個 tool（例如讀取檔案內容），然後請模型「先建立檔案、再讀出來確認」，觀察它怎麼串接兩個 tool。

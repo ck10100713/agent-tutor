@@ -1,64 +1,72 @@
 ---
-translated: false
+translated: true
 source: examples/codex/secure_quality_gitlab.md
 ---
-
-# Automating Code Quality and Security Fixes with Codex CLI on GitLab
+# 用 Codex CLI 在 GitLab 自動化程式碼品質與資安修復
 
 > 原文：[examples/codex/secure_quality_gitlab.md](https://github.com/openai/openai-cookbook/blob/main/examples/codex/secure_quality_gitlab.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把 Codex CLI 塞進 GitLab CI/CD pipeline，讓它在 merge 前幫你做兩件事：產出 GitLab 看得懂的 code quality 報告，以及把既有 SAST 掃描結果整理成有優先順序的修復建議和 patch。重點是 prompt、JSON marker 抽取、schema 驗證這套做法，讓 LLM 的輸出能穩定被程式吃進去。
 
+## 學完你會
+- 寫出一個 GitLab CI job，用 Codex CLI 產出符合 CodeClimate JSON 格式的報告，直接顯示在 merge request。
+- 讓 Codex 讀 `gl-sast-report.json`，去重、依可利用性排序，輸出 `security_priority.md`。
+- 讓 Codex 對 High/Critical 問題產生 `git diff` patch，並用 `git apply --check` 驗證。
 
-> **Update note — review the current guidance before using these examples.** The `--full-auto` flag used below is deprecated. Do not treat a failed Codex run or invalid output as an empty findings result. For general Codex automation, see [Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode). For dedicated Codex Security scanning and remediation, use the maintained [GitLab CI/CD guide](https://learn.chatgpt.com/docs/security/cli/ci/gitlab). That workflow differs from this article's code-quality analysis and interpretation of existing SAST results; the examples below have not been migrated to it.
+## 開跑前
+- GitLab 帳號和專案，runner 要能連外（`api.openai.com`）。
+- `OPENAI_API_KEY`，設在 Settings → CI/CD → Variables。
 
-## Introduction
+> **更新說明：使用這些範例前請先看最新的官方說明。** 下面用到的 `--full-auto` 旗標已經棄用。Codex 執行失敗或輸出無效時，不要當成「沒有發現問題」。一般的 Codex 自動化請看 [Non-interactive mode](https://learn.chatgpt.com/docs/non-interactive-mode)。專門的 Codex Security 掃描與修復，請用維護中的 [GitLab CI/CD 指南](https://learn.chatgpt.com/docs/security/cli/ci/gitlab)。那套流程跟本文的程式碼品質分析、解讀既有 SAST 結果不同，下面的範例還沒遷移過去。
 
-When deploying production code, most teams rely on CI/CD pipelines to validate changes before merging. Reviewers typically look at unit test results, vulnerability scans, and code quality reports. Traditionally, these are produced by rule-based engines that catch known issues but often miss contextual or higher-order problems—while leaving developers with noisy results that are hard to prioritize or act on.
+## 簡介
 
-With LLMs, you can add a new layer of intelligence to this process: reasoning about code quality and interpreting security findings. By augmenting your GitLab pipelines with **OpenAI’s Codex CLI**, teams gain insights that go beyond static rules:
+正式環境的程式碼上線前，大部分團隊靠 CI/CD pipeline 在 merge 前把關。reviewer 通常看單元測試結果、弱點掃描和 code quality 報告。這些傳統上都是規則引擎產出的，抓得到已知問題，但常漏掉需要上下文才看得出的問題，結果又吵又難排優先順序。
 
-* **Code Quality** → Generate GitLab-compliant CodeClimate JSON reports that surface contextual issues directly in merge requests.
+有了 LLM，你可以多加一層：讓它判斷程式碼品質、解讀資安發現。在 GitLab pipeline 裡加上 **OpenAI 的 Codex CLI**，可以拿到靜態規則給不了的東西：
 
-* **Security** → Post-process existing SAST results to consolidate duplicates, rank issues by exploitability, and provide clear, actionable remediation steps.
+* **Code Quality** → 產出符合 GitLab 規格的 CodeClimate JSON 報告，把有上下文的問題直接顯示在 merge request。
 
-This guide shows how to integrate Codex CLI into a GitLab pipeline for both use cases—delivering structured, machine-readable reports alongside actionable, human-readable guidance.
+* **Security** → 對既有 SAST 結果做後處理，合併重複項目、依可利用性排序，並給出清楚、可執行的修復步驟。
 
-## What is Codex CLI?
+這篇會示範怎麼把 Codex CLI 接進 GitLab pipeline 處理這兩種情境，同時產出機器可讀的結構化報告和人看得懂的修復指引。
 
-Codex CLI is an open-source command-line tool for bringing OpenAI’s reasoning models into your development workflow. For installation, usage, and full documentation, refer to the official repository: [github.com/openai/codex](https://github.com/openai/codex?utm_source=chatgpt.com).
+## Codex CLI 是什麼？
 
-In this cookbook, we’ll use **Full Auto mode** in an ephemeral GitLab runner to generate a standards-compliant JSON report.
+Codex CLI 是開源的命令列工具，讓你把 OpenAI 的 reasoning 模型帶進開發流程。安裝、用法和完整文件請看官方 repo：[github.com/openai/codex](https://github.com/openai/codex?utm_source=chatgpt.com)。
 
-### Pre-requisites
+這篇會在臨時的 GitLab runner 上用 **Full Auto mode** 產出符合標準的 JSON 報告。
 
-To follow along, you’ll need:
+### 前置需求
 
-* A GitLab account and project  
-* A GitLab runner with **internet access** (we’ve tested this on a Linux runner with 2 vCPUs, 8GB memory and 30GB of storage)  
-* Runner must be able to connect to  `api.openai.com`  
-* An **OpenAI API key** (`OPENAI_API_KEY`)  
-* GitLab CI/CD variables configured under **Settings → CI/CD → Variables**
+要跟著做，你需要：
 
-## Example #1 - Using Codex CLI to Produce a Code Quality Report
+* GitLab 帳號和專案  
+* 有**網路連線**的 GitLab runner（我們測試的是 2 vCPU、8GB 記憶體、30GB 儲存的 Linux runner）  
+* Runner 必須能連到 `api.openai.com`  
+* **OpenAI API key**（`OPENAI_API_KEY`）  
+* 在 **Settings → CI/CD → Variables** 設好 GitLab CI/CD 變數
 
-### Background
+## 範例 #1：用 Codex CLI 產生 Code Quality 報告
 
-This repository is a deliberately vulnerable Node.js Express demo app based on [GitLab's node express template](https://gitlab.com/gitlab-org/project-templates/express/-/tree/main), built to showcase static application security testing (SAST) and code quality scanning in GitLab CI/CD.
+### 背景
 
-The code includes common pitfalls such as command injection, path traversal, unsafe `eval`, regex DoS, weak cryptography (MD5), and hardcoded secrets. It’s used to validate that Codex-powered analyzers produce GitLab-native reports (Code Quality and SAST) that render directly in merge requests.
+這個 repo 是一個刻意留有漏洞的 Node.js Express demo app，基於 [GitLab 的 node express 範本](https://gitlab.com/gitlab-org/project-templates/express/-/tree/main)，用來展示 GitLab CI/CD 的靜態應用程式安全測試（SAST）和 code quality 掃描。
 
-The CI runs on GitLab SaaS runners with `node:24` images and a few extras (`jq`, `curl`, `ca-certificates`, `ajv-cli`). Jobs are hardened with `set -euo pipefail`, schema validation, and strict JSON markers to keep parsing reliable even if Codex output varies.
+程式裡有常見的坑，像 command injection、path traversal、不安全的 `eval`、regex DoS、弱加密（MD5）、寫死的 secret。用它來驗證 Codex 驅動的分析器能不能產出 GitLab 原生報告（Code Quality 和 SAST），並直接顯示在 merge request。
 
-This pipeline pattern—prompt, JSON marker extraction, schema validation—can be adapted to other stacks, though prompt wording and schema rules may need tweaks. Since Codex runs in a sandbox, some system commands (like `awk` or `nl`) may be restricted.
+CI 跑在 GitLab SaaS runner 上，用 `node:24` image，再加幾個工具（`jq`、`curl`、`ca-certificates`、`ajv-cli`）。Job 用 `set -euo pipefail`、schema 驗證和嚴格的 JSON marker 做防護，這樣就算 Codex 輸出有變化，解析還是穩的。
 
-Your team wants to ensure that **code quality checks run automatically** before any merge. To surface findings directly in GitLab’s merge request widget, reports must follow the **CodeClimate JSON format**. [Reference: GitLab Docs](https://docs.gitlab.com/ci/testing/code_quality/#import-code-quality-results-from-a-cicd-job)
+這套模式（prompt、JSON marker 抽取、schema 驗證）也能套到其他技術棧，只是 prompt 措辭和 schema 規則可能要微調。因為 Codex 跑在 sandbox 裡，有些系統指令（像 `awk` 或 `nl`）可能被限制。
 
-### Code Quality CI/CD Job Example
+你的團隊希望 merge 前**自動跑 code quality 檢查**。要讓發現直接顯示在 GitLab 的 merge request widget，報告必須符合 **CodeClimate JSON 格式**。[參考：GitLab 文件](https://docs.gitlab.com/ci/testing/code_quality/#import-code-quality-results-from-a-cicd-job)
 
-Here’s a drop-in GitLab CI job using **Codex CLI** to produce a compliant JSON file:
+### Code Quality CI/CD Job 範例
+
+這是一個可以直接放進去的 GitLab CI job，用 **Codex CLI** 產出合規的 JSON 檔：
 ```yaml
 stages: [codex]
 
@@ -154,50 +162,50 @@ codex_review:
     expire_in: 14 days
 ```
 
-1. Installs Codex CLI (`npm -g i @openai/codex@latest`)  
-2. Builds a file allowlist with `git ls-files`  
-3. Runs Codex in **full-auto mode** with a strict JSON-only prompt  
-4. Extracts valid JSON between markers, validates it, and falls back to `[]` if invalid  
-5. Publishes artifacts to GitLab so results appear inline with merge requests
+1. 安裝 Codex CLI（`npm -g i @openai/codex@latest`）  
+2. 用 `git ls-files` 建立檔案 allowlist  
+3. 用嚴格的「只輸出 JSON」prompt 以 full-auto mode 跑 Codex  
+4. 抽出 marker 之間的合法 JSON、驗證，無效就退回 `[]`  
+5. 把 artifact 發佈到 GitLab，結果會直接顯示在 merge request
 
-The generated artifacts can be downloaded from the pipeline page
+產出的 artifact 可以從 pipeline 頁面下載
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gitlab-pipelines-success.png" alt="GitLab Pipelines" width="700"/>
 
-Or when running as a merge from a feature to master branch, 
+如果是從 feature branch merge 到 master，則會顯示在這裡，
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gitlab-mr-widget.png" alt="GitLab Merge Request Widget" width="700"/>
 
-By embedding Codex CLI into your GitLab CI/CD pipelines, you can **elevate code quality checks beyond static rules**. Instead of only catching syntax errors or style violations, you enable reasoning-based analysis that highlights potential issues in context.
+把 Codex CLI 嵌進 GitLab CI/CD pipeline，你可以**讓 code quality 檢查超越靜態規則**。不再只抓語法錯誤或風格違規，而是做基於推理的分析，把潛在問題連同上下文一起指出來。
 
-This approach has several benefits:
+這種做法有幾個好處：
 
-* **Consistency**: every merge request is reviewed by the same reasoning process  
-* **Context awareness**: LLMs can flag subtle issues rule-based scanners miss  
-* **Developer empowerment**: feedback is immediate, visible, and actionable
+* **一致性**：每個 merge request 都經過同一套推理流程審查  
+* **理解上下文**：LLM 可以標出規則型掃描器漏掉的細微問題  
+* **賦能開發者**：回饋即時、看得到、可以直接動手
 
-As teams adopt this workflow, LLM-powered quality checks can complement traditional linting and vulnerability scanning—helping ensure that code shipped to production is both robust and maintainable.
+團隊採用這個流程後，LLM 驅動的品質檢查可以補強傳統的 lint 和弱點掃描，讓上線的程式碼既穩健又好維護。
 
-## Example #2 – Using Codex CLI for Security Remediation
+## 範例 #2：用 Codex CLI 做資安修復
 
-### Background
+### 背景
 
-For this example, we tested on [OWASP Juice Shop](https://github.com/juice-shop/juice-shop?utm_source=chatgpt.com), a deliberately vulnerable Node.js Express app. It contains common flaws such as injection, unsafe `eval`, weak crypto, and hardcoded secrets—ideal for validating Codex-powered analysis. 
+這個範例我們用 [OWASP Juice Shop](https://github.com/juice-shop/juice-shop?utm_source=chatgpt.com) 測試，它是刻意留有漏洞的 Node.js Express app，包含 injection、不安全的 `eval`、弱加密、寫死的 secret 等常見缺陷，很適合驗證 Codex 的分析能力。
 
-Your team wants to ensure that whenever code changes are introduced, the pipeline automatically checks for security vulnerabilities before merge. This is already handled by static analyzers and language-specific scanners, which generate reports in the GitLab SAST JSON schema. However, raw outputs can be rigid, noisy, and often leave reviewers without clear next steps.
+你的團隊希望每次有程式碼變更，pipeline 都會在 merge 前自動檢查資安漏洞。這件事靜態分析器和各語言的掃描器已經在做，它們會產出 GitLab SAST JSON schema 格式的報告。不過原始輸出往往死板、雜訊多，reviewer 看完還是不知道下一步該做什麼。
 
-By adding Codex CLI into your pipeline, you can turn scanner results generated by [GitLab SAST scanners](https://docs.gitlab.com/user/application_security/sast/) (or other scanner outputs) into **actionable remediation guidance** and even generate **ready-to-apply git patches**:
+把 Codex CLI 加進 pipeline，你可以把 [GitLab SAST 掃描器](https://docs.gitlab.com/user/application_security/sast/)（或其他掃描器）的結果變成**可執行的修復指引**，甚至產出**可直接套用的 git patch**：
 
-### Step 1: Generating Recommendations
+### 步驟 1：產生建議
 
-* Codex reads `gl-sast-report.json`.  
-* Consolidates duplicate findings.  
-* Ranks by exploitability (e.g. user input → dangerous sinks).  
-* Produces a succinct `security_priority.md` with top 5 actions and detailed remediation notes.
+* Codex 讀取 `gl-sast-report.json`。  
+* 合併重複的發現。  
+* 依可利用性排序（例如使用者輸入 → 危險的 sink）。  
+* 產出簡潔的 `security_priority.md`，包含前 5 大行動和詳細修復說明。
 
-#### Security Recommendations CI/CD Job Example
+#### 資安建議 CI/CD Job 範例
 
-**Requirement**: This job expects that upstream SAST jobs already generated a `gl-sast-report.json`. Codex reads it and produces `security_priority.md` for reviewers.
+**前提**：這個 job 預期上游的 SAST job 已經產生 `gl-sast-report.json`。Codex 讀取它，產出給 reviewer 看的 `security_priority.md`。
 
 ```yaml
 stages:
@@ -316,9 +324,9 @@ codex_recommendations:
      - security_priority.md
    expire_in: 14 days
 ```
-Here's an example of the output we receive: 
+下面是我們拿到的輸出範例：
 
-### Example Output: Consolidated SAST Findings
+### 輸出範例：合併後的 SAST 發現
 
 Parsed `gl-sast-report.json` and merged overlapping issues.  
 **Total raw findings:** 5 → **Consolidated into:** 4 representative entries  
@@ -376,15 +384,15 @@ Parsed `gl-sast-report.json` and merged overlapping issues.
 - Owners/Teams: Backend/API (routes)  
 - References: OWASP SSRF Prevention; OWASP Top 10 A10:2021  
 ---
-### Step 2: Remediating Security Issues Based on Recommendations
-- Codex consumes both the SAST JSON and the repo tree.  
-- For each High/Critical issue:  
-  - Builds a structured prompt → outputs a unified `git diff`.  
-  - Diff is validated (`git apply --check`) before being stored as `.patch`.  
+### 步驟 2：根據建議修復資安問題
+- Codex 同時讀取 SAST JSON 和 repo 目錄結構。  
+- 對每個 High/Critical 問題：  
+  - 建立結構化 prompt → 輸出統一格式的 `git diff`。  
+  - diff 會先用 `git apply --check` 驗證，才存成 `.patch`。  
 
-#### Remediation CI/CD Job Example
+#### 修復 CI/CD Job 範例
 
-**Requirement**: This job depends on the previous stage output of the `security_priority.md` file to use as input to generate the patch file for creating an MR: 
+**前提**：這個 job 依賴前一個 stage 產出的 `security_priority.md`，把它當輸入來產生 patch 檔，之後拿去建立 MR：
 ```yaml
  stages:
   - remediation
@@ -535,7 +543,7 @@ codex_resolution:
     expire_in: 14 days
 ```
 
-Running the CI/CD job with Codex CLI, we receive a Git patch that fixes the issues originally found by our security scanner:
+跑完這個用 Codex CLI 的 CI/CD job，我們拿到一個 Git patch，修掉了原本掃描器找到的問題：
 
 ```patch
 <unified diff here>
@@ -592,37 +600,47 @@ export function profileImageUrlUpload () {
         return
 ```
 
-## Key Benefits
-Using Codex CLI in GitLab CI/CD allows you to augment existing review processes so that your team can ship faster.
+## 主要好處
+在 GitLab CI/CD 裡用 Codex CLI，可以補強現有的 review 流程，讓團隊出貨更快。
 
-* **Complementary**: Codex doesn’t replace scanners — it interprets their findings and accelerates fixes. 
-* **Actionable**: Reviewers see not just vulnerabilities, but prioritized steps to fix them.  
-* **Automated**: Patches are created directly in CI, ready for `git apply` or a remediation branch.  
+* **互補**：Codex 不取代掃描器，它解讀掃描器的發現並加速修復。 
+* **可執行**：reviewer 看到的不只是漏洞，還有排好優先順序的修復步驟。  
+* **自動化**：patch 直接在 CI 裡產生，可以拿去 `git apply` 或開修復 branch。  
 
 ---
 
-## Wrapping Up
+## 總結
 
-In this cookbook, we explored how **Codex CLI** can be embedded into GitLab CI/CD pipelines to make software delivery safer and more maintainable:
+這篇示範了怎麼把 **Codex CLI** 嵌進 GitLab CI/CD pipeline，讓軟體交付更安全、更好維護：
 
-* **Code Quality Reports**: Generate GitLab-compliant CodeClimate JSON so reasoning-based findings surface alongside lint, unit tests, and style checks.
+* **Code Quality 報告**：產出符合 GitLab 規格的 CodeClimate JSON，讓推理型的發現跟 lint、單元測試、風格檢查一起顯示。
 
-* **Vulnerability Interpretation**: Take the raw output of SAST and other security scanners (`gl-sast-report.json`) and transform it into a prioritized, human-readable plan (`security_priority.md`) with deduplication, exploitability ranking, and actionable next steps.
+* **漏洞解讀**：拿 SAST 和其他掃描器的原始輸出（`gl-sast-report.json`），轉成有優先順序、人看得懂的計畫（`security_priority.md`），包含去重、可利用性排序和具體下一步。
 
-* **Automated Remediation**: Extend the workflow by having Codex generate unified git diffs as `.patch` files. These patches are validated (`git apply --check`) and can be applied automatically to a new branch.
+* **自動修復**：延伸流程，讓 Codex 產生統一格式的 git diff 存成 `.patch`。這些 patch 會先驗證（`git apply --check`），之後可以自動套用到新 branch。
 
-Taken together, these patterns show how **LLM-powered analysis complements—not replaces—traditional rule-based tools**. Scanners remain the source of truth for detection, while Codex adds context awareness, prioritization, developer guidance, and even the ability to propose concrete fixes via MRs. GitLab’s schemas and APIs provide the structure to make these outputs predictable, actionable, and fully integrated into developer workflows.
+整體來看，LLM 驅動的分析是補強傳統規則型工具，而不是取代。偵測仍以掃描器為準，Codex 補上上下文理解、優先順序、開發者指引，甚至能透過 MR 提出具體修法。GitLab 的 schema 和 API 提供結構，讓這些輸出可預期、可執行，也能完整融入開發流程。
 
-The critical lesson is that good results require **clear prompts, schema validation, and guardrails**. JSON markers, severity whitelists, schema enforcement, and diff validation ensure outputs are usable. 
+最關鍵的心得是，要有好結果需要**清楚的 prompt、schema 驗證和護欄**。JSON marker、severity 白名單、schema 強制檢查和 diff 驗證，才能讓輸出真的可用。
 
-Looking forward, this pattern can be extended to unify all major scan types through a single Codex-powered remediation flow:
+接下來，這個模式可以延伸成用同一條 Codex 修復流程整合所有主要掃描類型：
 
-* **Dependency Scans** → consolidate CVEs across lockfiles, recommend upgrades, and auto-generate diffs bumping vulnerable versions.  
-* **Container/Image Scans** → flag outdated base images and propose Dockerfile updates.  
-* **DAST Results** → highlight exploitable endpoints and patch routing/middleware for validation or access control.
+* **Dependency Scans** → 彙整各 lockfile 的 CVE，建議升級版本，並自動產生升級有漏洞套件的 diff。  
+* **Container/Image Scans** → 標出過時的 base image，建議 Dockerfile 的修改。  
+* **DAST 結果** → 找出可被利用的 endpoint，並修補 routing/middleware 加上驗證或存取控制。  
 
-By merging these into a single Codex-powered post-processing \+ remediation pipeline, teams can get a consistent stream of **actionable guidance, validated patches** across all security domains.
+把這些合併成單一個 Codex 驅動的後處理加修復 pipeline，團隊就能在所有資安領域得到一致的**可執行指引和驗證過的 patch**。
 
-**The broader takeaway:** with prompt engineering, schema validation, and integration into GitLab’s native MR workflow, LLMs evolve from “advisors” into **first-class CI/CD agents** — helping teams ship code that is not only functional, but also secure, maintainable, and automatically remediated where possible.
+**更大的結論：**搭配 prompt engineering、schema 驗證，以及整合進 GitLab 原生的 MR 流程，LLM 會從「顧問」變成**一等公民的 CI/CD agent**，幫團隊交付的程式碼不只能用，還安全、好維護，而且盡可能自動修好。
 
-<!-- tutor:summary -->
+## 重點整理
+- 規則型掃描器負責偵測，LLM 負責解讀、排序和提修法，兩者互補。
+- 讓 LLM 輸出可被程式消化的關鍵是 JSON marker、schema 驗證，以及失敗時退回安全預設值。
+- 報告格式要對齊 GitLab 的 schema（CodeClimate、SAST），才能直接顯示在 merge request。
+- patch 要先 `git apply --check` 驗證才存檔，避免產出壞掉的 diff。
+- 這份範例用的 `--full-auto` 已棄用，實際使用前要對照最新官方指南。
+
+## 練習
+1. 把 Code Quality job 的 prompt 改成只回報某一類問題（例如只看 `eval` 和 command injection），看輸出的 JSON 有什麼變化。
+2. 在 `security_priority.md` 的 prompt 裡把「前 5 大行動」改成前 3 大，或加上「Owners/Teams」以外的欄位，確認輸出還能通過你的驗證。
+3. 修改修復 job，讓它只處理 Critical 等級的問題，並在 `git apply --check` 失敗時讓 job 明確失敗，而不是默默產出空 patch。

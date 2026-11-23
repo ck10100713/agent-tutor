@@ -1,26 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/fine-tuned_qa/olympics-2-create-qa.ipynb
 ---
 
-# Fine-Tuned Q&A - create Q&A
+# Fine-Tuned Q&A：建立 Q&A 資料集
 
 > 原文：[examples/fine-tuned_qa/olympics-2-create-qa.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/olympics-2-create-qa.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-<span style="color:orange; font-weight:bold">Note: To answer questions based on text documents, we recommend the procedure in <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering using Embeddings</a>. Some of the code below may rely on <a href="https://github.com/openai/openai-cookbook/tree/main/transition_guides_for_deprecated_API_endpoints">deprecated API endpoints</a>.</span>
+用 `davinci-instruct-beta-v3` 針對奧運維基百科的每個段落，先產生問題，再根據同一段內容產生答案，組成 Q&A 資料集，供之後 fine-tuning 使用。後半段還會用舊的 search endpoint 做問答，並分析它能多常找回正確的段落。
 
-We use [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta), a model specialized in following instructions, to create questions based on the given context. Then we also use [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta) to answer those questions, given the same context. 
+## 學完你會
 
-This is expensive, and will also take a long time, as we call the davinci engine for each section. You can simply download the final dataset instead.
+- 把標題、小標、內文串成 context，並用 prompt 讓模型批次產生問題與答案。
+- 看懂為什麼 instruct 模型即使 context 裡沒有答案，也傾向硬答，這正是後面要 fine-tune 的原因。
+- 用產生的問題估算 retrieval 找回原始 context 的比例與排名分布。
 
-We're using the dataset created using the [previous notebook](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/olympics-1-collect-data.ipynb)
+## 開跑前
 
-## 2.1 Read in the data, and create a context
-Create a context by concatenating the title, the heading and the content of that section
+- 需要 OpenAI API key。
+- 這份 notebook 會對每個段落呼叫 davinci，花很多時間和 token，也很貴。可以直接下載最後的資料集。
+- 部分程式碼用到已棄用的 API endpoint。
+
+<span style="color:orange; font-weight:bold">注意：想根據文字文件回答問題的話，建議改用 <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering using Embeddings</a> 的做法。下面部分程式碼可能用到<a href="https://github.com/openai/openai-cookbook/tree/main/transition_guides_for_deprecated_API_endpoints">已棄用的 API endpoint</a>。</span>
+
+我們用 [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta)，一個擅長遵循指令的模型，根據給定的 context 產生問題。接著再用同一個 [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta)，根據同樣的 context 回答這些問題。 
+
+這很貴，也會花很長時間，因為每個段落都要呼叫一次 davinci engine。你也可以直接下載最後的資料集。
+
+我們用的是[上一本 notebook](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/olympics-1-collect-data.ipynb) 建立的資料集
+
+## 2.1 讀入資料並建立 context
+把該段落的標題、小標和內文串在一起，作為 context
 
 ```python
 import pandas as pd
@@ -54,12 +68,12 @@ df.head()
     4  2020 Summer Olympics\nEffect on doping tests\n...
     ```
 
-## 2.2 Create questions based on the context
-Use davinci-instruct to generate a number of plausible questions relating to the Wikipedia section contents.
+## 2.2 根據 context 產生問題
+用 davinci-instruct 針對維基百科段落內容，產生一批合理的問題。
 
-Note: We have used temperature=0, but it may be beneficial to experiment with a higher temperature to get a higher diversity of questions.
+注意：我們用的是 temperature=0，但把 temperature 調高、讓問題更多樣，也許會更好。
 
-<span style="color:orange; font-weight:bold">WARNING: This step will last a long time, and consume a lot of tokens, as it calls davinci-instruct for every section to generate a number of questions.</span>
+<span style="color:orange; font-weight:bold">警告：這一步會跑很久，也會消耗大量 token，因為每個段落都要呼叫 davinci-instruct 來產生一批問題。</span>
 
 ```python
 from openai import OpenAI
@@ -96,9 +110,9 @@ print(df[['questions']].values[0][0])
     5. Who won the most medals at the 2020 Summer Olympics?
     ```
 
-The prompt is designed to generate a number of questions. Example questions above were generated based on the summary section of the 2020 Summer Olympics page.
+這個 prompt 的設計是產生一批問題。上面的範例問題，是根據 2020 年夏季奧運頁面的摘要段落產生的。
 
-We can observe that the questions 3 and 5 above repeat. Sometimes the generated questions could be ambiguous without the context. We will show that even despite these limitations we can create a successful model.
+可以看到上面第 3 題和第 5 題重複了。有時候產生的問題如果沒有 context 會有歧義。我們會證明，即使有這些限制，仍然能訓練出成功的模型。
 
 ```python
 print(df.content.values[0])
@@ -112,12 +126,12 @@ print(df.content.values[0])
     New events were introduced in existing sports for 2020, including 3x3 basketball, freestyle BMX and mixed gender team events in a number of existing sports, as well as the return of madison cycling for men and an introduction of the same event for women. New IOC policies also allowed the host organizing committee to add new sports to the Olympic program for just one Games. The disciplines added by the Japanese Olympic Committee were baseball and softball, karate, sport climbing, surfing and skateboarding, the last four of which made their Olympic debuts, and the last three of which will remain on the Olympic program.The United States topped the medal count by both total golds (39) and total medals (113), with China finishing second by both respects (38 and 88). Host nation Japan finished third, setting a record for the most gold medals and total medals ever won by their delegation at an Olympic Games with 27 and 58. Great Britain finished fourth, with a total of 22 gold and 65 medals, becoming the first nation at the Summer Olympics to increase or equal their total medals won in the two Games subsequent to hosting them. The Russian delegation competing as the ROC (not to be confused with the Republic of China (Taiwan) which competed as Chinese Taipei, not ROC) finished fifth with 20 gold medals and third in the overall medal count, with 71 medals. Bermuda, the Philippines and Qatar won their first-ever Olympic gold medals. Burkina Faso, San Marino and Turkmenistan won their first-ever Olympic medals.
     ```
 
-## 2.3 Create answers based on the context
-Use davinci-instruct to answer the questions given the relevant Wikipedia section contents
+## 2.3 根據 context 產生答案
+用 davinci-instruct，根據相關的維基百科段落內容回答問題
 
-Note: We have used temperature=0, but it may be beneficial to experiment with a higher temperature to get a higher diversity of questions.
+注意：我們用的是 temperature=0，但把 temperature 調高、讓問題更多樣，也許會更好。
 
-<span style="color:orange">**WARNING: This step will last a long time, and consume a lot of tokens, as it calls davinci-instruct for every section to answer all the questions.**</span>
+<span style="color:orange">**警告：這一步會跑很久，也會消耗大量 token，因為每個段落都要呼叫 davinci-instruct 來回答所有問題。**</span>
 
 ```python
 def get_answers(row):
@@ -153,21 +167,21 @@ print(df[['answers']].values[0][0])
     5. The United States topped the medal count by both total golds (39) and total medals (113), with China finishing second by both respects (38 and 88).
     ```
 
-These are the answers to the questions above based on the context around the host city selection. 
+這些是根據主辦城市選擇相關 context 所產生的答案。 
 
-We can see that answers 3-5 contain the correct answer, but instead of answering the question directly, the answer is a verbatim extraction. Despite these occasional lower quality answers, we will show that the model can learn the task reasonably well, given a high number of examples.
+可以看到第 3 到第 5 題的答案包含正確內容，但不是直接回答問題，而是逐字摘出原文。雖然偶爾有品質較低的答案，只要範例夠多，模型仍然可以把這個任務學得不錯。
 
-## 2.4 Save the Olympics Q&A dataset based on Wikipedia sections
-We save the file for use in the [next notebook](olympics-3-train-qa.md)
+## 2.4 儲存根據維基百科段落建立的奧運 Q&A 資料集
+把檔案存起來，給[下一本 notebook](olympics-3-train-qa.md) 使用
 
 ```python
 df.to_csv('olympics-data/olympics_qa.csv', index=False)
 ```
 
-## 2.5 Search file (DEPRECATED)
-We create a search file ([API reference](https://beta.openai.com/docs/api-reference/files/list)), which can be used to retrieve the relevant context when a question is asked.
+## 2.5 Search 檔案（已棄用）
+我們建立一個 search 檔案（[API reference](https://beta.openai.com/docs/api-reference/files/list)），問問題時可以用它找出相關的 context。
 
-<span style="color:orange; font-weight:bold">DEPRECATED: The /search endpoint is deprecated in favour of using embeddings. Embeddings are cheaper, faster and can support a better search experience. See <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering Guide</a> for a search implementation using the embeddings</span>
+<span style="color:orange; font-weight:bold">已棄用：/search endpoint 已被 embeddings 取代。Embeddings 更便宜、更快，也能提供更好的搜尋體驗。用 embeddings 做搜尋的實作請看 <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering Guide</a></span>
 
 
 ```python
@@ -181,9 +195,9 @@ search_file = client.files.create(
 olympics_search_fileid = search_file['id']
 ```
 
-## 2.6 Answer questions based on the context provided
+## 2.6 根據提供的 context 回答問題
 
-We will use a simple implementation of the answers endpoint. This works by simply using the [/search endpoint](https://beta.openai.com/docs/api-reference/searches), which searches over an indexed file to obtain the relevant sections which can be included in the context, following by a question and answering prompt given a specified model.
+我們用一個簡單的 answers endpoint 實作。做法是先用 [/search endpoint](https://beta.openai.com/docs/api-reference/searches) 搜尋已建立索引的檔案，取得相關段落放進 context，接著對指定的模型送出問答 prompt。
 
 ```python
 from answers_with_ft import create_context, answer_question
@@ -221,7 +235,7 @@ answer_question(olympics_search_fileid, "davinci-instruct-beta-v3",
     ' Japan National Stadium'
     ```
 
-After we fine-tune the model for Q&A we'll be able to use it instead of [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta), to obtain better answers when the question can't be answered based on the context. We see a downside of [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta), which always attempts to answer the question, regardless of the relevant context being present or not. (Note the second question is asking about a future event, set in 2024.)
+等我們把模型 fine-tune 成 Q&A 模型之後，就能用它取代 [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta)，在問題無法從 context 回答的時候得到更好的答案。我們看到 [`davinci-instruct-beta-v3`](https://beta.openai.com/docs/engines/instruct-series-beta) 的缺點是，不管有沒有相關 context，它都一定會試著回答問題。（注意第二個問題問的是未來的事件，設定在 2024 年。）
 
 ```python
 answer_question(olympics_search_fileid, "davinci-instruct-beta-v3", 
@@ -234,9 +248,9 @@ answer_question(olympics_search_fileid, "davinci-instruct-beta-v3",
     ' Japan National Stadium'
     ```
 
-We can see that davinci has a tendency to answer the question, even if the question can't be answered given the context provided. Note the question asked regarding 2048 Summer Olympics, which didn't happen yet, and the retrieved content has only returned results for 2020.
+可以看到 davinci 傾向回答問題，即使根據提供的 context 根本無法回答。注意問的是 2048 年夏季奧運，這個還沒發生，而檢索到的內容只有 2020 年的結果。
 
-## 2.7 (Optional) Investigation into how likely the search endpoint is to return the relevant context
+## 2.7 （選用）調查 search endpoint 回傳相關 context 的機率
 
 ```python
 def check_context(title, heading, question, max_len=1800, search_model='ada', max_rerank=10):
@@ -300,11 +314,11 @@ print(check_context("Athletics at the 2020 Summer Olympics – Women's 4 × 100 
     (0, 58)
     ```
 
-We utilize the generated questions based on context to estimate how often we can retrieve the original context. These questions are noisy, so this is not a perfect estimate.
+我們用根據 context 產生的問題，來估計能多常找回原始的 context。這些問題有雜訊，所以這不是完美的估計。
 
-Our questions and answers are prefixed with numbered bullet points, however due to the way they were generated, they are missing the first number, hence we add "1." to the list of questions (and answers).
+我們的問題和答案開頭有編號項目符號，但由於產生的方式，缺少了第一個編號，所以我們在問題（和答案）清單前面補上 "1."。
 
-We calculate the rank of the section retrieved using ada search, and the number of tokens in the context needed to retrieve the relevant section in full.
+我們計算用 ada search 檢索到的段落排名，以及完整檢索到相關段落所需的 context token 數。
 
 ```python
 ada_results = df.apply(lambda x: [
@@ -365,7 +379,7 @@ print(f"{within_2k*100:.1f}% of relevant paragraphs are retrieved within the fir
     74.3% of relevant paragraphs are retrieved within the first 2k tokens
     ```
 
-The relevant context can be obtained 74% of the time on this dataset
+在這個資料集上，有 74% 的機率可以取得相關 context
 
 ```python
 outside_200 = (out_expanded['rank'] == -1).mean()
@@ -378,8 +392,8 @@ print(f"{outside_200*100:.1f}% of relevant paragraphs are not retrieved within t
     7.4% of relevant paragraphs are not retrieved within the first 200 results
     ```
 
-7.4% of the time, this is due to the keyword search part of the search algorithm not retrieving the relevant context within the first 200 results.
-18.3% of the time this is due to the semantic search not placing the relevant context within the first 2000 tokens.
+其中 7.4% 是因為 search 演算法的關鍵字搜尋部分，沒有在前 200 筆結果裡找到相關 context。
+另外 18.3% 是因為語意搜尋沒有把相關 context 放進前 2000 個 token。
 
 ```python
 import matplotlib.pyplot as plt
@@ -408,7 +422,7 @@ plt.show()
 
     ![](olympics-2-create-qa_files/out_34_0.png)
 
-We can observe that the context is most likely to be returned as one of the first results, and most likely to be returned within the first 200-500 tokens.
+可以看到 context 最可能出現在最前面的結果，而且最可能在前 200 到 500 個 token 內被回傳。
 
 ```python
 # normalized value_counts
@@ -434,6 +448,18 @@ out_expanded['rank'].value_counts(normalize=True).sort_index()[:13]
     Name: rank, dtype: float64
     ```
 
-probabilities of the relevant context being returned at each rank. (-2 means a processing error, -1 means the rank is >200)
+相關 context 在各個排名被回傳的機率。（-2 代表處理錯誤，-1 代表排名超過 200）
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 用 instruct 模型可以把現成文件變成 Q&A 資料集：先產生問題，再根據同一段 context 產生答案。
+- 自動產生的資料有雜訊，例如問題重複、答案是逐字摘錄，但範例夠多，模型還是能學會這個任務。
+- instruct 模型不論 context 有沒有答案都會硬答，這是需要 fine-tune 的動機。
+- 評估 retrieval 時，可以用產生的問題反向檢查能不能找回原始段落。
+- 這篇用到的 search endpoint 已棄用，新做法應該用 embeddings。
+
+## 練習
+
+1. 把產生問題的 temperature 從 0 調高一點，只跑一個段落，比較問題的重複程度和多樣性。
+2. 修改產生答案的 prompt，要求答案必須用完整句子，而且不能逐字複製原文，看輸出有沒有改善。
+3. 在 2.6 節自己再加一個無法從 context 回答的問題（例如問一個不存在的賽事），觀察模型是不是還是硬答。

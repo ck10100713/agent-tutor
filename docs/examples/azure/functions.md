@@ -1,27 +1,32 @@
 ---
-translated: false
+translated: true
 source: examples/azure/functions.ipynb
 ---
 
-# Azure functions example
+# Azure Functions 範例
 
 > 原文：[examples/azure/functions.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/azure/functions.ipynb)
 
+## 這篇在做什麼
+示範怎麼在 Azure OpenAI service 上用 function calling。你會定義函式、讓模型決定要不要呼叫、執行函式，再把結果餵回去讓模型組出最後答案。
 
+## 學完你會
+- 用 API key 或 Azure Active Directory 設定 `AzureOpenAI` client
+- 用 JSON schema 定義函式，並傳給 chat completions API
+- 完整跑一輪 function calling：拿到 tool call、執行函式、把結果回傳給模型
 
-<!-- tutor:goals -->
+## 開跑前
+需要一個 Azure OpenAI 資源，並在 Azure OpenAI Studio 建好 chat 模型的 deployment。設定 `AZURE_OPENAI_API_KEY`、`AZURE_OPENAI_ENDPOINT` 這類環境變數，或改用 Azure AD 驗證。
 
+這個 notebook 示範怎麼在 Azure OpenAI service 上使用 function calling。chat completions 的呼叫端可以定義一些函式，讓模型用來把能力延伸到外部工具和資料來源。
 
-This notebook shows how to use the function calling capability with the Azure OpenAI service. Functions allow a caller of chat completions to define capabilities that the model can use to extend its
-functionality into external tools and data sources.
+更多說明可以看 OpenAI 的部落格：https://openai.com/blog/function-calling-and-other-api-updates
 
-You can read more about chat functions on OpenAI's blog: https://openai.com/blog/function-calling-and-other-api-updates
+**注意**：chat functions 需要 gpt-4 以上的模型版本，以及 `-0613` 標籤開頭的 gpt-35-turbo。更舊的模型版本不支援。
 
-**NOTE**: Chat functions require model versions beginning with gpt-4 and gpt-35-turbo's `-0613` labels. They are not supported by older versions of the models.
+## 設定
 
-## Setup
-
-First, we install the necessary dependencies and import the libraries we will be using.
+先安裝需要的套件並 import。
 
 ```python
 ! pip install "openai>=1.0.0,<2.0.0"
@@ -36,17 +41,17 @@ import dotenv
 dotenv.load_dotenv()
 ```
 
-### Authentication
+### 驗證
 
-The Azure OpenAI service supports multiple authentication mechanisms that include API keys and Azure Active Directory token credentials.
+Azure OpenAI service 支援多種驗證方式，包含 API key 和 Azure Active Directory 的 token credential。
 
 ```python
 use_azure_active_directory = False  # Set this flag to True if you are using Azure Active Directory
 ```
 
-#### Authentication using API key
+#### 用 API key 驗證
 
-To set up the OpenAI SDK to use an *Azure API Key*, we need to set `api_key` to a key associated with your endpoint (you can find this key in *"Keys and Endpoints"* under *"Resource Management"* in the [Azure Portal](https://portal.azure.com)). You'll also find the endpoint for your resource here.
+要讓 OpenAI SDK 使用 *Azure API Key*，要把 `api_key` 設成你 endpoint 的 key（在 [Azure Portal](https://portal.azure.com) 的 *Resource Management* 底下 *Keys and Endpoints* 找得到）。resource 的 endpoint 也在同一個地方。
 
 ```python
 if not use_azure_active_directory:
@@ -60,10 +65,10 @@ if not use_azure_active_directory:
     )
 ```
 
-#### Authentication using Azure Active Directory
-Let's now see how we can authenticate via Azure Active Directory. We'll start by installing the `azure-identity` library. This library will provide the token credentials we need to authenticate and help us build a token credential provider through the `get_bearer_token_provider` helper function. It's recommended to use `get_bearer_token_provider` over providing a static token to `AzureOpenAI` because this API will automatically cache and refresh tokens for you. 
+#### 用 Azure Active Directory 驗證
+再來看怎麼用 Azure Active Directory 驗證。先安裝 `azure-identity`，它提供驗證需要的 token credential，並透過 `get_bearer_token_provider` 這個 helper 建出 token credential provider。比起給 `AzureOpenAI` 一個固定的 token，更建議用 `get_bearer_token_provider`，因為它會自動快取並更新 token。
 
-For more information on how to set up Azure Active Directory authentication with Azure OpenAI, see the [documentation](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity).
+Azure Active Directory 搭配 Azure OpenAI 的設定方式，可以看這份[文件](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity)。
 
 ```python
 ! pip install "azure-identity>=1.15.0"
@@ -83,37 +88,37 @@ if use_azure_active_directory:
     )
 ```
 
-> Note: the AzureOpenAI infers the following arguments from their corresponding environment variables if they are not provided:
+> 注意：如果沒有提供下列參數，AzureOpenAI 會從對應的環境變數推得：
 
-- `api_key` from `AZURE_OPENAI_API_KEY`
-- `azure_ad_token` from `AZURE_OPENAI_AD_TOKEN`
-- `api_version` from `OPENAI_API_VERSION`
-- `azure_endpoint` from `AZURE_OPENAI_ENDPOINT`
+- `api_key` 來自 `AZURE_OPENAI_API_KEY`
+- `azure_ad_token` 來自 `AZURE_OPENAI_AD_TOKEN`
+- `api_version` 來自 `OPENAI_API_VERSION`
+- `azure_endpoint` 來自 `AZURE_OPENAI_ENDPOINT`
 
 
-## Deployments
+## Deployment
 
-In this section we are going to create a deployment of a GPT model that we can use to call functions.
+這一節要建立一個 GPT 模型的 deployment，之後拿來呼叫函式。
 
-### Deployments: Create in the Azure OpenAI Studio
-Let's deploy a model to use with chat completions. Go to https://portal.azure.com, find your Azure OpenAI resource, and then navigate to the Azure OpenAI Studio. Click on the "Deployments" tab and then create a deployment for the model you want to use for chat completions. The deployment name that you give the model will be used in the code below.
+### Deployment：在 Azure OpenAI Studio 建立
+先部署一個 chat completions 用的模型。到 https://portal.azure.com 找到你的 Azure OpenAI resource，進入 Azure OpenAI Studio，點 "Deployments" 分頁，替想用的模型建一個 deployment。你給 deployment 取的名字會在下面的程式碼用到。
 
 ```python
 deployment = "" # Fill in the deployment name from the portal here
 ```
 
-## Functions
+## 函式
 
-With setup and authentication complete, you can now use functions with the Azure OpenAI service. This will be split into a few steps:
+設定和驗證完成後，就能在 Azure OpenAI service 上用函式了。流程分幾步：
 
-1. Define the function(s)
-2. Pass function definition(s) into chat completions API
-3. Call function with arguments from the response
-4. Feed function response back into chat completions API
+1. 定義函式
+2. 把函式定義傳給 chat completions API
+3. 用回應裡的參數呼叫函式
+4. 把函式的結果回傳給 chat completions API
 
-#### 1. Define the function(s)
+#### 1. 定義函式
 
-A list of functions can be defined, each containing the name of the function, an optional description, and the parameters the function accepts (described as a JSON schema).
+可以定義一串函式，每個包含函式名稱、選填的描述，以及函式接受的參數（用 JSON schema 描述）。
 
 ```python
 functions = [
@@ -139,9 +144,9 @@ functions = [
 ]
 ```
 
-#### 2. Pass function definition(s) into chat completions API
+#### 2. 把函式定義傳給 chat completions API
 
-Now we can pass the function into the chat completions API. If the model determines it should call the function, a `finish_reason` of "tool_calls" will be populated on the choice and the details of which function to call and its arguments will be present in the `message`. Optionally, you can set the `tool_choice` keyword argument to force the model to call a particular function (e.g. `{"type": "function", "function": {"name": get_current_weather}}`). By default, this is set to `auto`, allowing the model to choose whether to call the function or not. 
+現在可以把函式傳給 chat completions API。如果模型判斷該呼叫函式，choice 的 `finish_reason` 會是 "tool_calls"，要呼叫哪個函式和參數會在 `message` 裡。你也可以設 `tool_choice` 參數強制模型呼叫特定函式（例如 `{"type": "function", "function": {"name": get_current_weather}}`）。預設是 `auto`，讓模型自己決定要不要呼叫。
 
 ```python
 messages = [
@@ -157,9 +162,9 @@ chat_completion = client.chat.completions.create(
 print(chat_completion)
 ```
 
-#### 3. Call function with arguments from the response
+#### 3. 用回應裡的參數呼叫函式
 
-The name of the function call will be one that was provided initially and the arguments will include JSON matching the schema included in the function definition.
+函式呼叫的名稱會是你一開始提供的名稱，參數則是符合函式定義 schema 的 JSON。
 
 ```python
 import json
@@ -182,9 +187,9 @@ if function_call.name == "get_current_weather":
     response = get_current_weather(json.loads(function_call.arguments))
 ```
 
-#### 4. Feed function response back into chat completions API
+#### 4. 把函式回應餵回 chat completions API
 
-The response from the function should be serialized into a new message with the role set to "function". Now the model will use the response data to formulate its answer.
+函式的回應要序列化成一則新 message，role 設為 "function"。這樣模型就會用回應資料來組出答案。
 
 ```python
 messages.append(
@@ -204,4 +209,14 @@ function_completion = client.chat.completions.create(
 print(function_completion.choices[0].message.content.strip())
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Azure OpenAI 的 function calling 用法和 OpenAI 一致，差別主要在 client 設定與 deployment 名稱。
+- 驗證可以用 API key，也可以用 Azure AD，後者建議用 `get_bearer_token_provider` 自動快取更新 token。
+- 函式用 JSON schema 描述，模型只負責決定呼叫誰和給什麼參數，真正執行在你自己的程式。
+- `finish_reason` 為 "tool_calls" 表示模型想呼叫函式，`tool_choice` 可以強制指定。
+- 函式結果要再放回對話，模型才能產生最終回答。
+
+## 練習
+1. 在函式清單多加一個參數（例如溫度單位 enum），看模型傳來的參數有什麼變化。
+2. 把 `tool_choice` 改成強制呼叫特定函式，再改回 `auto`，比較問不相關問題時的行為。
+3. 再定義第二個函式，讓模型在一個問題裡同時呼叫兩個函式，並把兩個結果都回傳。

@@ -1,52 +1,64 @@
 ---
-translated: false
+translated: true
 source: examples/Function_calling_finding_nearby_places.ipynb
 ---
 
-# Function calling for nearby places: Leveraging the Google Places API and customer profiles
+# 用 function calling 找附近地點：結合 Google Places API 與客戶 profile
 
 > 原文：[examples/Function_calling_finding_nearby_places.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Function_calling_finding_nearby_places.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+把 Google Places API 和使用者 profile 結合，讓模型用 function calling 依照個人偏好推薦附近的地點。使用者只要說一句「我餓了」，模型就會決定要呼叫哪個 function、帶什麼參數去查附近的店。
 
-This notebook is centered around the integration of the Google Places API and custom user profiles to enhance location-based searches. Our approach involves using the Google Places API in combination with user preferences, aiming to make location discovery more personal and relevant. Please note that while we focus on the Google Places API in this instance, there are numerous other APIs you could explore and apply in a similar fashion.
+## 學完你會
 
-We'll explore the application of three main components:
+- 寫一個模擬資料庫查詢的 `fetch_customer_profile`，把 profile 放進 system message 影響模型行為。
+- 包裝 Google Places API 的呼叫，只取前兩筆結果以控制費用。
+- 用 `functions` 參數讓 GPT-3.5-Turbo 決定何時呼叫 `call_google_places_api`，並處理它的回傳。
 
-- Customer profile: This mock profile captures individual preferences for types of places (e.g., restaurants, parks, museums), budget, preferred ratings, and other specific requirements. 
+## 開跑前
 
-- Google Places API: This API provides real-time data about nearby places. It factors in various data points such as ratings, types of venues, costs, and more from the locations around you.
+- 需要 Google 帳號和 Google Places API key（付費服務，依呼叫次數計費，請留意用量）。
+- 需要 `OPENAI_API_KEY`，以及 `requests` 套件。
 
-- Function calling: A single command such as "I'm hungry" or "I want to visit a museum" activates the function which combines the user profile data and Google Places API to identify suitable venues.
+這個 notebook 的重點是把 Google Places API 和自訂的使用者 profile 結合，讓位置相關的搜尋更貼近個人。我們的做法是把 Google Places API 和使用者偏好結合，讓地點探索更個人化、更相關。要注意的是，這裡雖然用 Google Places API，但還有很多其他 API 可以用類似的方式探索和應用。
 
-This notebook introduces two primary use cases:
+我們會用到三個主要元件：
 
-- Profile-based recommendations: Learn how to create a user profile and make place recommendations based on individual preferences.
+- 客戶 profile：這個模擬 profile 記錄個人對地點類型的偏好（例如餐廳、公園、博物館）、預算、偏好的評分和其他特定需求。 
 
-- API integration with function calling: Understand how to integrate and call Google Places API effectively to source real-time data of various places using function calling.
+- Google Places API：這個 API 提供附近地點的即時資料，會考量周圍地點的評分、場所類型、價格等各種資料。
 
-Please note that while this system is highly versatile, its effectiveness may vary based on user preferences and available place data. For the purposes of this notebook, the customer data is fake and the location is hardcoded. 
+- Function calling：只要一句指令，例如 "I'm hungry" 或 "I want to visit a museum"，就會觸發 function，結合使用者 profile 資料和 Google Places API 找出合適的場所。
+
+這個 notebook 介紹兩個主要的使用情境：
+
+- 以 profile 為基礎的推薦：學習怎麼建立使用者 profile，並依個人偏好推薦地點。
+
+- 用 function calling 整合 API：了解怎麼有效整合並呼叫 Google Places API，透過 function calling 取得各種地點的即時資料。
+
+這個系統用途很廣，但效果會依使用者偏好和可取得的地點資料而有差異。這個 notebook 的客戶資料是假的，位置也是寫死的。 
 
 ## Setup
 
 Google Places API
 
-To use the Google Places API, you'll need two things:
+要使用 Google Places API，需要兩樣東西：
 
-- Google Account: If you don't already have one, you will need to create a Google account.
+- Google 帳號：如果還沒有，需要建立一個。
 
-- Google Places API Key: The API key is a unique identifier that is used to authenticate requests associated with your project for usage and billing purposes. You can get your API key from the [Google Cloud Console](https://console.cloud.google.com/getting-started?authuser=1). 
-
-
-
-Please note that Google Places API is a paid service, and the cost is associated with the number of API calls made. Keep track of your usage to avoid any unexpected charges.
+- Google Places API Key：API key 是唯一識別碼，用來驗證跟你的 project 相關的 request，作為用量和計費依據。你可以從 [Google Cloud Console](https://console.cloud.google.com/getting-started?authuser=1) 取得 API key。 
 
 
 
-The requests library is also needed, you can download it by using the following command: 
+請注意 Google Places API 是付費服務，費用跟 API 呼叫次數有關。請持續追蹤用量，避免意外的費用。
+
+
+
+也需要 requests 函式庫，可以用以下指令下載： 
 
 ```python
 pip install requests
@@ -60,11 +72,11 @@ import requests
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-In this code snippet, we are defining a function `fetch_customer_profile` that accepts a `user_id` and returns a mock user profile.
+這段程式碼定義了一個 function `fetch_customer_profile`，接收 `user_id` 並回傳一個模擬的使用者 profile。
 
-This function simulates an API call that fetches user data from a database. For this demo, we're using hard-coded data. The user profile contains various details such as the user's location (set to the coordinates of the Golden Gate Bridge for this example), preferences in food and activities, app usage metrics, recent interactions, and user rank.
+這個 function 模擬從資料庫取得使用者資料的 API 呼叫。這個 demo 用的是寫死的資料。使用者 profile 包含許多細節，例如使用者的位置（這個範例設在金門大橋的座標）、飲食和活動的偏好、app 使用指標、近期互動和使用者等級。
 
-In a production environment, you would replace this hard-coded data with a real API call to your user database.
+在正式環境中，你會把這些寫死的資料換成對使用者資料庫的真實 API 呼叫。
 
 
 ```python
@@ -97,17 +109,17 @@ def fetch_customer_profile(user_id):
         return None
 ```
 
-## Requesting and processing data from Google Places API
+## 向 Google Places API 請求並處理資料
 
-The function call_google_places_api serves to request information from the Google Places API and provide a list of the top two places based on a given place_type and optional food_preference. We've limited this function to the top two results to manage usage since this is a paid service. However, you can modify this to retrieve any number of results as per your requirement.
+function call_google_places_api 用來向 Google Places API 請求資訊，並根據給定的 place_type 和選用的 food_preference，回傳前兩個地點的清單。因為這是付費服務，我們把這個 function 限制在前兩筆結果以控制用量。你可以依需求修改，取得任意數量的結果。
 
-The function is configured with a hardcoded location (set to the coordinates of the Transamerica Pyramid), your Google API key, and specific request parameters. Depending on the place_type, it formulates the appropriate API request URL. If the place_type is a restaurant and a food_preference is specified, it is included in the API request.
+這個 function 設定了寫死的位置（設在 Transamerica Pyramid 的座標）、你的 Google API key，以及特定的 request 參數。依照 place_type，它會組出適當的 API request URL。如果 place_type 是餐廳，而且指定了 food_preference，就會一起放進 API request。
 
-After sending the GET request, the function checks the response status. If it's successful, it processes the JSON response, extracts the relevant details using the get_place_details function, and returns them in a human-readable format. If the request fails, it prints out the error for debugging.
+送出 GET request 後，function 會檢查回應狀態。成功的話，就處理 JSON 回應，用 get_place_details function 取出相關細節，並以人類可讀的格式回傳。如果 request 失敗，就把錯誤印出來方便 debug。
 
-The get_place_details function is used to retrieve more detailed information about a place, given its place_id. It sends a GET request to the Google Place Details API and returns the result if the request is successful. If the request fails, it prints out the error for debugging.
+get_place_details function 用來根據 place_id 取得某個地點更詳細的資訊。它會對 Google Place Details API 送 GET request，成功就回傳結果。如果 request 失敗，就把錯誤印出來方便 debug。
 
-Both functions handle exceptions and return an error message if something goes wrong. 
+這兩個 function 都會處理例外，出問題時回傳錯誤訊息。 
 
 ```python
 def get_place_details(place_id, api_key):
@@ -179,17 +191,17 @@ def call_google_places_api(user_id, place_type, food_preference=None):
         return []
 ```
 
-## Generating user-specific recommendations with GPT-3.5-Turbo and Google Places API
+## 用 GPT-3.5-Turbo 和 Google Places API 產生針對使用者的推薦
 
-The function `provide_user_specific_recommendations` interacts with GPT-3.5-Turbo and the Google Places API to provide responses tailored to a user's preferences and location.
+`provide_user_specific_recommendations` 這個 function 會跟 GPT-3.5-Turbo 和 Google Places API 互動，根據使用者的偏好和位置提供量身打造的回應。
 
-First, it fetches the customer's profile using their `user_id`. If no profile is found, it returns an error message.
+首先，它用 `user_id` 取得客戶的 profile。找不到 profile 的話，就回傳錯誤訊息。
 
-With a valid profile, it extracts the customer's food preferences and then interacts with the OpenAI model. It provides an initial system message, giving context to the AI model about its role, user preferences, and the usage of the Google Places API function.
+有了有效的 profile，它會取出客戶的飲食偏好，然後跟 OpenAI 模型互動。它先送出一則 system message，讓模型知道自己的角色、使用者偏好，以及怎麼使用 Google Places API function。
 
-The user input is also sent to the model as a message, and the function `call_google_places_api` is defined in the `functions` parameter for the AI model to call as needed.
+使用者的輸入也會當成 message 送給模型，而 `call_google_places_api` 這個 function 會定義在 `functions` 參數裡，讓模型視需要呼叫。
 
-Finally, it processes the model's response. If the model makes a function call to the Google Places API, the function is executed with the appropriate arguments, and the names of nearby places are returned. If there are no such places or the request isn't understood, appropriate error messages are returned.
+最後處理模型的回應。如果模型對 Google Places API 發出 function call，就用適當的參數執行該 function，並回傳附近地點的名稱。如果沒有這樣的地點，或是看不懂 request，就回傳對應的錯誤訊息。
 
 
 ```python
@@ -254,9 +266,9 @@ def provide_user_specific_recommendations(user_input, user_id):
     return "I am sorry, but I could not understand your request."
 ```
 
-## Executing user-specific recommendations
+## 執行針對使用者的推薦
 
-Upon execution, the function fetches the user's profile, interacts with the AI model, processes the model's response, calls the Google Places API if necessary, and ultimately returns a list of recommendations tailored to the user's preferences and location. The printed output would consist of these personalized recommendations.
+執行時，function 會取得使用者 profile、跟 AI 模型互動、處理模型的回應，必要時呼叫 Google Places API，最後回傳符合使用者偏好和位置的推薦清單。印出的輸出就是這些個人化的推薦。
 
 
 ```python
@@ -273,4 +285,16 @@ print(output)
     Here are some places you might be interested in: Sotto Mare is a restaurant located at 552 Green Street. It has a rating of 4.6 based on 3765 user reviews. Mona Lisa Restaurant is a restaurant located at 353 Columbus Avenue #3907. It has a rating of 4.4 based on 1888 user reviews.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- function calling 讓模型自己決定要不要呼叫外部 API，以及帶什麼參數，你的程式負責真的去執行。
+- 把使用者 profile 放進 system message，就能讓同一句話在不同使用者身上得到不同的推薦。
+- 付費 API 要主動限制結果數量，這個範例只取前兩筆。
+- 範例裡的 profile 和位置都是寫死的，正式環境要換成真實的資料庫與使用者定位。
+- 外部 API 呼叫要處理例外和錯誤回應，不然模型拿到壞資料也無從判斷。
+
+## 練習
+
+1. 修改 `fetch_customer_profile` 裡的飲食偏好，換個菜系，看推薦結果怎麼跟著變。
+2. 把 `call_google_places_api` 取前兩筆結果的限制改成前五筆，觀察輸出和用量的差別。
+3. 新增一個 `place_type`（例如咖啡廳或書店）到 function 的定義裡，讓模型在使用者說出對應需求時也會呼叫它。

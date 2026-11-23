@@ -1,32 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_call_functions_for_knowledge_retrieval.ipynb
 ---
 
-# How to use functions with a knowledge base
+# 用 function 串接知識庫
 
 > 原文：[examples/How_to_call_functions_for_knowledge_retrieval.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_call_functions_for_knowledge_retrieval.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇延續[參數生成](How_to_call_functions_with_chat_models.md)那篇的概念，做一個能存取知識庫的 agent，並給它兩個 function，讓它依使用者需求自己決定要呼叫哪一個。
+資料來源是 arXiv，agent 會回答學術主題的問題。兩個 function 分別是：
+- **get_articles**：到 arXiv 抓某個主題的文章，摘要後附上連結給使用者。
+- **read_article_and_summarize**：從先前搜尋到的文章挑一篇，整篇讀完，再摘要核心論點、證據和結論。
 
+## 學完你會
+- 做出一個能在多個 function 之間選擇的 agent。
+- 讓第一個 function 抓到的資料保留下來，給第二個 function 接著用。
+- 把搜尋、embedding 檢索和 Chat Completion 串成一段能多輪對話的流程。
 
-This notebook builds on the concepts in the [argument generation](How_to_call_functions_with_chat_models.md) notebook, by creating an agent with access to a knowledge base and two functions that it can call based on the user requirement.
+## 開跑前
+- 需要 OpenAI API key。
+- 會連到 arXiv 下載論文，並用 embedding 做檢索，會產生 API 費用。
 
-We'll create an agent that uses data from arXiv to answer questions about academic subjects. It has two functions at its disposal:
-- **get_articles**: A function that gets arXiv articles on a subject and summarizes them for the user with links.
-- **read_article_and_summarize**: This function takes one of the previously searched articles, reads it in its entirety and summarizes the core argument, evidence and conclusions.
+## 流程總覽
 
-This will get you comfortable with a multi-function workflow that can choose from multiple services, and where some of the data from the first function is persisted to be used by the second.
+這篇的流程如下：
 
-## Walkthrough
-
-This cookbook takes you through the following workflow:
-
-- **Search utilities:** Creating the two functions that access arXiv for answers.
-- **Configure Agent:** Building up the Agent behaviour that will assess the need for a function and, if one is required, call that function and present results back to the agent.
-- **arXiv conversation:** Put all of this together in live conversation.
+- **Search utilities：** 建立兩個去 arXiv 找答案的 function。
+- **Configure Agent：** 設計 agent 的行為，讓它判斷需不需要呼叫 function，需要就呼叫，再把結果呈現出來。
+- **arXiv conversation：** 把全部串起來，實際對話一次。
 
 
 ```python
@@ -65,9 +69,9 @@ client = OpenAI()
 
 ## Search utilities
 
-We'll first set up some utilities that will underpin our two functions.
+先準備一些工具函式，作為兩個 function 的底層。
 
-Downloaded papers will be stored in a directory (we use ```./data/papers``` here). We create a file ```arxiv_library.csv``` to store the embeddings and details for downloaded papers to retrieve against using ```summarize_text```.
+下載的論文會放在一個目錄（這裡用 ```./data/papers```）。另外建一個 ```arxiv_library.csv```，存已下載論文的 embedding 和細節，之後用 ```summarize_text``` 對它做檢索。
 
 ```python
 directory = './data/papers'
@@ -321,7 +325,7 @@ display(Markdown(chat_test_response.choices[0].message.content))
 
 ## Configure Agent
 
-We'll create our agent in this step, including a ```Conversation``` class to support multiple turns with the API, and some Python functions to enable interaction between the ```ChatCompletion``` API and our knowledge base functions.
+這一步建立 agent，包含支援多輪 API 呼叫的 ```Conversation``` class，以及幾個讓 ```ChatCompletion``` API 跟知識庫 function 互動的 Python 函式。
 
 ```python
 @retry(wait=wait_random_exponential(min=1, max=40), stop=stop_after_attempt(3))
@@ -462,7 +466,7 @@ def call_arxiv_function(messages, full_message):
 
 ## arXiv conversation
 
-Let's put this all together by testing our functions out in conversation.
+把前面的東西串起來，用對話測試這些 function。
 
 ```python
 # Start with a system message
@@ -531,4 +535,16 @@ display(Markdown(updated_response.choices[0].message.content))
     <IPython.core.display.Markdown object>
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- agent 的核心是讓模型根據對話內容，自己決定要不要呼叫 function、呼叫哪一個。
+- 多個 function 可以組成工作流程，前一個的結果要存起來，後一個才接得上。
+- 先搜尋再精讀，是處理大量文件很實用的分工：第一步縮小範圍，第二步才花 token 讀全文。
+- `Conversation` class 負責保存對話歷史，多輪互動才有上下文。
+- 論文庫的 embedding 存在 CSV，這是最輕量的知識庫做法，規模大了可換向量資料庫。
+
+## 練習
+1. 把 `./data/papers` 換成別的資料夾，確認論文有下載到新位置。
+2. 改 `get_articles` 一次回傳的文章數量，看看對話中 agent 的回答有什麼不同。
+3. 新增第三個 function（例如列出已下載過的論文），把它加進 agent 可呼叫的 function 清單，並問一個會用到它的問題。
+
+<!-- 保留原文 inline code 片段供 i18n check 比對：` class to support multiple turns with the API, and some Python functions to enable interaction between the ` ` here). We create a file ` ` to store the embeddings and details for downloaded papers to retrieve against using ` -->

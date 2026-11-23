@@ -1,47 +1,55 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/gpt-5-1_prompting_guide.ipynb
 ---
-
-# GPT-5.1 Prompting Guide
+# GPT-5.1 Prompting 指南
 
 > 原文：[examples/gpt-5/gpt-5-1_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5-1_prompting_guide.ipynb)
 
+## 這篇在做什麼
 
+這是一份 GPT-5.1 的 prompt 寫法指南，整理 OpenAI 內部測試和合作夥伴在 production agent 上驗證過的 prompt 模式。內容包含怎麼調 agent 的個性和輸出長度、怎麼讓它做完整個任務、怎麼定義 tool，以及新的 `apply_patch` 和 `shell` tool。最後教你用 metaprompt 讓模型自己診斷並修補 prompt。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 persona、verbosity 和長度規則，控制 agent 的語氣、輸出長度與 user update（preamble）
+- 寫出讓 agent 不要提早停手、會平行呼叫 tool、並在 `none` reasoning 模式下仍然可靠的 prompt 片段
+- 接上 `apply_patch` 與 `shell` tool，並用兩步驟的 metaprompt 找出 system prompt 裡互相矛盾的指令
 
-## Introduction
+## 開跑前
 
-GPT-5.1, our newest flagship model, is designed to balance intelligence and speed for a variety of agentic and coding tasks, while also introducing a new `none` reasoning mode for low-latency interactions. Building on the strengths of GPT-5, GPT-5.1 is better calibrated to prompt difficulty, consuming far fewer tokens on easy inputs and more efficiently handling challenging ones. Along with these benefits, GPT-5.1 is more steerable in personality, tone, and output formatting.
+這篇主要是 prompt 範例和概念，沒有一鍵可跑的設定。要實際試的話需要 OpenAI API key，並使用支援 GPT-5.1 的 Responses API。
 
-While GPT-5.1 works well out of the box for most applications, this guide focuses on prompt patterns that maximize performance in real deployments. These techniques come from extensive internal testing and collaborations with partners building production agents, where small prompt changes often produce large gains in reliability and user experience. We expect this guide to serve as a starting point: prompting is iterative, and the best results will come from adapting these patterns to your specific tools and workflows.
+## 簡介
 
-## Migrating to GPT-5.1
+GPT-5.1 是我們最新的旗艦模型，設計目標是在各種 agentic 和 coding 任務中平衡智慧和速度，同時新增 `none` reasoning 模式，適合低延遲的互動。它延續 GPT-5 的優點，對 prompt 難度的判斷更準：簡單的輸入用掉的 token 少很多，困難的輸入處理得更有效率。此外，GPT-5.1 在個性、語氣和輸出格式上更好 steer。
 
-For developers using GPT-4.1, GPT-5.1 with `none` reasoning effort should be a natural fit for most low-latency use cases that do not require reasoning.
+GPT-5.1 在大多數應用中開箱即用就表現不錯，這份指南則專注在能讓真實部署表現最大化的 prompt 模式。這些技巧來自大量內部測試，以及和打造 production agent 的合作夥伴的協作，在這些場景裡，小小的 prompt 改動常常能大幅提升可靠度和使用者體驗。這份指南只是起點：寫 prompt 是反覆迭代的過程，最好的結果來自把這些模式調整成適合你自己的 tool 和流程。
 
-For developers using GPT-5, we have seen strong success with customers who follow a few key pieces of guidance:
+## 遷移到 GPT-5.1
 
-1. **Persistence:** GPT-5.1 now has better-calibrated reasoning token consumption but can sometimes err on the side of being excessively concise and come at the cost of answer completeness. It can be helpful to emphasize via prompting the importance of persistence and completeness.  
-2. **Output formatting and verbosity:** While overall more detailed, GPT-5.1 can occasionally be verbose, so it is worthwhile being explicit in your instructions on desired output detail.  
-3. **Coding agents:** If you’re working on a coding agent, migrate your apply\_patch to our new, named tool implementation.  
-4. **Instruction following:** For other behavior issues, GPT-5.1 is excellent at instruction-following, and you should be able to shape the behavior significantly by checking for conflicting instructions and being clear.
+如果你原本用 GPT-4.1，把 GPT-5.1 設成 `none` reasoning effort，對大多數不需要 reasoning 的低延遲場景應該很合適。
 
-We also released GPT-5.1-codex. That model behaves a bit differently than GPT-5.1, and we recommend you check out the [Codex prompting guide](https://cookbook.openai.com/examples/gpt-5/codex_prompting_guide) for more information. The current Codex model in the API is `gpt-5.2-codex` (see the [model page](https://platform.openai.com/docs/models/gpt-5.2-codex)).
+如果你原本用 GPT-5，照著幾個重點做的客戶都有不錯的成果：
+
+1. **Persistence（堅持做完）：** GPT-5.1 現在的 reasoning token 消耗校準得更好，但有時會過度精簡，犧牲答案的完整度。可以在 prompt 裡強調堅持和完整性的重要
+2. **輸出格式與 verbosity：** 整體來說 GPT-5.1 更詳細，偶爾會太囉嗦，所以在 instructions 裡明確寫出想要的輸出詳細程度是值得的
+3. **Coding agent：** 如果你在做 coding agent，把你的 apply\_patch 遷移到我們新的、有名稱的 tool 實作
+4. **Instruction following：** 其他行為問題，GPT-5.1 很擅長遵循 instructions，檢查有沒有互相衝突的指令並把話講清楚，就能大幅調整行為
+
+我們也發布了 GPT-5.1-codex。這個模型的行為和 GPT-5.1 有點不同，建議看 [Codex prompting guide](https://cookbook.openai.com/examples/gpt-5/codex_prompting_guide) 了解更多。目前 API 裡的 Codex 模型是 `gpt-5.2-codex`（見[模型頁面](https://platform.openai.com/docs/models/gpt-5.2-codex)）。
 
 ## Agentic steerability
 
-GPT-5.1 is a highly steerable model, allowing for robust control over your agent’s behaviors, personality, and communication frequency.
+GPT-5.1 是很好 steer 的模型，可以穩定控制 agent 的行為、個性和溝通頻率。
 
-### Shaping your agent’s personality
+### 塑造 agent 的個性
 
-GPT-5.1’s personality and response style can be adapted to your use case. While verbosity is controllable through a dedicated `verbosity` parameter, you can also shape the overall style, tone, and cadence through prompting.
+GPT-5.1 的個性和回應風格可以依你的使用情境調整。verbosity 可以用專用的 `verbosity` 參數控制，整體的風格、語氣和節奏則可以靠 prompt 來塑造。
 
-We’ve found that personality and style work best when you define a clear agent persona. This is especially important for customer-facing agents which need to display emotional intelligence to handle a range of user situations and dynamics. In practice, this can mean adjusting warmth and brevity to the state of the conversation, and avoiding excessive acknowledgment phrases like “got it” or “thank you.”
+我們發現，先定義清楚的 agent persona，個性和風格的效果最好。這對面向客戶的 agent 特別重要，因為它們要展現情緒智慧，應付各種使用者情境和互動。實務上，這可能代表依對話狀態調整親切度和簡潔程度，並避免過度使用「got it」或「thank you」這類確認用語。
 
-The sample prompt below shows how we shaped the personality for a customer support agent, focusing on balancing the right level of directness and warmth in resolving an issue.
+下面的範例 prompt 展示我們怎麼塑造一個客服 agent 的個性，重點是在解決問題時，平衡直接和親切的程度。
 
 ```
 <final_answer_formatting>
@@ -68,7 +76,7 @@ You value clarity, momentum, and respect measured by usefulness rather than plea
 </final_answer_formatting>
 ```
 
-In the prompt below, we’ve included sections that constrain a coding agent’s responses to be short for small changes and longer for more detailed queries. We also specify the amount of code allowed in the final response to avoid large blocks.
+下面這個 prompt 加了幾個段落，限制 coding agent 的回應：小改動要短，較詳細的問題可以長一點。我們也規定最終回應中可以放多少程式碼，避免出現大段程式碼。
 
 ```
 <final_answer_formatting>
@@ -90,7 +98,7 @@ In the prompt below, we’ve included sections that constrain a coding agent’s
 </final_answer_formatting>
 ```
 
-Excess output length can be mitigated by adjusting the verbosity parameter and further reduced via prompting as GPT-5.1 adheres well to concrete length guidance:
+輸出太長的問題可以用調整 verbosity 參數來減輕，再用 prompt 進一步壓低，因為 GPT-5.1 很能遵守具體的長度指引：
 
 ```
 <output_verbosity_spec>
@@ -100,11 +108,11 @@ Excess output length can be mitigated by adjusting the verbosity parameter and f
 </output_verbosity_spec>
 ```
 
-### Eliciting user updates  
+### 引導 user update
 
-User updates, also called preambles, are a way for GPT-5.1 to share upfront plans and provide consistent progress updates as assistant messages during a rollout. User updates can be adjusted along four major axes: frequency, verbosity, tone, and content. We trained the model to excel at keeping the user informed with plans, important insights and decisions, and granular context about what/why it's doing. These updates help the user supervise agentic rollouts more effectively, in both coding and non-coding domains.
+User update 也叫 preamble，是 GPT-5.1 在一次 rollout 過程中，以 assistant 訊息的形式先說出計畫、並持續回報進度的方式。User update 可以從四個主要面向調整：頻率、詳細程度、語氣和內容。我們訓練模型擅長讓使用者知道計畫、重要的洞察與決定，以及它在做什麼、為什麼這樣做的細節。這些更新幫助使用者更有效地監督 agentic rollout，不管是 coding 還是非 coding 的領域。
 
-When timed correctly, the model will be able to share a point-in-time understanding that maps to the current state of the rollout. In the prompt addition below, we define what types of preamble would and would not be useful.  
+時機抓得好，模型就能分享對應 rollout 當下狀態的即時理解。在下面追加的 prompt 裡，我們定義了哪些類型的 preamble 有用、哪些沒用。
 
 ```
 <user_updates_spec>
@@ -131,7 +139,7 @@ You'll work for stretches with tool calls — it's critical to keep the user upd
 </user_updates_spec>
 ```
 
-In longer-running model executions, providing a fast initial assistant message can improve perceived latency and user experience. We can achieve this behavior with GPT-5.1 through clear prompting.
+在執行時間較長的任務中，快速給出第一則 assistant 訊息，可以改善使用者感受到的延遲和體驗。用清楚的 prompt，GPT-5.1 就能做到這點。
 
 ```
 <user_update_immediacy>
@@ -139,13 +147,13 @@ Always explain what you're doing in a commentary message FIRST, BEFORE sampling 
 </user_update_immediacy>
 ```
 
-## Optimizing intelligence and instruction-following
+## 優化智慧與 instruction following
 
-GPT-5.1 will pay very close attention to the instructions you provide, including guidance on tool usage, parallelism, and solution completeness.
+GPT-5.1 會非常仔細地看你給的 instructions，包括 tool 使用方式、平行化和解法完整性的指引。
 
-### Encouraging complete solutions
+### 鼓勵給出完整解法
 
-On long agentic tasks, we’ve noticed that GPT-5.1 may end prematurely without reaching a complete solution, but we have found this behavior is promptable. In the following instruction, we tell the model to avoid premature termination and unnecessary follow-up questions. 
+在長時間的 agentic 任務中，我們發現 GPT-5.1 可能在還沒得到完整解法前就提早結束，但這個行為可以用 prompt 修正。下面的 instruction 告訴模型不要提早終止，也不要問不必要的追問。
 
 ```
 <solution_persistence>
@@ -155,9 +163,9 @@ On long agentic tasks, we’ve noticed that GPT-5.1 may end prematurely without 
 </solution_persistence>
 ```
 
-### Tool-calling format
+### Tool-calling 格式
 
-In order to make tool-calling most effective, we recommend describing functionality in the tool definition and how/when to use tools in the prompt. In the example below, we define a tool that creates a restaurant reservation, and we concisely describe what it does when invoked. 
+為了讓 tool calling 最有效，我們建議在 tool 定義裡描述功能，並在 prompt 裡說明如何、何時使用 tool。下面的範例定義了一個建立餐廳訂位的 tool，並簡潔描述它被呼叫時會做什麼。
 
 ```
 {
@@ -181,7 +189,7 @@ In order to make tool-calling most effective, we recommend describing functional
 
 ```
 
-In the prompt, you may have a section that references the tool like this:
+在 prompt 裡，你可以有一個段落像這樣引用這個 tool：
 
 ```
 <reservation_tool_usage_rules>
@@ -213,37 +221,37 @@ Assistant: “Done! Your reservation for Daniel at 6:00pm tonight is confirmed. 
 </reservation_tool_example>
 ```
 
-GPT-5.1 also executes parallel tool calls more efficiently. When scanning a codebase or retrieving from a vector store, enabling parallel tool calling and encouraging the model to use parallelism within the tool description is a good starting point. In the system prompt, you can reinforce parallel tool usage by providing some examples of permissible parallelism. An example instruction may look like:
+GPT-5.1 執行平行 tool call 也更有效率。掃描 codebase 或從 vector store 取資料時，開啟平行 tool calling，並在 tool 描述裡鼓勵模型使用平行化，是不錯的起點。在 system prompt 裡，你可以舉幾個允許平行化的例子來加強。範例 instruction 可能像這樣：
 
 ```
 Parallelize tool calls whenever possible. Batch reads (read_file) and edits (apply_patch) to speed up the process.
 ```
 
-### Using the “none” reasoning mode for improved efficiency
+### 用「none」reasoning 模式提升效率
 
-GPT-5.1 introduces a new reasoning mode: `none`. Unlike GPT-5’s prior `minimal` setting, `none` forces the model to never use reasoning tokens, making it much more similar in usage to GPT-4.1, GPT-4o, and other prior non-reasoning models. Importantly, developers can now use hosted tools like [web search](https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses) and [file search](https://platform.openai.com/docs/guides/tools?tool-type=file-search) with `none`, and custom function-calling performance is also substantially improved. With that in mind, [prior guidance on prompting non-reasoning models](https://cookbook.openai.com/examples/gpt4-1_prompting_guide) like GPT-4.1 also applies here, including using few-shot prompting and high-quality tool descriptions.
+GPT-5.1 新增了一個 reasoning 模式：`none`。和 GPT-5 之前的 `minimal` 設定不同，`none` 會強制模型完全不使用 reasoning token，用起來更接近 GPT-4.1、GPT-4o 和其他以前的非 reasoning 模型。重點是，開發者現在可以在 `none` 下使用 [web search](https://platform.openai.com/docs/guides/tools-web-search?api-mode=responses) 和 [file search](https://platform.openai.com/docs/guides/tools?tool-type=file-search) 這類 hosted tool，自訂 function calling 的表現也大幅提升。因此，[之前針對非 reasoning 模型的 prompt 指引](https://cookbook.openai.com/examples/gpt4-1_prompting_guide)（像 GPT-4.1）在這裡也適用，包括使用 few-shot prompting 和高品質的 tool 描述。
 
-While GPT-5.1 does not use reasoning tokens with `none`, we’ve found prompting the model to think carefully about which functions it plans to invoke can improve accuracy.
+雖然 GPT-5.1 在 `none` 下不使用 reasoning token，我們發現，用 prompt 要求模型仔細思考打算呼叫哪些 function，可以提升準確度。
 
 ```
 You MUST plan extensively before each function call, and reflect extensively on the outcomes of the previous function calls, ensuring user's query is completely resolved. DO NOT do this entire process by making function calls only, as this can impair your ability to solve the problem and think insightfully. In addition, ensure function calls have the correct arguments.
 ```
 
-We’ve also observed that on longer model execution, encouraging the model to “verify” its outputs results in better instruction following for tool use. Below is an example we used within the instruction when clarifying a tool’s usage.
+我們也觀察到，在較長的執行中，鼓勵模型「verify」它的輸出，能讓 tool 使用更符合 instructions。下面是我們在說明某個 tool 用法時，放在 instruction 裡的例子。
 
 ```
 When selecting a replacement variant, verify it meets all user constraints (cheapest, brand, spec, etc.). Quote the item-id and price back for confirmation before executing.  
 ```
 
-In our testing, GPT-5’s prior `minimal` reasoning mode sometimes led to executions that terminated prematurely. Although other reasoning modes may be better suited for these tasks, our guidance for GPT-5.1 with `none` is similar. Below is a snippet from our Tau bench prompt.
+在我們的測試中，GPT-5 之前的 `minimal` reasoning 模式有時會讓執行提早結束。雖然其他 reasoning 模式可能更適合這類任務，我們對 GPT-5.1 搭配 `none` 的建議也類似。下面是我們 Tau bench prompt 的片段。
 
 ```
 Remember, you are an agent - please keep going until the user’s query is completely resolved, before ending your turn and yielding back to the user. You must be prepared to answer multiple queries and only finish the call once the user has confirmed they're done.   
 ```
 
-## Maximizing coding performance from planning to execution
+## 從規劃到執行，最大化 coding 表現
 
-One tool we recommend implementing for long-running tasks is a planning tool. You may have noticed reasoning models plan within their reasoning summaries. Although this is helpful in the moment, it may be difficult to keep track of where the model is relative to the execution of the query.
+對長時間執行的任務，我們建議實作一個 planning tool。你可能已經注意到 reasoning 模型會在 reasoning summary 裡做規劃。這在當下很有幫助，但很難追蹤模型相對於整個任務的執行進度。
 
 ```
 <plan_tool_usage>
@@ -260,7 +268,7 @@ One tool we recommend implementing for long-running tasks is a planning tool. Yo
 <plan_tool_usage>
 ```
 
-A plan tool can be used with minimal scaffolding. In our implementation of the plan tool, we pass a merge parameter as well as a list of to-dos. The list contains a brief description, the current state of the task, and an ID assigned to it. Below is an example of a function call that GPT-5.1 may make to record its state.
+plan tool 只要極少的架構就能用。在我們的實作裡，我們傳入一個 merge 參數和一個 to-do 清單。清單裡每項有簡短描述、任務目前的狀態和指派的 ID。下面是 GPT-5.1 可能為了記錄自己的狀態而發出的 function call 範例。
 
 ```
 {
@@ -283,9 +291,9 @@ A plan tool can be used with minimal scaffolding. In our implementation of the p
 }
 ```
 
-### Design system enforcement
+### 強制遵守 design system
 
-When building frontend interfaces, GPT-5.1 can be steered to produce websites that match your visual design system. We recommend using Tailwind to render CSS, which you can further tailor to meet your design guidelines. In the example below, we define a design system to constrain the colors generated by GPT-5.1.
+建立前端介面時，GPT-5.1 可以被引導產出符合你視覺 design system 的網站。我們建議用 Tailwind 來產生 CSS，再進一步調整成符合你的設計規範。下面的範例定義了一個 design system，用來限制 GPT-5.1 產生的顏色。
 
 ```
 <design_system_enforcement>
@@ -298,15 +306,15 @@ When building frontend interfaces, GPT-5.1 can be steered to produce websites th
 </design_system_enforcement>
 ```
 
-## New tool types in GPT-5.1
+## GPT-5.1 的新 tool 類型
 
-GPT-5.1 has been post-trained on specific tools that are commonly used in coding use cases. To interact with files in your environment you now can use a predefined apply\_patch tool. Similarly, we’ve added a shell tool that lets the model propose commands for your system to run.  
+GPT-5.1 針對 coding 常用的特定 tool 做過 post-training。要操作你環境裡的檔案，現在可以用預先定義好的 apply\_patch tool。同樣地，我們新增了 shell tool，讓模型提出指令，由你的系統執行。
 
-### Using apply\_patch
+### 使用 apply\_patch
 
-The apply\_patch tool lets GPT-5.1 create, update, and delete files in your codebase using structured diffs. Instead of just suggesting edits, the model emits patch operations that your application applies and then reports back on, enabling iterative, multi-step code editing workflows. You can find additional usage details and context in the [GPT-4.1 prompting guide](https://cookbook.openai.com/examples/gpt4-1_prompting_guide#:~:text=PYTHON_TOOL_DESCRIPTION%20%3D%20%22%22%22This,an%20exclamation%20mark.).
+apply\_patch tool 讓 GPT-5.1 用結構化的 diff 在你的 codebase 裡建立、更新和刪除檔案。模型不只是建議修改，而是輸出 patch 操作，由你的應用程式套用並回報結果，這樣就能做反覆、多步驟的程式碼編輯流程。更多使用細節和背景可以看 [GPT-4.1 prompting guide](https://cookbook.openai.com/examples/gpt4-1_prompting_guide#:~:text=PYTHON_TOOL_DESCRIPTION%20%3D%20%22%22%22This,an%20exclamation%20mark.)。
 
-With GPT-5.1, you can use apply\_patch as a new tool type without writing custom descriptions for the tool. The description and handling are managed via the Responses API. Under the hood, this implementation uses a freeform function call rather than a JSON format. In testing, the named function decreased apply\_patch failure rates by 35%.
+在 GPT-5.1 裡，你可以把 apply\_patch 當成新的 tool 類型使用，不用自己寫 tool 描述。描述和處理邏輯由 Responses API 負責。底層這個實作用的是 freeform function call，而不是 JSON 格式。測試中，這個有名稱的 function 讓 apply\_patch 的失敗率降低了 35%。
 
 ```
 response = client.responses.create( 
@@ -316,7 +324,7 @@ tools=[{"type": "apply_patch"}]
 )
 ```
 
-When the model decides to execute an apply\_patch tool, you will receive an apply\_patch\_call function type within the response stream. Within the operation object, you’ll receive a type field (with one of `create_file`, `update_file`, or `delete_file`) and the diff to implement.
+當模型決定執行 apply\_patch tool 時，你會在 response stream 裡收到 apply\_patch\_call 這個 function 類型。在 operation 物件裡，你會拿到一個 type 欄位（值是 `create_file`、`update_file` 或 `delete_file` 之一）以及要套用的 diff。
 
 ```
 {
@@ -340,7 +348,7 @@ When the model decides to execute an apply\_patch tool, you will receive an appl
 
 ```
 
-[This repository](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/apply_patch.py) contains the expected implementation for the apply\_patch tool executable. When your system finishes executing the patch tool, the Responses API expects a tool output in the following form:
+[這個 repository](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/apply_patch.py) 有 apply\_patch tool 執行檔預期的實作。你的系統執行完 patch tool 後，Responses API 預期收到的 tool output 格式如下：
 
 ```
 {
@@ -351,17 +359,17 @@ When the model decides to execute an apply\_patch tool, you will receive an appl
 }
 ```
 
-### Using the shell tool 
+### 使用 shell tool
 
-We’ve also built a new shell tool for GPT-5.1. The shell tool allows the model to interact with your local computer through a controlled command-line interface. The model proposes shell commands; your integration executes them and returns the outputs. This creates a simple plan-execute loop that lets models inspect the system, run utilities, and gather data until they finish the task. 
+我們也為 GPT-5.1 做了新的 shell tool。shell tool 讓模型透過受控的命令列介面和你的本機電腦互動。模型提出 shell 指令，你的整合負責執行並回傳輸出。這形成一個簡單的規劃、執行迴圈，讓模型能檢查系統、執行工具程式並收集資料，直到完成任務。
 
-The shell tool is invoked in the same way as apply\_patch: include it as a tool of type `shell`.
+shell tool 的呼叫方式和 apply\_patch 一樣：把它當成 `shell` 類型的 tool 放進去。
 
 ```
 tools = [{"type": "shell"}]
 ```
 
-When a shell tool call is returned, the Responses API includes a `shell_call` object with a timeout, a maximum output length, and the command to run.
+shell tool call 回傳時，Responses API 會附上一個 `shell_call` 物件，內含 timeout、最大輸出長度和要執行的指令。
 
 ```
 {
@@ -376,7 +384,7 @@ When a shell tool call is returned, the Responses API includes a `shell_call` ob
 }
 ```
 
-After executing the shell command, return the untruncated stdout/stderr logs as well as the exit-code details.
+執行完 shell 指令後，要回傳沒有被截斷的 stdout/stderr 日誌，以及 exit code 的資訊。
 
 ```
 {
@@ -396,9 +404,9 @@ After executing the shell command, return the untruncated stdout/stderr logs as 
 }
 ```
 
-## How to metaprompt effectively 
+## 如何有效地 metaprompt
 
-Building prompts can be cumbersome, but it’s also the highest-leverage thing you can do to resolve most model behavior issues. Small inclusions can unexpectedly steer the model undesirably. Let’s walk through an example of an agent that plans events. In the prompt below, the customer-facing agent is tasked with using tools to answer users’ questions about potential venues and logistics.
+建立 prompt 可能很麻煩，但這也是解決大多數模型行為問題最有槓桿的做法。小小的一句話可能意外地把模型帶往不好的方向。我們用一個規劃活動的 agent 當例子。下面的 prompt 裡，這個面向客戶的 agent 要用 tool 回答使用者關於潛在場地和後勤的問題。
 
 ```
 You are “GreenGather,” an autonomous sustainable event-planning agent. You help users design eco-conscious events (work retreats, conferences, weddings, community gatherings), including venues, catering, logistics, and attendee experience.
@@ -468,19 +476,19 @@ Avoid over-apologizing or repeating yourself. Users should feel like decisions a
 End every response with a subtle next step the user could take, phrased as a suggestion rather than a question, and avoid explicit calls for confirmation such as “Let me know if this works.”
 ```
 
-Although this is a strong starting prompt, there are a few issues we noticed upon testing:
+雖然這是個不錯的起始 prompt，測試時我們發現幾個問題：
 
-* Small conceptual questions (like asking about a 20-person leadership dinner) triggered unnecessary tool calls and very concrete venue suggestions, despite the prompt allowing internal knowledge for simple, high-level questions.
+* 小型的概念性問題（例如問 20 人的主管晚餐）觸發了不必要的 tool call 和很具體的場地建議，儘管 prompt 允許簡單、高層次的問題使用內部知識
 
-* The agent oscillated between being overly verbose (multi-day Austin offsites turning into dense, multi-section essays) and overly hesitant (refusing to propose a plan without more questions) and occasionally ignored unit rules (a Berlin summit described in miles and °F instead of km and °C).
+* agent 在過度囉嗦（多天的 Austin offsite 變成密密麻麻、多段落的長文）和過度猶豫（不多問問題就拒絕提出計畫）之間擺盪，偶爾還無視單位規則（柏林的高峰會用英里和 °F 描述，而不是 km 和 °C）
 
-Rather than manually guessing which lines of the system prompt caused these behaviors, we can metaprompt GPT-5.1 to inspect its own instructions and traces.
+與其手動猜是 system prompt 的哪幾行造成這些行為，我們可以用 metaprompt 讓 GPT-5.1 檢查自己的 instructions 和 trace。
 
-**Step 1**: Ask GPT-5.1 to diagnose failures
+**步驟 1**：請 GPT-5.1 診斷失敗原因
 
-Paste the system prompt and a small batch of failure examples into a separate analysis call. Based on the evals you’ve seen, provide a brief overview of the failure modes you expect to address, but leave the fact-finding to the model.
+把 system prompt 和一小批失敗範例貼到另一個分析呼叫裡。依你看過的 eval，簡短概述你預期要處理的失敗模式，但讓模型自己去找出事實。
 
-Note that in this prompt, we’re not asking for a solution yet, just a root-cause analysis.
+注意這個 prompt 還沒要求解法，只是做 root-cause 分析。
 
 ```
 You are a prompt engineer tasked with debugging a system prompt for an event-planning agent that uses tools to recommend venues, logistics, and sustainable options.
@@ -518,11 +526,11 @@ failure_modes:
     - why_it_matters: ...
 ```
 
-Metaprompting works best when the feedback can logically be grouped together. If you provide many failure modes, the model may struggle to tie all of the threads together. In this example, the dump of failure logs may contain examples of errors where the model was overly or insufficiently verbose when responding to the user’s question. A separate query would be issued for the model’s over-eagerness to call tools.
+當回饋可以邏輯上分組時，metaprompting 效果最好。如果你給了太多失敗模式，模型可能很難把所有線索串在一起。在這個例子裡，失敗日誌可能包含模型回答使用者問題時過度囉嗦或不夠詳細的錯誤。模型過度積極呼叫 tool 的問題，則要另外發一個查詢。
 
-**Step 2:** Ask GPT-5.1 how it would patch the prompt to fix those behaviors
+**步驟 2：** 請 GPT-5.1 說明它會怎麼修補 prompt 來解決這些行為
 
-Once you have that analysis, you can run a second, separate call that focuses on implementation: tightening the prompt without fully rewriting it.
+有了分析結果之後，可以另外跑第二個呼叫，專注在實作：在不完全重寫的前提下收緊 prompt。
 
 ```
 You previously analyzed this system prompt and its failure modes.
@@ -551,9 +559,9 @@ Output:
 2) revised_system_prompt: the full updated system prompt with your edits applied, ready to drop into an agent configuration.
 ```
 
-In this example, the first metaprompt helps GPT-5.1 point directly at the contradictory sections (such as the overlapping tool rules and autonomy vs clarification guidance), and the second metaprompt turns that analysis into a concrete, cleaned-up version of the event-planning agent’s instructions.
+在這個例子中，第一個 metaprompt 幫 GPT-5.1 直接指出互相矛盾的段落（例如重疊的 tool 規則，以及自主行動與詢問釐清的指引），第二個 metaprompt 則把分析變成活動規劃 agent instructions 的具體、整理過的版本。
 
-The output from the second prompt might look something like this:
+第二個 prompt 的輸出可能長這樣：
 
 ```
 patch_notes:
@@ -568,18 +576,26 @@ revised_system_prompt:
 [...]
 ```
 
-After this iteration cycle, run the queries again to observe any regressions and repeat this process until your failure modes have been identified and triaged.
+這一輪迭代之後，再跑一次查詢看有沒有 regression，並重複這個流程，直到失敗模式都被找出並處理。
 
-As you continue to grow your agentic systems (e.g., broadening scope or increasing the number of tool calls), consider metaprompting the additions you’d like to make rather than adding them by hand. This helps maintain discrete boundaries for each tool and when they should be used.
+隨著你的 agentic 系統持續成長（例如擴大範圍或增加 tool call 的數量），考慮用 metaprompt 來處理你想新增的內容，而不是手動加進去。這樣有助於維持每個 tool 的清楚邊界，以及它們該在什麼時候使用。
 
-## What's next
+## 接下來
 
-To summarize, GPT-5.1 builds on the foundation set by GPT-5 and adds things like quicker thinking for easy questions, steerability when it comes to model output, new tools for coding use cases, and the option to set reasoning to `none` when your tasks don't require heavy thinking.
+總結來說，GPT-5.1 建立在 GPT-5 的基礎上，加入了幾樣東西：簡單問題思考更快、輸出更好 steer、針對 coding 情境的新 tool，以及任務不需要大量思考時可以把 reasoning 設成 `none`。
 
-Get started with GPT-5.1 in the [docs](https://platform.openai.com/docs/guides/latest-model), or read the [blog post](https://openai.com/index/gpt-5-1-for-developers/) to learn more.
+想開始用 GPT-5.1，可以看[文件](https://platform.openai.com/docs/guides/latest-model)，或讀[部落格文章](https://openai.com/index/gpt-5-1-for-developers/)了解更多。
 
+## 重點整理
 
+- GPT-5.1 很吃 instructions，prompt 裡互相衝突的指令是行為問題的常見原因，先檢查矛盾再加規則
+- 個性、長度和 user update 都可以靠 prompt 加 `verbosity` 參數調整，給具體的長度指引效果最好
+- 長任務容易提早收工，在 prompt 裡明確要求做完整、不要多餘追問；平行 tool call 也要在 tool 描述和 system prompt 裡鼓勵
+- `none` reasoning 模式像非 reasoning 模型，能搭配 hosted tool，要靠 few-shot、好的 tool 描述和「先想要呼叫哪些 function」「verify 結果」這類 prompt 補強
+- 修 prompt 時用兩步驟 metaprompt：先診斷 root cause，再提出最小修補，而且一次只處理同一類失敗
 
+## 練習
 
-
-<!-- tutor:summary -->
+1. 拿頁面上客服 agent 或 coding agent 的 prompt，把長度規則改成具體數字（例如最多 3 句、程式碼不超過 10 行），再比較有沒有調 `verbosity` 參數時的輸出差異。
+2. 照頁面的訂位 tool 範例，自己寫一個查詢天氣的 tool 定義，並在 system prompt 裡加一段平行 tool call 的規則，看模型是否會一次發出多個呼叫。
+3. 找一段你自己的 system prompt，照兩步驟 metaprompt 做：先請 GPT-5.1 只做 root-cause 分析，再請它提出最小修補，最後重跑原本失敗的案例確認沒有 regression。

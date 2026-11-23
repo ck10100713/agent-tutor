@@ -1,30 +1,38 @@
 ---
-translated: false
+translated: true
 source: examples/Embedding_Wikipedia_articles_for_search.ipynb
 ---
 
-# Embedding Wikipedia articles for search
+# 為搜尋做 Wikipedia 文章的 embedding
 
 > 原文：[examples/Embedding_Wikipedia_articles_for_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_Wikipedia_articles_for_search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼把一批 Wikipedia 文章處理成可搜尋的資料集：下載、切 chunk、做 embedding，最後存成 CSV。這份資料集就是 [Question_answering_using_embeddings.ipynb](Question_answering_using_embeddings.md) 用的那份。
 
+## 學完你會
+- 把長文章清理後切成帶有標題脈絡的短 section
+- 遞迴地把太長的 section 沿段落邊界切小，並理解切 chunk 的取捨
+- 對每個 chunk 呼叫 embedding API，並存成 CSV
 
-This notebook shows how we prepared a dataset of Wikipedia articles for search, used in [Question_answering_using_embeddings.ipynb](Question_answering_using_embeddings.md).
+## 開跑前
+需要 OpenAI API key（環境變數 `OPENAI_API_KEY`）。embedding 會產生 API 費用。
 
-Procedure:
+這個 notebook 示範我們怎麼為搜尋準備 Wikipedia 文章資料集，這份資料集用在 [Question_answering_using_embeddings.ipynb](Question_answering_using_embeddings.md)。
 
-0. Prerequisites: Import libraries, set API key (if needed)
-1. Collect: We download a few hundred Wikipedia articles about the 2022 Olympics
-2. Chunk: Documents are split into short, semi-self-contained sections to be embedded
-3. Embed: Each section is embedded with the OpenAI API
-4. Store: Embeddings are saved in a CSV file (for large datasets, use a vector database)
+步驟：
 
-## 0. Prerequisites
+0. 前置準備：匯入函式庫，設定 API key（如果需要）
+1. 蒐集：下載幾百篇關於 2022 年奧運的 Wikipedia 文章
+2. 切 chunk：把文件切成短的、大致自成一格的 section 以便 embedding
+3. Embed：用 OpenAI API 對每個 section 做 embedding
+4. 儲存：把 embedding 存進 CSV 檔（資料量大時請用 vector database）
 
-### Import libraries
+## 0. 前置準備
+
+### 匯入函式庫
 
 ```python
 # imports
@@ -39,23 +47,23 @@ import tiktoken  # for counting tokens
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-Install any missing libraries with `pip install` in your terminal. E.g.,
+缺少的函式庫，可以在終端機用 `pip install` 安裝。例如：
 
 ```zsh
 pip install openai
 ```
 
-(You can also do this in a notebook cell with `!pip install openai`.)
+（你也可以在 notebook cell 裡用 `!pip install openai` 安裝。）
 
-If you install any libraries, be sure to restart the notebook kernel.
+如果有安裝新的函式庫，記得重啟 notebook kernel。
 
-### Set API key (if needed)
+### 設定 API key（如果需要）
 
-Note that the OpenAI library will try to read your API key from the `OPENAI_API_KEY` environment variable. If you haven't already, set this environment variable by following [these instructions](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety).
+注意 OpenAI 函式庫會嘗試從 `OPENAI_API_KEY` 環境變數讀取 API key。如果還沒設定，請照[這份說明](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)設定這個環境變數。
 
-## 1. Collect documents
+## 1. 蒐集文件
 
-In this example, we'll download a few hundred Wikipedia articles related to the 2022 Winter Olympics.
+這個例子會下載幾百篇跟 2022 冬季奧運相關的 Wikipedia 文章。
 
 ```python
 # get Wikipedia pages about the 2022 Winter Olympics
@@ -92,18 +100,18 @@ print(f"Found {len(titles)} article titles in {CATEGORY_TITLE}.")
     Found 179 article titles in Category:2022 Winter Olympics.
     ```
 
-## 2. Chunk documents
+## 2. 切分文件
 
-Now that we have our reference documents, we need to prepare them for search.
+有了參考文件之後，要先準備好才能拿來搜尋。
 
-Because GPT can only read a limited amount of text at once, we'll split each document into chunks short enough to be read.
+因為 GPT 一次只能讀有限的文字量，所以我們要把每份文件切成夠短、讀得完的 chunk。
 
-For this specific example on Wikipedia articles, we'll:
-- Discard less relevant-looking sections like External Links and Footnotes
-- Clean up the text by removing reference tags (e.g., <ref>), whitespace, and super short sections
-- Split each article into sections
-- Prepend titles and subtitles to each section's text, to help GPT understand the context
-- If a section is long (say, > 1,600 tokens), we'll recursively split it into smaller sections, trying to split along semantic boundaries like paragraphs
+針對這個 Wikipedia 文章的例子，我們會：
+- 丟掉看起來比較不相關的段落，像是外部連結和註腳
+- 清理文字，移除 reference 標籤（例如 <ref>）、空白，以及超短的段落
+- 把每篇文章切成多個 section
+- 在每個 section 的文字前面加上標題和子標題，幫助 GPT 理解上下文
+- 如果某個 section 太長（例如 > 1,600 tokens），就遞迴地切成更小的 section，盡量沿著段落這類語意邊界來切
 
 ```python
 # define functions to split Wikipedia pages into sections
@@ -291,18 +299,18 @@ for ws in wikipedia_sections[:5]:
     '<section begin=boycotts />\n[[File:2022 Winter Olympics (Beijing) diplomatic b...'
     ```
 
-Next, we'll recursively split long sections into smaller sections.
+接下來，把太長的 section 遞迴切小。
 
-There's no perfect recipe for splitting text into sections.
+切文字沒有完美的做法。
 
-Some tradeoffs include:
-- Longer sections may be better for questions that require more context
-- Longer sections may be worse for retrieval, as they may have more topics muddled together
-- Shorter sections are better for reducing costs (which are proportional to the number of tokens)
-- Shorter sections allow more sections to be retrieved, which may help with recall
-- Overlapping sections may help prevent answers from being cut by section boundaries
+要考慮的取捨包括：
+- 較長的 section 對需要更多上下文的問題可能比較好
+- 較長的 section 對檢索可能比較差，因為可能混了更多主題
+- 較短的 section 比較省成本（成本和 token 數成正比）
+- 較短的 section 可以檢索更多段，可能有助於 recall
+- section 之間有重疊，可以避免答案被 section 邊界切斷
 
-Here, we'll use a simple approach and limit sections to 1,600 tokens each, recursively halving any sections that are too long. To avoid cutting in the middle of useful sentences, we'll split along paragraph boundaries when possible.
+這裡我們用簡單的做法，每個 section 限制在 1,600 tokens，太長的就遞迴對半切。為了避免把有用的句子從中間切斷，可以的話會沿著段落邊界切。
 
 ```python
 GPT_MODEL = "gpt-4o-mini"  # only matters insofar as it selects which tokenizer to use
@@ -430,11 +438,11 @@ print(wikipedia_strings[1])
     After winning two gold medals and returning to his home country of Sweden skater [[Nils van der Poel]] criticized the IOC's selection of China as the host saying "I think it is extremely irresponsible to give it to a country that violates human rights as blatantly as the Chinese regime is doing." He had declined to criticize China before leaving for the games saying "I don't think it would be particularly wise for me to criticize the system I'm about to transition to, if I want to live a long and productive life."
     ```
 
-## 3. Embed document chunks
+## 3. 對文件 chunk 做 embedding
 
-Now that we've split our library into shorter self-contained strings, we can compute embeddings for each.
+現在已經把資料庫切成較短、自成一格的字串，可以對每一個計算 embedding。
 
-(For large embedding jobs, use a script like [api_request_parallel_processor.py](https://github.com/openai/openai-cookbook/blob/main/examples/api_request_parallel_processor.py) to parallelize requests while throttling to stay under rate limits.)
+（大量 embedding 的工作，可以用 [api_request_parallel_processor.py](https://github.com/openai/openai-cookbook/blob/main/examples/api_request_parallel_processor.py) 這類腳本，平行送出請求，同時節流以避免超過 rate limit。）
 
 ```python
 EMBEDDING_MODEL = "text-embedding-3-small"
@@ -462,11 +470,11 @@ df = pd.DataFrame({"text": wikipedia_strings, "embedding": embeddings})
     Batch 2000 to 2999
     ```
 
-## 4. Store document chunks and embeddings
+## 4. 儲存文件 chunk 與 embedding
 
-Because this example only uses a few thousand strings, we'll store them in a CSV file.
+因為這個例子只有幾千個字串，所以我們把它們存成 CSV 檔。
 
-(For larger datasets, use a vector database, which will be more performant.)
+（資料集更大時，請用 vector database，效能會更好。）
 
 ```python
 # save document chunks and embeddings
@@ -476,4 +484,14 @@ SAVE_PATH = "data/winter_olympics_2022.csv"
 df.to_csv(SAVE_PATH, index=False)
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 搜尋用的資料集流程是：蒐集、清理、切 chunk、embed、儲存。
+- 切 chunk 沒有標準答案，長度在上下文完整、檢索精準和成本之間取捨。
+- 在每個 section 前加上標題和子標題，能讓 chunk 脫離原文後仍有脈絡。
+- 資料量小時 CSV 夠用，大了就該換 vector database。
+- 大量 embedding 要平行處理，並控制 rate limit。
+
+## 練習
+1. 把 section 的 token 上限從 1,600 改成 800，看切出來的 chunk 數量增加多少。
+2. 修改清理步驟，多丟掉一個你覺得不相關的段落標題（例如 "See also"），重新看 chunk 數量。
+3. 讓遞迴切分在相鄰 chunk 之間保留一段重疊內容，並比較重疊前後的 chunk 數量與 embedding 成本。

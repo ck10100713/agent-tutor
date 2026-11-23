@@ -1,34 +1,45 @@
 ---
-translated: false
+translated: true
 source: articles/gpt-oss/build-your-own-fact-checker-cerebras.ipynb
 ---
 
-# Build your own content fact checker with gpt-oss-120B, Cerebras, and Parallel
+# 用 gpt-oss-120B、Cerebras 和 Parallel 打造你自己的內容事實查核器
 
 > 原文：[articles/gpt-oss/build-your-own-fact-checker-cerebras.ipynb](https://github.com/openai/openai-cookbook/blob/main/articles/gpt-oss/build-your-own-fact-checker-cerebras.ipynb)
 
-Cookbook to build a content fact checker with gpt-oss-120B on Cerebras using Parallel.
+用 Parallel 在 Cerebras 上以 gpt-oss-120B 打造內容事實查核器的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+做一個自動事實查核器：從文字或 URL 抽出 claims，用 Parallel 搜尋網路證據，再讓 Cerebras 上的 gpt-oss-120B 判斷每個 claim 是 True、False 或 Uncertain，並附上引用的 URL。
+
+## 學完你會
+- 用 Cerebras 呼叫 gpt-oss-120B，並串接 Parallel 搜尋當作 LLM 的網路證據來源。
+- 把一段文字拆成可獨立查證的 claims，再對每個 claim 回傳結構化的判定和說明。
+- 把整套流程包成可以直接吃文字或 URL 的函式。
+
+## 開跑前
+- 需要 Cerebras API key（環境變數 `CEREBRAS_API_KEY`）。
+- 需要 Parallel API key（環境變數 `PARALLEL_API_KEY`）。
+- 兩個服務都有免費額度可以開始。
 
 
-Ever read an article only to discover later that some of the “facts” were fabricated? As information becomes more abundant, verifying its accuracy has become increasingly challenging.
+有沒有讀完一篇文章，後來才發現其中一些「事實」是捏造的？資訊越來越多，要驗證它是否正確也越來越難。
 
-This guide provides a practical, automated way to assess factual accuracy at scale. It extracts claims from any text or URL, retrieves real-world evidence, and evaluates each claim using gpt-oss-120B powered by Cerebras ultra low latency inference.
+這份指南提供一個實用的自動化做法，可以大規模評估事實正確性。它會從任何文字或 URL 抽出 claims，取得真實世界的證據，並用 Cerebras 超低延遲推論驅動的 gpt-oss-120B 評估每個 claim。
 
-See demo here: [Content Fact-Checker](https://oss.parallel.ai/agents/cerebras-fact-checker).
+Demo 在這裡：[Content Fact-Checker](https://oss.parallel.ai/agents/cerebras-fact-checker)。
 
-For this guide, set up the following accounts: 
+這份指南需要先設定下面的帳號： 
 
-- Cerebras API: the fastest inference provider, [get started for free here.](https://cloud.cerebras.ai/?utm_source=DevX&utm_campaign=parallel)
+- Cerebras API：最快的推論服務商，[在這裡免費開始。](https://cloud.cerebras.ai/?utm_source=DevX&utm_campaign=parallel)
 
-- Parallel API: The search engine for AI, [get started for free here.](https://platform.parallel.ai/)
+- Parallel API：為 AI 打造的搜尋引擎，[在這裡免費開始。](https://platform.parallel.ai/)
 
-Learn more about best practices of gpt-oss-120B [here](https://openai.com/index/introducing-gpt-oss/).
+想了解 gpt-oss-120B 的最佳實務，看[這裡](https://openai.com/index/introducing-gpt-oss/)。
 
-### **Step 1: Environment Setup (Colab or local)**
+### **Step 1：環境設定（Colab 或本機）**
 
-This guide supports both local Jupyter environments and Google Colab. Set the following environment variables:
+這份指南同時支援本機 Jupyter 環境和 Google Colab。設定下面的環境變數：
 - CEREBRAS_API_KEY
 - PARALLEL_API_KEY
 
@@ -73,9 +84,9 @@ print("Clients initialized, model:", CEREBRAS_MODEL_NAME)
     Clients initialized, model: gpt-oss-120b
     ```
 
-### **Step 2: Set up the LLM**
+### **Step 2：設定 LLM**
 
-Now, with the environment ready, create the function that will call the LLM.
+環境準備好之後，建立呼叫 LLM 的函式。
 
 
 ```python
@@ -120,15 +131,15 @@ def call_cerebras_chat(
     return resp.choices[0].message.content
 ```
 
-### **Step 3: Connect the LLM to the web**
+### **Step 3：把 LLM 連到網路**
 
-To fact-check a claim, the model needs to find evidence online, and this step builds the function that connects the LLM to the web.
+要查核一個 claim，模型需要在網路上找證據，這一步建立把 LLM 連到網路的函式。
 
-Notice a few fields:
+注意幾個欄位：
 
-- `objective` field: Bold text Natural language intent rather than keywords.
+- `objective` 欄位：Bold text 用自然語言描述意圖，而不是關鍵字。
 
-- `one-shot` mode: For simplicity and speed, this guide stick to a one-shot setup, which gives high-quality excerpts in a single call.
+- `one-shot` 模式：為了簡單和速度，這份指南採用 one-shot 設定，一次呼叫就能得到高品質的摘錄。
 
 ```python
 def search_web(query: str, num: int = 5, mode: str = "one-shot"):
@@ -173,9 +184,9 @@ def search_web(query: str, num: int = 5, mode: str = "one-shot"):
     return results
 ```
 
-### **Step 4 – Organize and summarize web results**
+### **Step 4：整理並摘要網路結果**
 
-After retrieving information from the web, organize it into a clean, readable format. This step takes the search results and compiles the key excerpts into a simple summary for evaluation.
+從網路取得資訊後，把它整理成乾淨易讀的格式。這一步會把搜尋結果的關鍵摘錄彙整成簡單的摘要，方便評估。
 
 ```python
 import textwrap
@@ -204,18 +215,18 @@ def build_evidence_context(results: List[Dict[str, Any]], max_chars: int = 8000)
     return context
 ```
 
-### **Step 5 – Find the claims to verify**
+### **Step 5：找出要查證的 claims**
 
-Next, identify the specific statements in the text to verify. Rather than analyzing an entire article at once, the LLM should break it into multiple clear, stand-alone claims that can be judged verbatim.
+接下來，找出文字裡要查證的具體陳述。不要一次分析整篇文章，而是讓 LLM 把它拆成多個清楚、獨立、可以逐字判斷的 claims。
 
-For example, from a short paragraph like: “The unemployment rate fell to 3.5% in March 2024, and Company X announced a $10B merger the same week.”
+例如，一小段文字：「The unemployment rate fell to 3.5% in March 2024, and Company X announced a $10B merger the same week.」
 
-The LLM should extract individual factual statements such as:
+LLM 應該抽出個別的事實陳述，像是：
 
 *  “The unemployment rate fell to 3.5% in March 2024.”
 *  “Company X announced a $10 billion merger.”
 
-Each one can then be checked independently, which makes the entire fact-checking process precise and reliable.
+每一個都可以獨立查核，讓整個事實查核流程精準又可靠。
 
 ````python
 import json
@@ -288,22 +299,22 @@ print("Claim extraction ready")
     Claim extraction ready
     ```
 
-### **Step 6 – Check claims against evidence (true / false / uncertain)**
+### **Step 6：用證據檢查 claims（true / false / uncertain）**
 
-After collecting the claims and extracting them into independent factual claims, the LLM can now evaluate each claim for a verdict. The process has two steps:
+收集完 claims 並抽成獨立的事實 claims 之後，LLM 就可以評估每個 claim 並給出判定。流程分兩步：
 
-1) **Retrieve evidence with Parallel:**
-First, use Parallel to query authoritative sources related to the claim.
+1) **用 Parallel 取得證據：**
+先用 Parallel 查詢和 claim 相關的權威來源。
 
-2) **Judge the claim with Cerebras:**
-Then, send the evidence and the original claims to Cerebras for evaluation. Here's where Cerebras's ultra-fast inference becomes crucial, where the LLM can analyze multiple pieces of evidence, weigh contradictions, and generate a verdict. 
+2) **用 Cerebras 判斷 claim：**
+然後把證據和原始 claims 送給 Cerebras 評估。這裡 Cerebras 超快的推論就很關鍵，LLM 可以分析多份證據、權衡互相矛盾的地方，並產生判定。 
 
-The model will return one of three structured verdicts:
-- **True** — Evidence supports the claim
-- **False** — Evidence contradicts the claim
-- **Uncertain** — Not enough evidence, or sources conflict
+模型會回傳三種結構化判定之一：
+- **True**：證據支持這個 claim
+- **False**：證據反駁這個 claim
+- **Uncertain**：證據不足，或來源互相衝突
 
-Each verdict comes with an explanation and cited URLs, so the model's reasoning is transparent.
+每個判定都附上說明和引用的 URL，讓模型的推理過程透明。
 
 ````python
 from typing import Dict, Any
@@ -435,9 +446,9 @@ print("Single-claim fact-checker ready")
     Single-claim fact checker ready
     ```
 
-### **Step 7 - Fact-check an entire text**
+### **Step 7：對整段文字做事實查核**
 
-This final step brings everything together. Here, take any piece of text and run each one through the full fact-checking process you built.
+這最後一步把所有東西串起來。拿任何一段文字，讓每個 claim 都跑過你建好的完整事實查核流程。
 
 ```python
 def fact_check_text(text: str, max_claims: int = 6):
@@ -479,8 +490,8 @@ print("Full fact-checking pipeline ready")
     Full fact-checking pipeline ready
     ```
 
-### **Step 8: Fact check directly from a URL**
-Finally, to make the fact-checker even easier, add a function that accepts a URL directly.
+### **Step 8：直接從 URL 做事實查核**
+最後，為了讓查核器更好用，加一個直接接受 URL 的函式。
 
 ```python
 import requests
@@ -531,9 +542,9 @@ print("URL claim extraction function ready")
     URL claim extraction function ready
     ```
 
-### **Examples**
+### **範例**
 
-Start with a short sample text first.
+先從一小段範例文字開始。
 
 ```python
 sample_text = """\nThe Earth is flat and the moon is made of cheese. Humans landed on Mars in 1969. Albert Einstein was born in Germany in 1879.\n"""
@@ -617,9 +628,9 @@ display(fact_check_results)
       'sources': ['https://en.wikipedia.org/wiki/Albert_Einstein']}]
     ```
 
-Now, paste in a 400-word statement and see what the fact-checker says. 
+現在貼上一段 400 字的陳述，看看查核器怎麼說。 
 
-[Note: this is a composite text example designed to verify the content fact-checker. It contains plausible but fabricated claims.]
+[注意：這是一段為了測試內容查核器而設計的綜合文字範例，裡面有看似合理但其實捏造的 claims。]
 
 ```python
 long_sample_text = """
@@ -726,7 +737,7 @@ display(long_fact_check_results)
        'https://www.escardio.org/The-ESC/Press-Office/Press-releases/morning-coffee-may-protect-the-heart-better-than-all-day-coffee-drinking']}]
     ```
 
-Paste a URL link directly.
+直接貼一個 URL 連結。
 
 ```python
 current_doc_url = "https://www.snopes.com/fact-check/drinking-at-disney-world/"
@@ -822,7 +833,7 @@ else:
        'https://www.disneyfoodblog.com/2023/10/08/the-one-rule-about-drinking-in-disney-world-you-need-to-know/']}]
     ```
 
-Here's another with a URL example.
+這是另一個 URL 的範例。
 
 ```python
 article_url = "https://theonion.com/shedeur-sanders-confident-he-can-deliver-everything-browns-fans-have-come-to-expect/"
@@ -919,18 +930,18 @@ else:
        'https://sports.yahoo.com/nfl/article/what-does-browns-firing-kevin-stefanski-mean-for-shedeur-sanders-062323054.html']}]
     ```
 
-And with that, you've successfully built a fact-checker using gpt-oss-120B, Cerebras, and Parallel!
+這樣你就成功用 gpt-oss-120B、Cerebras 和 Parallel 做出一個事實查核器了！
 
 
 
-**⚠️ Disclaimer:**
+**⚠️ 免責聲明：**
 
 
-This guide is meant purely as an educational starting point. To keep things simple, the code here skips over several production concerns like prompt injection, input sanitation, and stricter output validation. If you decide to turn this into a real app, add those protections. 
+這份指南純粹是教學用的起點。為了簡單，這裡的程式碼略過了幾個 production 要考慮的問題，像是 prompt injection、輸入清理和更嚴格的輸出驗證。如果你要把它做成真正的應用程式，要加上這些保護。 
 
-**Contributors**
+**貢獻者**
 
-This guide serves as a joint collaboration effort between OpenAI, [Cerebras Systems](https://www.cerebras.ai/), and [Parallel Web Systems](https://parallel.ai/), with attributions to the following for their valuable feedback and support. 
+這份指南是 OpenAI、[Cerebras Systems](https://www.cerebras.ai/) 和 [Parallel Web Systems](https://parallel.ai/) 共同合作的成果，感謝下列人員寶貴的回饋與支持。 
 
 - Vaibhav Srivastav
 - Dominik Kundel
@@ -942,4 +953,14 @@ This guide serves as a joint collaboration effort between OpenAI, [Cerebras Syst
 - Kevin Taylor
 - Khushi Shelat
 
-<!-- tutor:summary -->
+## 重點整理
+- 事實查核的關鍵是先把文章拆成獨立、可驗證的 claims，再逐一查。
+- 搜尋用 `objective` 這種自然語言意圖，比關鍵字更能找到好證據。
+- 證據檢索（Parallel）和判斷（Cerebras 上的 LLM）分開，各做擅長的事。
+- 判定限制成 True / False / Uncertain 並附 URL，輸出才好檢查。
+- 這份範例沒處理 prompt injection 等問題，上 production 前要補。
+
+## 練習
+1. 修改 Step 5 抽 claims 的 prompt，限制每段文字最多抽 5 個 claims，觀察結果變化。
+2. 在 Step 6 的判定輸出加一個 confidence 欄位（0 到 1），並顯示在最後結果裡。
+3. 對 Step 7 的逐個 claim 查核改成平行執行（例如 `ThreadPoolExecutor`），比較總耗時。

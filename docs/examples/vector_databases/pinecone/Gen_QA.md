@@ -1,24 +1,34 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/pinecone/Gen_QA.ipynb
 ---
 
-# Retrieval augmented generative question answering with Pinecone
+# 用 Pinecone 做檢索增強的問答生成（RAG）
 
 > 原文：[examples/vector_databases/pinecone/Gen_QA.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/pinecone/Gen_QA.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+LLM 回答專業問題時常常會亂編。這篇把 YouTube 逐字稿做成 embedding 存進 Pinecone，提問時先檢索相關內容，再一起丟給 OpenAI 模型，讓答案有真實資料當後盾。
+
+## 學完你會
+- 看懂 LLM 幻覺的樣子，以及為什麼 RAG 比 fine-tuning 更適合補特定知識
+- 用 `text-embedding-3-small` 產生 embedding，並寫進 Pinecone index
+- 做出「查詢向量 → 檢索 context → 塞進 prompt → 生成答案」的完整流程
+
+## 開跑前
+- OpenAI API key
+- Pinecone 的 API key（有免費方案）
 
 
-#### Fixing LLMs that Hallucinate
+#### 修正會亂講的 LLM
 
-In this notebook we will learn how to query relevant contexts to our queries from Pinecone, and pass these to a generative OpenAI model to generate an answer backed by real data sources.
+這份 notebook 會示範怎麼從 Pinecone 撈出跟問題相關的 context，再交給 OpenAI 的生成模型，產生有真實資料支持的答案。
 
-A common problem with using GPT-3 to factually answer questions is that GPT-3 can sometimes make things up. The GPT models have a broad range of general knowledge, but this does not necessarily apply to more specific information. For that we use the Pinecone vector database as our _"external knowledge base"_ — like *long-term memory* for GPT-3.
+用 GPT-3 回答事實性問題有個常見問題：它有時會自己編。GPT 系列的通用知識很廣，但遇到比較專門的資訊就不一定對。這時我們用 Pinecone 向量資料庫當「外部知識庫」，就像 GPT-3 的*長期記憶*。
 
-Required installs for this notebook are:
+這份 notebook 需要安裝：
 
 ```python
 !pip install -qU openai pinecone-client datasets
@@ -49,7 +59,7 @@ import openai
 openai.api_key = "OPENAI_API_KEY"
 ```
 
-For many questions *state-of-the-art (SOTA)* LLMs are more than capable of answering correctly.
+很多問題 *state-of-the-art (SOTA)* 的 LLM 都答得對。
 
 ```python
 query = "who was the 12th person on the moon and when did they land?"
@@ -75,7 +85,7 @@ res['choices'][0]['text'].strip()
     'The 12th person on the moon was Harrison Schmitt, and he landed on December 11, 1972.'
     ```
 
-However, that isn't always the case. First let's first rewrite the above into a simple function so we're not rewriting this every time.
+但不是每次都這樣。先把上面的做法包成一個簡單的函式，之後就不用重複寫。
 
 ```python
 def complete(prompt):
@@ -92,9 +102,9 @@ def complete(prompt):
     return res['choices'][0]['text'].strip()
 ```
 
-Now let's ask a more specific question about training a type of transformer model called a *sentence transformer*. The ideal answer we'd be looking for is _"Multiple Negatives Ranking (MNR) loss"_.
+現在問一個比較專門的問題：訓練一種叫 *sentence transformer* 的 transformer 模型。理想答案是 _"Multiple Negatives Ranking (MNR) loss"_。
 
-Don't worry if this is a new term to you, it isn't required to understand what we're doing or demoing here.
+這個詞不懂也沒關係，不影響我們要示範的東西。
 
 ```python
 query = (
@@ -111,35 +121,35 @@ complete(query)
     'If you only have pairs of related sentences, then the best training method to use for sentence transformers is the supervised learning approach. This approach involves providing the model with labeled data, such as pairs of related sentences, and then training the model to learn the relationships between the sentences. This approach is often used for tasks such as natural language inference, semantic similarity, and paraphrase identification.'
     ```
 
-One of the common answers we get to this is:
+常見的答案之一是：
 
 ```
 The best training method to use for fine-tuning a pre-trained model with sentence transformers is the Masked Language Model (MLM) training. MLM training involves randomly masking some of the words in a sentence and then training the model to predict the masked words. This helps the model to learn the context of the sentence and better understand the relationships between words.
 ```
 
-This answer seems pretty convincing right? Yet, it's wrong. MLM is typically used in the pretraining step of a transformer model but *"cannot"* be used to fine-tune a sentence-transformer, and has nothing to do with having _"pairs of related sentences"_.
+這個答案看起來很有說服力對吧？但它是錯的。MLM 通常用在 transformer 模型的預訓練階段，*不能*拿來 fine-tune sentence-transformer，也跟「成對的相關句子」無關。
 
-An alternative answer we receive (and the one we returned above) is about `supervised learning approach` being the most suitable. This is completely true, but it's not specific and doesn't answer the question.
+另一個我們得到的答案（就是上面回傳的那個）說 `supervised learning approach` 最合適。這句話沒錯，但太籠統，沒有回答問題。
 
-We have two options for enabling our LLM in understanding and correctly answering this question:
+要讓 LLM 理解並正確回答這個問題，有兩個選項：
 
-1. We fine-tune the LLM on text data covering the topic mentioned, likely on articles and papers talking about sentence transformers, semantic search training methods, etc.
+1. 用相關主題的文字資料 fine-tune LLM，例如講 sentence transformer、semantic search 訓練方法的文章和論文。
 
-2. We use **R**etrieval **A**ugmented **G**eneration (RAG), a technique that implements an information retrieval component to the generation process. Allowing us to retrieve relevant information and feed this information into the generation model as a *secondary* source of information.
+2. 用 **R**etrieval **A**ugmented **G**eneration（RAG），在生成流程中加一個資訊檢索元件。先檢索相關資訊，再當作*次要*資訊來源餵給生成模型。
 
-We will demonstrate option **2**.
+我們示範選項 **2**。
 
 ---
 
-## Building a Knowledge Base
+## 建立知識庫
 
-With option **2** the retrieval of relevant information requires an external _"Knowledge Base"_, a place where we can store and use to efficiently retrieve information. We can think of this as the external _long-term memory_ of our LLM.
+選項 **2** 需要一個外部「知識庫」，用來存資料並有效率地檢索。可以把它想成 LLM 外掛的*長期記憶*。
 
-We will need to retrieve information that is semantically related to our queries, to do this we need to use _"dense vector embeddings"_. These can be thought of as numerical representations of the *meaning* behind our sentences.
+我們要找的是語意上跟問題相關的資訊，所以需要「dense vector embedding」，也就是句子*意思*的數值表示。
 
-To create these dense vectors we use the `text-embedding-3-small` model.
+這些 dense vector 用 `text-embedding-3-small` 模型產生。
 
-We have already authenticated our OpenAI connection, to create an embedding we just do:
+OpenAI 連線已經認證好了，要建立 embedding 只要這樣做：
 
 ```python
 embed_model = "text-embedding-ada-002"
@@ -152,7 +162,7 @@ res = openai.Embedding.create(
 )
 ```
 
-In the response `res` we will find a JSON-like object containing our new embeddings within the `'data'` field.
+回應 `res` 是類似 JSON 的物件，新的 embedding 在 `'data'` 欄位裡。
 
 ```python
 res.keys()
@@ -164,7 +174,7 @@ res.keys()
     dict_keys(['object', 'data', 'model', 'usage'])
     ```
 
-Inside `'data'` we will find two records, one for each of the two sentences we just embedded. Each vector embedding contains `1536` dimensions (the output dimensionality of the `text-embedding-3-small` model.
+`'data'` 裡有兩筆資料，對應剛剛 embed 的兩個句子。每個向量有 `1536` 維（`text-embedding-3-small` 的輸出維度）。
 
 ```python
 len(res['data'])
@@ -186,11 +196,11 @@ len(res['data'][0]['embedding']), len(res['data'][1]['embedding'])
     (1536, 1536)
     ```
 
-We will apply this same embedding logic to a dataset containing information relevant to our query (and many other queries on the topics of ML and AI).
+接著把同樣的 embedding 流程套用到一個資料集上，這個資料集包含跟我們的問題（以及很多 ML、AI 主題問題）相關的資訊。
 
-### Data Preparation
+### 資料準備
 
-The dataset we will be using is the `jamescalam/youtube-transcriptions` from Hugging Face _Datasets_. It contains transcribed audio from several ML and tech YouTube channels. We download it with:
+資料集用 Hugging Face _Datasets_ 上的 `jamescalam/youtube-transcriptions`，內容是幾個 ML 和科技 YouTube 頻道的語音逐字稿。下載方式：
 
 ```python
 from datasets import load_dataset
@@ -231,7 +241,7 @@ data[0]
      'end': 9.36}
     ```
 
-The dataset contains many small snippets of text data. We will need to merge many snippets from each video to create more substantial chunks of text that contain more information.
+資料集是很多小段文字。我們要把每支影片的許多片段合併成較大的 chunk，讓每塊包含更多資訊。
 
 ```python
 from tqdm.auto import tqdm
@@ -283,7 +293,7 @@ new_data[0]
      'channel_id': 'UCv83tO5cePwHMt1952IVVHw'}
     ```
 
-Now we need a place to store these embeddings and enable a efficient _vector search_ through them all. To do that we use **`Pinecone`**, we can get a [free API key](https://app.pinecone.io) and enter it below where we will initialize our connection to `Pinecone` and create a new index.
+現在需要一個地方存這些 embedding，並能對它們做有效率的 _vector search_。我們用 **`Pinecone`**。可以申請[免費 API key](https://app.pinecone.io)，填在下面，初始化 `Pinecone` 連線並建立新的 index。
 
 ```python
 import pinecone
@@ -320,7 +330,7 @@ index.describe_index_stats()
      'total_vector_count': 0}
     ```
 
-We can see the index is currently empty with a `total_vector_count` of `0`. We can begin populating it with OpenAI `text-embedding-3-small` built embeddings like so:
+index 目前是空的，`total_vector_count` 是 `0`。接著用 OpenAI `text-embedding-3-small` 產生的 embedding 填進去：
 
 ```python
 from tqdm.auto import tqdm
@@ -366,7 +376,7 @@ for i in tqdm(range(0, len(new_data), batch_size)):
       0%|          | 0/487 [00:00<?, ?it/s]
     ```
 
-Now we search, for this we need to create a _query vector_ `xq`:
+接下來搜尋，要先建立 _query vector_ `xq`：
 
 ```python
 res = openai.Embedding.create(
@@ -498,6 +508,16 @@ complete(query_with_contexts)
     'You should use Natural Language Inference (NLI) with multiple negative ranking loss.'
     ```
 
-And we get a pretty great answer straight away, specifying to use _multiple-rankings loss_ (also called _multiple negatives ranking loss_).
+一下子就得到很好的答案，它指出要用 _multiple-rankings loss_（也叫 _multiple negatives ranking loss_）。
 
-<!-- tutor:summary -->
+## 重點整理
+- LLM 對冷門、專門的問題會一本正經地答錯，這就是幻覺。
+- RAG 是在生成前先檢索相關資料，當作額外 context 給模型，不用重新訓練模型。
+- 檢索靠 embedding：把文字轉成向量，用向量相似度找語意相近的內容。
+- 影片逐字稿片段太短，要先合併成較大的 chunk 再 embed，檢索結果才有足夠資訊。
+- 向量資料庫（這裡是 Pinecone）負責存向量並做快速搜尋，OpenAI 模型負責用檢索到的內容產生答案。
+
+## 練習
+1. 把最後問的問題換成另一個 ML 相關的問題，比較「有 RAG」和「沒有 RAG」兩種答案差在哪。
+2. 調整檢索時的 `top_k`（例如 1、3、5），看塞進 prompt 的 context 數量如何影響答案。
+3. 改變合併逐字稿的 chunk 大小（改成更長或更短），重新 embed 並 upsert，觀察檢索品質的變化。

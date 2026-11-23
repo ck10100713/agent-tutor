@@ -1,98 +1,109 @@
 ---
-translated: false
+translated: true
 source: examples/Question_answering_using_embeddings.ipynb
 ---
-
-# Question answering using embeddings-based search
+# 用 embedding 搜尋來做問答
 
 > 原文：[examples/Question_answering_using_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+GPT 只會回答訓練資料裡有的東西。這篇教你用「先搜尋、再提問」兩步驟，讓 GPT 根據你自己準備的參考文件來回答問題。範例用的是幾百篇 2022 冬季奧運的 Wikipedia 文章。
+
+## 學完你會
+
+- 說得出為什麼要讓模型記住知識時，把資料放進 input 比 fine-tuning 更可靠
+- 寫出用 embedding 把問題和文字段落做相似度排序的 search 函式
+- 把搜到的段落塞進 message，做出一個會引用資料回答的 `ask` 函式
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY` 環境變數，執行會呼叫付費的 OpenAI API
 
 
-GPT excels at answering questions, but only on topics it remembers from its training data.
+GPT 很會回答問題，但只限於它訓練資料裡記得的主題。
 
-What should you do if you want GPT to answer questions about unfamiliar topics? E.g.,
-- Recent events after October 2023 for GPT 4 series models
-- Your non-public documents
-- Information from past conversations
-- etc.
+如果你想讓 GPT 回答它不熟的主題呢？例如：
+- GPT 4 系列模型 2023 年 10 月之後的新事件
+- 你的非公開文件
+- 過去的對話內容
+- 等等
 
-This notebook demonstrates a two-step Search-Ask method for enabling GPT to answer questions using a library of reference text.
+這份 notebook 示範一個兩步驟的「搜尋、提問」（Search-Ask）做法，讓 GPT 用一批參考文字來回答問題。
 
-1. **Search:** search your library of text for relevant text sections
-2. **Ask:** insert the retrieved text sections into a message to GPT and ask it the question
+1. **Search：** 在你的文字庫裡找出相關的段落
+2. **Ask：** 把找到的段落放進給 GPT 的 message，再問它問題
 
-## Why search is better than fine-tuning
+## 為什麼搜尋比 fine-tuning 好
 
-GPT can learn knowledge in two ways:
+GPT 可以用兩種方式學到知識：
 
-- Via model weights (i.e., fine-tune the model on a training set)
-- Via model inputs (i.e., insert the knowledge into an input message)
+- 透過模型權重（也就是用訓練集 fine-tune 模型）
+- 透過模型輸入（也就是把知識放進 input message）
 
-Although fine-tuning can feel like the more natural option—training on data is how GPT learned all of its other knowledge, after all—we generally do not recommend it as a way to teach the model knowledge. Fine-tuning is better suited to teaching specialized tasks or styles, and is less reliable for factual recall.
+fine-tuning 感覺比較自然，畢竟 GPT 其他知識都是靠資料訓練出來的。但我們一般不建議用它來教模型知識。fine-tuning 比較適合教特定任務或風格，對事實的記憶比較不可靠。
 
-As an analogy, model weights are like long-term memory. When you fine-tune a model, it's like studying for an exam a week away. When the exam arrives, the model may forget details, or misremember facts it never read.
+打個比方，模型權重像長期記憶。fine-tune 模型就像考前一週才開始念書，到了考試，模型可能忘記細節，或把沒讀過的事實記錯。
 
-In contrast, message inputs are like short-term memory. When you insert knowledge into a message, it's like taking an exam with open notes. With notes in hand, the model is more likely to arrive at correct answers.
+相對地，message 輸入像短期記憶。把知識放進 message，就像開書考試，手上有筆記，模型比較可能答對。
 
-One downside of text search relative to fine-tuning is that each model is limited by a maximum amount of text it can read at once:
+文字搜尋比起 fine-tuning 有個缺點：每個模型一次能讀的文字量有上限：
 
-| Model           | Maximum text length       |
+| Model           | 最大文字長度       |
 |-----------------|---------------------------|
 | `gpt-4o-mini`   | 128,000 tokens (~384 pages)|
 | `gpt-4o`        | 128,000 tokens (~384 pages)|
 
 
-Continuing the analogy, you can think of the model like a student who can only look at a few pages of notes at a time, despite potentially having shelves of textbooks to draw upon.
+接著剛才的比方，模型像一個一次只能看幾頁筆記的學生，儘管背後可能有整櫃的課本可以參考。
 
-Therefore, to build a system capable of drawing upon large quantities of text to answer questions, we recommend using a Search-Ask approach.
+所以如果要做一個能從大量文字裡找答案的系統，我們建議用 Search-Ask 的做法。
 
 
 ## Search
 
-Text can be searched in many ways. E.g.,
+文字可以用很多方式搜尋，例如：
 
-- Lexical-based search
-- Graph-based search
-- Embedding-based search
+- 詞彙式（lexical）搜尋
+- 圖形式（graph）搜尋
+- embedding 式搜尋
 
-This example notebook uses embedding-based search. [Embeddings](https://platform.openai.com/docs/guides/embeddings) are simple to implement and work especially well with questions, as questions often don't lexically overlap with their answers.
+這份 notebook 用 embedding 式搜尋。[Embeddings](https://platform.openai.com/docs/guides/embeddings) 實作簡單，而且特別適合問題，因為問題常常跟答案沒有字面上的重疊。
 
-Consider embeddings-only search as a starting point for your own system. Better search systems might combine multiple search methods, along with features like popularity, recency, user history, redundancy with prior search results, click rate data, etc. Q&A retrieval performance may also be improved with techniques like [HyDE](https://arxiv.org/abs/2212.10496), in which questions are first transformed into hypothetical answers before being embedded. Similarly, GPT can also potentially improve search results by automatically transforming questions into sets of keywords or search terms.
+你可以把只用 embedding 的搜尋當成自己系統的起點。更好的搜尋系統可能會混合多種搜尋方法，再加上熱門度、新近度、使用者歷史、跟先前搜尋結果的重複度、點擊率等特徵。問答檢索的表現也可以用 [HyDE](https://arxiv.org/abs/2212.10496) 這類技巧改善，做法是先把問題轉成假設性的答案再做 embedding。同樣地，GPT 也可以自動把問題轉成一組關鍵字或搜尋詞，來改善搜尋結果。
 
-## Full procedure
+## 完整流程
 
-Specifically, this notebook demonstrates the following procedure:
+這份 notebook 示範的流程如下：
 
-1. Prepare search data (once per document)
-    1. Collect: We'll download a few hundred Wikipedia articles about the 2022 Olympics
-    2. Chunk: Documents are split into short, mostly self-contained sections to be embedded
-    3. Embed: Each section is embedded with the OpenAI API
-    4. Store: Embeddings are saved (for large datasets, use a vector database)
-2. Search (once per query)
-    1. Given a user question, generate an embedding for the query from the OpenAI API
-    2. Using the embeddings, rank the text sections by relevance to the query
-3. Ask (once per query)
-    1. Insert the question and the most relevant sections into a message to GPT
-    2. Return GPT's answer
+1. 準備搜尋資料（每份文件做一次）
+    1. Collect：下載幾百篇 2022 奧運相關的 Wikipedia 文章
+    2. Chunk：把文件切成短的、大致自成一體的段落，準備做 embedding
+    3. Embed：用 OpenAI API 對每個段落做 embedding
+    4. Store：把 embedding 存起來（資料量大就用 vector database）
+2. Search（每次查詢做一次）
+    1. 拿到使用者問題後，用 OpenAI API 產生 query 的 embedding
+    2. 用 embedding 依相關度對文字段落排序
+3. Ask（每次查詢做一次）
+    1. 把問題和最相關的段落放進給 GPT 的 message
+    2. 回傳 GPT 的答案
 
-### Costs
+### 成本
 
-Because GPT models are more expensive than embeddings search, a system with a decent volume of queries will have its costs dominated by step 3.
+GPT 模型比 embedding 搜尋貴，所以查詢量不小的系統，成本主要都花在第 3 步。
 
-- For `gpt-4o`, considering ~1000 tokens per query, it costs ~$0.0025 per query, or ~450 queries per dollar (as of Nov 2024)
-- For `gpt-4o-mini`, using ~1000 tokens per query, it costs ~$0.00015 per query, or ~6000 queries per dollar (as of Nov 2024)
+- `gpt-4o`：每次查詢約 1000 tokens，約 $0.0025，大約一美元 450 次（2024 年 11 月的價格）
+- `gpt-4o-mini`：每次查詢約 1000 tokens，約 $0.00015，大約一美元 6000 次（2024 年 11 月的價格）
 
-Of course, exact costs will depend on the system specifics and usage patterns.
+實際成本當然取決於系統細節跟使用模式。
 
-## Preamble
+## 前置作業
 
-We'll begin by:
-- Importing the necessary libraries
-- Selecting models for embeddings search and question answering
+先做兩件事：
+- 匯入需要的函式庫
+- 選好 embedding 搜尋跟問答要用的模型
 
 
 
@@ -113,28 +124,28 @@ EMBEDDING_MODEL = "text-embedding-3-small"
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-#### Troubleshooting: Installing libraries
+#### 疑難排解：安裝函式庫
 
-If you need to install any of the libraries above, run `pip install {library_name}` in your terminal.
+如果上面有函式庫還沒裝，在終端機執行 `pip install {library_name}`。
 
-For example, to install the `openai` library, run:
+例如要裝 `openai`，執行：
 ```zsh
 pip install openai
 ```
 
-(You can also do this in a notebook cell with `!pip install openai` or `%pip install openai`.)
+（你也可以在 notebook cell 用 `!pip install openai` 或 `%pip install openai`。）
 
-After installing, restart the notebook kernel so the libraries can be loaded.
+裝完要重啟 notebook kernel，函式庫才會載入。
 
-#### Troubleshooting: Setting your API key
+#### 疑難排解：設定 API key
 
-The OpenAI library will try to read your API key from the `OPENAI_API_KEY` environment variable. If you haven't already, you can set this environment variable by following [these instructions](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety).
+OpenAI 函式庫會從 `OPENAI_API_KEY` 環境變數讀你的 API key。如果還沒設，可以照[這份說明](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)設定。
 
-### Motivating example: GPT cannot answer questions about current events
+### 動機範例：GPT 回答不了時事問題
 
-Because the training data for `gpt-4o-mini` mostly ended in October 2023, the models cannot answer questions about more recent events, such as the 2024 Elections or recent games.
+`gpt-4o-mini` 的訓練資料大多到 2023 年 10 月為止，所以它回答不了比較新的事件，例如 2024 年大選或最近的比賽。
 
-For example, let's try asking 'How many ?':
+我們先試著問「How many ?」：
 
 ```python
 # an example question about the 2022 Olympics
@@ -158,7 +169,7 @@ print(response.choices[0].message.content)
     I'm sorry, but I don't have information on the outcomes of the 2024 Summer Olympics, including which athletes won the most gold medals. My training only includes data up to October 2023, and the Olympics are scheduled to take place in Paris from July 26 to August 11, 2024. You might want to check the latest updates from reliable sports news sources or the official Olympics website for the most current information.
     ```
 
-In this case, the model has no knowledge of 2024 and is unable to answer the question. In a similar way, if you ask a question pertaining to a recent political event (that occurred in Nov 2024 for example), GPT-4o-mini models will not be able to answer due to their knowledge cutoff date of Oct 2023. 
+這個例子裡，模型不知道 2024 年的事，答不出來。同樣地，如果你問一個最近的政治事件（比如 2024 年 11 月發生的），GPT-4o-mini 這類模型因為知識截止在 2023 年 10 月，也答不出來。
 
 ```python
 # an example question about the 2024 Elections
@@ -182,9 +193,9 @@ print(response.choices[0].message.content)
     I'm sorry, but I don't have information on events or elections that occurred after October 2023. For the latest updates on the 2024 US elections, I recommend checking reliable news sources.
     ```
 
-### You can give GPT knowledge about a topic by inserting it into an input message
+### 把知識放進 input message，就能讓 GPT 知道一個主題
 
-To help give the model knowledge of curling at the 2022 Winter Olympics, we can copy and paste the top half of a relevant Wikipedia article into our message:
+為了讓模型知道 2022 冬奧的冰壺（curling），我們可以把相關 Wikipedia 文章的前半段複製貼到 message 裡：
 
 ```python
 # text copied and pasted from: https://en.wikipedia.org/wiki/2024_Summer_Olympics
@@ -311,17 +322,17 @@ print(response.choices[0].message.content)
     - Bronze: United States (42 bronze medals)
     ```
 
-Thanks to the Wikipedia article included in the input message, GPT answers correctly.
+因為 input message 裡有那篇 Wikipedia 文章，GPT 答對了。
 
-Of course, this example partly relied on human intelligence. We knew the question was about summer olympics, so we inserted a Wikipedia article about 2024 paris olympics game.
+當然，這個例子有一部分靠人的判斷。我們知道問題是關於夏季奧運，所以貼了 2024 巴黎奧運的 Wikipedia 文章。
 
-The rest of this notebook shows how to automate this knowledge insertion with embeddings-based search.
+這份 notebook 接下來會示範怎麼用 embedding 搜尋，把這個「放入知識」的動作自動化。
 
-## 1. Prepare search data
+## 1. 準備搜尋資料
 
-To save you the time & expense, we've prepared a pre-embedded dataset of a few hundred Wikipedia articles about the 2022 Winter Olympics.
+為了幫你省時間跟費用，我們已經準備好一份預先做過 embedding 的資料集，內容是幾百篇 2022 冬奧的 Wikipedia 文章。
 
-To see how we constructed this dataset, or to modify it yourself, see [Embedding Wikipedia articles for search](Embedding_Wikipedia_articles_for_search.md).
+想看這個資料集怎麼建的，或想自己改，請看 [Embedding Wikipedia articles for search](Embedding_Wikipedia_articles_for_search.md)。
 
 ```python
 # download pre-chunked text and pre-computed embeddings
@@ -375,13 +386,13 @@ df
 
 ## 2. Search
 
-Now we'll define a search function that:
-- Takes a user query and a dataframe with text & embedding columns
-- Embeds the user query with the OpenAI API
-- Uses distance between query embedding and text embeddings to rank the texts
-- Returns two lists:
-    - The top N texts, ranked by relevance
-    - Their corresponding relevance scores
+現在來定義一個搜尋函式，它會：
+- 接收使用者的 query 和一個有文字與 embedding 欄位的 dataframe
+- 用 OpenAI API 對 query 做 embedding
+- 用 query embedding 跟文字 embedding 的距離對文字排序
+- 回傳兩個 list：
+    - 依相關度排序的前 N 段文字
+    - 它們對應的相關度分數
 
 ```python
 # search function
@@ -458,14 +469,14 @@ for string, relatedness in zip(strings, relatednesses):
 
 ## 3. Ask
 
-With the search function above, we can now automatically retrieve relevant knowledge and insert it into messages to GPT.
+有了上面的搜尋函式，就能自動找出相關知識，放進給 GPT 的 message。
 
-Below, we define a function `ask` that:
-- Takes a user query
-- Searches for text relevant to the query
-- Stuffs that text into a message for GPT
-- Sends the message to GPT
-- Returns GPT's answer
+下面定義一個 `ask` 函式，它會：
+- 接收使用者的 query
+- 搜尋跟 query 相關的文字
+- 把那些文字塞進給 GPT 的 message
+- 把 message 送給 GPT
+- 回傳 GPT 的答案
 
 ```python
 def num_tokens(text: str, model: str = GPT_MODELS[0]) -> int:
@@ -521,9 +532,9 @@ def ask(
     return response_message
 ```
 
-### Example questions
+### 範例問題
 
-Finally, let's ask our system our original question about gold medal curlers:
+最後，用我們的系統來問一開始那個關於冰壺金牌選手的問題：
 
 ```python
 ask('Which athletes won the gold medal in curling at the 2022 Winter Olympics?')
@@ -535,13 +546,13 @@ ask('Which athletes won the gold medal in curling at the 2022 Winter Olympics?')
     "The athletes who won the gold medal in curling at the 2022 Winter Olympics are:\n\n- Men's tournament: Niklas Edin, Oskar Eriksson, Rasmus Wranå, Christoffer Sundgren, and Daniel Magnusson from Sweden.\n- Women's tournament: Eve Muirhead, Vicky Wright, Jennifer Dodds, Hailey Duff, and Mili Smith from Great Britain.\n- Mixed doubles tournament: Stefania Constantini and Amos Mosaner from Italy."
     ```
 
-With latest model and using embedding search, our search system was able to retrieve reference text for the model to read, allowing it to correctly list the gold medal winners in the Men's and Women's tournaments.
+用最新的模型加上 embedding 搜尋，我們的搜尋系統找到了供模型閱讀的參考文字，讓它正確列出男子組和女子組的金牌得主。
 
-### Troubleshooting wrong answers
+### 答錯時怎麼排查
 
-In case we get any mistakes in the output, we can see whether a mistake is from a lack of relevant source text (i.e., failure of the search step) or a lack of reasoning reliability (i.e., failure of the ask step), you can look at the text GPT was given by setting `print_message=True`.
+如果輸出有錯，可以判斷錯誤是來自缺少相關原文（也就是 search 步驟失敗），還是推理不夠可靠（也就是 ask 步驟失敗）。做法是設定 `print_message=True`，看 GPT 實際拿到什麼文字。
 
-In this particular case, looking at the text below, it looks like the #1 article given to the model did contain medalists for all three events, but the later results emphasized the Men's and Women's tournaments, which may have distracted the model from giving a more complete answer.
+這個案例裡，看下面的文字會發現，排第 1 的文章其實已經包含三個項目的獎牌得主，但後面的結果比較強調男子組和女子組，可能分散了模型的注意力，讓它沒給出更完整的答案。
 
 ```python
 # set print_message=True to see the source text GPT was working off of
@@ -598,9 +609,9 @@ ask('Which athletes won the gold medal in curling at the 2022 Winter Olympics?',
     "The athletes who won the gold medal in curling at the 2022 Winter Olympics are:\n\n- Men's tournament: Niklas Edin, Oskar Eriksson, Rasmus Wranå, Christoffer Sundgren, and Daniel Magnusson from Sweden.\n- Women's tournament: Eve Muirhead, Vicky Wright, Jennifer Dodds, Hailey Duff, and Mili Smith from Great Britain.\n- Mixed doubles tournament: Stefania Constantini and Amos Mosaner from Italy."
     ```
 
-Knowing that sometimes, this mistake can be due to imperfect reasoning in the ask step, than imperfect retrieval in the search step, one can focus on improving the ask step.
+知道這種錯誤有時是 ask 步驟的推理不夠完美，而不是 search 步驟的檢索不夠好，就可以把力氣放在改善 ask 步驟。
 
-The easiest way to improve results is to use a more capable models, such as `GPT-4o-mini` or `GPT-4o` models. Let's try it.
+最簡單的改善方式是換更強的模型，例如 `GPT-4o-mini` 或 `GPT-4o`。我們來試試。
 
 ```python
 ask('Which athletes won the gold medal in curling at the 2022 Winter Olympics?', model=GPT_MODELS[1])
@@ -612,11 +623,11 @@ ask('Which athletes won the gold medal in curling at the 2022 Winter Olympics?',
     "The gold medal in curling at the 2022 Winter Olympics was won by the following athletes:\n\n- Men's tournament: Niklas Edin, Oskar Eriksson, Rasmus Wranå, Christoffer Sundgren, Daniel Magnusson from Sweden.\n- Women's tournament: Eve Muirhead, Vicky Wright, Jennifer Dodds, Hailey Duff, Mili Smith from Great Britain.\n- Mixed doubles: Stefania Constantini and Amos Mosaner from Italy."
     ```
 
-GPT-4 models tend to succeed, correctly identifying all 12 gold medal winners in curling. 
+GPT-4 系列模型通常能成功，正確指出冰壺全部 12 位金牌得主。
 
-#### More examples
+#### 更多範例
 
-Below are a few more examples of the system in action. Feel free to try your own questions, and see how it does. In general, search-based systems do best on questions that have a simple lookup, and worst on questions that require multiple partial sources to be combined and reasoned about.
+下面還有幾個系統運作的範例。你可以自己試著問問題，看表現如何。一般來說，搜尋式系統最擅長簡單查找的問題，最不擅長需要組合多個片段來源再推理的問題。
 
 ```python
 # counting question
@@ -728,4 +739,16 @@ ask("How did COVID-19 affect the 2022 Winter Olympics?")
     "COVID-19 had a significant impact on the 2022 Winter Olympics in several ways:\n\n1. **Qualification Changes**: The pandemic led to changes in the qualification process for sports like curling and women's ice hockey due to the cancellation of tournaments in 2020. Qualification for curling was based on placement in the 2021 World Curling Championships and an Olympic Qualification Event, while the IIHF used existing world rankings for women's ice hockey.\n\n2. **Biosecurity Protocols**: The IOC announced strict biosecurity protocols, requiring all athletes to remain within a bio-secure bubble, undergo daily COVID-19 testing, and only travel to and from Games-related venues. Athletes who were not fully vaccinated or did not have a valid medical exemption had to quarantine for 21 days upon arrival.\n\n3. **Spectator Restrictions**: Initially, only residents of the People's Republic of China were allowed to attend as spectators. Later, ticket sales to the general public were canceled, and only limited numbers of spectators were admitted by invitation, making it the second consecutive Olympics closed to the general public.\n\n4. **NHL Withdrawal**: The National Hockey League (NHL) withdrew its players from the men's hockey tournament due to COVID-19 concerns and the need to make up postponed games.\n\n5. **Quarantine and Testing**: Everyone present at the Games had to use the My2022 mobile app for health reporting and COVID-19 testing records. Concerns about the app's security led some delegations to advise athletes to use burner phones and laptops.\n\n6. **Athlete Absences**: Some top athletes, considered medal contenders, were unable to travel to China after testing positive for COVID-19, even if asymptomatic. This included athletes like Austrian ski jumper Marita Kramer and Russian skeletonist Nikita Tregubov.\n\n7. **Complaints and Controversies**: There were complaints from athletes and team officials about quarantine conditions, including issues with food, facilities, and lack of training equipment. Some athletes expressed frustration over the testing process and quarantine management.\n\n8. **COVID-19 Cases**: A total of 437 COVID-19 cases were reported during the Olympics, with 171 cases among the protective bubble residents and 266 detected from airport testing. Despite strict containment efforts, the number of cases was only slightly lower than those reported during the 2020 Tokyo Summer Olympics.\n\nOverall, COVID-19 significantly influenced the organization, participation, and experience of the 2022 Winter Olympics."
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 想讓模型知道它沒學過的知識，把資料放進 input（類似開書考試）通常比 fine-tuning 可靠。fine-tuning 比較適合教任務和風格。
+- Search-Ask 分兩步：先用 embedding 排序找出相關段落，再把段落和問題一起送給 GPT。
+- 模型一次能讀的長度有限，所以要先切 chunk，只放最相關的幾段進去。
+- 答錯時先分辨是 search 沒找到對的資料，還是 ask 沒推理好，再決定要改檢索還是換更強的模型。
+- 這種系統最擅長簡單查找，需要整合多個來源的問題比較弱。
+
+## 練習
+
+1. 把 `ask` 裡用的模型換成另一個（例如 `gpt-4o` 換成 `gpt-4o-mini`），用同一個冰壺問題比較答案。
+2. 呼叫 `ask` 時設定 `print_message=True`，看第 1 名文章有沒有包含答案，判斷錯誤出在 search 還是 ask。
+3. 調整 search 函式回傳的前 N 段數量，觀察答案品質和 token 用量怎麼變。

@@ -1,27 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/o-series/o3o4-mini_prompting_guide.ipynb
 ---
-
-# o3/o4-mini Function Calling Guide
+# o3/o4-mini Function Calling 指南
 
 > 原文：[examples/o-series/o3o4-mini_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/o-series/o3o4-mini_prompting_guide.ipynb)
 
-Cookbook to improve o3/o4-mini function calling with prompt best practices.
+用 prompt 的最佳做法，改善 o3/o4-mini 的 function calling。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇整理 o3/o4-mini 這兩個 reasoning 模型在 function calling 上的 prompting 技巧，包含 developer message 怎麼寫、function description 怎麼寫、怎麼降低幻覺和偷懶，以及搭配 Responses API 和 hosted tool 的做法。
 
-## Introduction 
-The o3/o4-mini models are the latest in our o-series of models trained to think for longer before responding. They are the smartest models we’ve released to date and represent a significant step forward from o1/o3-mini in tool calling capabilities. These models are trained to use tools natively within their chain of thought (CoT) which unlocks improved reasoning capabilities around when and how to use tools. We’ve released a guide on how to [call functions](https://cookbook.openai.com/examples/reasoning_function_calls) with these models via the responses API, this guide builds on top of that and tells you how you can get the best function calling performance with these models.
+## 學完你會
 
-## Prompt guidance for better function calling performance
-To fully utilize function calling intelligence behind o3/o4-mini models, we recommend a few best practices in both developer prompts and function descriptions.
+1. 用 developer message 設定角色、規定 tool call 的順序，並劃清什麼時候該用或不該用 tool。
+2. 把使用條件、few-shot 範例和關鍵規則放進 function description，並用 `strict` 和明確指示降低 tool call 的幻覺。
+3. 用 Responses API 把 reasoning item 帶回去，並規劃 hosted tool、自訂 function 和 MCP 混用時的 tool 路由。
 
-### A quick note on developer prompt, system prompt, and function descriptions for reasoning models
-We introduced developer messages to make it explicit to reasoning models that an instruction is coming from the developer. In o-series models, any system message provided by the developer is automatically converted to a developer message internally. For practical purposes, you can treat the developer prompt as analogous to the traditional system prompt—but for clarity and correctness, this guide refers to all such instructions as developer prompts/messages.
+## 開跑前
 
-When we refer to a function description in this document, we mean the explanatory text in the description field of each function object inside the tool parameter of an API request. This description tells the model when and how to use the function. Here’s an example from our function calling [documentation](https://platform.openai.com/docs/guides/function-calling):
+文中的範例 cell 會呼叫 OpenAI API，需要 `OPENAI_API_KEY`。
+
+## 簡介
+o3/o4-mini 是我們 o-series 模型的最新成員，訓練成回答之前會想比較久。它們是我們到目前為止發布最聰明的模型，在 tool calling 能力上比 o1/o3-mini 大幅進步。這些模型被訓練成在自己的 chain of thought（CoT）裡原生使用 tool，讓它們在判斷什麼時候、怎麼用 tool 上推理得更好。我們已經發布一份指南，說明怎麼透過 Responses API 用這些模型[呼叫 function](https://cookbook.openai.com/examples/reasoning_function_calls)，這篇建立在它之上，告訴你怎麼讓這些模型的 function calling 表現最好。
+
+## 改善 function calling 表現的 prompt 指引
+要充分發揮 o3/o4-mini 背後的 function calling 能力，我們建議在 developer prompt 和 function description 兩邊都遵循一些最佳做法。
+
+### 關於 reasoning 模型的 developer prompt、system prompt 和 function description
+我們引入 developer message，讓 reasoning 模型明確知道某個指令來自開發者。在 o-series 模型裡，開發者提供的任何 system message 都會在內部自動轉成 developer message。實務上，可以把 developer prompt 當成傳統的 system prompt，不過為了清楚和正確，這篇把所有這類指令都稱為 developer prompt/message。
+
+文中提到 function description 時，指的是 API 請求裡 tool 參數中，每個 function 物件的 description 欄位裡的說明文字。這段描述告訴模型什麼時候、怎麼用這個 function。下面是我們 function calling [文件](https://platform.openai.com/docs/guides/function-calling)裡的例子：
 
 ```
 tools = [{
@@ -40,24 +50,24 @@ tools = [{
     "strict": True
 }]
 ```
-Here, `"Get current temperature for provided coordinates in celsius."` serves as the function description.
+這裡的 `"Get current temperature for provided coordinates in celsius."` 就是 function description。
 
-Now that we got definitions out of the way, we can start getting into best practices.
+定義講完了，可以開始看最佳做法。
 
 
 
-### Context setting via developer message
-1. General context: In line with general prompt engineering best practices, role prompting is helpful in setting the base behavior, tone and outlining the set of actions that are possible. For example:
+### 用 developer message 設定 context
+1. 一般 context：跟一般 prompt engineering 的最佳做法一致，role prompting 有助於設定基本行為、語氣，並列出可能的動作範圍。例如：
 ```
 You are an AI retail agent.
 
 As a retail agent, you can help users cancel or modify pending orders, return or exchange delivered orders, modify their default user address, or provide information about their own profile, orders, and related products.
 ```
-2. Function Call ordering: o3/o4-mini are trained to accomplish goals with tools. However, it can make mistakes in the order of the tool calls. To guard against these cases, it is recommended to explicitly outline the orders to accomplish certain tasks. For example, to guard against the failure case that a coding agent possibly making a file in a directory that does not yet exist, adding the following will usually suffice:
+2. Function call 的順序：o3/o4-mini 被訓練成用 tool 達成目標，但它在 tool call 的順序上可能出錯。為了預防這類情況，建議明確列出完成某些任務的順序。例如，要預防 coding agent 可能在還不存在的目錄裡建檔這種失敗情況，加上下面這段通常就夠了：
 ```
 check to see if directories exist before making files
 ```
-For high volume and well defined tasks, we can make it even more robust by outlining the sequence of functions to call explicitly, for example:
+對於大量且定義明確的任務，可以進一步明確列出要呼叫的 function 順序，讓它更穩健，例如：
 ```
 To Process a refund for a delivered order, follow the following steps:
 1. Confirm the order was delivered. Use: `order_status_check`
@@ -66,7 +76,7 @@ To Process a refund for a delivered order, follow the following steps:
 4. Notify the user of refund status. Use: `user_notify`
 ```
 
-3. Defining boundaries on when to use tools: It is helpful to clarify the model boundaries on when and when not to invoke certain tools. This can be done both at the developer prompt level and at the tool description level. Here is an example developer prompt:
+3. 定義何時使用 tool 的界線：釐清模型何時該呼叫、何時不該呼叫某些 tool 很有幫助。這在 developer prompt 層級和 tool description 層級都可以做。下面是一個 developer prompt 範例：
 ```
 Be proactive in using tools to accomplish the user's goal. If a task cannot be completed with a single step, keep going and use multiple tools as needed until the task is completed. Do not stop at the first failure. Try alternative steps or tool combinations until you succeed.
 
@@ -84,15 +94,15 @@ If a task is not possible due to real constraints (For example, trying to cancel
 ```
 
 ### Function Description
-A function’s description should clarify when it should be invoked and how its arguments should be constructed.
+function 的 description 應該說明它什麼時候該被呼叫，以及參數該怎麼組。
 
-A function’s description is the ideal place to clarify both when the function should be invoked and how its arguments should be constructed. This serves as a durable interface contract between reasoning models and tool APIs.
+function 的 description 是釐清「何時該呼叫」和「參數怎麼組」的理想位置。這能成為 reasoning 模型和 tool API 之間持久的介面契約。
 
-In general, the function description defines what it does, how to invoke it. Developer instructions provide guidance to the agent using the tools. So if there are multiple tools that could be used for a similar purpose, the developer can disambiguate between them in the instructions. If the agentic workflow requirements have a preference for using tools in a specific order, or use certain tools frequently vs sparingly these would also go into the developer instructions.
+一般來說，function description 定義它做什麼、怎麼呼叫。Developer 指示則是給使用這些 tool 的 agent 的指引。所以如果有多個 tool 可以用在相近的目的，開發者可以在指示裡區分它們。如果 agentic 工作流需要偏好某個 tool 使用順序，或某些 tool 要常用、某些要少用，這些也要寫進 developer 指示。
 
-A well-structured description can improve accuracy and reduce misfires by anchoring key criteria and argument requirements early. It also allows developers to encode “proactiveness” control heuristics outside the developer prompt, closer to the tool definition itself. 
+結構良好的 description 能把關鍵條件和參數要求放在前面，提高準確度並減少誤觸發。它也讓開發者能把「主動程度」的控制規則，放在 developer prompt 之外、更靠近 tool 定義的地方。
 
-1. Usage Criteria: Similar to how you can refine function calling proactiveness through the developer prompt, you can further refine how a function gets called at the function description level. Here is an example for a file_create function:
+1. 使用條件：就像你能透過 developer prompt 調整 function calling 的主動程度，也可以在 function description 層級進一步調整 function 怎麼被呼叫。下面是 file_create function 的例子：
 ```
 Creates a new file with the specified name and contents in a target directory. This function should be used when persistent storage is needed and the file does not already exist.
 - Only call this function if the target directory exists. Check first using the `directory_check` tool.  
@@ -101,7 +111,7 @@ Creates a new file with the specified name and contents in a target directory. T
 - Do not overwrite existing files.  
   If replacement is intended and confirmed, use `file_delete` followed by `file_create`, or use `file_update` instead.
 ```
-2. Few shot prompting: While reasoning models do not benefit from few-shot prompting as much as non-reasoning models, we found that few shot prompting can improve tool calling performance, especially when the model struggles to accurately construct function arguments. For example, here is an example tool description for a grep tool passed in as tool description: 
+2. Few shot prompting：雖然 reasoning 模型從 few-shot prompting 得到的好處，不像非 reasoning 模型那麼多，但我們發現 few-shot prompting 能改善 tool calling 表現，尤其是模型很難準確組出 function 參數的時候。例如，下面是一個 grep tool 的 tool description 範例，當作 tool description 傳入：
 
 ```
 Use this tool to run fast, exact regex searches over text files using the `ripgrep` engine.
@@ -121,7 +131,7 @@ user|admin         -> user\\|admin
 path\to\file       -> path\\\\to\\\\file     
 ```
 
-3. Key rules up front and minimize distractions: Note in the above example, the instruction to escape a special character is relatively the first thing the model reads. A **worse** alternative would be:
+3. 關鍵規則放前面，減少干擾：注意上面的範例裡，跳脫特殊字元的指示，相對來說是模型最先讀到的東西之一。**比較差**的寫法會是：
 ```
 Performs a fast regex-based text search that looks for exact pattern matches within files or entire directories, leveraging the ripgrep tool for high-speed scanning.
 Output follows ripgrep formatting and can optionally display line numbers and matched lines.
@@ -132,52 +142,52 @@ It offers more accuracy than semantic methods when the goal is to locate a known
 It’s generally recommended over semantic search when you’re looking for a specific identifier—such as a function name, variable, or keyword—within a defined set of directories or file types.
 ```
 
-This performs poorly because much of the prompt is not prescriptive and the most important rules for how to construct the argument are not front and center. The previous prompt scored 6% higher on a tool calling accuracy eval for using this ripgrep tool compared to the one above.
+這個寫法表現不好，因為 prompt 有很多內容不是規範性的，而且最重要的參數組法規則沒有放在最顯眼的位置。在這個 ripgrep tool 的 tool calling 準確度 eval 上，前一個 prompt 比這一個高了 6%。
 
 
 
 
 
-### Guarding Against Function Calling Hallucinations 
-We are aware that the o3 model may be more prone to hallucinations than other models. These hallucinations may appear as the model promising to call tools in the background without actually doing so, or promising to call a tool in future turns, etc. In instances like these, it is helpful to be explicit in a few areas to minimize these types of hallucinations:
+### 預防 function calling 的幻覺
+我們知道 o3 模型可能比其他模型更容易產生幻覺。這些幻覺可能表現成模型承諾在背景呼叫 tool 卻沒有真的做，或承諾在之後的回合呼叫 tool 等等。遇到這類情況，在幾個地方講清楚有助於減少這類幻覺：
 
-1. Explicit instructions: explicitly instruct the model to avoid common hallucinations like promising future function calls when it is not possible.
+1. 明確指示：明確指示模型避免常見的幻覺，例如在不可能的情況下承諾之後會呼叫 function。
 
 ```
 Do NOT promise to call a function later. If a function call is required, emit it now; otherwise respond normally.
 ```
 
-2. Catch bad arguments early:
-setting `strict` to `true` will ensure function calls reliably adhere to the [function schema](https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode). We recommend turning it on whenever possible.
+2. 及早抓出錯誤的參數：
+把 `strict` 設成 `true`，能確保 function call 可靠地遵守 [function schema](https://platform.openai.com/docs/guides/function-calling?api-mode=responses#strict-mode)。我們建議盡可能開啟。
 
-If your arguments have additional complex format requirements (e.g valid python code etc), adding the following instruction can remind the model of the expected format. 
+如果你的參數還有額外複雜的格式要求（例如要是合法的 python 程式碼等），加上下面這個指示可以提醒模型預期的格式。
 
 ```
 Validate arguments against the format before sending the call; if you are unsure, ask for clarification instead of guessing.
 ```
 
-3. Another note on lazy behavior:
-we are aware of rare instances of lazy behavior from o3, such as stating it does not have enough time to complete a task, promising to follow up separately, or giving terse answers even when explicitly prompted to provide more detail. We have found that the following steps help ameliorate this behavior:
+3. 另一個關於偷懶行為的說明：
+我們知道 o3 有少數偷懶的情況，例如說自己沒有足夠時間完成任務、承諾之後另外跟進，或即使明確要求更詳細，還是給很簡短的答案。我們發現下面這些做法有助於改善：
 
-    a. Start a new conversation for unrelated topics:  
-       When switching to a new or unrelated topic, begin a fresh conversation thread rather than continuing in the same context. This helps the model focus on the current subject and prevents it from being influenced by previous, irrelevant context, which can sometimes lead to incomplete or lazy responses. For example, if you were previously discussing code debugging and now want to ask about documentation best practices, which does not require previous conversation context, start a new conversation to ensure clarity and focus.
+    a. 不相關的主題開新對話：
+       切換到新的或不相關的主題時，開一個新的對話串，不要在同一個 context 裡繼續。這能幫模型專注在目前的主題，避免被之前不相關的 context 影響，那有時會導致回答不完整或偷懶。例如，你之前在討論程式除錯，現在想問文件的最佳做法，不需要之前的對話 context，就開新對話，確保清楚和專注。
 
-    b. Discard irrelevant past tool calls/outputs when the list gets too long, and summarize them as context in the user message:  
-       If the conversation history contains a long list of previous tool calls or outputs that are no longer relevant, remove them from the context. Instead, provide a concise summary of the important information as part of the user message. This keeps the context manageable and ensures the model has access to only the most pertinent information. For instance, if you have a lengthy sequence of tool outputs, you can summarize the key results and include only that summary in your next message.
+    b. 清單太長時，丟掉不相關的過往 tool call 和輸出，改在 user message 裡用摘要當作 context：
+       如果對話歷史裡有一長串已經不相關的過往 tool call 或輸出，就把它們從 context 移除，改在 user message 裡提供重要資訊的簡短摘要。這樣 context 比較好管理，模型也只會拿到最相關的資訊。例如，你有一長串 tool 輸出，可以把關鍵結果摘要起來，下一則訊息只放那份摘要。
 
-    c. We are constantly improving our models and expect to have this issue addressed in future versions.
+    c. 我們持續在改進模型，預期未來的版本會解決這個問題。
 
 
-### Avoid Chain of Thought Prompting
-Since these models are reasoning models and produce an internal chain of thought, they do not have to be explicitly prompted to plan and reason between tool calls. Therefore, a developer should not try to induce additional reasoning before each function call by asking the model to plan more extensively. Asking a reasoning model to reason more may actually hurt the performance. 
+### 避免 Chain of Thought prompting
+這些模型是 reasoning 模型，會產生內部的 chain of thought，所以不需要明確 prompt 它們在 tool call 之間規劃和推理。因此，開發者不該要求模型更廣泛地規劃，來引導它在每次 function call 前多推理。要求 reasoning 模型多推理，反而可能傷害表現。
 
-A quick side note on reasoning summaries: the models will output reasoning tokens before calling tools. However, these will not always be accompanied by a summary, since our reasoning summaries require a minimum number of material reasoning tokens to produce a summary.
+順帶說明一下 reasoning summary：模型在呼叫 tool 之前會輸出 reasoning token，但不一定會附上摘要，因為我們的 reasoning summary 需要有一定數量的實質 reasoning token 才會產生摘要。
 
 
 # Responses API
 
-### Reasoning Items for Better Performance
-We’ve released a [cookbook](https://cookbook.openai.com/examples/responses_api/reasoning_items) detailing the benefits of using the responses API. It is worth restating a few of the main points in this guide as well. o3/o4-mini are both trained with its internal reasoning persisted between tool calls within a single turn. Persisting these reasoning items between tool calls during inference will therefore lead to higher intelligence and performance in the form of better decision in when and how a tool gets called. Responses allow you to persist these reasoning items (maintained either by us or yourself through encrypted content if you do not want us to handle state-management) while Chat Completion doesn’t. Switching to the responses API and allowing the model access to reasoning items between function calls is the easiest way to squeeze out as much performance as possible for function calls. Here is an the example in the cookbook, reproduced for convenience, showing how you can pass back the reasoning item using `encrypted_content` in a way which we do not retain any state on our end:
+### 用 reasoning item 提升表現
+我們發布過一份 [cookbook](https://cookbook.openai.com/examples/responses_api/reasoning_items)，詳細說明使用 Responses API 的好處。這份指南裡還是值得重提幾個主要重點。o3/o4-mini 都是在單一回合內，tool call 之間保留內部 reasoning 的情況下訓練的。所以在推論時，在 tool call 之間保留這些 reasoning item，會讓模型更聰明、表現更好，也就是更能判斷什麼時候、怎麼呼叫 tool。Responses 讓你能保留這些 reasoning item（由我們維護，或者如果你不想讓我們處理狀態管理，就自己透過加密內容維護），Chat Completion 則做不到。換到 Responses API，讓模型在 function call 之間能存取 reasoning item，是讓 function call 表現最大化最簡單的方法。下面是 cookbook 裡的範例，為了方便重現在這裡，示範怎麼用 `encrypted_content` 把 reasoning item 傳回去，而我們這邊不保留任何狀態：
 
 
 ```python
@@ -251,12 +261,12 @@ print(response_2.output_text)
     The current temperature in Paris is about 18.8 °C.
     ```
 
-## Agentic Experience with Hosted tools. 
-Responses API supports a set of hosted/built-in tools. We recently also added [new tools and features](https://openai.com/index/new-tools-and-features-in-the-responses-api/) in the responses API which makes it easier to build agentic applications that connect to external services; With built-in tools in the Responses API, developers can create more capable agents with a single API call.
+## 用 hosted tool 打造 agentic 體驗
+Responses API 支援一組 hosted/內建 tool。我們最近也在 Responses API 加入了[新的 tool 和功能](https://openai.com/index/new-tools-and-features-in-the-responses-api/)，讓連接外部服務的 agentic 應用更容易建構。有了 Responses API 的內建 tool，開發者只要一次 API 呼叫，就能建出更強的 agent。
 
-You can mix and match hosted tools and custom tools in the same session. This unlocks powerful composition patterns, but it also makes tool routing clarity critical. Here are a couple of concrete recommendations:
+你可以在同一個 session 裡混用 hosted tool 和自訂 tool。這解鎖了強大的組合模式，但也讓 tool 路由的清楚程度變得關鍵。以下是幾個具體建議：
 
-1. Explicitly define tool usage boundaries in the developer prompt: If multiple tools can fulfill similar roles (e.g. both the python tool and a custom calculator), instruct the model which tool is preferred and when. This reduces ambiguity, improves accuracy, and avoids tool overuse or underuse. :
+1. 在 developer prompt 裡明確定義 tool 的使用界線：如果多個 tool 能扮演相近的角色（例如 python tool 和自訂的計算機），就告訴模型偏好哪一個、什麼時候用。這能減少歧義、提高準確度，也避免 tool 用太多或太少。
 ```
 You are a helpful research assistant with access to the following tools:
 - python tool: for any computation involving math, statistics, or code execution
@@ -265,7 +275,7 @@ You are a helpful research assistant with access to the following tools:
 Always use the python tool for anything involving logic, scripts, or multistep math. Use the calculator tool only for simple 1-step math problems.
 ```
 
-2. Clarify when internal knowledge is not sufficient: Even though o3/o4-mini models can often solve tasks on their own, tools may provide more reliable answers. Use the system prompt to steer the model away from “trying to solve it itself” when a tool is more appropriate.
+2. 釐清什麼時候內部知識不夠：雖然 o3/o4-mini 常常能自己解決任務，tool 可能提供更可靠的答案。用 system prompt 引導模型，在 tool 比較合適時，不要「試著自己解決」。
 
 ```
 You have access to a `code_interpreter`. Always prefer using `code_interpreter` when a user asks a question involving:
@@ -277,7 +287,7 @@ You have access to a `code_interpreter`. Always prefer using `code_interpreter` 
 Avoid doing these directly in your own response. Always use the tool instead.
 ```
 
-3. Since the developer prompt acts as a centralized, durable contract, spell out decision boundaries for tools here when we want to mix and match hosted tools with your custom functions, including coverage overlap, confidence expectations, or fallback behavior:
+3. 因為 developer prompt 是集中、持久的契約，想混用 hosted tool 和自訂 function 時，就在這裡把 tool 的決策界線寫清楚，包括功能重疊的範圍、信心程度的期待，或 fallback 行為：
 
 ```
 Use `python` for general math, data parsing, unit conversion, or logic tasks that can be solved without external lookup—for example, computing the total cost from a list of prices.
@@ -286,10 +296,9 @@ Use `calculate_shipping_cost` when the user asks for shipping estimates, as it a
 
 When both could be used (e.g., calculating a delivery fee), prefer `calculate_shipping_cost` for accuracy and policy compliance. Fall back to `python` only if the custom tool is unavailable or fails.
 ```
+4. 關於 MCP：我們有一份更詳細的[指南](https://cookbook.openai.com/examples/mcp/mcp_tool_guide)，說明使用 MCP tool 的最佳做法，但為了完整，這裡重提幾個高層次的準則（這些不是 o3/o4-mini 專屬，但仍然相關）。
 
-4. More on MCP: We have a more detailed [guide](https://cookbook.openai.com/examples/mcp/mcp_tool_guide) on best practices for using MCP tools, but for completeness, we will reiterate a few high-level guidelines here (these are not specific to o3/o4-mini, but are still relevant).
-
-* Filter tools to avoid ballooning payloads: take advantage of the allowed_tools parameter to use only the tools that are necessary and save on unnecessary context: Since you do not always need all of the tools returned by the MCP server, you can filter to only the necessary tools via the allowed_tools field.
+* 過濾 tool 避免 payload 膨脹：善用 allowed_tools 參數，只用必要的 tool，省下不必要的 context。因為你不一定需要 MCP server 回傳的所有 tool，可以透過 allowed_tools 欄位只過濾出需要的。
 
 
 ```
@@ -303,50 +312,59 @@ When both could be used (e.g., calculating a delivery fee), prefer `calculate_sh
         }
 ```
 
-* Reduce latency via caching and reserve reasoning models for high complexity tasks: make sure you are either passing back `mcp_list_tools` or include `previous_response_id` to make sure the API does not need to reimport the list of tools again and again unnecessarily.
-* Use MCP with other tools: You can mix and match MCP with other hosted tools and your custom defined functions. If you are mixing the tools, it is helpful to define the decision boundaries and be explicit about when to use a tool over another using the overall developer prompt. [Here](https://cookbook.openai.com/examples/mcp/mcp_tool_guide#using-mcp-with-other-tools) is a great example from the MCP tool guide.
+* 用 caching 降低延遲，並把 reasoning 模型留給高複雜度的任務：確保你有傳回 `mcp_list_tools`，或帶上 `previous_response_id`，這樣 API 就不需要一再不必要地重新匯入 tool 清單。
+* MCP 搭配其他 tool 使用：你可以混用 MCP、其他 hosted tool 和自己定義的 function。混用時，在整體的 developer prompt 裡定義決策界線，明確說明什麼時候該用哪個 tool，會很有幫助。MCP tool 指南裡有[一個很好的範例](https://cookbook.openai.com/examples/mcp/mcp_tool_guide#using-mcp-with-other-tools)。
 
 
-### Frequented Asked Questions (FAQ)
+### 常見問題（FAQ）
 
-**Q: How many functions is too many?**
+**Q：多少個 function 算太多？**
 
-**A:** For o3 and o4-mini models, there is no hard upper limit on the number of functions, but practical guidance does exist based on both training data distribution and observed model behavior. As of May 2025, any setup with fewer than ~100 tools and fewer than ~20 arguments per tool is considered in-distribution and should perform within expected reliability bounds. Performance still depends on your prompt design and task complexity. 
+**A：** o3 和 o4-mini 沒有硬性的 function 數量上限，但根據訓練資料分佈和觀察到的模型行為，有一些實務上的指引。截至 2025 年 5 月，tool 少於約 100 個、每個 tool 的參數少於約 20 個的設定，算在訓練分佈內，應該能在預期的可靠度範圍內運作。表現仍取決於你的 prompt 設計和任務複雜度。
 
-Even if you are technically within training distribution, more tools can introduce ambiguity or confusion. Here are key considerations:
+即使技術上在訓練分佈內，tool 越多也可能帶來歧義或混淆。以下是關鍵考量：
 
-* Function description clarity becomes critical: If multiple tools have overlapping purposes or vague descriptions, models may call the wrong one or hesitate to call any at all.
+* function description 的清楚程度變得關鍵：如果多個 tool 用途重疊或描述含糊，模型可能呼叫錯的，或猶豫著不呼叫任何一個。
 
-* Tool list size can affect latency and reasoning depth: Longer lists mean the model has more options to parse during its reasoning phase. While o3/o4-mini can handle this with their integrated reasoning pipelines, performance can degrade if schema clarity or invocation conditions aren’t sharp.
+* tool 清單大小會影響延遲和推理深度：清單越長，模型在推理階段要解析的選項越多。雖然 o3/o4-mini 能靠整合的推理流程處理，但如果 schema 不夠清楚或呼叫條件不夠明確，表現可能下降。
 
-* Tool hallucinations can increase with complexity: Especially with o3, there have been reports of hallucinated or speculative tool calls when the toolset is large and under-defined. Explicit instructions help mitigate this (e.g., “Only use tools X, Y, Z. Do not invent tool calls or defer them to future turns.”)
+* tool 幻覺會隨複雜度增加：尤其是 o3，有人回報在 tool 集合很大又定義不足時，會出現幻想或臆測的 tool call。明確的指示能緩解（例如「只能用 tool X、Y、Z。不要自己發明 tool call，也不要拖到之後的回合」）。
 
-Ultimately, the performance will defer depending on the use case; Therefore it is important to invest in evals that you trust you can use to iterate on.
-
-
-**Q: Is it OK to have deeply nested params within tools or should I "flatten" out the schema?**
-
-**A:** There is again no hard guidance. However, even if your nesting structure is technically supported, deeply layered argument trees can impact performance or reliability. When in doubt we recommend you err on the side of making the arguments flat.
-
-Flat structures are often easier for the model to reason about: In flatter schemas, argument fields are top-level and immediately visible. This reduces the need for internal parsing and structuring, which can help prevent issues like partially filled nested objects or invalid field combinations. With deeply nested objects, especially ones with repeated or semantically similar field names, the model is more likely to omit or misuse arguments.
-
-Nesting can help organize complex logic, but needs additional care: For domains that naturally involve structured input, like configuration payloads, rich search filters, or form submissions, nesting helps organize related parameters. However, you must use techniques like clear field descriptions, anyOf logic, or strict schemas to guard against invalid argument combinations and improve model reliability
-
-The best way to choose is to test with your own evals and measure success. There’s no “one-size-fits-all” because invocation behaviors are emergent and prompt-sensitive
+最終表現會依用途而異，所以投資在你信得過、可以拿來迭代的 eval 很重要。
 
 
-**Q: Does this function-calling guidance apply to custom tool formats?**
+**Q：tool 裡面可以有很深的巢狀參數嗎，還是應該把 schema 「攤平」？**
 
-**A:** Not guaranteed. The guidance in this document assumes you’re using the standard `tools` model parameter to pass your function schemas, as shown in our [general guide](https://platform.openai.com/docs/guides/function-calling) on function calling. Our o3/o4-mini models are trained to understand and use these schemas natively for tool selection and argument construction.
+**A：** 同樣沒有硬性指引。不過，即使你的巢狀結構技術上支援，很深層的參數樹也可能影響表現或可靠度。不確定的時候，建議傾向把參數做成扁平的。
 
-If you’re instead providing custom tool definitions via natural language in a developer-authored prompt (e.g., defining tools inline in the developer message or user message), this guidance may not fully apply. In those cases:
-The model is not relying on its internal tool-schema priors. 
-You may need to be more explicit with few-shot examples, output formats, and tool selection criteria. 
-Argument construction reliability may degrade without schema-level anchoring.
+扁平結構通常比較容易讓模型推理：在比較扁平的 schema 裡，參數欄位在最上層，一眼就看得到。這減少內部解析和組織結構的需要，能避免像是巢狀物件只填一半，或欄位組合無效的問題。在很深的巢狀物件裡，尤其是有重複或語意相近的欄位名稱時，模型更可能漏掉或誤用參數。
 
-Use the structured tools parameter when possible. If you must define tools in free text, treat it as a custom protocol and test accordingly.
+巢狀有助於組織複雜邏輯，但需要額外小心：對於天生就有結構化輸入的領域，像是設定 payload、豐富的搜尋過濾條件或表單提交，巢狀有助於整理相關參數。不過，你得用清楚的欄位描述、anyOf 邏輯或 strict schema 這類技巧，防止無效的參數組合並提高模型可靠度。
 
+最好的選擇方式是用你自己的 eval 測試並衡量成功率。沒有「一體適用」的答案，因為呼叫行為是湧現的，而且對 prompt 很敏感。
 
 
+**Q：這份 function-calling 指引適用於自訂的 tool 格式嗎？**
 
-<!-- tutor:summary -->
+**A：** 不保證。這份文件的指引假設你用標準的 `tools` 模型參數傳入 function schema，就像我們 function calling [一般指南](https://platform.openai.com/docs/guides/function-calling)裡示範的那樣。我們的 o3/o4-mini 模型被訓練成原生理解並使用這些 schema 來選 tool 和組參數。
+
+如果你是在開發者撰寫的 prompt 裡，用自然語言提供自訂的 tool 定義（例如在 developer message 或 user message 裡內嵌定義 tool），這份指引可能不完全適用。這種情況下：
+模型不是依靠它內部的 tool schema 先驗。
+你可能需要更明確地提供 few-shot 範例、輸出格式和 tool 選擇條件。
+沒有 schema 層級的錨點，參數組裝的可靠度可能下降。
+
+可以的話用結構化的 tools 參數。如果一定要用自由文字定義 tool，就把它當成自訂協定，並相應地測試。
+
+## 重點整理
+
+- developer message 負責角色、tool 的順序和使用界線，function description 負責什麼時候呼叫、參數怎麼組。
+- 關鍵規則放在 description 最前面，並避免太多非規範性的內容，few-shot 範例在模型組不好參數時有幫助。
+- 對 o3 的幻覺和偷懶，要明確指示、開 `strict`，並在換主題時開新對話，或把過長的 tool 歷史摘要掉。
+- 這些是 reasoning 模型，不需要也不該要求它們在 tool call 之間多規劃，在 Responses API 保留 reasoning item 反而更有幫助。
+- 混用 hosted tool、MCP 和自訂 function 時，把路由規則寫進 developer prompt，並用 `allowed_tools` 控制 tool 數量，schema 盡量扁平。
+
+## 練習
+
+1. 把文中 grep tool 的 description，改成把跳脫字元的規則放在最後面，比較一下兩種寫法的 tool call 參數有沒有差別。
+2. 在 developer prompt 加一段明確指示，禁止承諾之後才呼叫 tool，並用一個資訊不足的問題測試模型的反應。
+3. 在 MCP 範例裡用 `allowed_tools` 只留下一兩個 tool，檢查請求的 payload 和模型行為有沒有改變。

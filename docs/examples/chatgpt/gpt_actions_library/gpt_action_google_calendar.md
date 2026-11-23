@@ -1,126 +1,138 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md
 ---
 
-# GPT Actions library - Google Calendar
+# GPT Actions 範例庫：Google Calendar
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+教你做一個 GPT Action，用 OAuth 連到 Google Calendar，讓 ChatGPT 能用自然語言幫你查詢和建立行事曆活動。內容分兩半，前半在 Google Cloud Console 開 API、建 OAuth 憑證，後半在 GPT 裡貼 OpenAPI schema 並回填 callback URL。
 
+## 學完你會
+
+- 在 Google Cloud Console 啟用 Calendar API、設定 OAuth consent screen 和 scope
+- 在 GPT 的 Action 填入 Client ID、Client Secret、Authorization URL、Token URL 和 OpenAPI schema
+- 把 ChatGPT 產生的 callback URL 加回 Google 的 Authorized redirect URIs，並用一句話測試
+
+## 開跑前
+
+- 一個有 Google Calendar 的 Google 帳號
+- 能使用 Google Cloud Console 並設定 OAuth 憑證的權限（建專案可能需要綁 billing account）
+- 能建立 GPT 的 ChatGPT 帳號
 
 ## Introduction
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+這頁是給要為特定應用程式做 GPT Action 的開發者看的說明。開始前，建議先看過下面幾份資料：
 
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This GPT Action provides an overview of how to connect to your **Google Calendar**. It uses OAuth to link to your Google account, enabling you to create, read, update, and delete events within your calendar.
+這個 GPT Action 示範怎麼連到你的 **Google Calendar**。它用 OAuth 連結你的 Google 帳號，讓你可以在行事曆裡建立、讀取、更新和刪除活動。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境範例
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to their Google Calendar.
+**價值**：使用者可以用 ChatGPT 的自然語言能力，直接連到自己的 Google Calendar。
 
-**Example Use Cases**: 
-- You want to create a new event in your calendar. 
-- You want to search your calendar for events based on a specific criteria. 
-- You want to delete an event from your calendar. 
+**使用情境範例**：
+- 想在行事曆新增一個活動。
+- 想依特定條件搜尋行事曆裡的活動。
+- 想刪除行事曆裡的某個活動。
 
-***Note:*** This is a good example of an GPT that may be useful to call from other GPTs using the @<name of your GPT> function. You can find more information on this feature on our [help site](https://help.openai.com/en/articles/8908924-what-is-the-mentions-feature-for-gpts).
+***注意：*** 這是一個很適合被其他 GPT 呼叫的 GPT，可以用 @<你的 GPT 名稱> 的功能叫它。這個功能的說明在我們的 [help site](https://help.openai.com/en/articles/8908924-what-is-the-mentions-feature-for-gpts)。
 
-## Application Information
+## 應用程式資訊
 
-### Application Prerequisites
+### 前置條件
 
-Before you get started, ensure you can meet the following pre-requistes.
+開始前，先確認你符合下面的條件。
 
- - A Google account with Google Calendar access. 
- - Permissions to access the Google Calendar API and use the Google Cloud Console to configure your OAuth credentials. 
+ - 一個能使用 Google Calendar 的 Google 帳號。
+ - 有權限存取 Google Calendar API，並能使用 Google Cloud Console 設定 OAuth 憑證。
 
-# Google Calendar Configuration Steps
+# Google Calendar 設定步驟
 
-## Enabling the Google Calendar API
+## 啟用 Google Calendar API
 
-- Visit [console.cloud.google.com](https://console.cloud.google.com).
-- In the project selector, choose the project you’d like to use for this GPT Action. If you don’t have a project yet, click the **Create Project** button.
-- When creating a new project, enter a name for it and select the billing account you’d like to associate. In this example, ‘No Organization’ is selected.
+- 到 [console.cloud.google.com](https://console.cloud.google.com)。
+- 在專案選擇器裡選這個 GPT Action 要用的專案。還沒有專案的話，點 **Create Project**。
+- 建新專案時，輸入名稱並選要關聯的 billing account。這個範例選的是 ‘No Organization’。
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(55.43981481481482% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/0QxHM3NKyUZcv3di9CkA?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="Cookbook | Create Google Cloud Project" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-You now have a Google Cloud Project and are ready to configure the API access to your Google Calendar.
+這樣你就有 Google Cloud Project 了，接著設定 Google Calendar 的 API 存取。
 
-- In the Quck Access menu, select **APIs & Services** > **Library**
-- Search for **Google Calendar API** (not DKIM) and click on it.
-- Click on the **Enable** button.
+- 在 Quick Access 選單選 **APIs & Services** > **Library**
+- 搜尋 **Google Calendar API**（不是 DKIM）並點進去。
+- 點 **Enable** 按鈕。
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(53.793774319066145% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/uEOZVBdf8OZ8sP0DZAld?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="Cookbook | Enable Google Calendar API" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-## Creating up OAuth Credentials
+## 建立 OAuth 憑證
 
-The next step is to configure the OAuth credentials to allow your GPT Action to access your Google Calendar.
+下一步是設定 OAuth 憑證，讓你的 GPT Action 能存取你的 Google Calendar。
 
-Depending on your current configuration you may need to configure your OAuth consent screen. We'll start with that. 
+依你目前的設定，可能要先設定 OAuth consent screen，我們先從這個開始。
 
-- In the left menu click **Credentials**
-- Now click **Configure consent screen**
-- If you get the option, choose **Go To New Experience** and click **Get Started**
-- Enter your app name and choose your email in the User support email dropdown.
-- Choose Internal audience and enter a contact email. 
-- Agree to the terms and click **Create** 
+- 在左邊選單點 **Credentials**
+- 點 **Configure consent screen**
+- 如果有選項，選 **Go To New Experience** 並點 **Get Started**
+- 輸入 app 名稱，並在 User support email 下拉選單選你的 email。
+- Audience 選 Internal，輸入聯絡 email。
+- 同意條款，點 **Create**
 
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(53.793774319066145% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/Xs5oyXa1ssYY9zyPsL0s?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="Cookbook | Create Consent Screen" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-We are now ready to create the OAuth credentials. 
+現在可以建立 OAuth 憑證了。
 
-- Click **Create OAuth Credentials**
-- Choose **Web Application**
-- Enter your application name
-- Under Authorizes JavaScript Origins, enter `https://chat.openai.com` & `https://chatgpt.com`
-- For now we'll leave the **Authorized redirect URIs** blank. (we'll come back to this later)
-- Click **Create**
-- Open the credentials page and you'll see your OAuth client ID and client secret on the right of the screen.
+- 點 **Create OAuth Credentials**
+- 選 **Web Application**
+- 輸入 application 名稱
+- 在 Authorizes JavaScript Origins 輸入 `https://chat.openai.com` 和 `https://chatgpt.com`
+- **Authorized redirect URIs** 先留空（後面會回來填）
+- 點 **Create**
+- 打開 credentials 頁面，畫面右邊會看到 OAuth client ID 和 client secret。
 
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(53.793774319066145% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/OHyS6C3ETFPCc4eqrQ4a?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="OAuth overview – Google Auth Platform – cookbook-demo – Google Cloud console" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-## Configuring OAuth Scopes
+## 設定 OAuth Scopes
 
-Next, configure the scopes (or services) that the OAuth client ID will have access to. In this case, we’ll configure access to the Google Calendar API.
+接著設定這個 OAuth client ID 可以存取哪些 scope（服務）。這裡要設定的是 Google Calendar API 的存取。
 
-- In the left menu click **Data Access**
-- Click **Add or Remove Scopes**
-- In the right panel filter on `https://www.googleapis.com/auth/calendar`
-- In the filtered results, choose the first result, the scope should end with `/auth/calendar`
-- Click **Update** and then **Save**
+- 在左邊選單點 **Data Access**
+- 點 **Add or Remove Scopes**
+- 在右邊面板用 `https://www.googleapis.com/auth/calendar` 篩選
+- 在篩選結果裡選第一個，scope 結尾應該是 `/auth/calendar`
+- 點 **Update**，再點 **Save**
 
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(53.793774319066145% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/mbsRtOs10arPZtzjeum2?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="Clients – Google Auth Platform – cookbook-demo – Google Cloud console" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-# GPT Action Configuration Steps
+# GPT Action 設定步驟
 
-We are now ready to configure the GPT Action. First we'll configure the OAuth settings to allow the GPT to authenticate with Google Calendar. 
+現在可以設定 GPT Action 了。先設定 OAuth，讓 GPT 能向 Google Calendar 認證。
 
-- In your GPT, create an action. 
-- Click on the settings gear icon and select **OAuth**
-- Enter the **Client ID** and **Client Secret** from the Google Cloud Console. 
-- Enter the following details: 
+- 在你的 GPT 裡建立一個 action。
+- 點設定齒輪圖示，選 **OAuth**
+- 輸入從 Google Cloud Console 拿到的 **Client ID** 和 **Client Secret**。
+- 輸入下列內容：
   - Authorization URL: `https://accounts.google.com/o/oauth2/auth`
   - Token URL: `https://oauth2.googleapis.com/token`
   - Scopes: `https://www.googleapis.com/auth/calendar`
-- Leave the Token Exchange Method as default. 
-- Click **Save**
+- Token Exchange Method 保持預設。
+- 點 **Save**
 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-calendar-action-config.png" alt="Google Calendar OAuth" width="400"/>
 
-We can now enter the OpenAPI schema for the action. The config below allows reading and creating events. Enter this in the OpenAPI schema field.
+接著輸入這個 action 的 OpenAPI schema。下面的設定可以讀取和建立活動，貼到 OpenAPI schema 欄位。
 
 ```yaml
 openapi: 3.1.0
@@ -332,33 +344,44 @@ paths:
           description: Internal server error
 ```
 
-If successful, you'll see the two endpoints appear at the bottom of the configuration screen.
+成功的話，設定畫面底部會出現兩個 endpoint。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-calendar-action-endpoints.png" alt="Google Calendar Action Endpoints" width="600"/>
 
-# Setting callback URL
+# 設定 callback URL
 
-Now that we've configured the OAuth settings and set the OpenAPI schema, ChatGPT will generate a callback URL. You’ll need to add this URL to the **Authorized redirect URIs** in the Google Cloud Console.
+OAuth 設定和 OpenAPI schema 都弄好後，ChatGPT 會產生一個 callback URL。你要把這個 URL 加到 Google Cloud Console 的 **Authorized redirect URIs**。
 
-Exit the action configuration screen in ChatGPT and scroll to the bottom. There, you'll find the generated callback URL.
+離開 ChatGPT 的 action 設定畫面，捲到最下面，就能看到產生的 callback URL。
 
-**Note:** If you modify the OAuth settings, a new callback URL will be generated, which will also need to be added to the **Authorized redirect URIs** in the Google Cloud Console."
+**注意：** 如果你改了 OAuth 設定，會產生新的 callback URL，也要再加到 Google Cloud Console 的 **Authorized redirect URIs**。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-calendar-callback.png" alt="Google Calendar Callback URL" width="600"/>
 
-Copy this URL and add it to the **Authorized redirect URIs** in the Google Cloud Console, then click **Save**.
+複製這個 URL，加到 Google Cloud Console 的 **Authorized redirect URIs**，然後點 **Save**。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-calendar-callback-settings.png" alt="Google Calendar Callback URL" width="600"/>
 
 
-# Testing the Action
+# 測試這個 Action
 
-With your action configured, you can now test it in ChatGPT. Start by asking your GPT a test question, for example: `What events do I have today?` If this is the first time you've used the action, you'll be prompted to authorize the action. Click **Sign in with googleapis.com** and follow the prompts to authorize the action. 
+Action 設定好後，就可以在 ChatGPT 測試。先問你的 GPT 一個測試問題，例如：`What events do I have today?` 第一次用這個 action 會要求授權，點 **Sign in with googleapis.com** 並照畫面完成授權。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-signin.png" alt="Google Calendar Sign In" width="600"/>
 
-Once authorized, you should then see the results from your calendar. 
+授權完成後，就會看到你行事曆的結果。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/google-calendar-results.png" alt="Google Calendar results" width="600"/>
 
-<!-- tutor:summary -->
+## 重點整理
+
+- GPT Action 的 OAuth 分兩邊設定，Google 端發 Client ID/Secret 和 scope，GPT 端填這些值加上 Authorization/Token URL。
+- OpenAPI schema 決定 GPT 能呼叫哪些 endpoint，這篇只開放讀取和建立活動。
+- Callback URL 是 ChatGPT 產生的，要回填到 Google 的 Authorized redirect URIs，OAuth 設定一改就會換新的。
+- Scope 給多大權限是安全決定，`/auth/calendar` 是完整讀寫。
+
+## 練習
+
+1. 看 OpenAPI schema，數一下有哪些 path 和 HTTP method，說出各自對應哪個行事曆操作。
+2. 在 schema 加一個刪除活動的 endpoint（`DELETE /calendars/{calendarId}/events/{eventId}`），重新儲存，確認設定畫面多出一個 endpoint。
+3. 改掉 OAuth 的 Client Secret 或其他設定再儲存，觀察 callback URL 有沒有變，並把新的 URL 補回 Google Console 後重新測試。

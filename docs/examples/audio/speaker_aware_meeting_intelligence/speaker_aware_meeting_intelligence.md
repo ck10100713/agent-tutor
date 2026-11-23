@@ -1,42 +1,57 @@
 ---
-translated: false
+translated: true
 source: examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.ipynb
 ---
-
-# Build a Speaker-Aware Meeting Intelligence Pipeline with Audio Diarization
+# 用音訊 diarization 建一條 speaker-aware 的會議分析 pipeline
 
 > 原文：[examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.ipynb)
 
-Build a production-style reference pipeline that turns recorded audio into speaker-labeled transcripts, summaries, decisions, risks, and follow-up actions.
+建一條接近正式環境的參考 pipeline，把錄音變成標好講者的逐字稿、摘要、決議、風險和後續行動。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 `gpt-4o-transcribe-diarize` 把會議錄音轉成標好講者（speaker）的 segment，整理成帶有固定 segment ID 的 JSON 和 Markdown，再用 structured outputs 抽出會議摘要、決議、風險、行動項目，每一項都附上指向逐字稿的證據引用。最後還會跑本地的 guardrail 檢查，決定哪些輸出要送人工審核。
+
+預設的 cell 用一份合成的 diarized 逐字稿，不需要 API key 就能跑完。真的丟音檔去呼叫 API 是要自己打開的選項。
+
+## 學完你會
+
+- 用 `response_format="diarized_json"` 呼叫 Transcriptions API，並用 reference clip 把講者對應到真實名字。
+- 設計一個要求 `evidence_refs`（segment ID 加引用原文）的 strict structured output schema，讓每個抽出來的項目都能機械式驗證。
+- 寫出 guardrail 和評估：redaction、證據驗證、人工審核路由、deterministic eval 和可選的 LLM-as-judge。
+
+## 開跑前
+
+- Python 3.10 以上。
+- 真的跑音檔需要 `OPENAI_API_KEY` 環境變數，會產生 API 費用。預設的合成 demo 不用。
+- 音檔要 25 MB 以下，格式是 `mp3`、`mp4`、`mpeg`、`mpga`、`m4a`、`wav`、`webm`。
+- 可選：最多 4 段短的單人 reference clip。
+
+很多組織本來就會錄下重要的對話，但光有逐字稿通常不夠做可靠的後續追蹤。缺的那一層是講者歸屬：誰提出疑慮、誰做出承諾、證據在錄音的哪個位置。有了 speaker-aware 的逐字稿，你可以把客戶需求跟業務的後續承諾分開、把結構化的證據引用跟行動項目放在一起，並且在內容進到 CRM、ticket 系統或知識庫之前，先把敏感的承諾送進審核流程。
+
+只要下游流程取決於「誰說了什麼」，這個模式就有用：
+
+- 業務探索和方案諮詢：把客戶需求、業務承諾、決策標準、阻礙和下一步連同證據一起記下來。
+- 客戶成功和客戶管理：把 QBR、續約電話和 onboarding 會議，變成有出處的風險、產品需求和後續計畫。
+- 客服升級和事件檢討：在建 ticket 或寫 postmortem 之前，保留時間線、回報的症狀、負責人的承諾和未解問題。
+- 招募和面試流程：摘要候選人或面試官的回饋，同時讓引用的話對上正確的講者。
+- 受監管或高風險的審查：在儲存醫療、金融、法律或法遵相關對話的筆記前，加上 redaction、證據檢查和人工審核。
+
+對營收團隊來說，價值通常不是多生出一份摘要，而是減少對話和系統紀錄（system of record）之間的資訊漏失。這樣的 pipeline 可以幫團隊更快記下能直接進 CRM 的下一步、更早發現續約或擴展的風險、留住預測更新背後的證據，並且用有出處的例子來輔導業務或客服，而不是靠軼事式的筆記。目標不是把判斷自動化掉，而是讓交接、審核和後續行動更完整、可稽核。
+
+這個 notebook 示範如何用 OpenAI 的音訊 diarization 建一條接近正式環境、通話後處理的會議分析 pipeline。流程如下：
+
+1. 接收一個會議錄音檔。
+2. 可選：用短的 reference clip 對應已知講者。
+3. 用 `response_format="diarized_json"` 呼叫 `gpt-4o-transcribe-diarize`。
+4. 把標好講者的 segment 整理成帶有固定 segment ID 的 JSON 和 Markdown。
+5. 用 structured outputs 抽出會議摘要、決議、風險、明確提出的問題、建議的後續動作、行動項目、證據引用和後續 email 草稿。
+6. 寫出可供審閱的產出檔和本地 guardrail 報告。
+
+預設的 cell 用合成的 diarized 逐字稿，不需要 API key。真實音檔的呼叫要自己開，所以整份 notebook 從頭到尾跑一遍都很安全。
 
 
-Many organizations already record important conversations, but a plain transcript often is not enough for reliable follow-up. The missing layer is speaker attribution: knowing who raised a concern, who made a commitment, and where the evidence appears in the recording. A speaker-aware transcript lets you separate customer needs from seller follow-up, keep structured evidence references next to action items, and route sensitive commitments into a review workflow before they land in a CRM, ticketing system, or knowledge base.
-
-This pattern is useful whenever the downstream workflow depends on who said what:
-
-- Sales discovery and solution consulting: capture customer requirements, seller commitments, decision criteria, blockers, and next steps with evidence.
-- Customer success and account management: turn QBRs, renewal calls, and onboarding sessions into sourced risks, product asks, and follow-up plans.
-- Support escalations and incident reviews: preserve the timeline, reported symptoms, owner commitments, and unresolved questions before creating tickets or postmortems.
-- Recruiting and interview loops: summarize candidate or interviewer feedback while keeping quotes tied to the right speaker.
-- Regulated or high-stakes reviews: add redaction, evidence checks, and human review before storing notes from healthcare, financial services, legal, or compliance-heavy conversations.
-
-For revenue teams, the impact is usually less about generating another summary and more about reducing leakage between the conversation and the system of record. A pipeline like this can help teams capture CRM-ready next steps faster, identify renewal or expansion risks earlier, preserve evidence behind forecast updates, and coach reps or support teams from sourced examples instead of anecdotal notes. The goal is not to automate judgment away; it is to make handoffs, reviews, and follow-up actions more complete and auditable.
-
-This notebook shows how to build a production-style, post-call meeting intelligence pipeline with OpenAI audio diarization. You will:
-
-1. Accept a recorded meeting audio file.
-2. Optionally map known speakers using short reference clips.
-3. Call `gpt-4o-transcribe-diarize` with `response_format="diarized_json"`.
-4. Normalize the speaker-labeled segments into JSON and Markdown with stable segment IDs.
-5. Use structured outputs to extract a meeting brief, decisions, risks, explicit questions, suggested follow-ups, action items, evidence references, and a follow-up email draft.
-6. Write reviewable artifacts and a local guardrail report.
-
-The default cells run without an API key using a synthetic diarized transcript. Real audio calls are opt-in so the notebook is safe to review top-to-bottom.
-
-
-## Architecture
+## 架構
 
 ![Architecture diagram](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/audio/speaker_aware_meeting_intelligence/images/architecture.svg)
 
@@ -49,31 +64,31 @@ The default cells run without an API key using a synthetic diarized transcript. 
 | Meeting intelligence | Extract summary, decisions, actions, risks, explicit questions, suggested follow-ups, quotes, and follow-up email with structured evidence references. | `meeting_intelligence.json`, `meeting_brief.md` |
 | Guardrails and review gate | Redact sensitive fields, verify evidence references, optionally moderate content, and route risky outputs for review. | `guardrail_report.json` |
 
-This is intentionally request-based. The Realtime API is a better fit for live voice UX, browser capture, or telephony streaming. For durable post-call diarization, this pattern uses the Transcriptions API and then runs structured extraction over the speaker-labeled transcript.
+這個設計刻意採用 request-based 的做法。如果是即時語音體驗、瀏覽器擷取或電話串流，Realtime API 比較適合。要做可留存的通話後 diarization，這個模式用 Transcriptions API，再對標好講者的逐字稿跑 structured extraction。
 
 
-## Why speaker-aware transcripts matter
+## 為什麼 speaker-aware 的逐字稿很重要
 
-The first version of meeting intelligence is often "send a transcript to a model and summarize it." That works for demos, but it breaks down in customer workflows because it loses who said what. A customer may state a requirement, a seller may make a commitment, and a manager may need the difference to be explicit.
+會議分析的第一版常常是「把逐字稿丟給模型做摘要」。做 demo 沒問題，但放到客戶流程裡就會出事，因為它丟掉了誰說了什麼。客戶可能提出一項需求，業務可能做出一項承諾，而主管需要看得出兩者的差別。
 
-Speaker-aware diarization gives the rest of the application better structure:
+有了 speaker-aware 的 diarization，應用程式的其他部分結構會好很多：
 
-- Action items can include the speaker who committed to them.
-- Risks can quote the exact customer concern.
-- Follow-up email drafts can avoid attributing seller commitments to the customer.
-- QA reviewers can spot-check speaker attribution by segment ID and timestamp.
-- CRM sync jobs can store mechanically verifiable evidence rather than opaque summaries.
+- 行動項目可以帶上做出承諾的講者。
+- 風險可以直接引用客戶說的那句疑慮。
+- 後續 email 草稿不會把業務的承諾寫成客戶的。
+- QA 審核者可以用 segment ID 和時間戳抽查講者歸屬。
+- CRM 同步作業可以存可機械驗證的證據，而不是看不透的摘要。
 
 
-## Security and guardrails
+## 安全與 guardrail
 
-Meeting intelligence should be treated as a sensitive-data workflow, not just a transcription or summarization task. Raw recordings can contain customer names, commercial terms, support details, health or financial information, and internal strategy. Speaker reference clips can also be sensitive because they are tied to a person's voice. Once the pipeline turns that audio into structured outputs, those outputs may flow into CRM records, support tickets, account plans, dashboards, or review queues.
+會議分析應該當成處理敏感資料的流程，而不只是轉錄或摘要的任務。原始錄音可能包含客戶名稱、商業條款、客服細節、健康或財務資訊，還有內部策略。Speaker reference clip 也可能很敏感，因為它綁著某個人的聲音。一旦 pipeline 把音訊變成結構化輸出，這些輸出可能流進 CRM 紀錄、客服 ticket、客戶計畫、dashboard 或審核佇列。
 
-Security and guardrails matter most when the output can influence a business process. A sales call summary may capture pricing or contractual commitments. A support escalation may include production-impacting incidents or customer credentials. A recruiting debrief may include candidate feedback. A regulated-industry meeting may contain data that needs retention, access-control, or redaction policies. For these workflows, the safest pattern is to minimize raw audio retention, redact sensitive content where appropriate, require evidence-backed outputs, and route risky or low-confidence outputs through human review before downstream writes.
+當輸出會影響商業流程時，安全和 guardrail 最重要。業務通話的摘要可能記下價格或合約承諾。客服升級可能包含影響正式環境的事故或客戶憑證。招募的討論可能含有候選人的回饋。受監管產業的會議可能包含需要保留期限、存取控制或 redaction 政策的資料。對這些流程，最安全的做法是：盡量減少原始音訊的保存、適當時對敏感內容做 redaction、要求輸出附帶證據，並且在寫入下游之前，把有風險或信心低的輸出送給人工審核。
 
-The included regex redaction is intentionally illustrative: it masks basic email and phone patterns only. It is not a complete PII or DLP system. For names, addresses, account identifiers, credentials, health data, financial data, or regulated workflows, use a policy-approved PII/DLP detector and keep a human review gate before downstream writes.
+內附的 regex redaction 只是示意：它只遮蔽基本的 email 和電話格式，不是完整的 PII 或 DLP 系統。對於姓名、地址、帳號識別碼、憑證、健康資料、財務資料或受監管流程，請使用符合政策的 PII/DLP 偵測器，並且在寫入下游前保留人工審核關卡。
 
-For the structured extraction step, this notebook sets `store=False` on the Responses API call so the generated meeting intelligence response is not stored as application state. `store=False` is a useful request-level control, but it is not the same as enabling Zero Data Retention for an organization or project. If your workflow requires stricter retention guarantees, review OpenAI's [data controls documentation](https://platform.openai.com/docs/models/default-usage-policies-by-endpoint) and confirm the right retention configuration for your use case.
+在 structured extraction 這一步，notebook 對 Responses API 的呼叫設了 `store=False`，所以產生的會議分析回應不會被存成應用程式狀態。`store=False` 是請求層級很實用的控制，但它跟替整個組織或專案啟用 Zero Data Retention 不一樣。如果你的流程需要更嚴格的保留保證，請看 OpenAI 的 [data controls 文件](https://platform.openai.com/docs/models/default-usage-policies-by-endpoint)，確認適合你情境的保留設定。
 
 | Risk | Guardrail |
 | --- | --- |
@@ -87,17 +102,17 @@ For the structured extraction step, this notebook sets `store=False` on the Resp
 | Silent quality drift | Log model versions, prompt versions, schema versions, audio duration, redaction state, moderation state, and reviewer decisions. Sample calls for evals. |
 
 
-## Prerequisites
+## 前置需求
 
-- Python 3.10 or later.
-- An OpenAI API key in `OPENAI_API_KEY` for real audio runs.
-- A meeting recording in a supported audio format for real audio runs.
-- Audio uploads must be 25 MB or smaller. Supported input formats are `mp3`, `mp4`, `mpeg`, `mpga`, `m4a`, `wav`, and `webm`.
-- Optional: up to four short, single-speaker reference clips. The speech-to-text guide recommends 2-10 second references, encoded as data URLs when sent with multipart form data.
+- Python 3.10 或更新版本。
+- 真實音訊要跑的話，需要在 `OPENAI_API_KEY` 放一把 OpenAI API key。
+- 真實音訊要跑的話，需要一個支援格式的會議錄音。
+- 上傳的音檔必須在 25 MB 以下。支援的輸入格式是 `mp3`、`mp4`、`mpeg`、`mpga`、`m4a`、`wav` 和 `webm`。
+- 可選：最多四段短的單人 reference clip。speech-to-text 指南建議 2 到 10 秒的 reference，用 multipart form data 傳送時要編碼成 data URL。
 
-### Run the notebook locally
+### 在本機跑這個 notebook
 
-From a local clone of the Cookbook repository, create a virtual environment, install Jupyter and the OpenAI SDK, then launch this notebook:
+從 Cookbook repo 的本機 clone 開始，建一個虛擬環境，安裝 Jupyter 和 OpenAI SDK，然後開啟這個 notebook：
 
 ```bash
 git clone https://github.com/openai/openai-cookbook.git
@@ -109,16 +124,16 @@ export OPENAI_API_KEY="your-api-key"
 jupyter notebook examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.ipynb
 ```
 
-The synthetic demo below uses only the Python standard library and does not call the API. For real audio, you can also install the OpenAI SDK from inside an existing notebook environment:
+下面的合成 demo 只用 Python 標準函式庫，不會呼叫 API。要跑真實音訊的話，你也可以在現有的 notebook 環境裡直接安裝 OpenAI SDK。如果是在 Colab，直接在 cell 裡用 `!pip install openai` 就可以：
 
 ```python
 %pip install "openai>=1.93.0"
 ```
 
 
-## Core diarization request
+## 核心的 diarization 請求
 
-The core API request is intentionally small:
+核心的 API 請求刻意寫得很短：
 
 ```python
 client = OpenAI(timeout=30 * 60)
@@ -140,21 +155,21 @@ with open("meeting.wav", "rb") as audio_file:
             print(event.speaker, event.text, event.start, event.end)
 ```
 
-The important details are:
+重點細節有：
 
-- Use `response_format="diarized_json"` when you need segment-level speaker metadata.
-- Use `chunking_strategy="auto"` for audio longer than 30 seconds.
-- Use `stream=True` for completed recordings when you want finalized diarized segments as they become available.
-- The Python SDK defaults to a 10-minute read timeout; the helper below uses 30 minutes for longer recordings.
-- Pass known speaker names and references together, in the same order.
-- Keep reference clips short and single-speaker.
+- 需要 segment 層級的講者 metadata 時，用 `response_format="diarized_json"`。
+- 音訊超過 30 秒時，用 `chunking_strategy="auto"`。
+- 對已經錄完的錄音，想在 segment 定稿時就逐步拿到結果，用 `stream=True`。
+- Python SDK 預設的 read timeout 是 10 分鐘，下面的 helper 為了較長的錄音改用 30 分鐘。
+- 已知講者的名字和 reference 要一起傳，而且順序一致。
+- Reference clip 要短、而且只有一個講者。
 
 
-## Diarization vs speaker identification
+## Diarization 和講者辨識的差別
 
-Diarization answers "which voice spoke each segment?" It separates voices inside one recording, but it does not create a permanent identity profile or remember that `speaker_0` from one call is the same person as `speaker_0` in a later call. Without references, generic labels are still useful because they preserve attribution: the pipeline can distinguish the speaker who raised a requirement from the speaker who made a commitment.
+Diarization 回答的是「每一段是哪個聲音在講」。它會在同一份錄音裡把聲音分開，但不會建立永久的身分檔案，也不會記得這次通話的 `speaker_0` 和下次通話的 `speaker_0` 是同一個人。沒有 reference 時，通用標籤仍然有用，因為它保留了歸屬：pipeline 可以分辨提出需求的講者和做出承諾的講者。
 
-Known-speaker references add an optional identity hint for the current request:
+已知講者的 reference 是針對當次請求的選用身分提示：
 
 | Input | Result |
 | --- | --- |
@@ -162,11 +177,10 @@ Known-speaker references add an optional identity hint for the current request:
 | Meeting audio plus a named reference clip | Matching segments can use the supplied name; unmatched speakers can remain generic. |
 | A later or historical recording | Pass the reference clip again. Labels do not carry across recordings automatically. |
 
-### Pass a reference clip with the meeting recording
+### 把 reference clip 跟會議錄音一起傳
 
-The meeting recording and the reference clip are separate inputs in one transcription request. Do not concatenate the reference clip onto the meeting audio. The meeting is uploaded as `file=...`; each reference clip is encoded as a data URL and sent through `known_speaker_references` with a name in the same position in `known_speaker_names`.
-
-The helper below wraps that request shape. For example, this passes a meeting recording plus a separate short clip of an internal rep speaking:
+會議錄音和 reference clip 是同一個 transcription 請求裡兩個分開的輸入。不要把 reference clip 接到會議音訊後面。會議用 `file=...` 上傳；每段 reference clip 編碼成 data URL，透過 `known_speaker_references` 傳送，名字則放在 `known_speaker_names` 裡相同的位置。
+下面的 helper 包裝了這個請求的形式。例如，這段會傳一份會議錄音，加上另一段內部業務代表說話的短 clip：
 
 ```python
 meeting_audio = Path("customer_call.wav")
@@ -180,7 +194,7 @@ raw_transcription = transcribe_with_diarization(
 )
 ```
 
-Use a clean, consented 2-10 second clip with one speaker and minimal background noise. For recurring internal speakers, a production application can keep an access-controlled reference registry and attach the appropriate clip on each request. For historical recordings, run the same flow per recording; a reference clip may come from an older consented call if it is clean and single-speaker. Treat references as sensitive data, evaluate match quality on representative audio, and keep human review for high-stakes downstream writes.
+請用乾淨、取得同意、2 到 10 秒、只有一個講者而且背景噪音很少的 clip。對於固定出現的內部講者，正式的應用程式可以維護一個有存取控制的 reference registry，每次請求時附上對應的 clip。對於歷史錄音，每份錄音都跑同樣的流程；只要 clip 乾淨、單人，reference clip 也可以來自較早且取得同意的通話。把 reference 當成敏感資料，用有代表性的音訊評估比對品質，高風險的下游寫入要保留人工審核。
 
 
 ```python
@@ -287,9 +301,9 @@ PII_PATTERNS = [
 print(f"Loaded {len(DEMO_SEGMENTS)} synthetic transcript segments")
 ```
 
-## Step 1: Define the structured output schema
+## 步驟 1：定義 structured output schema
 
-Meeting intelligence often feeds systems of record. Use strict structured outputs so downstream code gets a stable shape and unsupported fields are rejected rather than silently accepted. This schema also requires structured `evidence_refs`: each extracted item must cite a transcript `segment_id` and a quote from that segment, which lets guardrails verify the grounding mechanically.
+會議分析的結果常常要餵給系統紀錄。用 strict structured outputs，下游程式碼才會拿到穩定的格式，不支持的欄位會被拒絕，而不是被默默接受。這個 schema 也要求結構化的 `evidence_refs`：每個抽出來的項目都必須引用逐字稿的 `segment_id` 和該 segment 裡的一段引文，這樣 guardrail 就能機械式驗證內容有沒有依據。
 
 
 ```python
@@ -454,11 +468,11 @@ MEETING_INTELLIGENCE_SCHEMA: dict[str, Any] = {
 print("Structured output schema ready")
 ```
 
-## Step 2: Build audio and transcript helpers
+## 步驟 2：建立音訊和逐字稿的 helper
 
-Known-speaker references are optional. Without them, diarization can still separate speakers, but labels may be generic, such as `speaker_0` or `speaker_1`. With references, the API can map segments to the names you provide.
+已知講者的 reference 是選用的。沒有的話，diarization 還是能把講者分開，只是標籤可能是通用的，例如 `speaker_0` 或 `speaker_1`。有 reference 時，API 可以把 segment 對應到你提供的名字。
 
-Use short, clean reference clips with one speaker and minimal background noise. Keep reference clips only when you have consent and a clear business need.
+請用短而乾淨、只有一個講者、背景噪音少的 reference clip。只有在取得同意而且有明確業務需求時，才保留 reference clip。
 
 
 ```python
@@ -587,13 +601,13 @@ def normalize_segments(transcription: Any) -> list[Segment]:
 print("Audio and transcript helpers ready")
 ```
 
-## Step 3: Normalize the transcript
+## 步驟 3：正規化逐字稿
 
-The normalized transcript is the contract between audio processing and meeting intelligence. It helps you rerun summarization without retranscribing audio, inspect attribution quality, and keep raw audio retention short.
+正規化後的逐字稿是音訊處理和會議分析之間的合約。它讓你可以不重新轉錄音訊就重跑摘要、檢查歸屬品質，並且縮短原始音訊的保存時間。
 
-Each segment gets a stable `segment_id` such as `seg_005`. Later, the model must cite those IDs in `evidence_refs`, and the guardrail step verifies that each cited quote appears in the referenced segment.
+每個 segment 都會得到固定的 `segment_id`，例如 `seg_005`。之後模型必須在 `evidence_refs` 裡引用這些 ID，guardrail 步驟會驗證每段引文真的出現在所引用的 segment 裡。
 
-The regex redaction helper below is intentionally illustrative: it masks basic email and phone patterns only. It is not a complete PII or DLP system; use a policy-approved detector and human review for sensitive or regulated workflows.
+下面的 regex redaction helper 只是示意：它只遮蔽基本的 email 和電話格式，不是完整的 PII 或 DLP 系統。敏感或受監管的流程，請用符合政策的偵測器加上人工審核。
 
 
 ```python
@@ -652,11 +666,11 @@ def transcript_for_model(segments: list[Segment]) -> str:
 show_markdown(transcript_as_markdown(DEMO_SEGMENTS))
 ```
 
-## Step 4: Extract structured meeting intelligence
+## 步驟 4：抽取結構化的會議分析
 
-The model gets a speaker-labeled transcript and must use only that transcript as evidence. The safest default is to produce empty arrays instead of plausible but unsupported CRM notes. The schema also uses required-but-nullable fields, such as `due_date_or_trigger`, `inferred_role`, and `directed_to_speaker`, so unknown values stay `null` instead of being filled with guesses.
+模型拿到標好講者的逐字稿，而且只能用這份逐字稿當證據。最安全的預設做法，是輸出空陣列，而不是看似合理但沒有依據的 CRM 筆記。schema 也用了必填但可為 null 的欄位，例如 `due_date_or_trigger`、`inferred_role` 和 `directed_to_speaker`，這樣未知的值會維持 `null`，不會被猜測填滿。
 
-For every extracted fact, action item, risk, question, or recommendation, the model returns `evidence_refs` with a `segment_id` and quote. This gives reviewers a readable source trail and gives code something concrete to validate.
+對每個抽出來的事實、行動項目、風險、問題或建議，模型都會回傳帶有 `segment_id` 和引文的 `evidence_refs`。這讓審核者有一條可讀的出處軌跡，也讓程式碼有具體的東西可以驗證。
 
 
 ```python
@@ -882,9 +896,9 @@ def demo_meeting_intelligence() -> dict[str, Any]:
 show_json(demo_meeting_intelligence(), expanded=False)
 ```
 
-## Step 5: Render a reviewable meeting brief
+## 步驟 5：產生可審閱的會議簡報
 
-The review artifact keeps speaker, segment ID, timestamp, and quote evidence next to decisions, risks, and action items so humans can spot-check before anything is written downstream.
+這份審閱用的產出會把講者、segment ID、時間戳和引文證據，放在決議、風險和行動項目旁邊，讓人在內容寫入下游之前可以先抽查。
 
 
 ```python
@@ -1011,16 +1025,16 @@ demo_brief = render_meeting_brief(demo_meeting_intelligence())
 show_markdown(demo_brief)
 ```
 
-## Step 6: Add guardrails and write artifacts
+## 步驟 6：加上 guardrail 並寫出產出檔
 
-The sample writes a `guardrail_report.json` with local checks for:
+範例會寫出一份 `guardrail_report.json`，裡面是這些本地檢查：
 
-- normalized transcript segments;
-- basic email and phone PII patterns;
-- evidence references that point to real segment IDs and matching quotes;
-- medium/high risk outputs;
-- optional moderation flags;
-- raw transcription response storage.
+- 正規化後的逐字稿 segment；
+- 基本的 email 和電話 PII 格式；
+- 指向真實 segment ID 且引文吻合的證據引用；
+- 中度或高度風險的輸出；
+- 可選的 moderation 標記；
+- 原始 transcription 回應的儲存。
 
 
 ```python
@@ -1289,17 +1303,17 @@ def run_pipeline_from_segments(
 print("Artifact helpers ready")
 ```
 
-## Step 7: Run the deterministic demo fixture
+## 步驟 7：跑 deterministic 的 demo fixture
 
-This section is a deterministic no-network demo, not a model-quality eval. It uses a fixed synthetic diarized transcript and a fixed expected meeting-intelligence object so reviewers can run the notebook without an API key.
+這一段是不需要網路的 deterministic demo，不是模型品質的 eval。它用一份固定的合成 diarized 逐字稿，和一個固定的預期會議分析物件，讓審閱者不用 API key 也能跑 notebook。
 
-### What this fixture checks
+### 這個 fixture 檢查什麼
 
-The fixture exercises the same artifact and guardrail path used by real audio: transcript rendering, JSON writing, Markdown brief rendering, PII redaction helpers, evidence-reference validation, nullable fields, and review routing.
+這個 fixture 會走過跟真實音訊相同的產出檔和 guardrail 路徑：逐字稿渲染、JSON 寫入、Markdown 簡報渲染、PII redaction helper、證據引用驗證、可為 null 的欄位，以及審核路由。
 
-### What this fixture does not check
+### 這個 fixture 不檢查什麼
 
-It does not measure transcription quality, diarization accuracy, or model extraction quality on new meetings. The eval sections below add deterministic scoring and an optional LLM-as-judge pattern for that layer.
+它不衡量轉錄品質、diarization 準確度，也不衡量模型對新會議的抽取品質。下面的 eval 區段會加上 deterministic 評分和一個可選的 LLM-as-judge 做法來處理那一層。
 
 
 ```python
@@ -1345,18 +1359,18 @@ guardrail_report = json.loads((output_dir / "guardrail_report.json").read_text()
 show_json(guardrail_report, expanded=True)
 ```
 
-## Step 8: Run with real audio
+## 步驟 8：用真實音訊跑
 
-The next cell is intentionally opt-in. Set `RUN_REAL_AUDIO = True`, provide your local audio paths, and make sure `OPENAI_API_KEY` is set.
+下一個 cell 刻意設成要自己開。把 `RUN_REAL_AUDIO = True`，填上你本機的音檔路徑，並確認已經設好 `OPENAI_API_KEY`。
 
-The Transcriptions API accepts files up to 25 MB. `chunking_strategy="auto"` segments a valid upload; it does not split an oversized file. For larger meetings, compress to a supported lower-bitrate format or split the recording into bounded files before transcription, then preserve or offset timestamps when combining results.
-Long recordings can also outlast the Python SDK default read timeout. The helper streams finalized diarized segments by default and keeps a 30-minute timeout as a backstop. Set `stream_transcription=False` only when you specifically need one non-streamed response; split unusually long recordings when one request is not operationally reliable.
+Transcriptions API 接受最大 25 MB 的檔案。`chunking_strategy="auto"` 是對合格的上傳切 segment，不會把過大的檔案切開。比較長的會議，要先壓縮成支援的低 bitrate 格式，或在轉錄前切成有大小上限的檔案，合併結果時再保留或位移時間戳。
+長錄音也可能超過 Python SDK 預設的 read timeout。這個 helper 預設用串流取得定稿的 diarized segment，並保留 30 分鐘的 timeout 當後盾。只有在你明確需要單一的非串流回應時才把 `stream_transcription=False`；如果超長的錄音用單一請求不夠可靠，就把它切開。
 
-### How readers supply their files
+### 讀者怎麼提供檔案
 
-This cookbook is notebook-first; there is no separate `.py` command in the published artifact. Put the meeting recording and any optional reference clips somewhere the notebook kernel can read. In local Jupyter, that can be a folder beside the notebook or an absolute path on disk. In a hosted notebook, upload the files into the notebook session first.
+這份 cookbook 以 notebook 為主，發布的內容裡沒有獨立的 `.py` 指令。把會議錄音和選用的 reference clip 放在 notebook kernel 讀得到的地方。在本機 Jupyter，可以是放在 notebook 旁邊的資料夾，或磁碟上的絕對路徑。在 Colab 這類託管的 notebook，要先把檔案上傳到 session 裡。
 
-For example, a reader might have:
+例如，讀者可能有這樣的檔案：
 
 ```text
 audio/
@@ -1364,7 +1378,7 @@ audio/
   internal_rep_reference.wav
 ```
 
-Then point the configuration variables at those files:
+然後把設定變數指向那些檔案：
 
 ```python
 AUDIO_FILE = Path("audio/customer_call.mp3")
@@ -1373,15 +1387,15 @@ KNOWN_SPEAKERS = {
 }
 ```
 
-`AUDIO_FILE` is the original meeting recording. `KNOWN_SPEAKERS` maps the label you want in the output to a separate 2-10 second reference clip; the helper sends the clip with the request rather than appending it to the meeting audio. In a production application, the same helper can receive a temporary file created from an upload or downloaded from object storage.
+`AUDIO_FILE` 是原始的會議錄音。`KNOWN_SPEAKERS` 把你想在輸出中看到的標籤，對應到另一段 2 到 10 秒的 reference clip；helper 是把這段 clip 隨請求一起送出，而不是接在會議音訊後面。在正式的應用程式裡，同一個 helper 可以接收由上傳建立的暫存檔，或從物件儲存下載的檔案。
 
-For the first production-style run, keep the setup simple:
+第一次跑接近正式環境的流程時，保持簡單：
 
-- Use one meeting audio file.
-- Use `chunking_strategy="auto"` for longer recordings.
-- Add known-speaker references only when you have consent and a clear business need.
-- Run redaction before storage.
-- Run moderation when harmful-content classification is part of your review policy.
+- 用一份會議音檔。
+- 較長的錄音用 `chunking_strategy="auto"`。
+- 只有在取得同意而且有明確業務需求時，才加已知講者的 reference。
+- 儲存之前先跑 redaction。
+- 如果有害內容分類是你審核政策的一部分，就跑 moderation。
 
 
 ```python
@@ -1439,17 +1453,17 @@ else:
     print("Skipped real audio run. Set RUN_REAL_AUDIO = True after configuring AUDIO_FILE and OPENAI_API_KEY.")
 ```
 
-## Step 9: Run deterministic smoke and regression checks
+## 步驟 9：跑 deterministic 的 smoke 和 regression 檢查
 
-These checks are deterministic and do not call the API. Treat them as a smoke test and regression suite for the notebook mechanics, not as an eval of model quality.
+這些檢查是 deterministic 的，不會呼叫 API。把它們當成 notebook 運作機制的 smoke test 和 regression 測試，不是模型品質的 eval。
 
-### Smoke-test checks
+### Smoke test 檢查
 
-The first checks confirm that the notebook writes all expected artifacts and routes medium-risk outputs to review.
+前幾項檢查確認 notebook 寫出所有預期的產出檔，並把中度風險的輸出送去審核。
 
-### Regression checks
+### Regression 檢查
 
-The remaining assertions catch regressions in schema nullability, evidence references, unsupported demo claims, response edge cases, redaction, and timestamp formatting.
+其餘的 assertion 會抓 schema 可為 null 的行為、證據引用、demo 中沒有依據的說法、回應邊界情況、redaction 和時間戳格式的退化。
 
 
 ```python
@@ -1551,11 +1565,11 @@ assert streamed_transcription["usage"]["total_tokens"] == 1
 print("Notebook demo validation passed")
 ```
 
-## Step 10: Run deterministic evals
+## 步驟 10：跑 deterministic eval
 
-This section runs a small deterministic eval against the labeled demo fixture. It is still not a broad production eval, but it shows how to score extraction quality with reproducible rules before adding model-graded judgments.
+這一段針對有標註的 demo fixture 跑一個小型的 deterministic eval。它還不是廣泛的正式環境 eval，但示範了在加入模型評分之前，怎麼用可重現的規則為抽取品質打分。
 
-The scorers below measure action-item precision/recall, explicit-question precision/recall, unsupported decisions, nullable unknown fields, and evidence-reference validity. For production, replace `GOLD_EVAL_LABELS` with a larger labeled dataset and run the same scorers across every example.
+下面的 scorer 衡量行動項目的 precision/recall、明確問題的 precision/recall、沒有依據的決議、可為 null 的未知欄位，以及證據引用是否有效。正式環境請把 `GOLD_EVAL_LABELS` 換成更大的標註資料集，並對每個範例跑同樣的 scorer。
 
 
 ```python
@@ -1699,11 +1713,11 @@ show_json(deterministic_eval_report, expanded=True)
 assert deterministic_eval_report["status"] == "pass"
 ```
 
-## Step 11: Add optional LLM-as-judge evals
+## 步驟 11：加上可選的 LLM-as-judge eval
 
-LLM-as-judge evals are useful for grading qualities that deterministic scorers cannot fully capture, such as summary usefulness, missing follow-ups, and whether the brief would help a reviewer. Keep this optional because it calls the API and can vary by judge model. Use it alongside deterministic scorers, not instead of them.
+LLM-as-judge eval 適合評 deterministic scorer 無法完整捕捉的品質，例如摘要有沒有用、有沒有漏掉後續動作，以及這份簡報對審核者有沒有幫助。它要呼叫 API、而且會隨 judge 模型而有差異，所以保持選用。請搭配 deterministic scorer 一起用，不要取代它們。
 
-The judge below receives the transcript, the structured output, and a rubric. It returns scores and review findings. Leave `RUN_LLM_JUDGE_EVAL = False` for the default no-network notebook run.
+下面的 judge 會收到逐字稿、結構化輸出和一份評分標準（rubric），然後回傳分數和審核發現。預設的不連網 notebook 執行請讓 `RUN_LLM_JUDGE_EVAL = False`。
 
 
 ```python
@@ -1798,9 +1812,9 @@ else:
     print("Skipped LLM judge eval. Set RUN_LLM_JUDGE_EVAL = True after configuring OPENAI_API_KEY.")
 ```
 
-## Production hardening checklist
+## 正式環境強化檢查表
 
-Use this checklist before turning the sample into a customer workflow:
+在把這個範例變成客戶流程之前，用這份檢查表過一遍：
 
 | Concern | Recommendation |
 | --- | --- |
@@ -1817,9 +1831,9 @@ Use this checklist before turning the sample into a customer workflow:
 | Evaluation | Sample calls weekly. Track speaker attribution accuracy, action-item precision, and unsupported-claim rate. |
 
 
-## Evaluation guidance for production
+## 正式環境的評估指引
 
-The deterministic eval above is intentionally small: it proves that the scoring pattern works on a labeled fixture. Production teams should expand it into a representative eval set before writing outputs to downstream systems. Start with a small, consented set of recordings or transcript fixtures, create human-reviewed labels, and keep a holdout set for regression testing when prompts, schemas, or models change.
+上面的 deterministic eval 刻意做得很小：它證明這套評分模式在有標註的 fixture 上可行。在把輸出寫進下游系統之前，正式的團隊應該把它擴充成有代表性的 eval 集。從一小批取得同意的錄音或逐字稿 fixture 開始，建立人工審核過的標註，並保留一份 holdout 集，在 prompt、schema 或模型變動時做 regression 測試。
 
 | Area | Example metrics |
 | --- | --- |
@@ -1829,22 +1843,21 @@ The deterministic eval above is intentionally small: it proves that the scoring 
 | Safety and privacy | PII redaction recall, moderation flag recall, false-positive review rate, raw-audio retention compliance. |
 | Workflow impact | Time-to-CRM-update, reviewer override rate, follow-up completion rate, renewal or escalation risk detection latency. |
 
-A useful first eval is simple: ask reviewers to mark each extracted action item as correct, partially correct, unsupported, or missing from the output. Track precision for generated items and recall against the human-labeled gold set. For quotes and evidence, prefer exact-match or near-exact-match checks against the transcript segment text so that helpful-sounding but unsupported summaries do not pass unnoticed. LLM-as-judge can help grade usefulness and completeness, but keep deterministic grounding checks in the loop because they are easier to reproduce.
+一個實用的第一個 eval 很簡單：請審核者把每個抽出的行動項目標成正確、部分正確、沒有依據，或是輸出中漏掉的。對產生的項目追蹤 precision，對人工標註的標準答案追蹤 recall。對於引文和證據，優先用跟逐字稿 segment 文字做完全比對或近似完全比對的檢查，這樣聽起來有幫助但沒有依據的摘要才不會被漏放過去。LLM-as-judge 可以幫忙評有用程度和完整度，但請把 deterministic 的依據檢查留在流程裡，因為它們比較容易重現。
 
 
-## Next steps
+## 下一步
 
-You can adapt the same pipeline for:
+你可以把同一條 pipeline 改用在：
+- 季度業務檢討（QBR）之後的客戶成功交接。
+- 重視責任歸屬和原話引用的客服升級。
+- 會餵給 CRM 下一步的業務探索通話。
+- 每位面試官都需要有出處筆記的招募面試檢討。
+- 需要更強審核和保留控制的醫療或金融服務流程。
 
-- Customer success handoffs after quarterly business reviews.
-- Support escalations where accountability and exact quotes matter.
-- Sales discovery calls that feed CRM next steps.
-- Recruiting interview debriefs where each interviewer needs sourced notes.
-- Healthcare or financial-services workflows with stronger review and retention controls.
+即時的情境，請用 Realtime 做通話中的體驗，需要可留存、有證據支持的會議分析時，仍然要跑這條通話後的 diarization pipeline。
 
-For live scenarios, use Realtime for the in-call experience and still run this post-call diarization pipeline when you need durable, evidence-backed meeting intelligence.
-
-Useful docs:
+相關文件：
 
 - [Audio and speech guide](https://developers.openai.com/api/docs/guides/audio)
 - [Speech-to-text and speaker diarization](https://developers.openai.com/api/docs/guides/speech-to-text)
@@ -1854,4 +1867,16 @@ Useful docs:
 - [Realtime guide](https://developers.openai.com/api/docs/guides/realtime)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 光有逐字稿不夠，diarization 保留了「誰說的」，行動項目、風險和 email 草稿才不會把話記到錯的人身上。
+- Diarization 只在單一錄音內分開聲音，不會跨錄音記住身分；要有真實名字，每次請求都要重新傳 reference clip。
+- 強制每個抽出的項目附上 `segment_id` 和引文，程式就能機械式驗證有沒有依據，不用靠人眼相信摘要。
+- 模型輸出不要直接寫進 CRM 或 ticket，中高風險、缺證據、moderation 被標記的內容要先過人工審核。
+- 評估分兩層：deterministic scorer 管可重現的依據和 precision/recall，LLM-as-judge 管有用程度，兩者搭配而不是互相取代。
+
+## 練習
+
+1. 把 `KNOWN_SPEAKERS` 的設定改成只給一位講者的 reference clip（或完全不給），跑一次 demo 或真實音訊，看輸出裡講者標籤從名字變回 `speaker_0` 的差別。
+2. 在 guardrail 步驟用的 regex redaction helper 裡，多加一個格式（例如簡單的信用卡號或身分證字號樣式），然後在 demo 的合成逐字稿塞一句含有該格式的話，確認 `guardrail_report.json` 有抓到。
+3. 在 `GOLD_EVAL_LABELS` 裡新增一筆你自己設計的行動項目，故意讓 demo 的預期輸出漏掉它，跑 deterministic eval，觀察 action-item recall 怎麼掉，再想想要怎麼調 prompt 或 schema 補回來。

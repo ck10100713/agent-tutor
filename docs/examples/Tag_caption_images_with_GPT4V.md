@@ -1,25 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/Tag_caption_images_with_GPT4V.ipynb
 ---
 
-# Using GPT4o mini to tag and caption images
+# 用 GPT4o mini 幫圖片加標籤和 caption
 
 > 原文：[examples/Tag_caption_images_with_GPT4V.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Tag_caption_images_with_GPT4V.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 GPT-4o mini 的視覺能力，替 Amazon 家具商品圖產生關鍵字標籤和簡短 caption，再用 embedding 做商品搜尋，輸入可以是文字或圖片。
+
+## 學完你會
+- 用「圖片加商品標題」的 zero-shot prompt 抽出關鍵字，並用 embedding 去重
+- 先讓模型描述圖片，再用 few-shot 把長描述改寫成短 caption
+- 把關鍵字和 caption 做成 embedding，用文字或圖片查詢相似商品
+
+## 開跑前
+- OpenAI API key
+- 處理前 50 筆資料大約要 20 分鐘，embedding 約 3 分鐘；也可以直接載入處理好的資料集
 
 
-This notebook explores how to leverage the vision capabilities of the GPT-4* models (for example `gpt-4o`, `gpt-4o-mini` or `gpt-4-turbo`) to tag & caption images. 
+這份 notebook 探索怎麼用 GPT-4* 系列模型（例如 `gpt-4o`、`gpt-4o-mini`、`gpt-4-turbo`）的視覺能力替圖片加標籤和 caption。 
 
-We can leverage the multimodal capabilities of these models to provide input images along with additional context on what they represent, and prompt the model to output tags or image descriptions. The image descriptions can then be further refined with a language model (in this notebook, we'll use `gpt-4o-mini`) to generate captions. 
+我們可以利用這些模型的多模態能力，輸入圖片並附上圖片代表什麼的額外 context，請模型輸出標籤或圖片描述。描述之後可以再用語言模型（這份 notebook 用 `gpt-4o-mini`）精修成 caption。 
 
-Generating text content from images can be useful for multiple use cases, especially use cases involving search.  
-We will illustrate a search use case in this notebook by using generated keywords and product captions to search for products - both from a text input and an image input.
+從圖片生成文字內容在很多情境都有用，尤其是搜尋相關的。  
+這份 notebook 會示範搜尋的用法：用產生的關鍵字和商品 caption 來搜尋商品，輸入可以是文字或圖片。
 
-As an example, we will use a dataset of Amazon furniture items, tag them with relevant keywords and generate short, descriptive captions.
+範例用 Amazon 家具商品資料集，替它們加上相關關鍵字，並產生簡短、描述性的 caption。
 
 ## Setup
 
@@ -93,15 +103,15 @@ df.head()
     ... (省略 45 行)
     ```
 
-## Tag images
+## 圖片標籤
 
-In this section, we'll use GPT-4o mini to generate relevant tags for our products.
+這一節用 GPT-4o mini 替商品產生相關標籤。
 
-We'll use a simple zero-shot approach to extract keywords, and deduplicate those keywords using embeddings to avoid having multiple keywords that are too similar.
+我們用簡單的 zero-shot 方式抽關鍵字，並用 embedding 對關鍵字去重，避免出現太相近的多個關鍵字。
 
-We will use a combination of an image and the product title to avoid extracting keywords for other items that are depicted in the image - sometimes there are multiple items used in the scene and we want to focus on just the one we want to tag.
+我們會同時提供圖片和商品標題，避免模型抽出圖中其他物品的關鍵字。圖片裡常有多個物品，但我們只想標記其中一個。
 
-### Extract keywords
+### 抽取關鍵字
 
 ```python
 system_prompt = '''
@@ -155,7 +165,7 @@ def analyze_image(img_url, title):
     return response.choices[0].message.content
 ```
 
-#### Testing with a few examples
+#### 用幾個例子測試
 
 ```python
 examples = df.iloc[:5]
@@ -213,9 +223,9 @@ for index, ex in examples.iterrows():
     ['tv tray', 'foldable', 'metal', 'grey']
     ```
 
-### Looking up existing keywords
+### 查詢既有關鍵字
 
-Using embeddings to avoid duplicates (synonyms) and/or match pre-defined keywords
+用 embedding 避免重複（同義詞），或對上預先定義好的關鍵字
 
 ```python
 # Feel free to change the embedding model here
@@ -228,7 +238,7 @@ def get_embedding(value, model="text-embedding-3-large"):
     return embeddings.data[0].embedding
 ```
 
-#### Testing with example keywords
+#### 用範例關鍵字測試
 
 ```python
 # Existing keywords
@@ -291,11 +301,11 @@ print(f"Final keywords: {final_keywords}")
     Final keywords: {'vintage', 'desk', 'wood', 'table', 'old', 'bed', 'metal', 'old school'}
     ```
 
-## Generate captions
+## 產生 caption
 
-In this section, we'll use GPT-4o mini to generate an image description and then use a few-shot examples approach with GPT-4-turbo to generate captions from the images.
+這一節用 GPT-4o mini 產生圖片描述，再用 few-shot 範例的方式，搭配 GPT-4-turbo 從描述產生 caption。
 
-If few-shot examples are not enough for your use case, consider fine-tuning a model to get the generated captions to match the style & tone you are targeting. 
+如果 few-shot 範例不夠用，可以考慮 fine-tune 模型，讓產生的 caption 符合你想要的風格和語氣。 
 
 ```python
 # Cleaning up dataset columns
@@ -329,7 +339,7 @@ df.head()
     4          Iron  Grey Set of 4  https://www.amazon.com/dp/B0CG1N9QRC
     ```
 
-### Describing images with GPT-4o mini
+### 用 GPT-4o mini 描述圖片
 
 ```python
 describe_system_prompt = '''
@@ -370,7 +380,7 @@ def describe_image(img_url, title):
     return response.choices[0].message.content
 ```
 
-#### Testing on a few examples
+#### 用幾個例子測試
 
 ```python
 for index, row in examples.iterrows():
@@ -408,8 +418,8 @@ for index, row in examples.iterrows():
     --------------------------
     ```
 
-### Turning descriptions into captions
-Using a few-shot examples approach to turn a long description into a short image caption
+### 把描述變成 caption
+用 few-shot 範例把長描述轉成簡短的圖片 caption
 
 ```python
 caption_system_prompt = '''
@@ -470,7 +480,7 @@ def caption_image(description, model="gpt-4o-mini"):
     return response.choices[0].message.content
 ```
 
-#### Testing on a few examples
+#### 用幾個例子測試
 
 ```python
 examples = df.iloc[5:8]
@@ -513,11 +523,11 @@ for index, row in examples.iterrows():
     --------------------------
     ```
 
-## Image search
+## 圖片搜尋
 
-In this section, we will use generated keywords and captions to search items that match a given input, either text or image.
+這一節用產生的關鍵字和 caption 去搜尋符合輸入的商品，輸入可以是文字或圖片。
 
-We will leverage our embeddings model to generate embeddings for the keywords and captions and compare them to either input text or the generated caption from an input image.
+我們用 embedding 模型替關鍵字和 caption 產生 embedding，再跟輸入文字，或輸入圖片產生的 caption 比較。
 
 ```python
 # Df we'll use to compare keywords
@@ -546,7 +556,7 @@ def get_keyword(keyword, df_keywords, threshold = 0.6):
     return keyword
 ```
 
-### Preparing the dataset
+### 準備資料集
 
 ```python
 import ast
@@ -578,9 +588,9 @@ df.shape
     (312, 9)
     ```
 
-Processing all 312 lines of the dataset will take a while.
-To test out the idea, we will only run it on the first 50 lines: this takes ~20 mins. 
-Feel free to skip this step and load the already processed dataset (see below).
+資料集共 312 行，全部處理要很久。
+為了試試這個做法，我們只跑前 50 行，大約要 20 分鐘。
+也可以跳過這步，直接載入處理好的資料集（見下方）。
 
 ```python
 # Running on first 50 lines
@@ -700,10 +710,10 @@ df.to_csv(data_path, index=False)
 df = pd.read_csv(data_path)
 ```
 
-### Embedding captions and keywords
-We can now use the generated captions and keywords to match relevant content to an input text query or caption. 
-To do this, we will embed a combination of keywords + captions.
-Note: creating the embeddings will take ~3 mins to run. Feel free to load the pre-processed dataset (see below).
+### 對 caption 和關鍵字做 embedding
+現在可以用產生的 caption 和關鍵字，去比對符合輸入文字查詢或 caption 的內容。 
+做法是把關鍵字加 caption 合在一起 embed。
+注意：建立 embedding 大約要 3 分鐘，也可以直接載入處理好的資料集（見下方）。
 
 ```python
 df_search = df.copy()
@@ -803,9 +813,9 @@ df_search = pd.read_csv(data_embeddings_path)
 df_search["embedding"] = df_search.embedding.apply(literal_eval).apply(np.array)
 ```
 
-### Search from input text    
+### 用輸入文字搜尋    
 
-We can compare the input text from a user directly to the embeddings we just created.
+使用者輸入的文字可以直接拿去跟剛建好的 embedding 比較。
 
 ```python
 # Searching for N most similar results
@@ -953,9 +963,9 @@ for i in user_inputs:
     <IPython.core.display.Image object>
     ```
 
-### Search from image
+### 用圖片搜尋
 
-If the input is an image, we can find similar images by first turning images into captions, and embedding those captions to compare them to the already created embeddings.
+如果輸入是圖片，可以先把圖片轉成 caption，再 embed 這些 caption，跟已建好的 embedding 比較，找出相似的圖片。
 
 ```python
 # We'll take a mix of images: some we haven't seen and some that are already in the dataset
@@ -1187,13 +1197,23 @@ for i in example_images:
     <IPython.core.display.Image object>
     ```
 
-## Wrapping up
+## 總結
 
 
-In this notebook, we explored how to leverage the multimodal capabilities of `gpt-4o-mini` to tag and caption images. By providing images along with contextual information to the model, we were able to generate tags and descriptions that can be further refined to create captions. This process has practical applications in various scenarios, particularly in enhancing search functionalities.
+這份 notebook 探索了怎麼用 `gpt-4o-mini` 的多模態能力替圖片加標籤和 caption。把圖片連同背景資訊一起給模型，就能產生標籤和描述，再進一步精修成 caption。這個流程在很多情境都實用，尤其能強化搜尋功能。
 
-The search use case illustrated can be directly applied to applications such as recommendation systems, but the techniques covered in this notebook can be extended beyond items search and used in multiple use cases, for example RAG applications leveraging unstructured image data.
+示範的搜尋用法可以直接套用到推薦系統等應用，這些技巧也能延伸到商品搜尋以外的情境，例如處理非結構化圖片資料的 RAG 應用。
 
-As a next step, you could explore using a combination of rule-based filtering with keywords and embeddings search with captions to retrieve more relevant results.
+下一步可以試試把關鍵字的規則式過濾，和 caption 的 embedding 搜尋結合，取得更相關的結果。
 
-<!-- tutor:summary -->
+## 重點整理
+- 多模態模型可以同時吃圖片和文字 context，圖片加商品標題能讓模型聚焦在要標記的那個物品。
+- 用 embedding 比對關鍵字，可以去掉同義詞或對上預先定義的關鍵字清單。
+- 先產生長描述、再用 few-shot 壓成短 caption，比一步到位更好控制風格。
+- 圖片搜尋的做法是圖片轉 caption、caption 轉 embedding，再跟已建好的 embedding 比相似度。
+- few-shot 不夠時，可以考慮 fine-tune 來對齊風格和語氣。
+
+## 練習
+1. 改關鍵字抽取的 prompt（例如限制最多 5 個關鍵字），看輸出的差異。
+2. 換一張自己的圖片當查詢，用「圖片轉 caption 再搜尋」找出最相似的商品。
+3. 把關鍵字的比對和 caption 的 embedding 搜尋結合：先用關鍵字過濾，再用 embedding 排序。

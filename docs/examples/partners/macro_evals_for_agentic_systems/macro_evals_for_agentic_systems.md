@@ -1,59 +1,69 @@
 ---
-translated: false
+translated: true
 source: examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.ipynb
 ---
-
-# Macro Evals for Agentic Systems
+# Agentic 系統的 Macro Evals
 
 > 原文：[examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.ipynb)
 
-A cookbook showing how to evaluate multi-agent systems by clustering trace-level eval signals into recurring behavior patterns and drilling into high-impact patterns.
+示範怎麼評估 multi-agent 系統：把 trace 層級的 eval 訊號分群成反覆出現的行為模式，再鑽進影響最大的那個模式。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用一份合成的電動車訂單 multi-agent 流程，示範 macro eval 的完整做法：先對每條 trace 做低層 eval，再把 trace 壓成文件、分群找出反覆出現的行為模式，最後挑一個影響最大的模式往回追可疑的 agent 或 handoff。資料都是預先算好的，不用 OpenAI API key 就能跑完。
+
+## 學完你會
+
+- 把一批 agent trace 整理成 `traces_df`、`events_df` 和可以分群的 trace 文件
+- 用 BERTopic 風格的流程（embedding、UMAP、HDBSCAN）找出行為模式，並用 impact score 排優先順序
+- 用 AgentTrace 風格的圖分析，從 focus event 往回找出該先檢查的 agent、tool 和 handoff
+
+## 開跑前
+
+不需要 OpenAI API key。資料放在範例資料夾的 `data/` 底下，如果放在別處，設環境變數 `MACRO_EVALS_DATA_ROOT`；labels 單獨放的話設 `MACRO_EVALS_LABELS_PATH`。
+
+agentic 系統出問題時，常常不只是某一次回答不好。可能 handoff 太晚、某個 specialist agent 在很多次 run 都漏掉同一個訊號，或是 review 流程被不該觸發的案例觸發。要改善系統，團隊得看整批 trace 反覆出現的行為。
+
+這篇走一遍 multi-agent 系統的 macro-eval 流程。我們用一個合成的電動車訂單 workflow，specialist agent 負責定價、法規、供應、工廠分派、排程和放行決策，同時市場和營運條件一直在變。
+
+notebook 使用預先算好的合成 trace 和存好的低層 eval labels，所以不需要 OpenAI API key 就能跑完整個流程。
+
+你會學到：
+1. 產生或收集大量有 trace 的 agent run；
+2. 對每個完成的 run 做低層 eval；
+3. 把每條 trace 變成精簡的文件；
+4. 在整批資料裡找出反覆出現的行為模式；
+5. 鑽進一個高影響的模式，找出人接下來該檢查系統哪裡。
+
+目標不是替每條 trace 建出完美的分類。目標是示範 AI 工程團隊怎麼從成千上萬個 agent 事件，收斂成少數技術人員和業務人員都看得懂的模式。
 
 
-When an agentic system fails, the problem is often larger than a single bad response. A handoff may happen too late, a specialist agent may miss the same signal across many runs, or a review process may trigger for the wrong class of cases. To improve the system, teams need to see recurring behavior across the whole population of traces.
-
-This cookbook walks through a macro-eval workflow for a multi-agent system. We use a synthetic EV order workflow where specialist agents handle pricing, compliance, supply, factory routing, scheduling, and release decisions while market and operational conditions change.
-
-The notebook uses precomputed synthetic traces and saved lower-level eval labels, so you can run the full workflow without an OpenAI API key.
-
-You will learn how to:
-1. Generate or collect many traced agent runs;
-2. Run lower-level evals on each completed run;
-3. Turn each trace into a compact document;
-4. Discover recurring behavior patterns across the population; and
-5. Drill into one high-impact pattern to find where a human should inspect the system next.
-
-The goal is not to build a perfect taxonomy of every trace. The goal is to show how an AI engineering team can move from thousands of agent events to a small number of patterns that are understandable by both technical and business stakeholders.
-
-
-## End-to-End Agentic System Map
+## 端到端的 Agentic 系統地圖
 
 ![End-to-end macro evals architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agentic-system-architecture.svg)
 
-The key idea is that the notebook evaluates a saved agentic system, not a generic chat transcript. Scenario inputs drive an orchestrated specialist swarm, the runtime emits trace bundles, saved Promptfoo labels are joined to normalized traces, and the macro-eval layer turns that evidence into pattern and diagnosis views.
+關鍵想法是，這個 notebook 評估的是一個存下來的 agentic 系統，不是一般的聊天紀錄。情境輸入驅動一群有編排的 specialist agent，runtime 產出 trace bundle，存好的 Promptfoo labels 會接到正規化後的 trace 上，macro-eval 層再把這些證據變成 pattern 和 diagnosis 的視圖。
 
 
-## 1. Why Macro Evals?
+## 1. 為什麼要 Macro Evals？
 
-Evals are how AI teams measure whether a system is working. For a simple model call, an eval might compare one output against a rubric or reference answer. For an agentic system, we also need to evaluate whether the system used the right tools, delegated to the right specialist, paused for review when risk was high, and stayed grounded in the business context.
+Eval 是 AI 團隊衡量系統有沒有在正常運作的方法。對單純的模型呼叫，eval 可能是拿一個輸出去對 rubric 或參考答案。對 agentic 系統，還要評估它有沒有用對 tool、有沒有交給對的 specialist、高風險時有沒有停下來 review，以及有沒有緊扣業務情境。
 
-Multi-agent systems make this harder because a final answer is only the last event in a longer workflow. A release recommendation can look plausible while the trace reveals that the pricing agent ignored an incentive, the supply agent missed a stockout, or the orchestrator routed around a required review step.
+Multi-agent 系統更難，因為最終答案只是長流程裡的最後一個事件。放行建議看起來合理，但 trace 可能顯示定價 agent 忽略了某個優惠、供應 agent 漏掉缺貨，或 orchestrator 繞過了必要的 review 步驟。
 
-This notebook separates the problem into two levels:
+這個 notebook 把問題分成兩層：
 
-- **Lower-level evals** grade individual agents, handoffs, tools, and completed runs. In this example, Promptfoo stands in for that agent-level eval layer by grading whether a run handled final decision quality, policy correctness, specialist routing, market drift, and review appropriateness.
-- **Macro evals** look across many lower-level findings. They ask: which kinds of problems repeat, where do they concentrate, and which part of the agent workflow should we inspect first?
+- **Lower-level evals** 評分單一 agent、handoff、tool 和完成的 run。在這個範例裡，Promptfoo 扮演 agent 層級的 eval，評分一次 run 在最終決策品質、政策正確性、specialist 分派、市場變動和 review 是否恰當上的表現。
+- **Macro evals** 看很多低層發現的整體。它們問的是：哪些問題一再重複、集中在哪裡、agent 流程的哪個部分該先檢查？
 
-We will use four reader-facing labels throughout the cookbook:
+整篇會用四個方便閱讀的標籤：
 
-- `case_type`: the generated business situation, such as a clean order, a validation block, a supplier substitution, or a pricing exception.
-- `run_outcome`: how the run ended, such as completed, awaiting review, blocked, or failed.
-- `eval_finding`: the lower-level signal that says what seemed wrong or risky.
-- `behavior_pattern`: the recurring pattern discovered across many traces.
+- `case_type`：產生出來的業務情境，例如乾淨訂單、validation 擋下、供應商替代或定價例外。
+- `run_outcome`：run 怎麼結束，例如完成、等待 review、被擋下或失敗。
+- `eval_finding`：低層的訊號，說明哪裡看起來有問題或有風險。
+- `behavior_pattern`：從很多 trace 中找出來、反覆出現的模式。
 
-A useful mental model is: `case_type` is the setup, `run_outcome` is the ending, `eval_finding` is the local symptom, and `behavior_pattern` is the population-level pattern.
+一個好用的心智模型：`case_type` 是設定，`run_outcome` 是結局，`eval_finding` 是局部症狀，`behavior_pattern` 是整批資料層級的模式。
 
 
 ```python
@@ -70,11 +80,11 @@ if not Path("requirements.txt").is_file():
 %pip install -q --only-binary=:all: -r requirements.txt
 ```
 
-## Setup and Data Materials
+## 環境設定與資料
 
-Install the dependencies, then load the offline dataset bundled with this example. The saved Promptfoo labels are part of the local data folder, so this notebook does not require a separate Promptfoo config, Promptfoo run artifact, or OpenAI API key.
+安裝相依套件，然後載入這個範例附的離線資料。存好的 Promptfoo labels 在本機資料夾裡，所以這個 notebook 不需要另外的 Promptfoo 設定、Promptfoo run artifact 或 OpenAI API key。
 
-Expected files:
+預期的檔案：
 
 ```text
 data/trace_results.jsonl
@@ -83,9 +93,9 @@ data/trace_bundles.zip
 data/eval_labels.jsonl
 ```
 
-`trace_bundles.zip` is expanded automatically into a local cache the first time the notebook runs. A full SQLite trace snapshot can be placed at `data/trace_snapshot.sqlite` for optional enrichment, but it is not required for the end-to-end workflow.
+`trace_bundles.zip` 第一次跑 notebook 時會自動解壓到本機 cache。完整的 SQLite trace snapshot 可以放在 `data/trace_snapshot.sqlite` 做選用的補充，但整個流程不一定要有它。
 
-If your data lives outside the example folder, set `MACRO_EVALS_DATA_ROOT` to that directory. If labels live separately, set `MACRO_EVALS_LABELS_PATH`.
+如果你的資料在範例資料夾以外，把 `MACRO_EVALS_DATA_ROOT` 設成那個目錄。labels 放在別處的話，設 `MACRO_EVALS_LABELS_PATH`。
 
 
 ```python
@@ -253,32 +263,32 @@ display(resolved_paths_df)
 display(Markdown(f"Example root: `{display_path(EXAMPLE_ROOT)}`  \nData root: `{display_path(DATA_ROOT)}`"))
 ```
 
-## 2. The Simulation: Automotive Orders in a Changing World
+## 2. 模擬情境：變動世界裡的汽車訂單
 
-The simulated business is an EV order and post-configuration workflow. A customer has chosen a vehicle configuration, and the company needs to decide whether the order can proceed as-is, needs adjustment, should be rerouted, requires substitution, or should pause for review.
+模擬的業務是電動車訂單和配置後流程。客戶選好了車款配置，公司要決定訂單能不能照原樣進行、需要調整、要改派、需要替代料件，或是該暫停 review。
 
-The simulation includes the kinds of constraints that make real automotive fulfillment hard:
+模擬包含了讓真實汽車履約很難做的那些限制：
 
-- component availability and supplier substitution;
-- factory capacity and production scheduling;
-- pricing exceptions, promotions, and incentives;
-- tariffs and dated market signals;
-- regional compliance constraints;
-- customer clarification and escalation paths;
-- release review thresholds for risky or ambiguous cases.
+- 零組件供應和供應商替代；
+- 工廠產能和生產排程；
+- 定價例外、促銷和優惠；
+- 關稅和有日期的市場訊號；
+- 各地區的法規限制；
+- 客戶澄清和升級處理的路徑；
+- 風險或模糊案例的放行 review 門檻。
 
-The agent swarm is organized around those business responsibilities. An orchestrator receives the order and current environment, then delegates to specialists such as validation, supply risk, procurement planning, capacity balancing, factory routing, market intelligence, pricing, compliance, customer communications, and release review.
+agent swarm 依這些業務職責來組織。orchestrator 收到訂單和當前環境，再委派給 specialist，像是 validation、供應風險、採購規劃、產能平衡、工廠分派、市場情報、定價、法規、客戶溝通和放行 review。
 
-This maps naturally to the OpenAI Agents SDK. In the SDK, an agent is the core unit of a workflow: it packages a model, instructions, and optional runtime behavior such as tools, handoffs, guardrails, and structured outputs. The simulation follows that pattern:
+這很自然對應到 OpenAI Agents SDK。在 SDK 裡，agent 是 workflow 的核心單位：它把模型、instructions 和選用的 runtime 行為（tools、handoffs、guardrails、structured outputs）包在一起。模擬照這個模式做：
 
-- **specialized agents** package the instructions and tools for one part of the decision;
-- **handoffs** let the orchestrator delegate to another specialist agent instead of stuffing every responsibility into one prompt;
-- **function tools** expose order data, environment signals, and approval markers through structured inputs and outputs;
-- **guardrails and review thresholds** represent validation, blocking, and human-review flows for risky or ambiguous cases;
-- **structured outputs** make downstream grading and aggregation possible;
-- **traces** preserve structured records of model calls, tool calls, handoffs, guardrails, and custom spans for debugging and macro-level analysis.
+- **specialized agents** 把決策某一塊的 instructions 和 tools 包起來；
+- **handoffs** 讓 orchestrator 把工作委派給另一個 specialist agent，不用把所有職責塞進同一個 prompt；
+- **function tools** 用結構化的輸入輸出提供訂單資料、環境訊號和核准標記；
+- **guardrails 和 review 門檻** 代表風險或模糊案例的驗證、擋下和人工 review 流程；
+- **structured outputs** 讓後續的評分和彙整成為可能；
+- **traces** 保留 model call、tool call、handoff、guardrail 和自訂 span 的結構化紀錄，供 debug 和 macro 層級的分析使用。
 
-The low-level evals later in the notebook are grounded in this simulation story. If the case type says there is a supplier substitution under tariff pressure, the trace should show awareness of supply, policy, market, and review risk. If the case type is clean, unnecessary escalation is itself a finding.
+notebook 後面的低層 evals 都建立在這個模擬情境上。如果 case type 說是關稅壓力下的供應商替代，trace 就應該顯示它注意到供應、政策、市場和 review 風險。如果 case type 是乾淨的，多餘的升級處理本身就是一個 finding。
 
 
 ```python
@@ -430,13 +440,13 @@ if SQLITE_PATH is None:
     ))
 ```
 
-### What One Bundle Represents
+### 一個 Bundle 代表什麼
 
-In this notebook, a **bundle** is the evidence packet for one simulated customer-order interaction.
+在這個 notebook 裡，**bundle** 是一次模擬的客戶訂單互動的證據包。
 
-Imagine one customer has configured an EV and the business needs to decide what to do next. The swarm receives that order plus the current operating world: supply constraints, factory capacity, promotions, incentives, tariffs, competitor pressure, and review thresholds. The agents then route work through specialists and produce a final state. The bundle is everything we need to audit that interaction afterward.
+想像一個客戶配好了一台電動車，公司要決定下一步。swarm 收到這張訂單，加上當前的營運環境：供應限制、工廠產能、促銷、優惠、關稅、競爭壓力和 review 門檻。agent 接著把工作分派給各個 specialist，產生最終狀態。bundle 就是事後稽核這次互動需要的全部資料。
 
-A bundle matters because macro evals need the workflow evidence behind the final answer. They need to know which agents were consulted, which tools were called, which environment signals were active, whether review was required, and where the workflow changed direction. With that evidence, we can move from "what happened in this one run?" to "which workflow patterns repeat across many runs?"
+bundle 重要，因為 macro evals 需要最終答案背後的 workflow 證據。要知道諮詢過哪些 agent、呼叫過哪些 tool、哪些環境訊號在作用、有沒有要求 review，以及 workflow 在哪裡轉向。有了這些證據，才能從「這一次 run 發生了什麼？」走到「很多次 run 之間，哪些 workflow 模式一再重複？」
 
 
 ```python
@@ -553,13 +563,13 @@ if sample_bundle is not None and sample_result_row is not None:
     display(example_interaction_df)
 ```
 
-### How to Read the Dataset Profile
+### 怎麼看 Dataset Profile
 
-The dataset profile tells us the scale and texture of the simulated business process we are about to evaluate. Each analyzable row is one customer-order interaction with enough trace evidence to reconstruct what the agent swarm saw, which specialists it consulted, and how the workflow ended.
+dataset profile 告訴我們即將評估的模擬業務流程的規模和質地。每個可分析的 row 是一次客戶訂單互動，帶有足夠的 trace 證據，可以重建 agent swarm 看到了什麼、諮詢了哪些 specialist，以及 workflow 怎麼結束。
 
-The generated batch asked the swarm to handle 1,000 synthetic order interactions. For 992 of them, we have a bundle: a complete evidence packet for grading the run, building a trace document, clustering it with similar runs, and inspecting the agent path afterward. That gives us a large enough population to look for repeated behavior while still retaining the trace detail needed to explain individual examples.
+這批資料要求 swarm 處理 1,000 筆合成的訂單互動。其中 992 筆有 bundle：一份完整的證據包，可以用來評分這次 run、建 trace 文件、跟相似的 run 分群，並在事後檢視 agent 走過的路徑。這個規模夠大，能找出重複的行為，同時保有說明單一案例所需的 trace 細節。
 
-The typical bundle is a structured record of a simulated business process: the order setup, active world events, specialist handoffs, tool/function activity, review artifacts, and terminal state. That is why this dataset can support macro evals. We can evaluate individual decisions, and we can also ask whether repeated workflow patterns emerge across hundreds of rich interaction records.
+典型的 bundle 是一個模擬業務流程的結構化紀錄：訂單設定、當時的世界事件、specialist handoff、tool/function 活動、review 產物和最終狀態。這就是這份資料能支撐 macro evals 的原因。我們能評估單一決策，也能問在數百筆豐富的互動紀錄中，有沒有出現重複的 workflow 模式。
 
 
 ```python
@@ -590,19 +600,19 @@ fig.show()
 display(scenario_counts_df.head(15))
 ```
 
-### What `case_type` Means
+### `case_type` 是什麼意思
 
-A `case_type` is a scenario label from the generator. It describes the kind of business situation the swarm was asked to handle before any eval or clustering has happened.
+`case_type` 是產生器給的情境標籤。它描述在任何 eval 或分群發生之前，swarm 被要求處理的是哪一種業務情境。
 
-Examples from this dataset include:
+這份資料裡的例子：
 
-- `clean_simple`: a relatively straightforward order where the correct behavior is usually to complete without unnecessary review.
-- `validation_block_simple`: a configuration has a validation issue, so the swarm should avoid overconfident release.
-- `supplier_substitution_compound`: component availability creates a substitution decision, often with downstream routing and scheduling implications.
-- `pricing_exception_compound`: pricing, incentives, or margin policy need specialist review.
-- `regional_compliance_compound`: the order needs regional policy or compliance handling.
+- `clean_simple`：相對單純的訂單，正確的行為通常是不做多餘的 review 就完成。
+- `validation_block_simple`：配置有 validation 問題，所以 swarm 應該避免過度自信地放行。
+- `supplier_substitution_compound`：零組件供應造成替代決策，常常連帶影響後續的分派和排程。
+- `pricing_exception_compound`：定價、優惠或毛利政策需要 specialist review。
+- `regional_compliance_compound`：訂單需要地區政策或法規的處理。
 
-The bar chart above is a coverage view. It shows whether the simulation produced enough variety to evaluate the swarm under different business pressures. A strong macro-eval dataset needs both ordinary cases and pressure cases, because recurring patterns only become meaningful when we can compare behavior across different setups.
+上面的長條圖是涵蓋度的視圖。它顯示模擬是否產生了足夠多樣的情境，能在不同業務壓力下評估 swarm。好的 macro-eval 資料集要同時有一般案例和壓力案例，因為要能比較不同設定下的行為，重複出現的模式才有意義。
 
 
 ```python
@@ -630,24 +640,23 @@ case_type_guide_df["plain_english"] = case_type_guide_df["case_type"].map(CASE_T
 display(case_type_guide_df.head(12))
 ```
 
-The table above turns the generator labels into business language. This is important because the same later pattern can mean different things depending on the setup. A fulfillment reroute in a supplier substitution case may be desirable. The same reroute in a clean case might be unnecessary complexity.
+上面的表把產生器的標籤轉成業務語言。這很重要，因為同一個後續模式在不同設定下意義不同。供應商替代案例裡的履約改派可能是對的，同樣的改派出現在乾淨案例裡，就可能是不必要的複雜度。
 
 
-## 3. Lower-Level Agent Evals with Promptfoo
+## 3. 用 Promptfoo 做低層 Agent Evals
 
-A mature multi-agent system should not rely on final-answer inspection alone. Each launched agent usually needs its own evals: did this specialist use the right evidence, call the right tools, respect policy, hand off at the right time, and produce an output that the rest of the system can trust?
+成熟的 multi-agent 系統不該只靠檢查最終答案。每個啟用的 agent 通常都需要自己的 evals：這個 specialist 有沒有用對證據、呼叫對 tool、遵守政策、在對的時間 handoff，並產出系統其他部分可以信任的輸出？
 
-Promptfoo plays that role in this notebook. It represents the lower-level eval layer that would normally live beside the agents in a production workflow. In a live system, some of these checks might run online, some might run asynchronously, and some might be sampled for human review. The implementation detail matters less than the contract: every run should carry eval signals that say what looked correct, risky, or wrong at the agent and workflow level.
+Promptfoo 在這個 notebook 裡扮演這個角色。它代表低層的 eval 層，在實際的 production workflow 裡通常會放在 agent 旁邊。在線上系統裡，有些檢查可能即時跑，有些非同步跑，有些抽樣給人工 review。實作細節沒那麼重要，重要的是約定：每次 run 都該帶著 eval 訊號，說明在 agent 和 workflow 層級哪些地方看起來正確、有風險或有錯。
 
-In this dataset, Promptfoo grades completed traces with questions that mirror the kinds of agent-level evals teams build for real systems:
+在這份資料裡，Promptfoo 用一組問題替完成的 trace 評分，這些問題對應團隊在真實系統裡會建的 agent 層級 evals：
+- 最終決策有沒有順著當前的問題得出？
+- 系統有沒有遵守定價、關稅、優惠、地區和政策的限制？
+- orchestrator 有沒有啟用該案例所暗示的 specialist？
+- 這次 run 有沒有回應有日期的市場訊號，而不是把世界當成靜止的？
+- review 或升級處理跟風險成不成比例？
 
-- Did the final decision follow from the active issue?
-- Did the system respect pricing, tariff, incentive, regional, and policy constraints?
-- Did the orchestrator activate the specialists implied by the case?
-- Did the run respond to dated market signals rather than acting as if the world were static?
-- Was review or escalation proportionate to the risk?
-
-These checks produce `eval_finding`. A failing lower-level eval is a local signal: one trace, one rubric, one symptom. The macro-eval sections later ask what those local signals become at population scale. Do they scatter randomly, or do they reveal repeated behavior patterns that point to a specific agent, handoff, tool, or business policy?
+這些檢查產生 `eval_finding`。失敗的低層 eval 是一個局部訊號：一條 trace、一個 rubric、一個症狀。後面的 macro-eval 章節要問的是，這些局部訊號放大到整批資料會變成什麼。它們是隨機散落，還是顯露出重複的行為模式，指向特定的 agent、handoff、tool 或業務政策？
 
 
 ```python
@@ -785,29 +794,29 @@ else:
         fig.show()
 ```
 
-### Interpreting the Promptfoo Outputs
+### 解讀 Promptfoo 的輸出
 
-The pie chart is the simplest lower-level scorecard: it separates traces that passed all rubric checks from traces with at least one failed check. In a live multi-agent system, this is the kind of layer that tells us which runs deserve attention before we do any macro analysis.
+圓餅圖是最簡單的低層成績單：把通過所有 rubric 檢查的 trace，跟至少有一項檢查失敗的 trace 分開。在線上的 multi-agent 系統裡，這一層可以告訴我們，在做任何 macro 分析之前，哪些 run 值得先關注。
 
-The failed-rubric bar chart answers a more useful question: which kinds of agent or workflow concerns appear most often? For this dataset, final decision quality is the dominant lower-level finding, while policy correctness, review appropriateness, and market-drift awareness also appear. That suggests the macro layer should focus less on isolated syntax errors and more on repeated decision-making patterns.
+失敗 rubric 的長條圖回答一個更有用的問題：哪一類 agent 或 workflow 問題最常出現？在這份資料裡，最終決策品質是最主要的低層 finding，政策正確性、review 恰當性和市場變動意識也都有出現。這表示 macro 層應該少關注零星的語法錯誤，多關注重複的決策模式。
 
-This is the bridge to macro evals. Promptfoo gives each trace local eval labels. The rest of the notebook asks how those labels organize across the whole population. In other words: agent-level evals create the raw signal, and macro evals turn many such signals into a map of recurring system behavior.
+這是通往 macro evals 的橋。Promptfoo 給每條 trace 局部的 eval labels。notebook 其餘部分要問的是，這些 labels 在整批資料裡怎麼組織起來。換句話說，agent 層級的 evals 產生原始訊號，macro evals 把很多這樣的訊號變成系統重複行為的地圖。
 
 
-## 4. Build the Analysis Dataset
+## 4. 建立分析用資料集
 
-Now we normalize the run bundles into two analysis tables:
+現在把 run bundle 正規化成兩張分析用的表：
 
-- `traces_df`: one row per run, with metadata, outcome, findings, and document fields.
-- `events_df`: one row per normalized trace event, including handoffs, tool calls, status events, model responses, and review/finding markers.
+- `traces_df`：一個 run 一列，有 metadata、結果、findings 和文件欄位。
+- `events_df`：一個正規化後的 trace event 一列，包含 handoff、tool call、狀態事件、model response 和 review/finding 標記。
 
-We also build trace documents. The document is the modeling object that the BERTopic-style section will cluster. The notebook uses `doc_structured_summary` because it is compact but still preserves scenario, routing, state transitions, handoffs, findings, and terminal state.
+我們也建 trace 文件。文件是 BERTopic 風格那一節要拿來分群的建模對象。notebook 用 `doc_structured_summary`，因為它夠精簡，同時保留了情境、分派、狀態轉換、handoff、findings 和最終狀態。
 
-The public analysis path is:
+公開的分析路徑是：
 
 `case_type -> run_outcome -> eval_finding -> behavior_pattern`
 
-The first three labels are known before clustering. The fourth appears after discovery.
+前三個標籤在分群前就已知，第四個是探索之後才出現。
 
 
 ```python
@@ -992,16 +1001,16 @@ display(analysis_profile_df)
 display(labeled_traces_df[["run_id", "case_type", "run_outcome", "eval_finding", "market_regime", "agent_version_set", "impact_score"]].head(10))
 ```
 
-### Interpreting the Analysis Profile
+### 解讀 Analysis Profile
 
-The profile above confirms that the lower-level eval layer has joined onto the normalized trace population. The important numbers are:
+上面的 profile 確認低層 eval 層已經接到正規化後的 trace 上。重要的數字有：
 
-- normalized traces: the bundle-backed population we can inspect;
-- normalized events: the event-level evidence behind those traces;
-- case types: the scenario coverage produced by the generator; and
-- Promptfoo-failed or review/failure-bearing traces: the lower-level signal population most relevant for macro discovery.
+- normalized traces：有 bundle 支撐、我們能檢視的資料；
+- normalized events：這些 trace 背後的事件層級證據；
+- case types：產生器產出的情境涵蓋度；
+- Promptfoo 判失敗或帶有 review/failure 的 trace：跟 macro 探索最相關的低層訊號母體。
 
-The exact counts depend on whether you run the full notebook or set `MACRO_EVALS_TRACE_LIMIT` for a smoke test. The sample rows show how the notebook simplifies the raw data into readable labels. For example, a `pricing_exception_compound` case that ends in review with a `final_decision_quality` finding is now easy to follow through the rest of the notebook.
+實際的數量取決於你跑完整的 notebook，還是設 `MACRO_EVALS_TRACE_LIMIT` 做 smoke test。範例列顯示 notebook 怎麼把原始資料簡化成好讀的 labels。舉例來說，一個以 review 收尾、帶 `final_decision_quality` finding 的 `pricing_exception_compound` 案例，在後面的流程裡就很容易追蹤。
 
 
 ```python
@@ -1071,47 +1080,47 @@ label_crosswalk_df = (
 display(label_crosswalk_df)
 ```
 
-### What the First Sankey Plot Teaches
+### 第一張 Sankey 圖告訴我們什麼
 
-The first Sankey plot is a pre-clustering view. It shows how generated case types flow into run outcomes and lower-level findings.
+第一張 Sankey 圖是分群前的視圖。它顯示產生出來的 case type 怎麼流向 run outcome 和低層 findings。
 
-Read it from left to right:
+從左往右看：
 
-- wide bands from a `case_type` mean that scenario appears often;
-- splits into `run_outcome` show whether that scenario tends to complete, pause, block, or fail;
-- final bands into `eval_finding` show which lower-level rubric or runtime signal is attached.
+- 從某個 `case_type` 出發的寬帶，代表這個情境常出現；
+- 分到 `run_outcome` 的分流，顯示這個情境傾向完成、暫停、被擋下還是失敗；
+- 最後流入 `eval_finding` 的帶子，顯示附著了哪個低層 rubric 或 runtime 訊號。
 
-This is already useful for a team. A business reader can ask whether the simulation produces the right kinds of pressure. An AI engineer can ask whether certain scenarios overproduce the same low-level finding. What it cannot yet answer is whether those findings represent the same underlying behavior pattern. That is why we cluster next.
-
-
-### Trace Documents: Turning Runs into Comparable Text
-
-A raw agent trace is too detailed to cluster directly. It may contain hundreds of events, long model responses, tool payloads, and repeated status updates. The document construction step compresses each run into a comparable view while preserving the information that matters for macro evals.
-
-A good trace document includes:
-
-- the business setup (`case_type`, selected route, active environment signals);
-- the run outcome and severity;
-- the important handoffs and specialist activations;
-- review/finding markers;
-- a short state-transition digest.
-
-The document view defines what the clustering algorithm is allowed to notice. Including agent handoffs helps the macro eval discover routing patterns. Including environment signals helps it discover market-drift failures. The quality of the trace document is therefore part of the evaluation design, not a mechanical cleanup step.
+這對團隊已經有用。業務人員可以問模擬有沒有產生對的壓力類型，AI 工程師可以問某些情境是不是過度產生同一種低層 finding。它還回答不了的是，這些 findings 是不是代表同一個底層行為模式，所以下一步要分群。
 
 
-### Failure and Focus-Event Glossary
+### Trace 文件：把 Run 變成可比較的文字
 
-The raw traces contain many event-level labels. To keep the notebook readable, we do not ask readers to learn all of them. The AgentTrace-style section mainly cares about focus events: visible moments in the trace where the system appears to require attention.
+原始的 agent trace 太細，無法直接分群。它可能有數百個事件、很長的 model response、tool payload 和重複的狀態更新。建構文件這一步，是把每個 run 壓成可比較的檢視，同時保留對 macro evals 重要的資訊。
 
-In this simulation, common focus-event signals include:
+好的 trace 文件包含：
 
-- `review finding`: a review or validation surface recorded an issue.
-- `review required` or `awaiting_review`: the run paused because the simulated business process required review.
-- `failed` or `blocked`: the run reached a degraded terminal state.
-- `triage route` or reroute signals: the workflow changed direction because another owner needed to act.
-- tool warnings or policy markers: a structured tool output indicated risk, ambiguity, or a policy constraint.
+- 業務設定（`case_type`、選到的路徑、當時的環境訊號）；
+- run 的結果和嚴重程度；
+- 重要的 handoff 和 specialist 啟用；
+- review/finding 標記；
+- 簡短的狀態轉換摘要。
 
-These are observability signals, not proof of root cause. They tell the diagnosis pass where to anchor its backward search.
+文件的樣子決定了分群演算法被允許注意到什麼。把 agent handoff 放進去，有助於 macro eval 找出分派模式。把環境訊號放進去，有助於找出市場變動造成的失敗。所以 trace 文件的品質是 eval 設計的一部分，不是機械式的清理。
+
+
+### Failure 與 Focus-Event 詞彙表
+
+原始 trace 有很多事件層級的標籤。為了讓 notebook 好讀，我們不要求讀者全部學會。AgentTrace 風格那一節主要關心 focus event：trace 裡系統看起來需要注意的明顯時刻。
+
+在這個模擬裡，常見的 focus-event 訊號有：
+
+- `review finding`：review 或 validation 的環節記錄了一個問題。
+- `review required` 或 `awaiting_review`：因為模擬的業務流程要求 review，run 暫停了。
+- `failed` 或 `blocked`：run 走到一個退化的終止狀態。
+- `triage route` 或改派訊號：因為需要另一個負責人處理，workflow 轉向了。
+- tool 警告或政策標記：結構化的 tool 輸出顯示有風險、模糊或政策限制。
+
+這些是 observability 訊號，不是根本原因的證明。它們告訴 diagnosis 這一步要從哪裡錨定、往回搜尋。
 
 
 ```python
@@ -1145,37 +1154,37 @@ display(Markdown(
 print(str(example_row[DISCOVERY_DOC_COLUMN])[:2400])
 ```
 
-The example document above is a single trace rendered as a compact narrative. It is intentionally denser than prose but easier to compare than a raw event log. When you adapt this workflow, spend real time on document construction. Better documents usually produce more useful behavior patterns than more complicated clustering settings.
+上面的範例文件是一條 trace 被呈現成精簡的敘述。它刻意比散文更密，但比原始的事件 log 更容易比較。改用這套流程時，要花真正的時間在建構文件。通常文件做得好，比用更複雜的分群設定更能得到有用的行為模式。
 
 
-## 5. BERTopic-Style Discovery
+## 5. BERTopic 風格的探索
 
-The discovery pass is inspired by the BERTopic family of methods. The high-level idea is modular:
+探索這一步受 BERTopic 一系列方法啟發。高層的想法是模組化的：
 
-1. **Represent each trace document as a vector.** If the document for trace $i$ is $d_i$, the embedding model produces a vector $e_i = f(d_i)$.
-2. **Reduce the vector geometry.** A reducer such as UMAP maps $e_i$ to a lower-dimensional point $z_i$ that preserves useful local neighborhoods.
-3. **Cluster dense regions.** A density clusterer such as HDBSCAN groups nearby points and can mark outliers as noise.
-4. **Represent each topic.** For each cluster, compute terms that distinguish that cluster from the rest of the corpus.
+1. **把每份 trace 文件表示成向量。** 如果 trace $i$ 的文件是 $d_i$，embedding 模型產生向量 $e_i = f(d_i)$。
+2. **降低向量的維度。** 像 UMAP 這樣的 reducer 把 $e_i$ 映射到低維的點 $z_i$，並保留有用的局部鄰近關係。
+3. **對密集區域分群。** 像 HDBSCAN 這樣的密度分群器把相近的點分成一群，並且可以把離群點標成雜訊。
+4. **表示每個 topic。** 對每個 cluster，計算能把它和其餘語料區分開來的詞。
 
-This notebook uses the helper module to keep the implementation compact, but the major mathematical ideas are visible:
+這個 notebook 用 helper module 讓實作保持精簡，但主要的數學想法都看得到：
 
-- A trace belongs to a cluster $k$ when its document vector is near other trace vectors in the reduced space.
-- A term is useful for labeling cluster $k$ when it appears often inside $k$ and less often elsewhere.
-- A simple class-aware term score is:
+- 當一條 trace 的文件向量在降維後的空間裡靠近其他 trace 向量，它就屬於 cluster $k$。
+- 一個詞適合用來標記 cluster $k$，是當它在 $k$ 裡常出現，在其他地方較少出現。
+- 一個簡單、考慮類別的詞分數是：
 
 $$
 score(t, k) = tf(t, k) \times \log\left(\frac{1 + N}{1 + df(t)}\right)
 $$
 
-where $tf(t, k)$ is the term frequency for term $t$ inside cluster $k$, $df(t)$ is the number of clusters/documents where the term appears, and $N$ is the comparison population size. The exact implementation can vary, but the intuition is stable: labels should describe what makes a cluster distinctive.
+其中 $tf(t, k)$ 是詞 $t$ 在 cluster $k$ 裡的詞頻，$df(t)$ 是詞出現在其中的 cluster/文件數，$N$ 是比較母體的大小。實際實作可以不同，但直覺是穩定的：label 應該描述是什麼讓這個 cluster 與眾不同。
 
-Finally, we rank patterns by a triage metric:
+最後，我們用一個 triage 指標替 pattern 排名：
 
 $$
 impact\_score(k) = prevalence\_share(k) \times severity\_weighted\_prevalence(k)
 $$
 
-This is not a universal risk formula. It is a practical prioritization score: a pattern matters more when it is both common and severe.
+這不是通用的風險公式。它是實用的優先排序分數：一個 pattern 同時常見又嚴重時，就更重要。
 
 
 ```python
@@ -1244,19 +1253,19 @@ display(
 )
 ```
 
-### Interpreting the Discovery Output
+### 解讀探索的輸出
 
-The discovery summary tells us how many traces were clustered and how many non-noise behavior patterns were recovered. We run discovery on the traces that already have failure, review, runtime, or Promptfoo signals because this cookbook is focused on where the system needs attention.
+探索的摘要告訴我們有多少條 trace 被分群，以及找回了多少個非雜訊的行為模式。我們只對已經有 failure、review、runtime 或 Promptfoo 訊號的 trace 做探索，因為這篇專注在系統需要關注的地方。
 
-The topic table should be read as a triage board:
+topic 表要當成 triage 看板來讀：
 
-- `trace_count` and `prevalence` tell us how often the pattern appears.
-- `severity_weighted_prevalence` tells us how severe the traces in the pattern tend to be.
-- `impact_score` combines prevalence and severity into a ranking.
-- `dominant_owner` is a heuristic owner label, not an assignment.
-- `keywords_text` gives the terms that made the pattern distinctive.
+- `trace_count` 和 `prevalence` 告訴我們這個 pattern 多常出現。
+- `severity_weighted_prevalence` 告訴我們這個 pattern 裡的 trace 傾向多嚴重。
+- `impact_score` 把 prevalence 和嚴重度合成一個排名。
+- `dominant_owner` 是啟發式的負責人標籤，不是指派。
+- `keywords_text` 給出讓這個 pattern 與眾不同的詞。
 
-A high-impact behavior pattern is not automatically a defect. It is where a reviewer should look first because the pattern is frequent, consequential, or both.
+高影響的行為模式不一定就是 defect。它是 reviewer 該先看的地方，因為這個模式常見、後果嚴重，或兩者皆是。
 
 
 ```python
@@ -1271,7 +1280,7 @@ impact_explanation_df["formula"] = "prevalence x severity_weighted_prevalence"
 display(impact_explanation_df)
 ```
 
-The table above makes the impact score concrete. A pattern can rank highly because it appears in many traces, because it concentrates higher-severity traces, or both. In the automotive configurator setting, that helps separate a rare edge case from a recurring operational behavior that may affect many orders.
+上面的表讓 impact score 變得具體。一個 pattern 排名高，可能因為它出現在很多 trace，也可能因為它集中了較高嚴重度的 trace，或兩者都是。在汽車 configurator 的情境裡，這有助於分辨罕見的邊緣案例，和可能影響很多訂單、反覆發生的營運行為。
 
 
 ```python
@@ -1292,13 +1301,13 @@ if "topic_label" in scatter_df.columns:
     scatter_fig.show()
 ```
 
-### Interpreting the Leaderboard and Trace Map
+### 解讀 Leaderboard 和 Trace Map
 
-The leaderboard is the portfolio view: it ranks behavior patterns by weighted impact. Use it to decide which pattern deserves human attention first.
+leaderboard 是投資組合式的視圖：依加權影響替行為模式排名。用它決定哪個 pattern 該先得到人的關注。
 
-The trace map is a geometry view: each point is one trace document, placed near traces with similar text. Nearby points often share routing paths, findings, or environment signals. The colors show discovered behavior patterns. Treat the map as diagnostic, not exact geography. Its job is to reveal clusters and outliers that might be hard to see in tables.
+trace map 是幾何視圖：每個點是一份 trace 文件，放在跟它文字相近的 trace 附近。相鄰的點常有相同的分派路徑、findings 或環境訊號。顏色代表探索出來的行為模式。把這張圖當成診斷用，不是精確的地理位置。它的作用是揭露表格裡可能很難看出的 cluster 和離群點。
 
-In this dataset, patterns such as fulfillment reroutes, pricing drift, compliance gates, and wheel/trim mismatches correspond to recognizable business problems. This is the first moment where lower-level evals become a macro-level story: repeated agent behaviors are visible across many cases.
+在這份資料裡，像履約改派、定價漂移、法規關卡和輪圈/內裝不匹配這些 pattern，對應到看得出來的業務問題。這是低層 evals 第一次變成 macro 層級的故事：很多案例裡都看得到重複的 agent 行為。
 
 
 ```python
@@ -1342,33 +1351,32 @@ pattern_eval_df = (
 display(pattern_eval_df)
 ```
 
-### Interpreting the Case-Type Heatmap
+### 解讀 Case-Type Heatmap
 
-The heatmap asks: which generated scenarios concentrate which behavior patterns?
+heatmap 問的是：哪些產生出來的情境集中了哪些行為模式？
 
-Read each row as a behavior pattern and each column as a case type. Darker or larger values mean that a pattern is more common within that scenario slice. This helps distinguish expected behavior from surprising behavior. For example, a fulfillment reroute pattern may be expected in supplier substitution or capacity cases, but more suspicious in clean cases.
+每一列是一個行為模式，每一欄是一個 case type。顏色越深或數值越大，代表該 pattern 在那個情境切片裡越常見。這有助於分辨預期的行為和意外的行為。舉例來說，履約改派的 pattern 在供應商替代或產能案例裡可能是預期的，出現在乾淨案例裡就比較可疑。
 
-The table beneath the chart connects patterns back to lower-level findings. If one behavior pattern repeatedly carries `final_decision_quality` findings, an AI engineer may inspect prompts, tool schemas, or handoff policies. If the pattern maps to a business-specific case type, a product or operations stakeholder can ask whether the simulated policy itself is realistic.
+圖下方的表把 pattern 連回低層 findings。如果某個行為模式反覆帶有 `final_decision_quality` finding，AI 工程師可能會檢查 prompt、tool schema 或 handoff 政策。如果 pattern 對應到某個業務特有的 case type，產品或營運人員可以問，模擬的政策本身實不實際。
 
 
-### Comparing Patterns Across Slices
+### 跨切片比較 Pattern
 
-This step appears here because BERTopic-style discovery has just given every risky trace a `behavior_pattern`. Before clustering, we could compare generated cases, outcomes, and lower-level eval findings. After clustering, we can ask a more useful macro-eval question: **where does each discovered behavior pattern concentrate?**
+這一步放在這裡，是因為 BERTopic 風格的探索剛好替每條有風險的 trace 指定了 `behavior_pattern`。分群之前，我們能比較產生的案例、結果和低層 eval findings。分群之後，可以問更有用的 macro-eval 問題：**每個探索出來的行為模式集中在哪裡？**
 
-This comparison is not a core equation from the BERTopic paper. It is a simple cohort-analysis layer we apply after topic assignment. The idea is to compare two shares:
+這個比較不是 BERTopic 論文裡的核心公式。它是我們在 topic 指派之後加上的簡單 cohort 分析層。想法是比較兩個占比：
 
-- **overall pattern share**: among all clustered traces, what share belongs to this behavior pattern?
-- **slice pattern share**: within one slice, such as `case_type = supplier_substitution_compound`, what share belongs to this behavior pattern?
+- **overall pattern share**：在所有被分群的 trace 裡，屬於這個行為模式的占比是多少？
+- **slice pattern share**：在一個切片裡，例如 `case_type = supplier_substitution_compound`，屬於這個行為模式的占比是多少？
 
-Then we compute:
+然後計算：
 
 $$
 lift = \frac{slice\ pattern\ share}{overall\ pattern\ share}
 $$
+Lift 是 `1.0`，代表這個 pattern 在那個切片出現的頻率跟整體差不多。高於 `1.0`，代表它集中在那個切片。低於 `1.0`，代表它在那裡比較少見。
 
-A lift of `1.0` means the pattern appears in that slice about as often as it appears overall. A lift above `1.0` means the pattern is concentrated in that slice. A lift below `1.0` means it is less common there.
-
-In macro evals, this is the bridge from discovery to action. A behavior pattern is easier to investigate when we can say where it shows up: a generated scenario, an agent version, an orchestration mode, a market regime, or a review state.
+在 macro evals 裡，這是從探索走向行動的橋。如果能說出一個行為模式出現在哪裡（某個產生的情境、某個 agent 版本、某個編排模式、某個市場狀態或某個 review 狀態），它就比較容易調查。
 
 
 ```python
@@ -1407,7 +1415,7 @@ slice_lift_view_df = (
 display(slice_lift_view_df)
 ```
 
-The table above should be read as an investigation queue. It highlights behavior patterns that are unusually concentrated in a given `case_type`, while requiring at least a small number of supporting traces. For example, if a routing pattern is much more common inside supplier-substitution cases than it is overall, that suggests the team should inspect supplier tools, procurement handoffs, and fulfillment policy before treating the pattern as a generic system issue.
+上面的表要當成調查佇列來讀。它標出特別集中在某個 `case_type` 的行為模式，同時要求至少有少量支持的 trace。舉例來說，如果某個分派 pattern 在供應商替代案例裡比整體常見得多，就表示團隊在把它當成通用的系統問題之前，應該先檢查供應商 tool、採購 handoff 和履約政策。
 
 
 ```python
@@ -1426,30 +1434,30 @@ public_label_view_df = (
 display(public_label_view_df)
 ```
 
-### What the Second Sankey Plot Adds
+### 第二張 Sankey 圖多了什麼
 
-The second Sankey plot adds the discovered `behavior_pattern` as the final step:
+第二張 Sankey 圖把探索出來的 `behavior_pattern` 加成最後一步：
 
 `case_type -> run_outcome -> eval_finding -> behavior_pattern`
 
-This is the key macro-eval move. The first three labels describe the generated setup, the ending, and the local symptom. The final label shows whether those local symptoms collapse into a smaller number of repeated operating patterns.
+這是 macro-eval 的關鍵動作。前三個標籤描述產生的設定、結局和局部症狀。最後一個標籤顯示這些局部症狀是不是收斂成較少數、重複出現的營運模式。
 
-A business stakeholder can use this to ask, "Which order scenarios are creating the most repeated operational issues?" An AI engineer can use it to ask, "Which lower-level findings are actually the same routing or decision pattern?" Both views are useful, and the Sankey gives them a shared map.
+業務人員可以用它問「哪些訂單情境製造了最多重複的營運問題？」AI 工程師可以用它問「哪些低層 findings 其實是同一個分派或決策模式？」兩種視角都有用，Sankey 給了他們共同的地圖。
 
 
-## 6. AgentTrace-Style Diagnosis
+## 6. AgentTrace 風格的 Diagnosis
 
-Discovery tells us what repeats. Diagnosis asks where to inspect first.
+探索告訴我們什麼在重複。Diagnosis 問的是該先檢查哪裡。
 
-For a selected behavior pattern, we reconstruct a lightweight execution graph:
+對選定的行為模式，我們重建一個輕量的執行圖：
 
 $$
 G = (V, E)
 $$
 
-where each node $v \in V$ is a normalized trace event and each edge $e \in E$ links events through temporal order, handoffs, tool calls, and nearby execution context. We then choose a focus event, also called an anchor. In this simulation, a focus event is usually a review/finding marker, failure-related status, or late-stage decision event.
+其中每個節點 $v \in V$ 是一個正規化的 trace event，每條邊 $e \in E$ 透過時間順序、handoff、tool call 和附近的執行上下文把事件連起來。接著選一個 focus event，也叫 anchor。在這個模擬裡，focus event 通常是 review/finding 標記、跟 failure 有關的狀態，或後期的決策事件。
 
-From that anchor, the diagnosis pass walks backward through the graph and scores upstream suspects. The score is intentionally explainable:
+從那個 anchor 出發，diagnosis 沿著圖往回走，替上游的嫌疑對象打分數。分數刻意做得可以解釋：
 
 $$
 suspect\_score =
@@ -1459,12 +1467,12 @@ suspect\_score =
 0.1 \cdot role
 $$
 
-- **Proximity** rewards events close to the focus event.
-- **Frequency** rewards events that recur across sampled traces in the same behavior pattern.
-- **Bridge** rewards events that connect parts of the execution graph.
-- **Role** rewards events whose agent/tool role is plausibly related to the finding.
+- **Proximity** 獎勵靠近 focus event 的事件。
+- **Frequency** 獎勵在同一個行為模式的抽樣 trace 裡反覆出現的事件。
+- **Bridge** 獎勵連接執行圖不同部分的事件。
+- **Role** 獎勵 agent/tool 角色看起來跟該 finding 有關的事件。
 
-This is not proof of causality. It is a way to turn "this pattern is important" into "inspect these agents, tools, handoffs, or review policies first."
+這不是因果關係的證明。它是把「這個 pattern 很重要」變成「先檢查這些 agent、tool、handoff 或 review 政策」的辦法。
 
 
 ```python
@@ -1540,22 +1548,22 @@ else:
     display(Markdown("No repeated upstream suspects were recovered for this behavior pattern."))
 ```
 
-### Interpreting the Suspect Leaderboard
+### 解讀 Suspect Leaderboard
 
-The focus behavior pattern is selected by impact score. Depending on whether you run the full dataset or a smaller smoke-test sample, the selected pattern may differ, but the reading process is the same: start from the highest-impact pattern, then inspect which review signals, handoffs, tools, or specialist responses repeatedly appear near the focus event.
+focus 行為模式是依 impact score 選出來的。依你跑完整資料集還是較小的 smoke-test 樣本，選到的 pattern 可能不同，但讀法一樣：從影響最高的 pattern 開始，檢視哪些 review 訊號、handoff、tool 或 specialist 回應反覆出現在 focus event 附近。
 
-A row such as `eval/review signal: review finding` is not meant to be mysterious. In the simulation, a review finding is a structured marker produced when a specialist or review surface observes an issue that should affect the order decision. It is the endpoint we trace backward from: the moment when the workflow has accumulated enough evidence to say, "this order needs attention."
+像 `eval/review signal: review finding` 這樣的列並不神秘。在模擬裡，review finding 是當 specialist 或 review 環節觀察到一個應該影響訂單決策的問題時，產生的結構化標記。它是我們往回追的終點：workflow 累積了足夠的證據，可以說「這張訂單需要注意」的那一刻。
 
-The more actionable rows are the operational events around that marker: handoffs involving the orchestrator, tool/function calls by monitor or orchestration agents, procurement-planning handoffs, and related specialist responses. Those are the places a human should inspect after the macro eval points to this pattern.
+更能採取行動的是那個標記周圍的營運事件：牽涉 orchestrator 的 handoff、monitor 或 orchestration agent 發出的 tool/function call、採購規劃的 handoff，以及相關的 specialist 回應。macro eval 指向這個 pattern 之後，這些就是人該檢查的地方。
 
-From a technical perspective, this output tells an AI engineer where to inspect:
+從技術角度看，這個輸出告訴 AI 工程師該檢查：
 
-- agent instructions and tool contracts for the named agents;
-- handoff rules around the repeated transition;
-- whether the system is recording review markers too early or too late;
-- whether a tool output is being ignored or over-weighted.
+- 點名的那些 agent 的 instructions 和 tool 約定；
+- 重複出現的轉換周圍的 handoff 規則；
+- 系統記錄 review 標記是不是太早或太晚；
+- 某個 tool 輸出是不是被忽略或被過度加權。
 
-From a business perspective, the same output tells an operations or product stakeholder which business function appears to own the pattern. A fulfillment, pricing, compliance, or clarification pattern should bring the corresponding business owners into the next review, not only the prompt engineer.
+從業務角度看，同一個輸出告訴營運或產品人員，哪個業務職能看起來擁有這個 pattern。履約、定價、法規或澄清的 pattern，應該讓對應的業務負責人加入下一次 review，不只是 prompt 工程師。
 
 
 ```python
@@ -1581,49 +1589,49 @@ if not root_cause.suspect_summary.empty:
     ))
 ```
 
-### Interpreting the Story Strip and Swimlane
+### 解讀 Story Strip 和 Swimlane
 
-The story strip is a path into the focus event. In this run, the focus event is a review/eval checkpoint inside the selected behavior pattern. It is the simulated business process saying that this order has an issue worth reviewing.
+story strip 是通往 focus event 的路徑。在這次 run 裡，focus event 是選定行為模式內的一個 review/eval 檢查點。這是模擬的業務流程在說，這張訂單有個值得 review 的問題。
 
-The swimlane view keeps more temporal structure. It shows the surrounding window of events by lane or agent, with the focus event highlighted. Read it left to right as the order moves through the swarm:
+swimlane 視圖保留更多時間結構。它依 lane 或 agent 顯示 focus event 周圍一段時間窗的事件，focus event 會被標亮。從左往右讀，就是訂單穿過 swarm 的過程：
 
-- Which specialist handled the order before the review finding?
-- Did the orchestrator route through the right business owners at the right time?
-- Did a tool/function call surface information that should have changed the order decision?
-- Did review happen before the workflow committed to a release, reroute, pricing, compliance, or customer-communication recommendation?
+- review finding 之前是哪個 specialist 處理訂單？
+- orchestrator 有沒有在對的時間把工作分派給對的業務負責人？
+- 有沒有 tool/function call 浮現了應該改變訂單決策的資訊？
+- review 有沒有發生在 workflow 對放行、改派、定價、法規或客戶溝通的建議做出承諾之前？
 
-For a business reader, the diagram turns an abstract pattern into an operational story: this set of orders repeatedly reaches a similar review point. For an AI engineer, it narrows the next debugging step: inspect the orchestration and handoff path around the review marker, especially the first non-review suspect highlighted in the diagnosis summary.
+對業務讀者來說，這張圖把抽象的 pattern 變成營運故事：這一批訂單反覆走到類似的 review 點。對 AI 工程師來說，它縮小了下一步的 debug 範圍：檢查 review 標記周圍的 orchestration 和 handoff 路徑，尤其是 diagnosis 摘要裡標出的第一個非 review 嫌疑對象。
 
 
-## 7. What We Learned and What to Do Next
+## 7. 我們學到什麼，接下來做什麼
 
-The cookbook has moved through four levels of evidence:
+這份 cookbook 走過四個層次的證據：
 
-1. **Simulation setup:** the business generated EV order cases under changing supply, pricing, capacity, compliance, and market conditions.
-2. **Lower-level evals:** Promptfoo supplied the agent/workflow-level eval signals: decision quality, policy correctness, routing, market awareness, and review appropriateness.
-3. **Macro discovery:** BERTopic-style clustering grouped lower-level findings into recurring behavior patterns and ranked them by impact.
-4. **Trace diagnosis:** AgentTrace-style graph analysis inspected one high-impact pattern and identified repeated upstream suspects.
+1. **模擬設定：** 業務在供應、定價、產能、法規和市場條件變動下，產生電動車訂單案例。
+2. **低層 evals：** Promptfoo 提供 agent/workflow 層級的 eval 訊號：決策品質、政策正確性、分派、市場意識和 review 恰當性。
+3. **Macro 探索：** BERTopic 風格的分群把低層 findings 分成反覆出現的行為模式，並依影響排名。
+4. **Trace diagnosis：** AgentTrace 風格的圖分析檢視一個高影響的 pattern，找出重複出現的上游嫌疑對象。
 
-This approach scales by directing human attention toward the patterns that are both frequent and consequential. Instead of reading hundreds of traces from top to bottom, a reviewer can start from a behavior pattern, inspect representative examples, and decide which agent, tool, handoff, or business rule deserves follow-up.
+這個做法的規模化方式，是把人的注意力導向既常見又有後果的 pattern。reviewer 不用從頭讀數百條 trace，可以從一個行為模式開始，看代表性的例子，再決定哪個 agent、tool、handoff 或業務規則值得追蹤。
 
-Practical next steps for an AI engineering team:
+給 AI 工程團隊的實務下一步：
 
-- promote the clearest lower-level eval failures into a regression suite;
-- review a small sample of automated grades to calibrate rubric strictness;
-- track behavior patterns by model version, prompt version, and orchestration mode;
-- assign business owners to the highest-impact patterns;
-- inspect the top suspect agents, tools, and handoffs before changing the system.
+- 把最明確的低層 eval 失敗提升成 regression suite；
+- 抽樣檢查一小批自動評分，校準 rubric 的嚴格度；
+- 依模型版本、prompt 版本和 orchestration 模式追蹤行為模式；
+- 為影響最高的 pattern 指派業務負責人；
+- 改系統之前，先檢查排名最前面的嫌疑 agent、tool 和 handoff。
 
-Practical next steps for a business stakeholder:
+給業務人員的實務下一步：
 
-- decide whether the generated case types match the real operating risks;
-- check whether high-impact patterns correspond to important customer or operational outcomes;
-- validate whether review thresholds are producing the intended business behavior;
-- use the Sankey and heatmap views to prioritize which scenarios need better policy or process design.
+- 判斷產生的 case type 是否符合真實的營運風險；
+- 檢查高影響的 pattern 是否對應到重要的客戶或營運結果；
+- 驗證 review 門檻有沒有產生預期的業務行為；
+- 用 Sankey 和 heatmap 視圖決定哪些情境需要更好的政策或流程設計。
 
-The core lesson is simple: agent-level evals tell us which local behaviors look risky, while macro evals tell us what those risks become at system scale.
+核心的結論很簡單：agent 層級的 evals 告訴我們哪些局部行為看起來有風險，macro evals 告訴我們這些風險放大到系統規模會變成什麼。
 
-**Further reading**
+**延伸閱讀**
 
 - OpenAI Agents SDK documentation: [Agents SDK use cases](https://developers.openai.com/api/docs/libraries#use-the-agents-sdk)
 - BERTopic documentation: [overview](https://maartengr.github.io/BERTopic/index.html) and [algorithm walkthrough](https://maartengr.github.io/BERTopic/algorithm/algorithm.html)
@@ -1631,12 +1639,24 @@ The core lesson is simple: agent-level evals tell us which local behaviors look 
 - AgentTrace paper: [Causal Graph Tracing for Root Cause Analysis in Deployed Multi-Agent Systems](https://arxiv.org/abs/2603.14688)
 
 
-## Contributors
-This cookbook serves as a joint collaboration effort between OpenAI and Slalom.
+## 貢獻者
+這份 cookbook 是 OpenAI 和 Slalom 的共同合作成果。
 
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 - [Will Thieme](https://www.linkedin.com/in/will-thieme-8689758b/)
 - [Bradley Strauss](https://www.linkedin.com/in/bradleyjstrauss/)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Agent 層級的 evals 只給局部訊號，macro evals 把很多訊號彙整成反覆出現的行為模式。
+- 把 trace 壓成文件的方式，決定分群能注意到什麼，這是 eval 設計的一部分。
+- BERTopic 風格流程是 embedding、降維、密度分群、再用詞分數標記，並用 prevalence 乘上嚴重度的 impact score 排優先順序。
+- 用 lift 比較 pattern 在各切片的集中程度，能判斷一個行為是預期還是可疑。
+- AgentTrace 風格的 diagnosis 從 focus event 往回打分，給的是該先檢查哪裡的線索，不是因果證明。
+
+## 練習
+
+1. 把 suspect score 的權重從 `0.4/0.3/0.2/0.1` 改成更重視 frequency（例如 `0.2/0.5/0.2/0.1`），看嫌疑排行榜的前幾名有沒有變。
+2. 把 `MACRO_EVALS_TRACE_LIMIT` 設小做 smoke test，比較 impact score 排名第一的 pattern 跟跑完整資料集時是否相同。
+3. 改 `doc_structured_summary` 的內容，例如拿掉 handoff 資訊，重新分群，觀察哪些行為模式消失或合併。

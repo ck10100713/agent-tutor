@@ -1,58 +1,66 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_confluence.ipynb
 ---
 
-# GPT Actions library - Confluence
+# GPT Actions 範例庫：Confluence
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_confluence.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_confluence.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼做一個連到 Confluence 的 GPT Action。使用者問問題，GPT 會去搜尋相關的 Confluence space 和頁面，整理出答案。這篇只做讀取和搜尋，不改 Confluence 內容。
 
+## 學完你會
+- 在 Atlassian Developer Portal 建立 OAuth 2.0 app，並設定 scope 和 callback URL。
+- 把 Custom GPT 的 Instructions 和 OpenAPI schema 貼到 GPT 裡，讓它能查 Confluence。
+- 在 ChatGPT 填入 OAuth 設定（Client ID、Authorization URL、Token URL、Scope），並排解 callback URL 錯誤、action 迴圈等常見問題。
 
+## 開跑前
+- 需要 ChatGPT 能建立 Custom GPT 的帳號。
+- 需要 Atlassian 帳號，且有權限在 Atlassian Developer Portal 建立 App。
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+這一頁是給開發者的說明，教你替特定應用程式做 GPT Action。開始之前，建議先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions Library 簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零打造 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to **Confluence**, Atlassian's collaboration and documentation platform. This Action takes a user’s question, scans the relevant Confluence spaces and pages to gather the necessary information, then formulates a response to answer the user’s question. This cookbook does not address updating content in Confluence directly from ChatGPT, but it is technically feasible to accomplish with additional Actions and scopes.
+這個 GPT Action 說明怎麼連到 **Confluence**，也就是 Atlassian 的協作與文件平台。它會接收使用者的問題，掃描相關的 Confluence space 和頁面蒐集資訊，再組出答案。這份教學不處理從 ChatGPT 直接更新 Confluence 內容，不過加上額外的 Action 和 scope 技術上是做得到的。
 
-### Value + Example Business Use Cases
+### 價值與商業情境範例
 
-**Value**
+**價值**
 
-Users can now leverage ChatGPT's natural language capability to connect directly to Confluence, enabling seamless interaction with their organization's knowledge base.
+使用者可以用 ChatGPT 的自然語言能力直接連到 Confluence，順暢地查詢組織的知識庫。
 
-**Example Use Cases**
-- **Knowledge Workers**: Easily retrieve information from Confluence pages and spaces to answer questions or gather details for reports and presentations.
-- **Project Managers**: Quickly access project documentation and updates stored in Confluence without manually searching through pages.
-- **Customer Support Teams**: Provide accurate and timely responses to customer inquiries by pulling relevant information from the Confluence knowledge base.
-- **All Users**: Gain more visibility into company-wide documentation, policies, and procedures, enhancing collaboration and knowledge sharing.
+**情境範例**
+- **知識工作者**：輕鬆從 Confluence 頁面和 space 取得資訊，回答問題或蒐集報告、簡報的資料。
+- **專案經理**：不用手動翻頁面，就能快速取得存在 Confluence 的專案文件和進度。
+- **客服團隊**：從 Confluence 知識庫撈出相關資訊，正確又即時地回覆客戶問題。
+- **所有使用者**：更清楚公司內的文件、政策和流程，促進協作與知識分享。
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- Application Website: https://developer.atlassian.com/console/myapps/ 
-- Application API Documentation: https://developer.atlassian.com/cloud/confluence/rest/v2/intro/#about
+開始前先看看這些連結：
+- 應用程式網站：https://developer.atlassian.com/console/myapps/ 
+- 應用程式 API 文件：https://developer.atlassian.com/cloud/confluence/rest/v2/intro/#about
 
-### Application Prerequisites
+### 應用程式前置條件
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Ensure you have permissions to create an App in the Atlassian Developer Portal
-- Determine what interactions you would like your GPT to take (search, read, edit, etc.)
+開始前，請先在應用程式環境完成下面的事：
+- 確認你有權限在 Atlassian Developer Portal 建立 App
+- 決定你要讓 GPT 做哪些操作（搜尋、讀取、編輯等）
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 You are a "Confluence Savant", equipped with the ability to search our company's Product Wiki in Confluence to answer product-related questions.
@@ -77,7 +85,7 @@ Remember, your goal is to provide helpful, accurate, and relevant information to
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 openapi: 3.1.0
@@ -195,57 +203,66 @@ components:
               description: The name of the space.
 ```
 
-## Authentication Instructions
+## 驗證設定說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面是跟這個第三方應用程式設定驗證的步驟。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)。
 
-### Pre-Action Steps
+### Action 設定前的步驟
 
-Before you set up authentication in ChatGPT, make sure you go through the following steps within the Atlassian Developer portal to create your Confluence app:
+在 ChatGPT 設定驗證之前，先到 Atlassian Developer portal 完成下面的步驟，建立你的 Confluence app：
 
-1. Select the Create drop-down
-2. Choose OAuth 2.0 integration
-3. Give a name, agree to terms, and click Create
-4. Select "Distribution" on the left-hand menu and click “Edit”
-5. Change radio button to "Sharing"
-6. Fill out required fields and Save Changes
-7. Select "Permissions" on the left-hand menu
-8. Add in the scopes you would like to include (e.g., User identity API and Confluence API so that the app can know what a user has access to and fetch from Confluence)
-9. Select "Authorization" on the left-hand menu
-10. Click "Add" under Action in the row for OAuth 2.0
-11. Enter the callback URL from your GPT (note: you may need to add a placeholder for now and revisit this once you have created the Action and OAuth in your GPT so that you have the final callback URL)
-12. Select "Settings" under the left-hand menu
-13. Copy your Client ID and Secret for us in OAuth setup in GPT
+1. 選擇 Create 下拉選單
+2. 選 OAuth 2.0 integration
+3. 取個名字、同意條款，按 Create
+4. 在左側選單選 "Distribution"，按 “Edit”
+5. 把選項改成 "Sharing"
+6. 填完必填欄位，儲存
+7. 在左側選單選 "Permissions"
+8. 加入你要的 scope（例如 User identity API 和 Confluence API，這樣 app 才知道使用者能存取什麼、能從 Confluence 取什麼）
+9. 在左側選單選 "Authorization"
+10. 在 OAuth 2.0 那一列的 Action 下按 "Add"
+11. 輸入 GPT 的 callback URL（注意：你可能得先填一個佔位值，等 GPT 裡的 Action 和 OAuth 建好、拿到最終的 callback URL 後再回來改）
+12. 在左側選單選 "Settings"
+13. 複製 Client ID 和 Secret，之後在 GPT 設定 OAuth 時使用
 
 
 ![confluence_gpt.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/confluence_gpt.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡設定
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點 "Authentication"，選 **"OAuth"**，填入下面的資訊。 
 
-- **Client ID**: use Client ID from steps above 
-- **Client Secret**: use Client Secret from steps above
-- **Authorization URL**: https://auth.atlassian.com/authorize
-- **Token URL**: https://auth.atlassian.com/oauth/token 
-- **Scope**: read:confluence-content.all search:confluence
-- **Token**: Default (POST)
+- **Client ID**：用上面步驟取得的 Client ID 
+- **Client Secret**：用上面步驟取得的 Client Secret
+- **Authorization URL**：https://auth.atlassian.com/authorize
+- **Token URL**：https://auth.atlassian.com/oauth/token 
+- **Scope**：read:confluence-content.all search:confluence
+- **Token**：Default (POST)
 
-### Post-Action Steps
+### Action 設定後的步驟
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+在 ChatGPT 設定好驗證後，回到應用程式完成最後設定。
 
-- Copy the callback URL from the GPT Action
-- In the “Authorized redirect URIs” (see screenshot above), add your callback URL 
-
-
-### FAQ & Troubleshooting
-
-- *Callback URL Error:* If you get a callback URL error in ChatGPT, pay close attention to the screenshot above. You need to add the callback URL directly into your Confluence app for the action to authenticate correctly
-- *Schema calls the wrong project or dataset:* If ChatGPT calls the wrong project or dataset, consider updating your instructions to make it more explicit either (a) which project / dataset should be called or (b) to require the user provide those exact details before it runs the query
-- *Looping Actions:* You may not have given the necessary scopes/permissions to your app to accomplish its intended purpose
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- 從 GPT Action 複製 callback URL
+- 把 callback URL 加到 “Authorized redirect URIs”（參考上面的截圖） 
 
 
-<!-- tutor:summary -->
+### FAQ 與疑難排解
+
+- *Callback URL 錯誤：* 如果在 ChatGPT 看到 callback URL 錯誤，請仔細對照上面的截圖。你必須把 callback URL 直接加到 Confluence app 裡，action 才能正確驗證
+- *Schema 呼叫了錯的 project 或 dataset：* 如果 ChatGPT 呼叫了錯的 project 或 dataset，可以更新 instructions，更明確地指定 (a) 要呼叫哪個 project / dataset，或 (b) 要求使用者在執行 query 前先提供這些細節
+- *Action 一直迴圈：* 可能是沒有給 app 完成目標所需的 scope 或權限
+
+*有想要我們優先支援的整合嗎？整合有錯誤嗎？歡迎到 GitHub 開 PR 或 issue，我們會看。*
+
+
+## 重點整理
+- GPT Action 由三塊組成：Instructions（告訴 GPT 怎麼用）、OpenAPI schema（定義能呼叫的 API）、Authentication（這裡用 OAuth 2.0）。
+- OAuth 要兩邊對接：先在 Atlassian 建 app 拿到 Client ID 和 Secret，再把 GPT 產生的 callback URL 回填進 app。
+- Scope 決定 GPT 能做什麼，這篇只給讀取和搜尋的 scope，所以不能改內容。
+- Action 迴圈通常是 scope 不夠；呼叫錯對象則靠改 instructions 解決。
+
+## 練習
+1. 在 Custom GPT 的 Instructions 裡加一句，要求回答時一律附上 Confluence 頁面連結。
+2. 把 Scope 欄位拿掉 `search:confluence`，測一次看 GPT 的行為會怎麼變，確認 scope 的作用。
+3. 在 OpenAPI schema 裡加上一個只列出 space 的 endpoint，並在 Instructions 裡要求 GPT 先列 space 讓使用者選，再去搜尋。

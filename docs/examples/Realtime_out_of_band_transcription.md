@@ -1,28 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/Realtime_out_of_band_transcription.ipynb
 ---
-
-# Transcribing User Audio with a Separate Realtime Request
+# 用獨立的 Realtime 請求轉錄使用者音訊
 
 > 原文：[examples/Realtime_out_of_band_transcription.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Realtime_out_of_band_transcription.ipynb)
 
-Cookbook to transcribe user audio using out-of-band Realtime sessions.
+用 out-of-band 的 Realtime session 來轉錄使用者音訊。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+Realtime API 內建的使用者語音轉錄靠的是另一個 ASR 模型，常常跟 agent 實際聽到的內容對不起來。這篇改在同一條 WebSocket 上多送一個 `response.create`，讓 Realtime 模型自己產出逐字稿，而且不會寫回主對話。
 
-**Purpose**: This notebook demonstrates how to use the Realtime model itself to accurately transcribe user audio `out-of-band` using the same websocket session connection, avoiding errors and inconsistencies common when relying on a separate transcription model (gpt-4o-transcribe/whisper-1).
+## 學完你會
 
-We call this [out-of-band](https://platform.openai.com/docs/guides/realtime-conversations#create-responses-outside-the-default-conversation) transcription using the Realtime model. It’s simply a second response.create request on the same Realtime WebSocket, tagged so it doesn’t write back to the active conversation state. The model runs again with a different set of instructions (a transcription prompt), triggering a new inference pass that’s separate from the assistant’s main speech turn.
+- 寫出一個 server-to-server 的 client，把麥克風音訊串流給 Realtime voice agent，並播放 agent 的語音回覆
+- 在每個使用者 turn 結束後，用 `conversation: "none"` 加 `output_modalities: ["text"]` 的 out-of-band 請求取得純文字逐字稿
+- 比較 Realtime 轉錄和內建 transcription 模型的品質與成本，並決定要帶完整 session context 還是只帶最新一輪
 
-It covers how to build a server-to-server client that:
+## 開跑前
 
-- Streams microphone audio to an OpenAI Realtime voice agent.
-- Plays back the agent's spoken replies.
-- After each user turn, generates a high-quality text-only transcript using the **same Realtime model**.
+- Python 3.10 以上
+- PortAudio（`sounddevice` 需要）
+- 有 Realtime API 權限的 OpenAI API key，設成環境變數
+- 需要麥克風和喇叭，所以得在本機執行（Colab 沒辦法接你的麥克風）
+- 會產生 API 費用，成本比較見下面章節
 
-This is achieved via a secondary `response.create` request:
+**目的**：示範用 Realtime 模型本身，在同一條 websocket session 連線上做 `out-of-band` 的使用者音訊轉錄，避開另外用轉錄模型（gpt-4o-transcribe/whisper-1）時常見的錯誤和不一致。
+
+我們把這叫做用 Realtime 模型的 [out-of-band](https://platform.openai.com/docs/guides/realtime-conversations#create-responses-outside-the-default-conversation) 轉錄。它其實就是在同一條 Realtime WebSocket 上多送第二個 response.create 請求，並加上標記，讓它不會寫回目前的對話狀態。模型會用另一組 instructions（轉錄 prompt）再跑一次，是和 assistant 主要語音回覆分開的一次新推論。
+
+內容是建立一個 server-to-server client，它會：
+
+- 把麥克風音訊串流給 OpenAI Realtime voice agent
+- 播放 agent 的語音回覆
+- 每個使用者 turn 結束後，用**同一個 Realtime 模型**產生高品質的純文字逐字稿
+
+做法是送出第二個 `response.create` 請求：
 
 ```python
 {
@@ -35,88 +49,87 @@ This is achieved via a secondary `response.create` request:
 }
 ```
 
-This notebook demonstrates using the **Realtime model itself** for transcription:
+這份 notebook 示範用 **Realtime 模型本身**做轉錄：
 
-- **Context-aware transcription**: Uses the full session context to improve transcript accuracy.
-- **Non-intrusive**: Runs outside the live conversation, so the transcript is never added back to session state.
-- **Customizable instructions**: Allows tailoring transcription prompts to specific use-cases. Realtime model is better than the transcription model at following instructions.
+- **Context-aware 轉錄**：用整個 session 的 context 提升逐字稿準確度
+- **不干擾對話**：在即時對話之外執行，逐字稿不會被加回 session 狀態
+- **可客製的 instructions**：可以依使用情境調整轉錄 prompt。Realtime 模型比轉錄模型更會遵循 instructions
 
-# 1. Why use out-of-band transcription?
+# 1. 為什麼要用 out-of-band 轉錄？
 
-The Realtime API offers built-in user input transcription, but this relies on a **separate ASR model** (e.g., gpt-4o-transcribe). Using different models for transcription and response generation can lead to discrepancies. For example:
+Realtime API 有內建的使用者輸入轉錄，但它靠的是**另一個 ASR 模型**（例如 gpt-4o-transcribe）。轉錄和回覆生成用不同模型，可能產生落差。例如：
 
-- User speech transcribed as: `I had otoo accident`
-- Realtime response interpreted correctly as: `Got it, you had an auto accident`
+- 使用者語音被轉成：`I had otoo accident`
+- Realtime 回應卻正確理解成：`Got it, you had an auto accident`
 
-Accurate transcriptions can be very important, particularly when:
+逐字稿準確在這些情況特別重要：
 
-- Transcripts trigger downstream actions (e.g., tool calls), where errors propagate through the system.
-- Transcripts are summarized or passed to other components, risking context pollution.
-- Transcripts are displayed to end users, leading to poor user experiences if errors occur.
+- 逐字稿會觸發下游動作（例如 tool call），錯誤會一路傳下去
+- 逐字稿會被摘要或傳給其他元件，有汙染 context 的風險
+- 逐字稿會顯示給終端使用者，錯了體驗就很差
 
-The potential advantages of using out-of-band transcription include:
-- **Reduced Mismatch**: The same model is used for both transcription and generation, minimizing inconsistencies between what the user says and how the agent responds.
-- **Greater Steerability**: The Realtime model is more steerable, can better follow custom instructions for higher transcription quality, and is not limited by a 1024-token input maximum.
-- **Session Context Awareness**: The model has access to the full session context, so, for example, if you mention your name multiple times, it will transcribe it correctly.
+用 out-of-band 轉錄可能的好處：
+- **減少落差**：轉錄和生成用同一個模型，降低使用者說的內容和 agent 回應之間的不一致
+- **更好控制**：Realtime 模型更好 steer，能更好地遵循自訂 instructions，轉錄品質更高，也沒有 1024 token 的輸入上限
+- **了解 session context**：模型看得到整個 session 的 context，例如你多次提到自己的名字，它就能轉錄正確
 
+**取捨**方面：
 
-In terms of **trade-offs**:
+- Realtime 模型（用來轉錄）：
+    - 音訊輸入 → 文字輸出：每 100 萬個音訊 token $32.00，加上每 100 萬個文字輸出 token $16.00
+    - 快取的 session context：每 100 萬個快取 context token $0.40
 
-- Realtime Model (for transcription):
-    - Audio Input → Text Output: $32.00 per 1M audio tokens + $16.00 per 1M text tokens out.
-    - Cached Session Context: $0.40 per 1M cached context tokens.
+    - 總成本（100 萬音訊 token 輸入 + 100 萬文字 token 輸出）：約 $48.00
 
-    - Total Cost (for 1M audio tokens in + 1M text tokens out): ≈ $48.00
+- GPT-4o Transcription：
 
-- GPT-4o Transcription:
+    - 音訊輸入：每 100 萬個音訊 token $6.00
 
-    - Audio Input: $6.00 per 1M audio tokens
+    - 文字輸入：每 100 萬 token $2.50
 
-    - Text Input: $2.50 per 1M tokens.
+    - 文字輸出：每 100 萬 token $10.00
 
-    - Text Output: $10.00 per 1M tokens
+    - 總成本（100 萬音訊 token 輸入 + 100 萬文字 token 輸出）：約 $16.00
 
-    - Total Cost (for 1M audio tokens in + 1M text tokens out): ≈ $16.00
+- 直接成本比較（範例見本篇最後）：
 
-- Direct Cost Comparison (see examples in the end of the cookbook):
+    - 用完整 session context：貴 16 到 22 倍（如果轉錄成本是每 session $0.001，Realtime 轉錄就是每 session $0.016）
+       - 成本較高是因為每次都要帶著不斷變長的 session context，但這也可能有助於轉錄品質
+    - 只用最新一輪使用者 turn：貴 3 到 5 倍（如果轉錄成本是每 session $0.001，Realtime 轉錄就是每 session $0.003）
+       - 成本較低是因為只轉錄最新一段使用者音訊，但轉錄時就用不到 session context 來提升品質
+    - 介於兩者之間（保留 1 到 N 輪 turn），價格會是 3 到 20 倍，視你保留幾輪而定
 
-    - Using full session context: 16-22x (if transcription cost is 0.001$/session, realtime transcription will be 0.016$/session)
-       - The cost is higher since you are always passing the growing session context. However, this can potentially help with transcription.
-    - Using only latest user turn: 3-5x (if transcription cost is 0.001$/session, realtime transcription will be 0.003$/session)
-       - The cost is lower since you are only transcribing the latest user audio turn. However, you no longer have access to the session context for transcription quality.
-    - Using 1 < N (turn) < Full Context, the price would be between 3-20x more expensive depending on how many turns you decide to keep in context
-
-    - **Note:** These cost estimates are specific to the examples covered in this cookbook. Actual costs may vary depending on factors such as session length, how often context is cached, the ratio of audio to text input, and the details of your particular use case.
+    - **注意：** 這些成本估算只適用於本篇範例。實際成本會因 session 長度、快取頻率、音訊與文字輸入的比例，以及你的使用情境而不同。
     
 
-- Other Considerations:
+- 其他考量：
 
-    - Implementing transcription via the Realtime model might be slightly more complex compared to using the built-in GPT-4o transcription option through the Realtime API.
+    - 用 Realtime 模型做轉錄，實作起來可能比直接用 Realtime API 內建的 GPT-4o transcription 選項稍微複雜
 
-**Note**: Out-of-band responses using the Realtime model can be used for other use cases beyond user turn transcription. Examples include generating structured summaries, triggering background actions, or performing validation tasks without affecting the main conversation.
+**注意**：用 Realtime 模型做 out-of-band 回應，也能用在使用者 turn 轉錄以外的情境，例如產生結構化摘要、觸發背景動作、或在不影響主對話下做驗證。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/oob_transcription.png" alt="drawing" width="2000"/>
 
 
-# 2. Requirements & Setup
+# 2. 需求與設定
 
-Ensure your environment meets these requirements:
+確認你的環境符合這些需求：
 
-1. **Python 3.10 or later**
+1. **Python 3.10 或更新版本**
 
-2. **PortAudio** (required by `sounddevice`):
-   - macOS:
+2. **PortAudio**（`sounddevice` 需要）：
+   - macOS：
      ```bash
      brew install portaudio
      ```
 
-3. **Python Dependencies**:
+3. **Python 套件**：
    ```bash
    pip install sounddevice websockets
    ```
 
-4. **OpenAI API Key** (with Realtime API access):
-   Set your key as an environment variable:
+4. **OpenAI API Key**（要有 Realtime API 權限）：
+   把 key 設成環境變數：
 
    ```bash
    export OPENAI_API_KEY=sk-...
@@ -128,12 +141,12 @@ Ensure your environment meets these requirements:
 
 # 3. Prompts
 
-We use **two distinct prompts**:
+我們用**兩個不同的 prompt**：
 
-1. **Voice Agent Prompt** (`REALTIME_MODEL_PROMPT`): This is an example prompt used with the Realtime model for the Speech 2 Speech interactions.
-2. **Transcription Prompt** (`REALTIME_MODEL_TRANSCRIPTION_PROMPT`): Silently returns a precise, verbatim transcript of the user's most recent speech turn. You can modify this prompt to iterate in transcription quality.
+1. **Voice Agent Prompt**（`REALTIME_MODEL_PROMPT`）：Realtime 模型做 Speech 2 Speech 互動用的範例 prompt
+2. **Transcription Prompt**（`REALTIME_MODEL_TRANSCRIPTION_PROMPT`）：靜默地回傳使用者最近一輪發言的精確逐字稿。你可以修改這個 prompt 來提升轉錄品質
 
-For the `REALTIME_MODEL_TRANSCRIPTION_PROMPT`, you can start from this base prompt, but the goal would be for you to iterate on the prompt to tailor it to your use case. Just remember to remove the Policy Number formatting rules since it might not apply to your use case!
+`REALTIME_MODEL_TRANSCRIPTION_PROMPT` 可以從這個基本 prompt 開始，但目標是讓你針對自己的使用情境反覆調整。記得把保單號碼（Policy Number）的格式規則拿掉，因為它可能不適用於你的情境！
 
 ```python
 REALTIME_MODEL_PROMPT = """
@@ -383,13 +396,13 @@ Your output must be the **precise, literal, and complete transcript of the most 
 """
 ```
 
-# 4. Core configuration
+# 4. 核心設定
 
-We define:
+我們定義：
 
-- Imports
-- Audio and model defaults
-- Constants for transcription event handling
+- imports
+- 音訊與模型的預設值
+- 處理轉錄事件用的常數
 
 ```python
 import asyncio
@@ -453,21 +466,21 @@ RESPONSE_AUDIO_TRANSCRIPT_DELTA_TYPES = {
 }
 ```
 
-# 5. Building the Realtime session & the out‑of‑band request
+# 5. 建立 Realtime session 與 out-of-band 請求
 
-The Realtime session (`session.update`) configures:
+Realtime session（`session.update`）設定了：
 
-- Audio input/output
-- Server‑side VAD
-- Set built‑in transcription (`input_audio_transcription_model`)
-   + We set this so that we can compare to the Realtime model transcription
+- 音訊輸入/輸出
+- Server 端 VAD
+- 內建轉錄（`input_audio_transcription_model`）
+   + 這樣設定是為了跟 Realtime 模型的轉錄做比較
 
-The out‑of‑band transcription is a `response.create` triggered after user input audio is committed `input_audio_buffer.committed`:
+out-of-band 轉錄是在使用者輸入音訊 commit（`input_audio_buffer.committed`）之後觸發的 `response.create`：
 
-- [`conversation: "none"`](https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-conversation) – use session state but don’t write to the main conversation session state
-- [`output_modalities: ["text"]`](https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-output_modalities) – get a text transcript only
+- [`conversation: "none"`](https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-conversation)：使用 session 狀態，但不寫入主對話的 session 狀態
+- [`output_modalities: ["text"]`](https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-output_modalities)：只要文字逐字稿
 
-**Note**: The REALTIME_MODEL_TRANSCRIPTION_PROMPT is not passed to the gpt-4o-transcribe model because the Realtime API enforces a 1024 token maximum for prompts.
+**注意**：REALTIME_MODEL_TRANSCRIPTION_PROMPT 不會傳給 gpt-4o-transcribe 模型，因為 Realtime API 限制 prompt 最多 1024 token。
 
 
 ```python
@@ -557,14 +570,14 @@ def build_transcription_request(
     }
 ```
 
-# 6. Audio streaming: mic → Realtime → speakers
+# 6. 音訊串流：麥克風 → Realtime → 喇叭
 
-We now define:
+接著定義：
 
-- `encode_audio` – base64 helper
-- `playback_audio` – play assistant audio on the default output device
-- `send_audio_from_queue` – send buffered mic audio to `input_audio_buffer`
-- `stream_microphone_audio` – capture PCM16 from the mic and feed the queue
+- `encode_audio`：base64 helper
+- `playback_audio`：用預設輸出裝置播放 assistant 音訊
+- `send_audio_from_queue`：把緩衝的麥克風音訊送到 `input_audio_buffer`
+- `stream_microphone_audio`：從麥克風擷取 PCM16 並餵進 queue
 
 
 ```python
@@ -658,14 +671,14 @@ async def stream_microphone_audio(
     await sender
 ```
 
-# 7. Extracting and comparing transcripts
+# 7. 擷取並比較逐字稿
 
-The function below enables us to generate **two transcripts** for each user turn:
+下面的函式讓每個使用者 turn 產生**兩份逐字稿**：
 
-- **Realtime model transcript**: from our out-of-band `response.create` call.
-- **Built-in ASR transcript**: from the standard transcription model (`input_audio_transcription_model`).
+- **Realtime 模型逐字稿**：來自我們的 out-of-band `response.create` 呼叫
+- **內建 ASR 逐字稿**：來自標準轉錄模型（`input_audio_transcription_model`）
 
-We align and display both clearly in the terminal:
+我們把兩者對齊後清楚地顯示在 terminal：
 
 ```text
 === User Turn (Realtime Transcript) ===
@@ -725,16 +738,16 @@ def flush_pending_transcription_prints(shared_state: dict) -> None:
         print()
 ```
 
-# 8. Listening for Realtime events
+# 8. 監聽 Realtime 事件
 
-`listen_for_events` drives the session:
+`listen_for_events` 負責驅動整個 session：
 
-- Watches for `speech_started` / `speech_stopped` / `committed`
-- Sends the out‑of‑band transcription request when a user turn finishes (`input_audio_buffer.committed`) when only_last_user_turn == False
-- Sends the out‑of‑band transcription request when a user turn is added to conversation (`conversation.item.added"`) when only_last_user_turn == True
-- Calculates token usage and cost for both transcription methods
-- Streams assistant audio to the playback queue
-- Buffers text deltas per `response_id`
+- 監看 `speech_started` / `speech_stopped` / `committed`
+- only_last_user_turn == False 時，使用者 turn 結束（`input_audio_buffer.committed`）就送出 out-of-band 轉錄請求
+- only_last_user_turn == True 時，使用者 turn 被加進對話（`conversation.item.added"`）才送出 out-of-band 轉錄請求
+- 計算兩種轉錄方式的 token 用量與成本
+- 把 assistant 音訊串流到播放 queue
+- 依 `response_id` 緩衝文字 delta
 
 ```python
 # Pricing constants (USD per 1M tokens). See https://platform.openai.com/pricing.
@@ -1075,21 +1088,21 @@ async def listen_for_events(
         await asyncio.sleep(0)
 ```
 
-# 9. Run Script
+# 9. 執行腳本
 
-In this step, we run the code which will allow us to view the Realtime model transcription vs transcription model transcriptions. The code does the following:
+這一步執行的程式讓你看到 Realtime 模型轉錄和轉錄模型轉錄的對照。程式會：
 
-- Loads configuration and prompts
-- Establishes a WebSocket connection
-- Starts concurrent tasks:
-  - `listen_for_events` (handle incoming messages)
-  - `stream_microphone_audio` (send microphone audio)
-  - Mutes mic when assistant is speaking
-  - `playback_audio` (play assistant responses)
-  - prints realtime and transcription model transcripts when they are both returned. It uses shared_state to ensure both are returned before printing.
-- Run session until you `interrupt`
+- 載入設定和 prompt
+- 建立 WebSocket 連線
+- 啟動並行 task：
+  - `listen_for_events`（處理進來的訊息）
+  - `stream_microphone_audio`（送出麥克風音訊）
+  - assistant 說話時把麥克風靜音
+  - `playback_audio`（播放 assistant 回應）
+  - 兩份逐字稿都回來後，印出 realtime 和轉錄模型的逐字稿。它用 shared_state 確保兩者都回來才印
+- 持續執行直到你 `interrupt`
 
-Output should look like:
+輸出看起來會像這樣：
 ```python
 [client] Speech detected; streaming...
 [client] Detected silence; preparing transcript...
@@ -1238,17 +1251,17 @@ await run_realtime_session(debug_usage_and_cost=False)
     ... (省略 56 行)
     ```
 
-From the above example, we can notice:
-- The Realtime Model Transcription quality matches or surpasses that of the transcription model in various turns. In one of the turns, the transcription model misses "this is important." while the realtime transcription gets it correctly.
-- The Realtime model correctly applies rules for Policy Number formatting (XXXX-XXXX).
-- With context from the entire session, including previous turns where I spelled out my name, the Realtime model accurately transcribes my name when the assistant asked my name again while the transcription model makes errors (e.g., "Minhaj ul Haq").
+從上面的例子可以看到：
+- Realtime 模型的轉錄品質在各個 turn 都持平或更好。其中一個 turn，轉錄模型漏掉了「this is important.」，Realtime 轉錄則正確抓到
+- Realtime 模型正確套用了保單號碼格式規則（XXXX-XXXX）
+- 因為有整個 session 的 context，包括我先前把名字拼出來的 turn，assistant 再問一次名字時，Realtime 模型能正確轉錄我的名字，轉錄模型則出錯（例如「Minhaj ul Haq」）
 
-## Example with Cost Calculations
+## 含成本計算的範例
 
-There are significant price differences between the available methods for transcribing user audio. GPT-4o-Transcribe is by far the most cost-effective approach: it charges only for the raw audio input and a small amount of text output, resulting in transcripts that cost just fractions of a cent per turn. In contrast, using the Realtime model for out-of-band transcription is more expensive. If you transcribe only the latest user turn with Realtime, it typically costs about 3–5× more than GPT-4o-Transcribe. If you include the full session context in each transcription request, the cost can increase to about 16–20× higher. This is because each request to the Realtime model processes the entire session context again at higher pricing, and the cost grows as the conversation gets longer.
+不同的使用者音訊轉錄方式，價差很大。GPT-4o-Transcribe 是最划算的做法：只收原始音訊輸入和少量文字輸出，每個 turn 的逐字稿只要零點幾美分。相較之下，用 Realtime 模型做 out-of-band 轉錄比較貴。如果只用 Realtime 轉錄最新一輪使用者 turn，通常比 GPT-4o-Transcribe 貴約 3 到 5 倍。如果每次轉錄請求都帶完整 session context，成本會升到約 16 到 20 倍。原因是每個送給 Realtime 模型的請求都要用較高的價格重新處理整個 session context，而且對話越長成本越高。
 
-### Cost for Transcribing Only the Latest Turn
-Let's walk through an example that uses full session context for realtime out-of-band transcription:
+### 轉錄完整 session context 的成本
+我們先看一個用完整 session context 做 realtime out-of-band 轉錄的例子：
 
 ```python
 await run_realtime_session(debug_usage_and_cost=True)
@@ -1300,30 +1313,30 @@ await run_realtime_session(debug_usage_and_cost=True)
     ... (省略 388 行)
     ```
 
-#### Transcription Cost Comparison
+#### 轉錄成本比較
 
-##### Costs Summary
+##### 成本摘要
 
-* **Realtime Out-of-Band (OOB):** $0.040974 total (~$0.006829 per turn)
-* **Dedicated Transcription:** $0.002114 total (~$0.000352 per turn)
-* **OOB is ~19× more expensive using full session context**
+* **Realtime Out-of-Band (OOB)：** 總共 $0.040974（每 turn 約 $0.006829）
+* **Dedicated Transcription：** 總共 $0.002114（每 turn 約 $0.000352）
+* **用完整 session context 時，OOB 約貴 19 倍**
 
-##### Considerations
+##### 考量
 
-* **Caching:** Because these conversations are short, you benefit little from caching beyond the initial system prompt.
-* **Transcription System Prompt:** The transcription model uses a minimal system prompt, so input costs would typically be higher.
+* **快取：** 因為這些對話很短，除了最初的 system prompt 之外，快取幫助不大
+* **轉錄 system prompt：** 轉錄模型用的是極簡的 system prompt，所以實際輸入成本通常會更高
 
-##### Recommended Cost-Saving Strategy
+##### 建議的省錢策略
 
-* **Limit transcription to recent turns:** Minimizing audio/text context significantly reduces OOB transcription costs.
+* **把轉錄限制在最近幾個 turn：** 縮小音訊/文字 context 能大幅降低 OOB 轉錄成本
 
-##### Understanding Cache Behavior
+##### 了解快取行為
 
-* Effective caching requires stable prompt instructions (usually 1,024+ tokens).
-* Different instruction prompts between OOB and main assistant sessions result in separate caches.
+* 要讓快取有效，prompt instructions 要穩定（通常要 1,024 token 以上）
+* OOB 和主 assistant session 用不同的 instructions prompt，會各自有獨立的快取
 
-### Cost for Transcribing Only the Latest Turn
-You can limit transcription to only the latest user turn by supplying input item_references like this:
+### 只轉錄最新一輪的成本
+可以用 input item_references 把轉錄限制在最新一輪使用者 turn，像這樣：
 ```python
     if item_ids:
         response["input"] = [
@@ -1336,9 +1349,9 @@ You can limit transcription to only the latest user turn by supplying input item
     }
 ```
 
-Transcribing just the most recent user turn lowers costs by restricting the session context sent to the model. However, this approach has trade-offs: the model won’t have access to previous conversation history to help resolve ambiguities or correct errors (for example, accurately recalling a username mentioned earlier). Additionally, because you’re always updating which input is referenced, little caching benefit is realized, the cache prefix changes each turn, so you don’t accumulate reusable context.
+只轉錄最近一輪使用者 turn，會限制送給模型的 session context，成本因此降低。但這個做法有取捨：模型看不到先前的對話歷史，就無法靠它消除歧義或修正錯誤（例如正確回想先前提到的使用者名稱）。另外，因為你每次都在更換被參照的 input，幾乎享受不到快取的好處，cache prefix 每個 turn 都在變，沒辦法累積可重用的 context。
 
-Now, let’s look at a second example that uses only the most recent user audio turn for realtime out-of-band transcription:
+接著看第二個例子，只用最近一輪使用者音訊做 realtime out-of-band 轉錄：
 
 ```python
 await run_realtime_session(debug_usage_and_cost=True, only_last_user_turn=True)
@@ -1390,47 +1403,59 @@ await run_realtime_session(debug_usage_and_cost=True, only_last_user_turn=True)
     ... (省略 250 行)
     ```
 
-#### Cost Analysis Summary
+#### 成本分析摘要
 
-Realtime Out-of-Band Transcription (OOB)
+Realtime Out-of-Band 轉錄（OOB）
 
-* **Total Cost:** $0.013354
-* **Average per Turn:** ~$0.001908
+* **總成本：** $0.013354
+* **每 turn 平均：** 約 $0.001908
 
-Dedicated Transcription Model
+Dedicated 轉錄模型
 
-* **Total Cost:** $0.002630
-* **Average per Turn:** ~$0.000376
-
-
-Difference in Costs
-
-* **Additional cost using OOB:** **+$0.010724**
-* **Cost Multiplier:** OOB is about **5×** more expensive than the dedicated transcription model.
-
-This approach costs significantly less than using the full session context. You should evaluate your use case to decide whether regular transcription, out-of-band transcription with full context, or transcribing only the latest turn best fits your needs. You can also choose an intermediate strategy, such as including just the last N turns in the input.
+* **總成本：** $0.002630
+* **每 turn 平均：** 約 $0.000376
 
 
-# Conclusion
+成本差異
 
-Exploring **out-of-band transcription** could be beneficial for your use case if:
+* **用 OOB 的額外成本：** **+$0.010724**
+* **成本倍數：** OOB 比 dedicated 轉錄模型貴約 **5 倍**
 
-* You're still experiencing unreliable transcriptions, even after optimizing the transcription model prompt.
-* You need a more reliable and steerable method for generating transcriptions.
-* The current transcripts fail to normalize entities correctly, causing downstream issues.
+這個做法比用完整 session context 便宜很多。你要評估自己的情境，決定一般轉錄、帶完整 context 的 out-of-band 轉錄，還是只轉錄最新一輪，哪個最適合。也可以折衷，例如只在輸入裡帶最後 N 個 turn。
 
-Keep in mind the trade-offs:
-- Cost: Out-of-band (OOB) transcription is more expensive. Be sure that the extra expense makes sense for your typical session lengths and business needs.
-- Complexity: Implementing OOB transcription takes extra engineering effort to connect all the pieces correctly. Only choose this approach if its benefits are important for your use case.
 
-If you decide to pursue this method, make sure you:
+# 結論
 
-* Set up the transcription trigger correctly, ensuring it activates after the audio commit.
-* Carefully iterate and refine the prompt to align closely with your specific use case and needs.
+如果有以下情況，可以考慮 **out-of-band 轉錄**：
 
-## Documentation:
+* 就算優化過轉錄模型的 prompt，逐字稿還是不可靠
+* 你需要更可靠、更好控制的轉錄方式
+* 目前的逐字稿沒辦法正確正規化實體（entity），造成下游問題
+
+也要記得這些取捨：
+- 成本：out-of-band（OOB）轉錄比較貴。確定多出來的花費，對你一般的 session 長度和業務需求來說划算
+- 複雜度：實作 OOB 轉錄需要額外的工程投入，才能把各個環節正確接起來。只有在好處對你的情境很重要時才選這個做法
+
+如果決定採用這個方法，請確保：
+
+* 正確設定轉錄的觸發點，確保它在音訊 commit 之後才啟動
+* 仔細迭代並調整 prompt，讓它貼近你的情境和需求
+
+## 文件：
 - https://platform.openai.com/docs/guides/realtime-conversations#create-responses-outside-the-default-conversation
 - https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-conversation
 - https://platform.openai.com/docs/api-reference/realtime-client-events/response/create#realtime_client_events-response-create-response-output_modalities
 
-<!-- tutor:summary -->
+## 重點整理
+
+- out-of-band 轉錄就是在同一條 WebSocket 上多送一個 `response.create`，用 `conversation: "none"` 不污染主對話，用 `output_modalities: ["text"]` 只拿文字
+- 轉錄和回覆用同一個模型，可以減少兩者對不上的情況，也能吃到整個 session 的 context
+- 逐字稿品質的提升要付成本：帶完整 context 約貴 16 到 20 倍，只帶最新一輪約貴 3 到 5 倍
+- 轉錄 prompt 可以自己調整，Realtime 模型比轉錄模型更會遵循 instructions
+- 觸發時機要放在音訊 commit 之後，而且只在品質要求高、值得多花錢時才用
+
+## 練習
+
+1. 把轉錄 prompt 裡的保單號碼格式規則拿掉，改成你自己想要的格式規則（例如電話號碼），用麥克風唸一次看逐字稿有沒有照做。
+2. 在 `response.create` 的 `conversation: "none"` 之外，把 `output_modalities` 的用途改成請模型輸出這一輪的簡短摘要，而不是逐字稿，觀察結果。
+3. 用 input item_references 只轉錄最新一輪，再改成保留最近 N 個 turn，比較兩種做法的成本和轉錄品質差異。

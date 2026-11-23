@@ -1,25 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/Reinforcement_Fine_Tuning.ipynb
 ---
-
-# Exploring Model Graders for Reinforcement Fine-Tuning
+# 用 Model Grader 做 Reinforcement Fine-Tuning
 
 > 原文：[examples/Reinforcement_Fine_Tuning.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Reinforcement_Fine_Tuning.ipynb)
 
-Cookbook to use model graders for reinforcement fine-tuning in expert tasks.
+這份 cookbook 示範在專家級任務上，用 model grader 做 reinforcement fine-tuning。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 `o4-mini` 跑一次 reinforcement fine-tuning（RFT），任務是從醫病對話描述預測臨床結果。重點放在怎麼設計 grader，以及怎麼抓到 reward hacking。
 
-*This guide is for developers and ML practitioners who already know their way around OpenAIʼs APIs, have a basic understanding of reinforcement fine-tuning (RFT), and wish to use their fine-tuned models for research or other appropriate uses. OpenAI’s services are not intended for the personalized treatment or diagnosis of any medical condition and are subject to our [applicable terms](https://openai.com/policies/).*
+## 學完你會
 
-[Reinforcement fine-tuning (RFT)](https://platform.openai.com/docs/guides/reinforcement-fine-tuning) of reasoning models consists of running reinforcement learning on top of the models to improve their reasoning performance by exploring the solution space and reinforcing strategies that result in a higher reward. RFT helps the model make sharper decisions and interpret context more effectively. 
+- 先用字串 grader 幫 base model 跑 benchmark，判斷任務適不適合做 RFT。
+- 寫出 model grader 並放進 API 需要的格式，還能發現並修掉 reward hacking。
+- 上傳資料、設定 hyper-parameters 啟動 RFT job，並比較 base 跟 fine-tuned model 的分數與 reasoning。
 
+## 開跑前
 
-In this guide, weʼll walk through how to apply RFT to the OpenAI `o4-mini` reasoning model, using a task from the life sciences research domain: predicting outcomes from doctor-patient transcripts and descriptions, which is a necessary assessment in many health research studies. We'll use a subset of the medical-o1-verifiable-problem [dataset](https://huggingface.co/datasets/FreedomIntelligence/medical-o1-verifiable-problem/viewer/default/train?row=0). You will learn key steps to take in order to successfully run RFT jobs for your use cases.
+- 需要 `OPENAI_API_KEY`。
+- RFT 訓練和 LLM grader 都會收費。
+- 資料集從 Hugging Face 下載。
 
-Here’s what we’ll cover:
+*這份指南的對象是已經熟悉 OpenAI API、對 reinforcement fine-tuning（RFT）有基本概念的開發者和 ML 工程師，用來做研究或其他適當用途。OpenAI 的服務不適用於個人化的醫療處置或診斷，並受[適用條款](https://openai.com/policies/)規範。*
+
+[Reinforcement fine-tuning (RFT)](https://platform.openai.com/docs/guides/reinforcement-fine-tuning) 是在 reasoning model 上再跑一輪 reinforcement learning，讓模型去探索解法空間，強化能拿到較高 reward 的策略，藉此提升推理表現。RFT 能讓模型做決策更準，也更會理解 context。
+
+這篇會示範怎麼對 OpenAI 的 `o4-mini` reasoning model 做 RFT。任務來自生命科學研究：根據醫病對話和病況描述預測結果，這在很多健康研究裡都是必要的評估。我們用 medical-o1-verifiable-problem [資料集](https://huggingface.co/datasets/FreedomIntelligence/medical-o1-verifiable-problem/viewer/default/train?row=0)的一個子集。你會學到成功跑 RFT job 的關鍵步驟。
+
+內容大綱：
 
 - **[1. Setup](#1-setup)**
 - **[2. Gathering the dataset](#2-gathering-the-dataset)**
@@ -31,23 +42,22 @@ Here’s what we’ll cover:
 ---
 
 
-## **1. Setup**
+## **1. 前置說明**
 
-Even strong reasoning models can miss the mark when it comes to expert-level behavior-especially in domains like medicine, where nuance and exactness matter. Imagine a model trying to extract [ICD-10](https://www.cms.gov/medicare/coding-billing/icd-10-codes) codes from a transcript: even if it understands the gist, it may not use the precise terminology expected by medical professionals. 
+就算是很強的 reasoning model，碰到專家級的行為也可能沒到位，醫療這種講究細節和精確的領域尤其明顯。想像模型要從對話逐字稿抽出 [ICD-10](https://www.cms.gov/medicare/coding-billing/icd-10-codes) 代碼：就算大致理解內容，也可能沒用到醫療人員預期的精確術語。
 
-Other great candidates for RFT include topics like ledger normalization or tiering fraud risk- settings in which you want precise, reliable, and repeatable reasoning. Checkout our [RFT use-cases guide](https://platform.openai.com/docs/guides/rft-use-cases) for great examples. 
+其他適合 RFT 的題目還有帳本正規化、詐欺風險分級這類場景，都需要精確、可靠、可重複的推理。更多例子可以看 [RFT use-cases 指南](https://platform.openai.com/docs/guides/rft-use-cases)。
 
-In our case, weʼll focus on teaching `o4-mini` to become better at predicting the outcomes of clinical conversations and descriptions. Specifically, we want to see if RFT can boost the accuracy of the prediction. 
+這次我們要教 `o4-mini` 更會預測臨床對話和描述的結果，具體來說是看 RFT 能不能提升預測準確率。
 
-Along the way, weʼll talk about how to write effective graders, how they guide the modelʼs learning, and how to watch out for classic reward-hacking pitfalls. 
-
+過程中會談怎麼寫有效的 grader、grader 怎麼引導模型學習，還有要留意的典型 reward hacking 陷阱。
 
 ---
 
 
-## **2. Gathering the Dataset**
+## **2. 取得資料集**
 
-Letʼs start off by loading the dataset from Hugging Face. Weʼre interested in samples framed as a description of a patient case with an associated question, followed by the correct answer. These represent real world transcripts where a physician is summarizing a case and assigning an outcome. For any use-case, verifying the accuracy of the gold level answers is critical and requires careful consideration. Here, we will trust the dataset quality.
+先從 Hugging Face 載入資料集。我們要的樣本格式是：一段病例描述加一個問題，後面接正確答案。這些代表真實世界裡醫師總結病例並給出結果的逐字稿。不管什麼用途，驗證標準答案的正確性都很關鍵，需要仔細考量。這裡我們直接信任資料集品質。
 
 ```python
 import re
@@ -74,9 +84,9 @@ print(f"Filtered samples: {len(filtered_samples)}")
     Filtered samples: 9169
     ```
 
-One of the advantages of RFT is that it doesnʼt need thousands of samples to start making a difference. Thanks to trajectory sampling and the feedback loop during training, the model learns not just correct behaviors, but also patterns to avoid. This means we can see solid gains even with small datasets.
+RFT 的好處之一是不需要幾千筆樣本就能看到差異。靠 trajectory sampling 和訓練時的 feedback loop，模型不只學到正確行為，也學到該避開的模式。所以小資料集也能有明顯進步。
 
-For this run, weʼll randomly sample 100 training and 100 test examples and slightly normalize them.
+這次隨機抽 100 筆訓練、100 筆測試，並做一點正規化。
 
 ```python
 import random
@@ -115,7 +125,7 @@ for sample in test_samples:
         sample['Ground-True Answer'] = sample['Ground-True Answer'].lower()
 ```
 
-We'll convert these samples to `jsonl` format, as expected by the [reinforcement finetuning API](https://platform.openai.com/docs/api-reference/fine-tuning/reinforcement-input).
+接著把樣本轉成 `jsonl` 格式，這是 [reinforcement finetuning API](https://platform.openai.com/docs/api-reference/fine-tuning/reinforcement-input) 要求的格式。
 
 ```python
 import json
@@ -150,19 +160,19 @@ test_samples_loaded = load_jsonl("data/medical_01_verifiable_problem_val.jsonl")
 ```
 
 
-Next up: we’ll see how the base model performs out of the box-and where there’s room to grow.
+下一步看 base model 開箱即用的表現，以及還有多少進步空間。
 
 ---
 
 
-## **3. Benchmarking the Base Model**
+## **3. 幫 Base Model 跑 Benchmark**
 
-Before we fine-tune anything, we need to know where we’re starting from. Benchmarking gives us a clear picture of the model’s initial strengths and weaknesses-so we can later measure how far it’s come.
+微調之前要先知道起點在哪。benchmark 能清楚看出模型原本的強項和弱點，之後才能衡量進步多少。
 
-We’ll first lean on two simple yet powerful evaluators:
+我們先用兩個簡單但好用的 evaluator：
 
-1. `clinical_phrase_binary_grader` - an exact-match checker.
-2. `clinical_phrase_grader` - a softer, token-based similarity grader.
+1. `clinical_phrase_binary_grader`：exact match 檢查。
+2. `clinical_phrase_grader`：比較寬鬆、以 token 為基礎的相似度 grader。
 
 ```python
 from rapidfuzz import fuzz, utils
@@ -181,9 +191,9 @@ def combined_grader(sample: dict, item: dict, weights: list[float] = [0.85, 0.15
     return weights[0] * clinical_phrase_score + weights[1] * binary_score
 ```
 
-This combination lets us track both strict correctness and partial lexical overlap. The binary grader gives a crisp 0 or 1: did the model produce an exact match? The softer one gives more nuance—how close did the output come to the gold answer? We use both because outcomes are often phrased in multiple valid ways. For instance, a model might respond with “gouty arthritis” instead of “gout.” While a human evaluator could consider this partially acceptable, a strict string match would not. Combining exact and fuzzy scoring ensures a more accurate and fair assessment of model outputs. 
+這樣搭配就能同時追蹤嚴格正確性和部分字面重疊。binary grader 給明確的 0 或 1，看模型有沒有完全吻合。寬鬆的那個則給更細的資訊，看輸出離標準答案多近。兩個都用，是因為同一個結果常有多種合理說法。例如模型回答「gouty arthritis」而不是「gout」，人類評審可能覺得部分可接受，但嚴格比對字串就不會算對。精確加模糊的評分一起用，評估才會比較準也比較公平。
 
-We build a helper function to prepend the examples with a system prompt.
+我們寫一個 helper function，在範例前面加上 system prompt。
 
 ```python
 def prepend_system_prompt_to_first_user_message(samples, system_prompt, path=None):
@@ -216,7 +226,7 @@ test_samples_loaded_simple_sys_prompt = prepend_system_prompt_to_first_user_mess
 )
 ```
 
-Then build a helper function to generate and store the model's predictions.
+再寫一個 helper function 來產生並儲存模型的預測。
 
 ```python
 from openai import OpenAI
@@ -299,7 +309,7 @@ def generate_model_predictions(
         return results_per_run
 ```
 
-To generate the predictions, first make sure your API key is set:
+要產生預測，先確認 API key 已設定：
 
 ```bash
 export OPENAI_API_KEY=...
@@ -327,8 +337,8 @@ results_simple_o3 = generate_model_predictions(
 )
 ```
 
-We now have predictions that are ready to be evaluated.<br>
-We'll build a helper function that allows us to easily swap in different scoring methods,
+現在預測都準備好可以評估了。<br>
+我們寫一個 helper function，方便抽換不同的評分方法，
 
 ```python
 import functools
@@ -431,7 +441,7 @@ def load_predictions(
     return all_predictions, all_metrics
 ```
 
-and then run the evaluations.
+然後跑評估。
 
 ```python
 model_name = "o4-mini"
@@ -478,7 +488,7 @@ predictions_o4mini_medium_simple_prompt, metrics_o4mini_medium_simple_prompt = l
     {'total_samples': 100, 'accuracy': 0.5943742483874717}
     ```
 
-Visualizing the results allows us to spot trends and failure modes.
+把結果視覺化，比較容易看出趨勢和失敗模式。
 
 ```python
 # Print mistakes where the model did not get the correct answer (score < 1.0)
@@ -528,14 +538,14 @@ for m in mistakes[15:20]:
       Score: 0.612
     ```
 
-As observed above, typical failure modes fall into three categories:
-1. Small differences and formatting issues, score >=0.8.
-2. Partial lexical match, 0.3 < score < 0.8.
-3. Lexically off-base, score < 0.3.
+從上面可以看到，典型的失敗模式分三類：
+1. 小差異和格式問題，score >= 0.8。
+2. 部分字面吻合，0.3 < score < 0.8。
+3. 字面上完全偏掉，score < 0.3。
 
-We can visualize the full score distribution on the training set.
+我們可以把訓練集完整的分數分布畫出來。
 
-> Note: In practice, analyzing model errors at scale often involves a mix of manual review and automated methods, such as tagging failure types or clustering predictions by score and content. That workflow is beyond the scope of this guide, but it's a valuable next step once you've identified broad patterns.
+> 註：實務上要大規模分析模型錯誤，通常會混合人工檢視和自動化方法，例如標記失敗類型，或依分數和內容把預測分群。這部分超出本篇範圍，但找出大方向的模式之後，這是很值得做的下一步。
 
 ```python
 import matplotlib.pyplot as plt
@@ -552,7 +562,7 @@ plt.legend()
 
     ![](Reinforcement_Fine_Tuning_files/out_30_1.png)
 
-Let's compare with other models and prompts, and visualize scores.
+再拿其他模型和 prompt 來比較，並把分數視覺化。
 
 ```python
 # OpenAI o3 model
@@ -667,25 +677,25 @@ plot_model_accuracies(model_metrics_avg, model_metrics_std, grader_title="Combin
 
     ![](Reinforcement_Fine_Tuning_files/out_34_0.png)
 
-We can see that the modelʼs performance has clear limits. In practice, iterating on the prompt often helps boost baseline results and get more out of the base model. However, in this case, our prompt engineering didnʼt lead to meaningful improvements-so we excluded those runs from the analysis.
+可以看到模型的表現有明顯上限。實務上調整 prompt 通常能拉高 baseline，讓 base model 發揮更多。不過這個案例裡 prompt engineering 沒帶來有意義的進步，所以那些 run 就沒放進分析。
 
 
-A key requirement for RFT to work is that the base model demonstrates it can successfully complete the task for at least some examples right out of the gate. The initial accuracy of ~0.6 is a strong signal that RFT can boost performance. If the model never succeeds on your tasks, there is no training signal to hill climb on.
+RFT 要有效有個前提：base model 至少要在一部分範例上，一開始就能成功完成任務。初始準確率約 0.6，是 RFT 能提升表現的強烈訊號。如果模型在你的任務上從來沒成功過，就沒有訓練訊號可以往上爬。
 
 
-This evaluation process prepares us for the next step: guiding the model with structured, high-quality feedback from a grader.
+這個評估流程為下一步做準備：用 grader 給模型結構化的高品質回饋。
 
 ---
 
 
-## **4. Defining Your Grader**
+## **4. 定義你的 Grader**
 
-The grader defines the reward function that shapes model behavior during RFT. It provides examples of desired outputs-and penalizes undesirable ones. Designing an effective grader requires both principled structure and thoughtful domain insight, and is perhaps the most important task for successful RFT. 
+grader 定義 RFT 期間塑造模型行為的 reward function。它會給期望輸出的範例，並懲罰不想要的輸出。設計有效的 grader 需要有原則的結構，也需要領域知識，可能是 RFT 成功最重要的工作。
 
-In this section, we will present 3 graders, show how they should be set up to fit the API, and discuss the results they yielded. We will then show how to actually launch an RFT task. 
+這一節會介紹 3 個 grader，說明怎麼設定才符合 API，並討論它們的結果，然後示範怎麼真正啟動 RFT 任務。
 
 ### String based grader
-We began with a dual grader using our earlier evaluation functions since it provides a distribution of scores that will be aligned with the lexical proximity of the prediction to the reference answer. It provided a starting point, but the signal wasnʼt rich enough for `o4-mini` to truly learn and improve, and a first experiment showed stagnant reward during the RFT run. For the API calls, you should build the python grading function as shown below. 
+我們一開始用前面的評估函式組成雙重 grader，它給出的分數分布會對應預測跟標準答案在字面上的接近程度。這是個起點，但訊號不夠豐富，`o4-mini` 學不到東西，第一次實驗的 reward 在 RFT 過程中停滯不前。呼叫 API 時，要像下面這樣寫 python grading function。
 
 ```python
 import inspect
@@ -719,18 +729,18 @@ multi_python_grader_tool_call = {
 }
 ```
 
-Here is a snapshot of its training curves, where the green curve is the training set reward and the blue curve is the test set reward:
+下面是它的訓練曲線，綠色是訓練集 reward，藍色是測試集 reward：
 
 ![RFT String Grader](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/rft_string_grader.png)
 
 ### Model Grader 1
-To address this limitation, we introduced a more advanced approach: the **model grader**. A model-based grader lets us embed semantic understanding and nuance into the feedback. Thatʼs especially powerful when domain-specific synonyms or fuzzy reasoning are in play. 
+為了解決這個限制，我們改用更進階的做法：**model grader**。以模型為基礎的 grader 可以把語意理解和細微差別放進回饋裡，碰到領域專有的同義詞或需要模糊推理時特別有用。
 
-We used gpt-4.1 as our grader model, guided by a rubric that emphasized semantic fidelity: clinical synonymy, correct disease categorization, and conceptual alignment. Rather than focusing on superficial phrasing-e.g., "Is this the same string?"-the grader aimed to answer, "Does this reflect the correct outcome or phenomenon?" 
+我們用 gpt-4.1 當 grader model，並用強調語意忠實度的 rubric 引導它：臨床同義詞、疾病分類是否正確、概念是否一致。它不看表面措辭（例如「這是同一個字串嗎？」），而是想回答「這有沒有反映正確的結果或現象？」
 
-To ensure the grader aligned with expert expectations, we evaluated it on a subset of base model predictions. For any production use-case, domain expert reviewers should verify that model assigned scores reflect preferred answer orderings and align with domain judgment. This typically involves confirming that the model grader correctly ranks predictions according to their validity. In the scope of this cookbook, we approximated this evaluation by using OpenAI `o3` to check whether higher-quality predictions were consistently rewarded relative to their alternatives.
+為了確保 grader 符合專家的期待，我們拿一部分 base model 的預測來評估它。任何正式的使用情境，都應該由領域專家審核，確認 model 給的分數符合偏好的答案排序，也符合領域判斷。這通常是確認 model grader 有依預測的有效程度正確排序。在這份 cookbook 的範圍內，我們用 OpenAI `o3` 近似這個評估，檢查品質較高的預測是不是一致地比其他選項得到更高的獎勵。
 
-From these discussions of `o3` , we iteratively update the model grader until the results are aligned. 
+根據與 `o3` 的這些討論，我們反覆修改 model grader，直到結果一致。
 
 ```python
 GRADER_PROMPT_1 = """
@@ -752,7 +762,7 @@ System:
 """
 ```
 
-To be submitted through the API, this is how the dictionary is built.
+要透過 API 提交時，dictionary 是這樣建構的。
 
 ```python
 model_grader_1 = {
@@ -778,7 +788,7 @@ model_grader_1 = {
 }
 ```
 
-Accordingly, we set up the model grader locally to check the results of the models we will fine-tune next. 
+接著我們在本機設定 model grader，用來檢查接下來要微調的模型的結果。
 
 ```python
 response_format = {
@@ -851,14 +861,14 @@ def python_model_grader(sample, item, model_grader=model_grader_1):
     return float(parsed["result"])
 ```
 
-While the rubric initially delivered sensible feedback, the model soon uncovered a loophole and began **reward-hacking**. Scores shot up-sometimes by 20-30 percentage points-not because clinical accuracy improved but because the model padded its “one phrase” answers with synonyms, doses, and full management plans. You might see `begin warfarin therapy **and** continue unfractionated heparin for ≥5 days, overlapping until the INR is in the therapeutic range (2–3)` or `chewable aspirin 325 mg stat plus nitroglycerin…` instead of the required `continue unfractionated heparin` or `aspirin` respectively. Although the system prompt is explicit-*“respond with exactly one phrase: the single most likely outcome or phenomenon”*-these verbose outputs inflate *lexical_similarity* scores without precisely adding prediction value. This experience highlights the need to continuously inspect model outputs and remain vigilant for reward-hacking behaviours that can quietly distort evaluation metrics.
+rubric 一開始給出合理的回饋，但模型很快就找到漏洞，開始 **reward hacking**。分數衝高，有時多出 20 到 30 個百分點，原因不是臨床準確度提升，而是模型把「一個片語」的答案灌水，塞進同義詞、劑量和完整的處置計畫。你可能會看到 `begin warfarin therapy **and** continue unfractionated heparin for ≥5 days, overlapping until the INR is in the therapeutic range (2–3)`，或 `chewable aspirin 325 mg stat plus nitroglycerin…`，而不是要求的 `continue unfractionated heparin` 或 `aspirin`。雖然 system prompt 寫得很明確（*"respond with exactly one phrase: the single most likely outcome or phenomenon"*），這些冗長的輸出還是會拉高 *lexical_similarity* 分數，卻沒有真的增加預測價值。這個經驗說明要持續檢查模型輸出，並提防會悄悄扭曲評估指標的 reward hacking 行為。
 
-Here is a snapshot of its training curves (green is training reward, blue is test reward):
+下面是它的訓練曲線（綠色是訓練 reward，藍色是測試 reward）：
 
 ![RFT Model Hacking](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/rft_hacking.png)
 
 ### Model Grader 2
-To mitigate this reward-hack, we refined the grader prompt by clarifying expectations, enforcing stricter output constraints, and supplying contrastive examples of correct versus incorrect behavior. Once again, we've iterated with `o3`, leveraging predictions from the base `o4-mini` and the previous fine-tuned model hacking examples, to design and validate our grader. Another important point of this updated grader is the reduction of the weight of the *lexical_similarity*, to ensure that *clinical_similarity* prevails.
+為了減輕這個 reward hack，我們改良 grader prompt：把期望講得更清楚、對輸出加更嚴格的限制，並提供正確與錯誤行為的對照範例。我們再 用 `o3` 反覆迭代，用 base `o4-mini` 的預測和前一個被 hack 的 fine-tuned model 範例來設計並驗證 grader。這個新版 grader 還有一點很重要：降低 *lexical_similarity* 的權重，讓 *clinical_similarity* 佔上風。
 
 ```python
 GRADER_PROMPT_2 = """You are an expert medical grader.
@@ -990,22 +1000,21 @@ model_grader_2 = {
 ```
 
 
-The final result was a high-signal, domain-sensitive grader that guided the model toward more appropriate and concise predictions.
+最後得到的是高訊號、對領域敏感的 grader，引導模型給出更恰當、更簡潔的預測。
+**費用提醒：** LLM grader 除了訓練算力之外，還會產生 token 費用。為了控制成本，建議：
+1. 先在本機用 base model 的 completion（也可以加合成的）測試 grader，確認它符合你的 rubric 或人類偏好。有的話可以用 [flex processing](https://platform.openai.com/docs/guides/flex-processing) 讓評估更省。
+2. 先跑小規模的 RFT，確認 grader 對得上、並偵測可能的 reward hacking，再放大規模。
 
-**Note on cost:** LLM graders incur token usage charges in addition to training compute. To manage costs effectively, we recommend:
-1. Testing your grader locally on base model completions (and optionally synthetic ones) to ensure it aligns with your rubric or human preferences. When available, use [flex processing](https://platform.openai.com/docs/guides/flex-processing) for more efficient evaluation.
-2. Starting with a small-scale RFT run to validate grader alignment and detect potential reward-hacking before scaling up.
-
-Let's look at how to launch the training in the next step!
+下一步來看怎麼啟動訓練！
 
 ---
 
 
-## **5. Training**
+## **5. 訓練**
 
-Once your prompt and grader are finalized, you can proceed to training. This section shows how to launch RFT using your final grader-but naturally, you would have already run similar commands when experimenting with earlier grader versions to evaluate their performance.
+prompt 和 grader 都定案後就可以開始訓練。這一節示範用最終版 grader 啟動 RFT，不過你在試驗前面幾版 grader 時，當然也已經跑過類似的指令來評估它們的表現。
 
-We make sure the grader passed API test,
+先確認 grader 通過 API 測試，
 
 ```python
 import requests
@@ -1035,7 +1044,7 @@ except requests.exceptions.RequestException as e:
     Grader validated
     ```
 
-and upload the training and test sets to the OpenAI file system.
+再把訓練集和測試集上傳到 OpenAI 檔案系統。
 
 ```python
 # Set your training and test file paths
@@ -1078,9 +1087,9 @@ if test_file and test_file.endswith("jsonl"):
     File uploaded successfully. File ID: file-78q2N1QAMKhLiRK3zVB6MC
     ```
 
-Let's now define the hyper-parameters for our run. We will be fine-tuning `o4-mini`, with the `medium` reasoning effort. This parameter will impact the duration by limiting the number of tokens the model uses to reason. We tune with a moderate compute multiplier and reasonable number of epochs, prioritizing efficiency and fast iteration. Additionally, we set the `eval_samples` parameter to 3 to make the validation curves more robust given the stochasticity of `o4-mini`’s outputs. Averaging across multiple samples reduces noise and helps reveal consistent patterns of learning.
+接著設定這次 run 的 hyper-parameters。我們要微調 `o4-mini`，reasoning effort 用 `medium`。這個參數會限制模型拿來推理的 token 數，所以會影響訓練時間。我們用中等的 compute multiplier 和合理的 epoch 數，優先考慮效率和快速迭代。另外把 `eval_samples` 設成 3，因為 `o4-mini` 的輸出有隨機性，多取樣平均可以讓驗證曲線更穩，降低雜訊，讓一致的學習模式浮現。
 
-You’ll want to tailor these depending on your budget, desired generalization, and dataset difficulty.
+你要依預算、希望的泛化程度和資料集難度調整這些參數。
 
 ```python
 # Set the model and other parameters
@@ -1096,7 +1105,7 @@ eval_samples = 3
 eval_interval = 5
 ```
 
-We are now ready to launch the run!
+準備好了，啟動 run！
 
 ```python
 # Launch the RFT job
@@ -1149,20 +1158,20 @@ except requests.exceptions.RequestException as e:
     View the job details at: https://platform.openai.com/finetune/ftjob-tt3B7l45hLUoaXGJRfoL1lLT
     ```
 
-On the [dashboard](https://platform.openai.com/finetune/) you can observe the reward plots - they let you watch overall performance improve across steps, while the per-grader charts break down specific components in the case of a *multi_grader*. Reasoning token usage trends (often decreasing as the model gets more confident) and step duration metrics give insight into efficiency. Grader latency and error count plots help ensure your grader stays performant and bug-free during the run.
+在 [dashboard](https://platform.openai.com/finetune/) 上可以看 reward 曲線，看整體表現隨 step 進步。如果用的是 *multi_grader*，各 grader 的圖表還會拆出個別元件的表現。Reasoning token 用量的趨勢（模型越有把握通常越少）和 step 時間指標可以看效率。Grader 延遲和錯誤數的圖則確保 grader 在 run 期間跑得順、沒有 bug。
 
-Here is a snapshot of our training curves, where the green and orange curves are for the training set, while the blue and red curves are for the test subset:
+下面是我們的訓練曲線，綠色和橘色是訓練集，藍色和紅色是測試子集：
 
 ![RFT Dashboard Example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/rft_dashboard_modelgrader2.png)
 
-During training, evaluation runs on the test set are logged directly to the [Evaluation API](https://platform.openai.com/evaluations?tab=runs). You can head there to track how your samples perform and get a sense of how predictions evolve over time.
+訓練期間，測試集上的評估 run 會直接記錄到 [Evaluation API](https://platform.openai.com/evaluations?tab=runs)。你可以去那裡追蹤樣本的表現，看預測怎麼隨時間演變。
 
 ---
 
 
-## **6. Using Your Fine-Tuned Model**
+## **6. 使用微調後的模型**
 
-When training completes, you can call your new model by its `model_id` and benchmark its improvements. Expect sharper predictions! 
+訓練完成後，用 `model_id` 就能呼叫新模型並 benchmark 它的進步。預期預測會更準！
 
 
 ```python
@@ -1182,9 +1191,9 @@ else:
 print("Fine-tuned model id:", fine_tuned_model_id)
 ```
 
-### Model's prediction scores
+### 模型的預測分數
 
-Let's compute the scores of our base and fine-tuned models for comparison.
+算出 base model 和 fine-tuned model 的分數來比較。
 
 ```python
 from functools import partial
@@ -1388,7 +1397,7 @@ predictions_o3_medium_simple_prompt_model_grader_2, metrics_o3_medium_simple_pro
     {'total_samples': 100, 'accuracy': 0.74235}
     ```
 
-We can now visualize them!
+現在把它們視覺化！
 
 ```python
 avg_metrics_o4mini_medium_simple_prompt_model_grader_2, std_metrics_o4mini_medium_simple_prompt_model_grader_2 = average_and_std_metrics(metrics_o4mini_medium_simple_prompt_model_grader_2)
@@ -1459,7 +1468,7 @@ for m in mistakes[5:10]:
       Score: 0.932
     ```
 
-We see about a 5-point boost in accuracy after fine-tuning. Looking at the first few errors, the model tends to harshly penalize answers that are close but not clinically identical-like *unfractionated heparin* vs. *enoxaparin*. It also dings longer answers, even when they’re correct, like *contrast enhanced computed tomography of the abdomen*.
+微調後準確率大約提升 5 個百分點。看前幾個錯誤會發現，模型對「接近但臨床上不完全相同」的答案懲罰很重，例如 *unfractionated heparin* 對 *enoxaparin*。它也會扣長答案的分，就算答案是對的，例如 *contrast enhanced computed tomography of the abdomen*。
 
 ```python
 scores_o4 = [p['score'] for p in predictions_o4mini_medium_simple_prompt_model_grader_2[0]]
@@ -1505,13 +1514,13 @@ print("Max bin count (y-axis):", max(max(counts_o4), max(counts_ft)))
 
     ![](Reinforcement_Fine_Tuning_files/out_72_1.png)
 
-The score distribution shows that RFT shifted the model’s predictions out of the mid-to-low range (0.2-0.6) and into the high range (0.8-1.0). Because the grader emphasizes clinical similarity over lexical match, our *expert* grader attributes this shift to stronger medical reasoning rather than better phrasing. A handful of already weak predictions fell into the 0.0-0.1 range, suggesting a residual knowledge gap.
+分數分布顯示，RFT 把模型的預測從中低區間（0.2-0.6）推到高區間（0.8-1.0）。因為 grader 看重臨床相似度勝過字面吻合，我們的 *expert* grader 把這個轉變歸因於醫學推理變強，而不是措辭變好。少數本來就很弱的預測掉到 0.0-0.1，表示還有知識缺口。
 
-Note that, because the earlier `combined_grader` was designed to reward lexical correctness, its accuracy didnʼt improve much-which is expected. That gap reinforces why validating your model grader is critical, and why you should monitor for reward-hacking. In our case, we used `o3` to spot-check grading behavior, but domain expert review is essential. 
+要注意，前面的 `combined_grader` 是設計來獎勵字面正確性的，所以它的準確率沒什麼提升，這是預期中的事。這個落差也說明了為什麼驗證 model grader 很關鍵，以及為什麼要監控 reward hacking。我們用 `o3` 抽查 grading 行為，但領域專家的審核不可少。
 
-### Model's reasoning
+### 模型的 reasoning
 
-Another important point in the analysis of the fine-tuned model are the reasoning summaries. The model may provide key information throughout these summaries, and exploring them to understand where the model fails can drive updates in the model's and the grader's system prompts. Below, we show examples of such chain of thought summaries that the model produced to show its way of answering the question:
+分析 fine-tuned model 還有一件重要的事，就是看 reasoning summary。模型可能在這些 summary 裡提供關鍵資訊，研究它們能了解模型哪裡失敗，進而更新模型和 grader 的 system prompt。下面是模型產生的 chain of thought summary 範例，看它怎麼一步步回答問題：
 
 ```python
 # Flatten the list of lists into a single list of dicts
@@ -1536,7 +1545,7 @@ for model_name, predictions in predictions.items():
     Mean reasoning_tokens_used ftmodel: 925
     ```
 
-The fine-tuned model spends more reasoning tokens to think through the question. Let's visualize an example thanks to the reasoning summaries.
+fine-tuned model 花更多 reasoning token 去思考問題。我們用 reasoning summary 來視覺化一個例子。
 
 ```python
 from IPython.display import Markdown, display
@@ -1568,21 +1577,33 @@ display(Markdown(markdown_text))
     I'm analyzing the question about the most suitable imaging study for a patient with symptoms suggesting chronic pancreatitis. The standard approach for suspected chronic pancreatitis is a contrast-enhanced CT scan of the abdomen, as it effectively identifies pancreatic calcifications and structural changes. While MRCP and endoscopic ultrasound provide additional details, CT is often preferred as the initial test. Therefore, my answer should focus on recommending a "contrast-enhanced abdominal CT" as the next step in evaluation.
     ```
 
-Base `o4‑mini`’s reasoning zooms straight to “abdominal CT scan,” mostly worrying about lowercase formatting and giving only a cursory “often the initial choice” justification. The `finetuned model`, meanwhile, first links the patient’s steatorrhea and alcohol history to chronic pancreatitis or cancer, weighs CT against MRCP and EUS, and explains why a contrast‑enhanced abdominal CT best reveals calcifications and structural change. The latter seems more careful, and seems to have learnt to break down the case description even more.
+base `o4‑mini` 的推理直接跳到「abdominal CT scan」，主要在擔心小寫格式，只給了「often the initial choice」這種簡略的理由。`finetuned model` 則先把病人的脂肪瀉和酗酒史連到慢性胰臟炎或癌症，再比較 CT、MRCP 和 EUS，並解釋為什麼 contrast‑enhanced abdominal CT 最能看出鈣化和結構變化。後者看起來更仔細，似乎學會了把病例描述拆得更細。
 
-### To push the scores further
-Both the baseline `o3` and our fine-tuned `o4-mini` sometimes scored zero on the same samples-a red flag that the reference labels may be wrong. Before adding more compute, invest in data quality: have a domain expert relabel the noisy slice, analyze the model's reasoning, then tighten the grader prompt. Clean, trusted data and methodical updates almost always buys more accuracy than extra epochs.
+### 想把分數再往上推
+baseline `o3` 和我們微調的 `o4-mini` 有時在同樣的樣本上都得 0 分，這是標準答案可能標錯的警訊。加更多算力之前，先投資在資料品質：請領域專家重新標註有雜訊的那一部分，分析模型的 reasoning，再收緊 grader prompt。乾淨可信的資料加上有條理的修改，通常比多跑 epoch 更能換到準確率。
 
 
 ---
 
 
-## **Conclusion**
+## **結論**
 
-Weʼve looked at how to design graders that give `o4-mini` the kind of detailed feedback it needs during RFT. That signal is what helps the model actually learn and improve beyond the baseline. Model graders can be incredibly powerful for this-but only if theyʼre designed carefully. A sloppy grader or sloppy data can send the wrong signals and steer the model in the wrong direction. 
+我們看了怎麼設計 grader，讓 `o4-mini` 在 RFT 時拿到夠細緻的回饋。這個訊號讓模型真的能學習並超越 baseline。model grader 可以非常強大，但前提是設計得夠小心。草率的 grader 或草率的資料，會送出錯的訊號，把模型帶往錯的方向。
 
-You're now ready to apply reinforcement fine-tuning on your own models using the OpenAI API. Weʼre excited to see how you push the boundaries of reasoning and tool use with custom graders and smarter model behavior!
+現在你可以用 OpenAI API 對自己的模型做 reinforcement fine-tuning 了。期待看到你用客製 grader 和更聰明的模型行為，推進 reasoning 和 tool use 的邊界！
 
-For troubleshooting or next steps, refer to the [OpenAI fine-tuning documentation](https://platform.openai.com/docs/guides/fine-tuning).
+要排除問題或找下一步，可參考 [OpenAI fine-tuning 文件](https://platform.openai.com/docs/guides/fine-tuning)。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- RFT 要有訓練訊號才有效：base model 至少要在部分範例上成功（這篇初始約 0.6），否則沒東西可爬。
+- grader 就是 reward function，決定模型往哪裡學，是 RFT 最關鍵的設計。
+- 字串型 grader 只看字面，訊號太貧乏，reward 會停滯。model grader 能看語意，但也會被鑽漏洞。
+- 模型會用灌水（塞同義詞、劑量、整套處置）來 reward hack，要持續檢查輸出，並用對照範例和調整權重來修 grader。
+- grader 和資料品質比多跑 epoch 更重要，兩個模型同時得 0 分，可能是標準答案標錯。
+
+## 練習
+
+1. 在第 2 節把訓練和測試各抽 100 筆的數字改成 50，重跑 benchmark，看 baseline 分數變動多大。
+2. 在第 3 節的 benchmark 裡，自己挑 5 筆 score 介於 0.3 到 0.8 的預測，手動判斷它們屬於哪種失敗模式，再看 binary grader 和 phrase grader 的分數差在哪。
+3. 在 Model Grader 2 的 grader 設定裡，調整 *lexical_similarity* 和 *clinical_similarity* 的權重（例如各 0.5），再用本機 grader 對灌水的答案評分，觀察 reward hacking 有沒有回來。

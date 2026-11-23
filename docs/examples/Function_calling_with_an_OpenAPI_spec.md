@@ -1,28 +1,38 @@
 ---
-translated: false
+translated: true
 source: examples/Function_calling_with_an_OpenAPI_spec.ipynb
 ---
 
-# Function calling with an OpenAPI specification
+# 用 OpenAPI 規格做 function calling
 
 > 原文：[examples/Function_calling_with_an_OpenAPI_spec.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Function_calling_with_an_OpenAPI_spec.ipynb)
 
+## 這篇在做什麼
+
+把一份 OpenAPI 規格轉成 chat completions API 能用的 function 定義，再讓模型依使用者指示產生呼叫這些 function 的 JSON 參數，並串接多個呼叫完成複雜操作。範例 API 是一個活動（event）管理服務。
+
+## 學完你會
+
+- 寫 `openapi_to_functions`，解析 `$ref`、取出 `operationId`、描述與參數，產生 function 定義清單
+- 把這些定義交給 chat completions API，讓模型產生呼叫參數
+- 在自己的程式裡執行 function 呼叫，並把多個呼叫串起來
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，呼叫模型會產生費用
+- 建議先看過 function calling 的基礎教學
 
 
-<!-- tutor:goals -->
+網路上很多東西都由 RESTful API 驅動。讓 GPT 能呼叫它們，就開啟了很多可能性。這個 notebook 示範怎麼讓 GPT 聰明地呼叫 API，用到 OpenAPI 規格和串接的 function call。
 
+[OpenAPI Specification (OAS)](https://swagger.io/specification/) 是公認的標準，用機器可讀、可解讀的格式描述 RESTful API 的細節。它讓人和電腦都能理解服務的功能，也可以用來教 GPT 怎麼呼叫 API。
 
+這個 notebook 分成兩大部分：
 
-Much of the internet is powered by RESTful APIs. Giving GPT the ability to call them opens up a world of possibilities. This notebook demonstrates how GPTs can be used to intelligently call APIs. It leverages OpenAPI specifications and chained function calls.
+1. 怎麼把範例 OpenAPI 規格轉成 chat completions API 用的 function 定義清單。
+2. 怎麼用 chat completions API 依使用者指示聰明地呼叫這些 function。
 
-The [OpenAPI Specification (OAS)](https://swagger.io/specification/) is a universally accepted standard for describing the details of RESTful APIs in a format that machines can read and interpret. It enables both humans and computers to understand the capabilities of a service, and it can be leveraged to show GPT how to call APIs.
-
-This notebook is divided into two main sections:
-
-1. How to convert a sample OpenAPI specification into a list of function definitions for the chat completions API.
-2. How to use the chat completions API to intelligently invoke these functions based on user instructions.
-
-We recommend familiarizing yourself with [function-calling](How_to_call_functions_with_chat_models.md) before proceeding.
+建議繼續之前先熟悉 [function-calling](How_to_call_functions_with_chat_models.md)。
 
 
 ```python
@@ -54,24 +64,24 @@ from pprint import pp
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-## How to convert an OpenAPI specification into function definitions
+## 怎麼把 OpenAPI 規格轉成 function 定義
 
 
-The example OpenAPI spec we use here was created using `gpt-4`. We will transform this sample spec into a set of function definitions that can be supplied to the chat completion API. The model, based on the provided user instructions, generates a JSON object containing the necessary arguments to call these functions.
+這裡用的範例 OpenAPI 規格是用 `gpt-4` 產生的。我們會把這份範例規格轉成一組 function 定義，提供給 chat completion API。模型會依使用者的指示，產生一個 JSON 物件，裡面是呼叫這些 function 所需的參數。
 
-Before we proceed, let's inspect this generated spec. OpenAPI specs include details about the API's endpoints, the operations they support, the parameters they accept, the requests they can handle, and the responses they return. The spec is defined in JSON format.
+繼續之前，先看看這份產生出來的規格。OpenAPI 規格包含 API 的 endpoint、支援的操作、接受的參數、可處理的請求，以及回傳的回應。規格是用 JSON 格式定義。
 
-The endpoints in the spec include operations for:
+規格中的 endpoint 包含這些操作：
 
-- Listing all events
-- Creating a new event
-- Retrieving an event by ID
-- Deleting an event by ID
-- Updating an event name by ID
+- 列出所有活動
+- 建立新活動
+- 依 ID 取得活動
+- 依 ID 刪除活動
+- 依 ID 更新活動名稱
 
-Each operation in the spec has an `operationId`, which we will use as the function name when we parse the spec into function specifications. The spec also includes schemas that define the data types and structures of the parameters for each operation.
+規格裡每個操作都有 `operationId`，我們把規格解析成 function 規格時，會用它當 function 名稱。規格也包含 schema，定義每個操作的參數的資料型別與結構。
 
-You can see the schema here:
+你可以在這裡看到 schema：
 
 
 ```python
@@ -127,23 +137,23 @@ display(openapi_spec)
     ... (省略 35 行)
     ```
 
-Now that we have a good understanding of the OpenAPI spec, we can proceed to parse it into function specifications.
+對 OpenAPI 規格有了清楚的了解後，就可以把它解析成 function 規格。
 
-We can write a simple `openapi_to_functions` function to generate a list of definitions, where each function is represented as a dictionary containing the following keys:
+我們可以寫一個簡單的 `openapi_to_functions` 函式來產生定義清單，每個 function 是一個 dictionary，包含下列 key：
 
-- `name`: This corresponds to the operation identifier of the API endpoint as defined in the OpenAPI specification.
-- `description`: This is a brief description or summary of the function, providing an overview of what the function does.
-- `parameters`: This is a schema that defines the expected input parameters for the function. It provides information about the type of each parameter, whether it is required or optional, and other related details.
+- `name`：對應 OpenAPI 規格裡定義的 API endpoint 的 operation 識別碼。
+- `description`：function 的簡短描述或摘要，概述這個 function 做什麼。
+- `parameters`：定義 function 預期輸入參數的 schema，說明每個參數的型別、必填或選填，以及其他相關細節。
 
-For each of the endpoints defined in the schema, we need to do the following:
+對 schema 裡定義的每個 endpoint，我們需要做這些事：
 
-1. **Resolve JSON references**: In an OpenAPI specification, it's common to use JSON references (also known as $ref) to avoid duplication. These references point to definitions that are used in multiple places. For example, if multiple API endpoints return the same object structure, that structure can be defined once and then referenced wherever it's needed. We need to resolve and replace these references with the content they point to.
+1. **解析 JSON reference**：在 OpenAPI 規格裡，常用 JSON reference（也叫 $ref）避免重複。這些 reference 指向會在多處使用的定義。例如多個 API endpoint 回傳相同的物件結構時，可以只定義一次，在需要的地方引用。我們需要解析這些 reference，並用它們指向的內容取代。
 
-2. **Extract a name for the functions:** We will simply use the operationId as the function name. Alternatively, we could use the endpoint path and operation as the function name.
+2. **取得 function 的名稱：**我們直接用 operationId 當 function 名稱。也可以改用 endpoint 的 path 加操作當 function 名稱。
 
-3. **Extract a description and parameters:** We will iterate through the `description`, `summary`, `requestBody` and `parameters` fields to populate the function's description and parameters.
+3. **取得描述和參數：**我們會遍歷 `description`、`summary`、`requestBody` 和 `parameters` 欄位，填入 function 的描述和參數。
 
-Here's the implementation:
+實作如下：
 
 
 ```python
@@ -244,14 +254,14 @@ for function in functions:
     ... (省略 7 行)
     ```
 
-## How to call these functions with GPT
+## 怎麼讓 GPT 呼叫這些 function
 
 
-Now that we have these function definitions, we can leverage GPT to call them intelligently based on user inputs.
+現在有了這些 function 定義，就可以讓 GPT 依使用者輸入聰明地呼叫它們。
 
-It's important to note that the chat completions API does not execute the function; instead, it generates the JSON that you can use to call the function in your own code.
+要注意的是，chat completions API 不會執行 function，它只會產生 JSON，讓你在自己的程式裡用來呼叫 function。
 
-For more information on function-calling, refer to our dedicated [function-calling guide](How_to_call_functions_with_chat_models.md).
+更多 function calling 的資訊，請看我們專門的 [function-calling 指南](How_to_call_functions_with_chat_models.md)。
 
 
 ```python
@@ -353,11 +363,23 @@ process_user_instruction(functions, USER_INSTRUCTION)
     3. Deleted the event with the ID "2456".
     ```
 
-### Conclusion
+### 結論
 
-We have demonstrated how to convert OpenAPI specs into function specifications that can be given to GPT for it to intelligently call them, and shown how these can be chained together to perform complex operations.
+我們示範了怎麼把 OpenAPI 規格轉成 function 規格，交給 GPT 讓它聰明地呼叫，也展示了怎麼把這些呼叫串起來執行複雜操作。
 
-Possible extensions of this system could include handling more complex user instructions that require conditional logic or looping, integrating with real APIs to perform actual operations, and improving error handling and validation to ensure the instructions are feasible and the function calls are successful.
+這個系統可能的延伸方向，包括處理需要條件判斷或迴圈的更複雜使用者指示、整合真實的 API 執行實際操作，以及改善錯誤處理與驗證，確保指示可行、function 呼叫成功。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- OpenAPI 規格已經包含 function calling 需要的資訊，可以自動轉成 function 定義，不用手寫。
+- 轉換重點是解開 `$ref`，用 `operationId` 當 name，再整合描述與參數。
+- 模型只負責產生呼叫用的 JSON，真正執行 function 的是你自己的程式。
+- 多個 function call 可以依序串接，讓模型完成需要多步驟的操作。
+- 要用在真實 API，還得加上錯誤處理和參數驗證。
+
+## 練習
+
+1. 在範例規格裡加一個 endpoint（例如依名稱搜尋活動），重新跑 `openapi_to_functions`，確認新的 function 定義出現。
+2. 改用 endpoint 的 path 加 HTTP method 當 function 名稱，取代 `operationId`。
+3. 寫一個簡單的假實作（in-memory 的活動清單），執行模型回傳的 function call，把結果回傳給模型，完成「建立活動後再改名」的串接。

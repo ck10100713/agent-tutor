@@ -1,27 +1,32 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/elasticsearch/elasticsearch-semantic-search.ipynb
 ---
-
-# Semantic search using Elasticsearch and OpenAI
+# 用 Elasticsearch 和 OpenAI 做語意搜尋
 
 > 原文：[examples/vector_databases/elasticsearch/elasticsearch-semantic-search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/elasticsearch/elasticsearch-semantic-search.ipynb)
 
+## 這篇在做什麼
+把 OpenAI 的 Wikipedia 向量資料集索引進 Elasticsearch，用 OpenAI embeddings endpoint 把問題轉成向量，再對 index 做 kNN 語意搜尋。
 
+## 學完你會
+- 建立有 `dense_vector` 欄位 mapping 的 Elasticsearch index
+- 用 bulk API 分批把 DataFrame 索引進去
+- 把問題 embed 後，用 kNN query 做語意搜尋
 
-<!-- tutor:goals -->
-
-
+## 開跑前
+- Elasticsearch 的 Elastic Cloud deployment（可註冊免費試用），需要 Cloud ID 和密碼
+- OpenAI API key
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openai/openai-cookbook/blob/main/examples/vector_databases/elasticsearch/elasticsearch-semantic-search.ipynb)
 
 
-This notebook demonstrates how to: 
-- Index the OpenAI Wikipedia vector dataset into Elasticsearch 
-- Embed a question with the OpenAI [`embeddings`](https://platform.openai.com/docs/api-reference/embeddings) endpoint
-- Perform semantic search on the Elasticsearch index using the encoded question
+這個 notebook 示範怎麼：
+- 把 OpenAI Wikipedia 向量資料集索引進 Elasticsearch
+- 用 OpenAI [`embeddings`](https://platform.openai.com/docs/api-reference/embeddings) endpoint 把問題 embed
+- 用編碼後的問題對 Elasticsearch index 做語意搜尋
 
-## Install packages and import modules 
+## 安裝套件並 import 模組
 
 ```python
 # install packages
@@ -39,14 +44,14 @@ import json
 from openai import OpenAI
 ```
 
-## Connect to Elasticsearch
+## 連線到 Elasticsearch
 
-ℹ️ We're using an Elastic Cloud deployment of Elasticsearch for this notebook.
-If you don't already have an Elastic deployment, you can sign up for a free [Elastic Cloud trial](https://cloud.elastic.co/registration?utm_source=github&utm_content=openai-cookbook).
+ℹ️ 這個 notebook 使用 Elastic Cloud 上的 Elasticsearch deployment。
+如果你還沒有 Elastic deployment，可以註冊免費的 [Elastic Cloud trial](https://cloud.elastic.co/registration?utm_source=github&utm_content=openai-cookbook)。
 
-To connect to Elasticsearch, you need to create a client instance with the Cloud ID and password for your deployment.
+要連到 Elasticsearch，需要用你 deployment 的 Cloud ID 和密碼建立 client instance。
 
-Find the Cloud ID for your deployment by going to https://cloud.elastic.co/deployments and selecting your deployment.
+到 https://cloud.elastic.co/deployments 選你的 deployment，就能找到它的 Cloud ID。
 
 ```python
 CLOUD_ID = getpass("Elastic deployment Cloud ID")
@@ -66,9 +71,9 @@ print(client.info())
     {'name': 'instance-0000000001', 'cluster_name': '29ef9817e13142f5ba0ea7b29c2a86e2', 'cluster_uuid': 'absjWgQvRw63IlwWKisN8w', 'version': {'number': '8.9.1', 'build_flavor': 'default', 'build_type': 'docker', 'build_hash': 'a813d015ef1826148d9d389bd1c0d781c6e349f0', 'build_date': '2023-08-10T05:02:32.517455352Z', 'build_snapshot': False, 'lucene_version': '9.7.0', 'minimum_wire_compatibility_version': '7.17.0', 'minimum_index_compatibility_version': '7.0.0'}, 'tagline': 'You Know, for Search'}
     ```
 
-## Download the dataset 
+## 下載資料集
 
-In this step we download the OpenAI Wikipedia embeddings dataset, and extract the zip file.
+這一步下載 OpenAI Wikipedia embeddings 資料集，並解壓縮 zip 檔。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -79,22 +84,22 @@ with zipfile.ZipFile("vector_database_wikipedia_articles_embedded.zip",
     zip_ref.extractall("data")
 ```
 
-##  Read CSV file into a Pandas DataFrame
+##  把 CSV 讀進 Pandas DataFrame
 
-Next we use the Pandas library to read the unzipped CSV file into a DataFrame. This step makes it easier to index the data into Elasticsearch in bulk.
+接著用 Pandas 把解壓縮後的 CSV 讀進 DataFrame。這樣之後比較容易批次索引進 Elasticsearch。
 
 ```python
 
 wikipedia_dataframe = pd.read_csv("data/vector_database_wikipedia_articles_embedded.csv")
 ```
 
-## Create index with mapping
+## 建立有 mapping 的 index
 
-Now we need to create an Elasticsearch index with the necessary mappings. This will enable us to index the data into Elasticsearch.
+現在要建一個有必要 mapping 的 Elasticsearch index，這樣才能把資料索引進去。
 
-We use the `dense_vector` field type for the `title_vector` and  `content_vector` fields. This is a special field type that allows us to store dense vectors in Elasticsearch.
+`title_vector` 和 `content_vector` 欄位我們用 `dense_vector` 欄位型別。這是特殊的欄位型別，可以在 Elasticsearch 存 dense vector。
 
-Later, we'll need to target the `dense_vector` field for kNN search.
+之後做 kNN 搜尋時，會以這些 `dense_vector` 欄位為目標。
 
 
 ```python
@@ -129,11 +134,11 @@ client.indices.create(index="wikipedia_vector_index", mappings=index_mapping)
     ObjectApiResponse({'acknowledged': True, 'shards_acknowledged': True, 'index': 'wikipedia_vector_index'})
     ```
 
-## Index data into Elasticsearch 
+## 把資料索引進 Elasticsearch
 
-The following function generates the required bulk actions that can be passed to Elasticsearch's Bulk API, so we can index multiple documents efficiently in a single request.
+下面這個函式會產生需要的 bulk action，可以傳給 Elasticsearch 的 Bulk API，這樣能在單一請求裡有效率地索引多份文件。
 
-For each row in the DataFrame, the function yields a dictionary representing a single document to be indexed. 
+DataFrame 的每一列，函式都會 yield 一個代表要索引的單一文件的 dictionary。
 
 ```python
 def dataframe_to_bulk_actions(df):
@@ -152,7 +157,7 @@ def dataframe_to_bulk_actions(df):
         }
 ```
 
-As the dataframe is large, we will index data in batches of `100`. We index the data into Elasticsearch using the Python client's [helpers](https://www.elastic.co/guide/en/elasticsearch/client/python-api/current/client-helpers.html#bulk-helpers) for the bulk API.
+DataFrame 很大，所以我們分批索引，每批 `100` 筆。我們用 Python client 的 bulk API [helpers](https://www.elastic.co/guide/en/elasticsearch/client/python-api/current/client-helpers.html#bulk-helpers) 把資料索引進 Elasticsearch。
 
 ```python
 start = 0
@@ -165,7 +170,7 @@ for batch_start in range(start, end, batch_size):
     helpers.bulk(client, actions)
 ```
 
-Let's test the index with a simple match query.
+用簡單的 match query 測試一下 index。
 
 ```python
 print(client.search(index="wikipedia_vector_index", body={
@@ -189,12 +194,12 @@ print(client.search(index="wikipedia_vector_index", body={
       print(client.search(index="wikipedia_vector_index", body={
     ```
 
-## Encode a question with OpenAI embedding model
+## 用 OpenAI embedding 模型編碼問題
 
-To perform semantic search, we need to encode queries with the same embedding model used to encode the documents at index time.
-In this example, we need to use the `text-embedding-3-small` model.
+要做語意搜尋，query 必須用和索引文件時相同的 embedding 模型來編碼。
+這個範例要用 `text-embedding-3-small` 模型。
 
-You'll need your OpenAI [API key](https://platform.openai.com/account/api-keys) to generate the embeddings.
+需要你的 OpenAI [API key](https://platform.openai.com/account/api-keys) 來產生 embedding。
 
 ```python
 # Create OpenAI client
@@ -209,11 +214,11 @@ question_embedding = openai_client.embeddings.create(
 )
 ```
 
-## Run semantic search queries
+## 執行語意搜尋 query
 
-Now we're ready to run queries against our Elasticsearch index using our encoded question. We'll be doing a k-nearest neighbors search, using the Elasticsearch [kNN query](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) option.
+現在可以用編碼後的問題對 Elasticsearch index 下 query 了。我們會用 Elasticsearch 的 [kNN query](https://www.elastic.co/guide/en/elasticsearch/reference/current/knn-search.html) 選項做 k 最近鄰搜尋。
 
-First, we define a small function to pretty print the results.
+先定義一個小函式，把結果漂亮地印出來。
 
 ```python
 # Function to pretty print Elasticsearch results
@@ -228,7 +233,7 @@ def pretty_response(response):
         print(pretty_output)
 ```
 
-Now let's run our `kNN` query.
+現在執行 `kNN` query。
 
 ```python
 response = client.search(
@@ -289,12 +294,21 @@ pretty_response(response)
     ... (省略 325 行)
     ```
 
-## Next steps
+## 下一步
 
-Success! Now you know how to use Elasticsearch as a vector database to store embeddings, encode queries by calling the OpenAI `embeddings` endpoint, and run semantic search.
+成功了！現在你知道怎麼把 Elasticsearch 當向量資料庫存 embedding、呼叫 OpenAI `embeddings` endpoint 編碼 query，並執行語意搜尋。
 
-Play around with different queries, and if you want to try with your own data, you can experiment with different embedding models.
+可以多試不同的 query。如果想用自己的資料，也可以試試不同的 embedding 模型。
 
-ℹ️ Check out our other notebook [Retrieval augmented generation using Elasticsearch and OpenAI](elasticsearch-retrieval-augmented-generation.md). That notebook builds on this example to demonstrate how to use Elasticsearch together with the OpenAI [chat completions](https://platform.openai.com/docs/api-reference/chat) API for retrieval augmented generation (RAG).
+ℹ️ 也可以看另一個 notebook [用 Elasticsearch 和 OpenAI 做 retrieval augmented generation](elasticsearch-retrieval-augmented-generation.md)。它以這個範例為基礎，示範怎麼把 Elasticsearch 搭配 OpenAI [chat completions](https://platform.openai.com/docs/api-reference/chat) API 做 retrieval augmented generation (RAG)。
 
-<!-- tutor:summary -->
+## 重點整理
+- 向量要存在 `dense_vector` 欄位型別，之後 kNN 搜尋就以它為目標。
+- 大量資料用 bulk API 分批索引，比逐筆送有效率。
+- query 的 embedding 模型必須和索引文件時用的一致。
+- kNN query 回傳的是向量空間裡最接近問題的文件，也就是語意搜尋。
+
+## 練習
+1. 換一個自己的問題做 kNN 搜尋，看回來的文章合不合理。
+2. 改 kNN query 的 `k` 和 `num_candidates`，觀察結果變化。
+3. 把搜尋目標從 `content_vector` 改成 `title_vector`，比較兩者結果。

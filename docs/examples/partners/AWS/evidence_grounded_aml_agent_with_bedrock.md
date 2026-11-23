@@ -1,32 +1,41 @@
 ---
-translated: false
+translated: true
 source: examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.ipynb
 ---
-
-# AML Analysis with the Agents SDK on Amazon Bedrock
+# 在 Amazon Bedrock 上用 Agents SDK 做 AML 分析
 
 > 原文：[examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.ipynb)
 
-Run a synthetic AML analysis with the OpenAI Agents SDK and GPT-5.6 Sol on Amazon Bedrock, verify structured claims against deterministic evidence, test failure cases, and enforce an application-owned human review gate.
+用 OpenAI Agents SDK 和 Amazon Bedrock 上的 GPT-5.6 Sol 跑一個合成資料的 AML（反洗錢）分析，用確定性的證據驗證結構化的 claim，測試失敗案例，並由應用程式自己掌控人工審核關卡。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 OpenAI Agents SDK 搭配 Amazon Bedrock 上的 GPT-5.6 Sol，對一筆合成的反洗錢案例做分析。預設走離線的確定性結果，從頭跑到尾不會呼叫模型；明確開啟旗標後才會讓 agent 用唯讀 tool 實際跑。兩條路徑都會拿確定性的計算去驗證模型提出的重要 claim。
 
-This notebook demonstrates one synthetic anti-money-laundering (AML) analysis with the OpenAI Agents SDK and GPT-5.6 Sol on Amazon Bedrock. The default path uses a deterministic offline assessment so a top-to-bottom run makes no model call. An explicit opt-in runs the agent with read-only tools. Both paths validate material claims against deterministic calculations.
+## 學完你會
 
-An alert starts an investigation. It does not prove wrongdoing. The model proposes an assessment. Application code verifies the structured claims and controls workflow state. A qualified human decides whether optional drafting may begin. All data is synthetic. Nothing here files a Suspicious Activity Report (SAR) or implements production compliance policy.
+- 用 Pydantic 定義結構化輸出，讓每個 finding 都帶著 evidence ID 和計算值，可以被機器檢查
+- 用型別化的 context 搭配唯讀 tool，把 agent 的資料範圍限制在單一 tenant 和單一 case
+- 做出「驗證 claim 有沒有真的被證據支持」的 validator，並設計由應用程式掌控的人工審核與重新審核流程
 
+## 開跑前
 
-## Workflow boundaries
+- 預設的離線路徑需要 Python 3.10 以上和 `uv`，不需要 AWS 帳號
+- 要跑付費的 agent，需要 AWS 憑證（走標準 credential chain）和 `openai.gpt-5.6-sol` 的存取權限
+- 環境變數：`RUN_ANALYSIS_DEMO=true` 跑分析 agent，`RUN_DRAFTING_DEMO=true` 跑草稿 agent，有 named profile 的話先設 `AWS_PROFILE`
 
-The notebook keeps deterministic evidence, model proposals, application controls, and human authority in separate boundaries.
+警告：這是一個合成資料的範例。警示（alert）只是調查的起點，不能證明有不法行為。模型提出評估，應用程式驗證結構化的 claim 並控制流程狀態，是否開始撰寫草稿由有資格的人來決定。這裡的所有資料都是合成的，不會真的送出可疑活動報告（SAR），也不是正式的合規政策實作。
+
+## 工作流程的邊界
+
+這份 notebook 把確定性證據、模型提案、應用程式控制、人類決定權分成四個獨立的邊界。
 
 ![Four boundaries for the regulated-investigation workflow](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partners/AWS/evidence-grounded-four-boundaries.png)
 
 
-## 1. Start the notebook
+## 1. 啟動 notebook
 
-The default offline path requires Python 3.10 or newer and `uv`. The optional paid Bedrock paths also require AWS credentials through the standard credential chain and access to `openai.gpt-5.6-sol`. From a clone of [openai/openai-cookbook](https://github.com/openai/openai-cookbook), run:
+預設的離線路徑需要 Python 3.10 以上和 `uv`。選用的付費 Bedrock 路徑還需要透過標準 credential chain 取得 AWS 憑證，以及 `openai.gpt-5.6-sol` 的存取權限。從 [openai/openai-cookbook](https://github.com/openai/openai-cookbook) 的 clone 裡執行：
 
 ```bash
 cd /path/to/openai-cookbook
@@ -35,16 +44,16 @@ export AWS_REGION=us-east-2
 uv run --with jupyterlab jupyter lab
 ```
 
-Open this notebook at `examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.ipynb`. The default run keeps both paid flags disabled. To run the analysis agent, set `RUN_ANALYSIS_DEMO=true` before starting Jupyter. To run the optional drafting agent, set `RUN_DRAFTING_DEMO=true`. Set `AWS_PROFILE` first if your organization uses a named profile. Never paste AWS credentials into the notebook.
+打開 `examples/partners/AWS/evidence_grounded_aml_agent_with_bedrock.ipynb`。預設執行時兩個付費旗標都是關的。想跑分析 agent，在啟動 Jupyter 前設 `RUN_ANALYSIS_DEMO=true`；想跑選用的草稿 agent，設 `RUN_DRAFTING_DEMO=true`。如果你的組織用 named profile，先設 `AWS_PROFILE`。不要把 AWS 憑證貼進 notebook。
 
 
 ```python
 %pip install -U "openai[bedrock]>=2.46.0" "openai-agents>=0.18.2" "pydantic>=2.13.0" --quiet
 ```
 
-## 2. Configure Amazon Bedrock
+## 2. 設定 Amazon Bedrock
 
-Both paid demonstrations require an explicit environment flag. When either flag is enabled, the SDK uses the AWS credential chain and a separate client lists models through the Bedrock Mantle discovery endpoint before paid inference. With both flags disabled, this cell constructs no client and makes no AWS call.
+兩個付費 demo 都要明確設定環境旗標才會跑。只要有一個旗標開著，SDK 就會用 AWS credential chain，並在付費推論前用另一個 client 透過 Bedrock Mantle 的 discovery endpoint 列出模型。兩個旗標都關著時，這個 cell 不會建立 client，也不會呼叫 AWS。
 
 
 ```python
@@ -105,9 +114,9 @@ else:
     print("Paid Bedrock demonstrations disabled; no AWS call was made.")
 ```
 
-## 3. Load the synthetic case
+## 3. 載入合成案例
 
-The case has three same-day cash credits followed by an outbound wire. A factory creates a fresh typed case for each application context. The amounts make the calculations easy to reproduce; they are demonstration rules, not regulatory thresholds.
+這個案例是同一天三筆現金入帳，接著一筆外匯出款。金額刻意挑得好重現，它們是 demo 用的規則，不是法規門檻。每個應用程式 context 都由 factory 建立一份全新的型別化案例。
 
 
 ```python
@@ -195,13 +204,13 @@ def build_synthetic_case() -> InvestigationCase:
 print(build_synthetic_case().model_dump_json(indent=2))
 ```
 
-## 4. Define the output and evidence tools
+## 4. 定義輸出與證據 tool
 
-The output schema makes the material claims machine-checkable. Each finding carries its evidence IDs and computed values. The validator recomputes those values because a valid transaction ID alone does not prove support.
+輸出 schema 讓重要的 claim 可以被機器檢查。每個 finding 都帶著自己的 evidence ID 和計算值。validator 會重新計算這些值，因為光是 transaction ID 有效，並不代表 claim 有證據支持。
 
-A typed `InvestigationContext` scopes one tenant, case, analysis, and review history. Each request creates its own context instance, passes it through `Runner.run(..., context=...)`, and lets tools access it through `RunContextWrapper`. The context is not itself model input; each read-only tool controls which fields it returns.
+型別化的 `InvestigationContext` 把範圍限制在一個 tenant、一個 case、一次分析和審核歷史。每個請求都建立自己的 context 實例，透過 `Runner.run(..., context=...)` 傳進去，tool 再用 `RunContextWrapper` 存取。context 本身不是模型的輸入，每個唯讀 tool 自己決定要回傳哪些欄位。
 
-Two tools return source facts, and one applies transparent demo checks. The checks identify signals for investigation, not intent, wrongdoing, or a filing requirement.
+兩個 tool 回傳原始事實，一個 tool 套用透明的 demo 檢查。這些檢查找出的是值得調查的訊號，不是意圖、不法行為，也不代表一定要申報。
 
 
 ```python
@@ -418,9 +427,9 @@ def run_typology_checks(
 print(json.dumps(detect_typology_signals(run_context.case), indent=2))
 ```
 
-## 5. Run the analysis agent
+## 5. 執行分析 agent
 
-The instructions require all three tools and a typed result. With `RUN_ANALYSIS_DEMO=true`, `Runner.run` manages the paid model and tool loop. The default path uses a labeled deterministic fixture with simulated tool-call evidence so the remaining validation and review cells run without AWS credentials or paid inference. The fixture does not prove Agents SDK orchestration.
+instructions 要求 agent 用到全部三個 tool，並回傳型別化的結果。設了 `RUN_ANALYSIS_DEMO=true` 時，`Runner.run` 會管理付費的模型與 tool 迴圈。預設路徑用的是有標示的確定性 fixture，裡面帶著模擬的 tool call 證據，讓後面的驗證和審核 cell 不用 AWS 憑證、不用付費推論也能跑。這個 fixture 不能證明 Agents SDK 的 orchestration 真的運作。
 
 
 ```python
@@ -535,15 +544,15 @@ print("Tool-call evidence:", sorted(tool_calls))
 print(assessment.model_dump_json(indent=2))
 ```
 
-## 6. Validate support, not just citation syntax
+## 6. 驗證「有證據支持」，不只是引用格式正確
 
-The validator performs three distinct checks:
+validator 做三種不同的檢查：
 
-1. **Citation validity:** every evidence ID exists in this case.
-2. **Claim support:** each finding type uses the exact transactions and computed values returned by deterministic application code.
-3. **Structured authority:** `drafting_authorized` must remain `false`, and `filing_decision` must remain `NOT_DETERMINED`.
+1. **引用有效：** 每個 evidence ID 都存在於這個 case 裡。
+2. **claim 有支持：** 每種 finding 類型都要對上應用程式確定性程式碼回傳的交易和計算值。
+3. **結構化權限：** `drafting_authorized` 必須維持 `false`，`filing_decision` 必須維持 `NOT_DETERMINED`。
 
-The schema prevents the model from granting drafting authority or making a filing decision through those structured fields. The validator does not classify every possible free-form paraphrase. A qualified reviewer still evaluates the narrative, information gaps, relevance, and disposition. Production systems should add expert-reviewed datasets, trace grading, adversarial cases, and policy-specific tests.
+schema 讓模型沒辦法透過這些結構化欄位授予自己撰寫草稿的權限，或做出申報決定。validator 沒辦法分類所有可能的自由文字改寫。敘述內容、資訊缺口、相關性和處置結果，仍然要由有資格的審核者評估。正式系統還應該加上專家審過的資料集、trace grading、對抗性案例和針對政策的測試。
 
 
 ```python
@@ -618,9 +627,9 @@ for check_name in checks:
     print("PASS:", check_name)
 ```
 
-## 7. Exercise negative cases
+## 7. 測試負面案例
 
-These local tests demonstrate failure behavior without additional model calls. A fabricated amount can use real transaction IDs and still be unsupported. Invalid IDs, a missing tool call, a structured authority claim, and a rejected review are separate failure modes.
+這些本機測試在不額外呼叫模型的情況下，示範失敗時的行為。捏造的金額可以用真實的 transaction ID，卻還是沒有證據支持。無效的 ID、缺少 tool call、結構化欄位宣稱權限、審核被駁回，是各自獨立的失敗模式。
 
 
 ```python
@@ -663,11 +672,11 @@ expect_validation_failure(
 )
 ```
 
-## 8. Preserve rejection and require explicit re-review
+## 8. 保留駁回紀錄，並要求明確重新審核
 
-The application now owns the approval boundary. It first stores the validated assessment, records a rejection, and proves drafting remains blocked. A revised assessment is then submitted as a new revision and reviewed again. The original rejection stays in `review_history`; it is never reset or overwritten.
+核准的邊界現在由應用程式掌管。它先存下通過驗證的評估，記錄一次駁回，並證明草稿仍然被擋住。接著把修訂後的評估當成新的 revision 提交，再審核一次。原本的駁回會留在 `review_history` 裡，不會被重設或覆蓋。
 
-The synthetic reviewer alias and typed context keep the example visible in one notebook. A concurrent service must create a separate context for every request and tenant. Production systems must derive reviewer identity from authentication, authorize the case and operation, persist revisions and decisions durably, and maintain an independently governed audit record.
+合成的審核者別名和型別化 context 讓整個範例可以放在一份 notebook 裡看。並行的服務必須為每個請求和每個 tenant 建立獨立的 context。正式系統要從認證取得審核者身分、對 case 和操作做授權、把 revision 和決定持久化儲存，並維護獨立治理的稽核紀錄。
 
 
 ```python
@@ -784,9 +793,9 @@ print(
 )
 ```
 
-## 9. Define the drafting agent only after approval
+## 9. 核准之後才定義草稿 agent
 
-The notebook defines the drafting agent after the application gate. The agent can read the current approved analysis and source evidence. It has no tool for approval, state changes, or filing. Running it is optional and adds one paid inference call. Set `RUN_DRAFTING_DEMO=true` before starting Jupyter. Evidence-tool exceptions propagate instead of becoming model-visible error outputs. Before storing a draft, application code verifies from the raw run-item payloads that every required evidence call produced an output, then checks the current case ID, evidence IDs, and disclaimer. Local negative tests cover a missing tool output and a mismatched case without making a model call. A qualified reviewer must still confirm that each narrative claim has support.
+notebook 在應用程式的關卡之後才定義草稿 agent。這個 agent 能讀目前核准的分析和原始證據，但沒有任何核准、改狀態或申報的 tool。執行它是選用的，會多一次付費推論呼叫。啟動 Jupyter 前設 `RUN_DRAFTING_DEMO=true`。證據 tool 的例外會直接往上拋，不會變成模型看得到的錯誤輸出。儲存草稿前，應用程式會從原始的 run-item payload 確認每個必要的證據呼叫都有產出，再檢查目前的 case ID、evidence ID 和免責聲明。本機的負面測試涵蓋缺少 tool 輸出和 case 不符兩種情況，不需要呼叫模型。有資格的審核者還是得確認每一句敘述都有支持。
 
 
 ```python
@@ -982,21 +991,21 @@ else:
     print("Optional drafting run skipped; the approved gate remains testable.")
 ```
 
-## 10. What this example establishes
+## 10. 這個範例證明了什麼
 
-- With explicit opt-in, the Agents SDK runs a bounded model and tool loop through Amazon Bedrock.
-- The default offline fixture makes no AWS or model call and does not prove Agents SDK orchestration.
-- A typed context scopes tools and workflow state to one request and tenant.
-- Pydantic makes material findings structured, but correctness comes from deterministic support checks.
-- Valid IDs and supported claims are tested separately.
-- Rejected work remains rejected until a revised analysis receives an explicit re-review.
-- Structured fields keep drafting authority false and the filing decision undetermined.
-- Drafting is downstream of application-owned approval, and filing stays out of scope.
+- 明確開啟後，Agents SDK 會透過 Amazon Bedrock 跑有界的模型與 tool 迴圈。
+- 預設的離線 fixture 不會呼叫 AWS 或模型，也不能證明 Agents SDK 的 orchestration。
+- 型別化的 context 把 tool 和流程狀態限制在單一請求、單一 tenant。
+- Pydantic 讓重要的 finding 結構化，但正確性來自確定性的支持檢查。
+- ID 有效和 claim 有支持是分開測試的。
+- 被駁回的工作維持駁回，直到修訂後的分析明確通過重新審核。
+- 結構化欄位讓草稿權限維持 false，申報決定維持未決定。
+- 草稿在應用程式掌管的核准之後才能進行，申報不在範圍內。
 
-This notebook is a learning asset, not a production AML system. Real deployments need institution-approved policy, identity and authorization, protected data handling, durable workflow and audit records, evals reviewed by domain experts, monitoring, incident response, and legal and compliance review. A separate companion document should cover AgentCore deployment and full AWS infrastructure.
+這份 notebook 是學習素材，不是正式的 AML 系統。真正部署需要機構核准的政策、身分與授權、受保護的資料處理、持久的流程和稽核紀錄、領域專家審過的 eval、監控、事件應變，以及法務與合規審查。AgentCore 部署和完整的 AWS 基礎設施應該另外用一份文件說明。
 
 
-## References
+## 參考資料
 
 - [OpenAI models in Amazon Bedrock](https://developers.openai.com/api/docs/guides/amazon-bedrock)
 - [OpenAI Agents SDK guide](https://developers.openai.com/api/docs/guides/agents)
@@ -1007,4 +1016,16 @@ This notebook is a learning asset, not a production AML system. Real deployments
 - [FinCEN Suspicious Activity Reports](https://www.fincen.gov/suspicious-activity-reports-sars)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 模型只負責提案，驗證和流程狀態由應用程式程式碼掌控。
+- 結構化輸出加上確定性重算，才能確認 claim 真的有證據支持，ID 存在不等於有支持。
+- 型別化 context 把 tool 的資料範圍限制在單一請求和 tenant。
+- 授權欄位（drafting_authorized、filing_decision）用 schema 鎖死，模型沒辦法自己給自己權限。
+- 駁回紀錄要保留，修訂後必須明確重新審核。
+
+## 練習
+
+1. 把 case 裡其中一筆交易金額改掉，跑驗證 cell，看哪一種 finding 的檢查會失敗。
+2. 在負面案例的 cell 裡多加一個測試：讓 `drafting_authorized` 為 `true`，確認 validator 會擋下來。
+3. 讓分析 agent 多一個你自己寫的唯讀 tool（例如回傳某筆交易的對手方資訊），並把它加進「必須呼叫的 tool」檢查裡。

@@ -1,25 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/Visualizing_embeddings_with_Atlas.ipynb
 ---
-
-# Visualizing embeddings in Atlas
+# 用 Atlas 視覺化 embedding
 
 > 原文：[examples/third_party/Visualizing_embeddings_with_Atlas.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/Visualizing_embeddings_with_Atlas.ipynb)
 
+## 這篇在做什麼
 
+把食物評論的 OpenAI embedding 上傳到 Atlas，在瀏覽器或 Jupyter notebook 裡互動式地看這些 embedding 的分佈。
 
-<!-- tutor:goals -->
+## 學完你會
 
-## Visualizing Open AI Embeddings in Atlas
+- 登入 Atlas 並把現成的 embedding 資料上傳成一張地圖
+- 在 Jupyter notebook 裡直接和上傳後的 embedding 互動
+- 理解為什麼視覺化 embedding 有助於觀察資料裡的群聚
 
-In this example, we will upload food review embeddings to [Atlas](https://atlas.nomic.ai) to visualize the embeddings.
+## 開跑前
 
-## What is Atlas?
+- 需要一個 [Atlas](https://atlas.nomic.ai) 帳號
+- 需要已經算好的食物評論 embedding 資料
 
-[Atlas](https://atlas.nomic.ai) is a machine learning tool used to visualize massive datasets of embeddings in your web browser. Upload millions of embeddings to Atlas and interact with them in your web browser or jupyter notebook.
+## 在 Atlas 視覺化 OpenAI Embedding
 
-### 1. Login to Atlas.
+這個範例要把食物評論的 embedding 上傳到 [Atlas](https://atlas.nomic.ai)，把 embedding 視覺化。
+
+## Atlas 是什麼？
+
+[Atlas](https://atlas.nomic.ai) 是一個機器學習工具，能在你的網頁瀏覽器裡視覺化超大型的 embedding 資料集。你可以把數百萬筆 embedding 上傳到 Atlas，在網頁瀏覽器或 jupyter notebook 裡和它們互動。
+
+### 1. 登入 Atlas。
 
 
 ```python
@@ -53,7 +63,7 @@ project = atlas.map_embeddings(embeddings=embeddings, data=data,
 map = project.maps[0]
 ```
 
-### 2. Interact with your embeddings in Jupyter
+### 2. 在 Jupyter 裡和你的 embedding 互動
 
 ```python
 map
@@ -65,4 +75,14 @@ map
     meek-laborer: https://atlas.nomic.ai/map/fddc0e07-97c5-477c-827c-96bca44519aa/463f4614-7689-47e4-b55b-1da0cc679559
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Atlas 讓你在瀏覽器或 notebook 裡視覺化大量 embedding，不用自己畫降維圖。
+- 流程是登入、上傳 embedding 資料建立地圖、再互動探索。
+- 視覺化能幫你快速看出資料裡有哪些群聚和離群點。
+
+## 練習
+
+1. 跑完登入和上傳的 cell，打開 Atlas 網頁，找出一個你看得出主題的群聚。
+2. 在 Jupyter 裡互動時，挑幾筆評論點開，確認同一群的評論內容真的相近。
+3. 換成另一批資料（例如你自己的評論），用同樣的上傳 cell 建一張新地圖。

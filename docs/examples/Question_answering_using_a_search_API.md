@@ -1,50 +1,59 @@
 ---
-translated: false
+translated: true
 source: examples/Question_answering_using_a_search_API.ipynb
 ---
 
-# Question answering using a search API and re-ranking
+# 用搜尋 API 加 Re-ranking 做問答
 
 > 原文：[examples/Question_answering_using_a_search_API.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_a_search_API.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+在現有的搜尋系統（例如 News API）上，加一層 GPT 產生多組查詢，再用 embedding 對結果 re-rank，最後讓模型根據排名最高的結果回答問題。不用另外維護 vector database。
 
+## 學完你會
+- 讓 GPT 根據使用者問題產生多組查詢，並平行執行搜尋。
+- 先產生一個假設的理想答案（HyDE），再用 embedding 的相似度替搜尋結果 re-rank 和過濾。
+- 把排名最高的結果交給模型，產生附參考來源與連結的最終答案。
 
-Searching for relevant information can sometimes feel like looking for a needle in a haystack, but don’t despair, GPTs can actually do a lot of this work for us. In this guide we explore a way to augment existing search systems with various AI techniques, helping us sift through the noise.
+## 開跑前
+- 需要 `OPENAI_API_KEY`。
+- 需要 `NEWS_API_KEY`（到 newsapi.org 申請）。
 
-Two ways of retrieving information for GPT are:
+要找到相關資訊有時像大海撈針，不過別擔心，GPT 其實能幫我們做很多這類工作。這份指南探討怎麼用各種 AI 技巧擴充現有的搜尋系統，幫我們從雜訊中篩選出需要的內容。
 
-1. **Mimicking Human Browsing:** [GPT triggers a search](https://openai.com/blog/chatgpt-plugins#browsing), evaluates the results, and modifies the search query if necessary. It can also follow up on specific search results to form a chain of thought, much like a human user would do.
-2. **Retrieval with Embeddings:** Calculate [embeddings](https://platform.openai.com/docs/guides/embeddings) for your content and a user query, and then [retrieve the content](Question_answering_using_embeddings.md) most related as measured by cosine similarity. This technique is [used heavily](https://blog.google/products/search/search-language-understanding-bert/) by search engines like Google.
+讓 GPT 取得資訊有兩種方式：
 
-These approaches are both promising, but each has their shortcomings: the first one can be slow due to its iterative nature and the second one requires embedding your entire knowledge base in advance, continuously embedding new content and maintaining a vector database.
+1. **模擬人類瀏覽：** [GPT 觸發搜尋](https://openai.com/blog/chatgpt-plugins#browsing)、評估結果，必要時調整搜尋 query。它也可以跟進特定的搜尋結果形成思路，就像人類使用者會做的那樣。
+2. **用 Embedding 檢索：** 為你的內容和使用者 query 計算 [embedding](https://platform.openai.com/docs/guides/embeddings)，再依 cosine similarity [取回](Question_answering_using_embeddings.md)最相關的內容。Google 這類搜尋引擎[大量使用](https://blog.google/products/search/search-language-understanding-bert/)這個技術。
 
-By combining these approaches, and drawing inspiration from [re-ranking](https://www.sbert.net/examples/applications/retrieve_rerank/README.html) methods, we identify an approach that sits in the middle. **This approach can be implemented on top of any existing search system, like the Slack search API, or an internal ElasticSearch instance with private data**. Here’s how it works:
+這兩種方法都很有前景，但各有缺點：第一種因為是迭代的，可能很慢；第二種需要事先對整個知識庫做 embedding、持續對新內容做 embedding，還要維護 vector database。
+
+結合這兩種方法，並從 [re-ranking](https://www.sbert.net/examples/applications/retrieve_rerank/README.html) 方法得到靈感，我們找到一個介於中間的做法。**這個做法可以建在任何現有的搜尋系統之上，像是 Slack search API，或是放私有資料的內部 ElasticSearch。** 運作方式如下：
 
 ![search_augmented_by_query_generation_and_embeddings_reranking.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/search_rerank_answer.png)
 
-**Step 1: Search**
+**步驟 1：搜尋**
 
-1.  User asks a question.
-2.  GPT generates a list of potential queries.
-3.  Search queries are executed in parallel.
+1.  使用者提出問題。
+2.  GPT 產生一組可能的 query。
+3.  平行執行這些搜尋 query。
 
-**Step 2: Re-rank**
+**步驟 2：Re-rank**
 
-1.  Embeddings for each result are used to calculate semantic similarity to a generated hypothetical ideal answer to the user question.
-2.  Results are ranked and filtered based on this similarity metric.
+1.  用每筆結果的 embedding，計算它和「針對使用者問題產生的假設理想答案」的語意相似度。
+2.  依這個相似度指標對結果排名並過濾。
 
-**Step 3: Answer**
+**步驟 3：回答**
 
-1.  Given the top search results, the model generates an answer to the user’s question, including references and links.
+1.  根據排名最高的搜尋結果，模型產生使用者問題的答案，並附上參考來源和連結。
 
-This hybrid approach offers relatively low latency and can be integrated into any existing search endpoint, without requiring the upkeep of a vector database. Let's dive into it! We will use the [News API](https://newsapi.org/) as an example domain to search over.
+這種混合式做法延遲相對低，可以整合進任何現有的搜尋 endpoint，也不用維護 vector database。來看看怎麼做！我們用 [News API](https://newsapi.org/) 當作搜尋的範例領域。
 
-## Setup
+## 設定
 
-In addition to your `OPENAI_API_KEY`, you'll have to include a `NEWS_API_KEY` in your environment. You can get an API key [here](https://newsapi.org/).
+除了 `OPENAI_API_KEY`，你還需要在環境變數加入 `NEWS_API_KEY`。可以在[這裡](https://newsapi.org/)取得 API key。
 
 
 ```python
@@ -91,9 +100,9 @@ def embeddings(input: list[str]) -> list[list[str]]:
     return [data.embedding for data in response.data]
 ```
 
-## 1. Search
+## 1. 搜尋
 
-It all starts with a user question.
+一切從使用者的問題開始。
 
 
 ```python
@@ -101,7 +110,7 @@ It all starts with a user question.
 USER_QUESTION = "Who won the NBA championship? And who was the MVP? Tell me a bit about the last game."
 ```
 
-Now, in order to be as exhaustive as possible, we use the model to generate a list of diverse queries based on this question.
+為了盡可能完整，我們用模型根據這個問題產生一組多樣化的 query。
 
 
 ```python
@@ -152,7 +161,7 @@ queries
      'Who won the NBA championship? And who was the MVP? Tell me a bit about the last game.']
     ```
 
-The queries look good, so let's run the searches.
+這些 query 看起來不錯，來執行搜尋。
 
 
 ```python
@@ -232,11 +241,11 @@ for article in articles[0:5]:
     Content: Michelob ULTRA, the MVP of joy and official beer sponsor of the NBA is back to celebrate with basket...
     ```
 
-As we can see, oftentimes, the search queries will return a large number of results, many of which are not relevant to the original question asked by the user. In order to improve the quality of the final answer, we use embeddings to re-rank and filter the results.
+可以看到，搜尋 query 常常會回傳大量結果，其中很多跟使用者原本的問題無關。為了提升最終答案的品質，我們用 embedding 對結果 re-rank 並過濾。
 
 ## 2. Re-rank
 
-Drawing inspiration from [HyDE (Gao et al.)](https://arxiv.org/abs/2212.10496), we first generate a hypothetical ideal answer to rerank our compare our results against. This helps prioritize results that look like good answers, rather than those similar to our question. Here’s the prompt we use to generate our hypothetical answer.
+受 [HyDE (Gao et al.)](https://arxiv.org/abs/2212.10496) 啟發，我們先產生一個假設的理想答案，作為 re-rank 時比較結果的對象。這樣能優先挑出看起來像好答案的結果，而不是只跟問題相似的結果。下面是我們用來產生假設答案的 prompt。
 
 
 ```python
@@ -261,7 +270,7 @@ hypothetical_answer
     'The NBA championship was won by TEAM NAME. The MVP was awarded to PLAYER NAME. The last game was held at STADIUM NAME, where both teams played with great energy and enthusiasm. It was a close game, but in the end, TEAM NAME emerged victorious.'
     ```
 
-Now, let's generate embeddings for the search results and the hypothetical answer. We then calculate the cosine distance between these embeddings, giving us a semantic similarity metric. Note that we can simply calculate the dot product in lieu of doing a full cosine similarity calculation since the OpenAI embeddings are returned normalized in our API.
+現在替搜尋結果和假設答案產生 embedding，再計算這些 embedding 之間的 cosine distance，得到語意相似度指標。注意，因為 OpenAI API 回傳的 embedding 已經正規化，我們可以直接算 dot product，不用做完整的 cosine similarity 計算。
 
 
 ```python
@@ -296,7 +305,7 @@ cosine_similarities[0:10]
      0.8405965885235218]
     ```
 
-Finally, we use these similarity scores to sort and filter the results.
+最後用這些相似度分數排序並過濾結果。
 
 
 ```python
@@ -347,9 +356,9 @@ for article, score in sorted_articles[0:5]:
     Score: 0.8389716330890262
     ```
 
-Awesome! These results look a lot more relevant to our original query. Now, let's use the top 5 results to generate a final answer.
+太好了！這些結果跟我們原本的 query 相關多了。現在用前 5 筆結果產生最終答案。
 
-## 3. Answer
+## 3. 回答
 
 
 ```python
@@ -390,4 +399,13 @@ for chunk in completion:
     <IPython.core.display.Markdown object>
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 這是介於「GPT 自己反覆搜尋」和「全庫 embedding」之間的做法，可以疊在任何現有搜尋系統上，不用維護 vector database。
+- 先讓 GPT 產生多組不同角度的 query，可以提高搜尋涵蓋面。
+- HyDE 的概念是拿「假設的理想答案」當比較對象，這樣挑出的是像答案的內容，而不是像問題的內容。
+- OpenAI 的 embedding 已經正規化，所以 dot product 就等於 cosine similarity，算起來更快。
+
+## 練習
+1. 把產生 query 的數量改成 3 組和 8 組，比較最終排名前 5 的結果有什麼不同。
+2. 把 re-rank 的比較對象從假設答案換成原始問題本身，看排名結果和答案品質有什麼變化。
+3. 把最終回答用的結果數量從 5 改成 3，並在 prompt 要求每個論點都標註來源連結，檢查模型有沒有照做。

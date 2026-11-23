@@ -1,78 +1,87 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/redis/getting-started-with-redis-and-openai.ipynb
 ---
-
-# Using Redis as a vector database with OpenAI
+# 用 Redis 當 OpenAI 的 vector database
 
 > 原文：[examples/vector_databases/redis/getting-started-with-redis-and-openai.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis/getting-started-with-redis-and-openai.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼把 Redis 當成 vector database，搭配 OpenAI embedding 使用。透過 RediSearch module 對 Redis 裡的向量建索引、做相似度搜尋，另外也會做混合查詢和 HNSW 索引。
+
+## 學完你會
+- 用 Docker 起一個 Redis Stack，並用 redis-py 連線。
+- 在 Redis 建立向量索引（FLAT 和 HNSW），把已經算好 embedding 的文件載入索引。
+- 用 OpenAI query embedding 做向量搜尋，以及結合全文檢索的 hybrid 查詢。
+
+## 開跑前
+- 需要 Docker 來跑 Redis Stack（本機 `localhost:6379`，RedisInsight 在 `localhost:8001`）。
+- 需要環境變數 `OPENAI_API_KEY`，用來把 query 轉成 embedding。
 
 
-This notebook provides an introduction to using Redis as a vector database with OpenAI embeddings. Redis is a scalable, real-time database that can be used as a vector database when using the [RediSearch Module](https://oss.redislabs.com/redisearch/). The RediSearch module allows you to index and search for vectors in Redis. This notebook will show you how to use the RediSearch module to index and search for vectors created by using the OpenAI API and stored in Redis.
+本篇介紹怎麼把 Redis 當成 vector database，搭配 OpenAI embedding 使用。Redis 是可擴充的即時資料庫，搭配 [RediSearch Module](https://oss.redislabs.com/redisearch/) 就能當 vector database 用。RediSearch module 可以對 Redis 裡的向量建索引和搜尋。這裡會示範怎麼用它來索引和搜尋由 OpenAI API 產生、存在 Redis 裡的向量。
 
-### What is Redis?
+### 什麼是 Redis？
 
-Most developers from a web services background are probably familiar with Redis. At it's core, Redis is an open-source key-value store that can be used as a cache, message broker, and database. Developers choice Redis because it is fast, has a large ecosystem of client libraries, and has been deployed by major enterprises for years.
+有 web 服務背景的開發者大多都熟悉 Redis。Redis 的核心是開源的 key-value store，可以當 cache、message broker 和資料庫。開發者選 Redis 是因為它快、client library 生態系大，而且已經被大型企業用了很多年。
 
-In addition to the traditional uses of Redis. Redis also provides [Redis Modules](https://redis.io/modules) which are a way to extend Redis with new data types and commands. Example modules include [RedisJSON](https://redis.io/docs/stack/json/), [RedisTimeSeries](https://redis.io/docs/stack/timeseries/), [RedisBloom](https://redis.io/docs/stack/bloom/) and [RediSearch](https://redis.io/docs/stack/search/).
+除了傳統用途，Redis 還提供 [Redis Modules](https://redis.io/modules)，用來替 Redis 擴充新的資料型別和指令。例如 [RedisJSON](https://redis.io/docs/stack/json/)、[RedisTimeSeries](https://redis.io/docs/stack/timeseries/)、[RedisBloom](https://redis.io/docs/stack/bloom/) 和 [RediSearch](https://redis.io/docs/stack/search/)。
 
-### What is RediSearch?
+### 什麼是 RediSearch？
 
-RediSearch is a [Redis module](https://redis.io/modules) that provides querying, secondary indexing, full-text search and vector search for Redis. To use RediSearch, you first declare indexes on your Redis data. You can then use the RediSearch clients to query that data. For more information on the feature set of RediSearch, see the [README](README.md) or the [RediSearch documentation](https://redis.io/docs/stack/search/).
+RediSearch 是一個 [Redis module](https://redis.io/modules)，替 Redis 提供查詢、secondary index、全文檢索和向量搜尋。使用時先對 Redis 資料宣告 index，再用 RediSearch client 查詢。RediSearch 的完整功能請看 [README](README.md) 或 [RediSearch 文件](https://redis.io/docs/stack/search/)。
 
-### Deployment options
+### 部署方式
 
-There are a number of ways to deploy Redis. For local development, the quickest method is to use the [Redis Stack docker container](https://hub.docker.com/r/redis/redis-stack) which we will use here. Redis Stack contains a number of Redis modules that can be used together to create a fast, multi-model data store and query engine.
+Redis 有很多部署方式。本機開發最快的是用 [Redis Stack docker container](https://hub.docker.com/r/redis/redis-stack)，這裡就用它。Redis Stack 包含多個 Redis module，可以組合成快速的多模型資料儲存和查詢引擎。
 
-For production use cases, The easiest way to get started is to use the [Redis Cloud](https://redislabs.com/redis-enterprise-cloud/overview/) service. Redis Cloud is a fully managed Redis service. You can also deploy Redis on your own infrastructure using [Redis Enterprise](https://redislabs.com/redis-enterprise/overview/). Redis Enterprise is a fully managed Redis service that can be deployed in kubernetes, on-premises or in the cloud.
+正式環境最簡單的起手方式是 [Redis Cloud](https://redislabs.com/redis-enterprise-cloud/overview/)，這是全託管的 Redis 服務。你也可以用 [Redis Enterprise](https://redislabs.com/redis-enterprise/overview/) 部署在自己的基礎設施上，它可以跑在 kubernetes、on-premises 或雲端。
 
-Additionally, every major cloud provider ([AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-e6y7ork67pjwg?sr=0-2&ref_=beagle&applicationId=AWSMPContessa), [Google Marketplace](https://console.cloud.google.com/marketplace/details/redislabs-public/redis-enterprise?pli=1), or [Azure Marketplace](https://azuremarketplace.microsoft.com/en-us/marketplace/apps/garantiadata.redis_enterprise_1sp_public_preview?tab=Overview)) offers Redis Enterprise in a marketplace offering.
+另外，每個主要雲端廠商（[AWS Marketplace](https://aws.amazon.com/marketplace/pp/prodview-e6y7ork67pjwg?sr=0-2&ref_=beagle&applicationId=AWSMPContessa)、[Google Marketplace](https://console.cloud.google.com/marketplace/details/redislabs-public/redis-enterprise?pli=1)、[Azure Marketplace](https://azuremarketplace.microsoft.com/en-us/marketplace/apps/garantiadata.redis_enterprise_1sp_public_preview?tab=Overview)）的 marketplace 都有 Redis Enterprise。
 
 
 
-## Prerequisites
+## 前置需求
 
-Before we start this project, we need to set up the following:
+開始之前，要先準備：
 
-* start a Redis database with RediSearch (redis-stack)
-* install libraries
+* 啟動一個有 RediSearch 的 Redis 資料庫（redis-stack）
+* 安裝套件
     * [Redis-py](https://github.com/redis/redis-py)
-* get your [OpenAI API key](https://beta.openai.com/account/api-keys)
+* 取得你的 [OpenAI API key](https://beta.openai.com/account/api-keys)
 
 ===========================================================
 
-### Start Redis
+### 啟動 Redis
 
-To keep this example simple, we will use the Redis Stack docker container which we can start as follows
+為了讓範例簡單，我們用 Redis Stack docker container，啟動方式如下
 
 ```bash
 $ docker-compose up -d
 ```
 
-This also includes the [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) GUI for managing your Redis database which you can view at [http://localhost:8001](http://localhost:8001) once you start the docker container.
+它也包含 [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) 這個管理 Redis 的 GUI，docker container 啟動後可以在 [http://localhost:8001](http://localhost:8001) 看到。
 
-You're all set up and ready to go! Next, we import and create our client for communicating with the Redis database we just created.
+這樣就設定好了。接下來匯入套件，建立 client 去連剛剛建好的 Redis 資料庫。
 
-## Install Requirements
+## 安裝套件
 
-Redis-Py is the python client for communicating with Redis. We will use this to communicate with our Redis-stack database. 
+Redis-Py 是跟 Redis 溝通的 Python client，我們用它連到 Redis-stack 資料庫。
 
 ```python
 ! pip install redis wget pandas openai
 ```
 
 ===========================================================
-## Prepare your OpenAI API key
+## 準備 OpenAI API key
 
-The `OpenAI API key` is used for vectorization of query data.
+`OpenAI API key` 用來把 query 資料向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+如果還沒有 OpenAI API key，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY` by using following command:
+拿到 key 之後，用下面的指令把它加到環境變數 `OPENAI_API_KEY`：
 
 ```python
 ! export OPENAI_API_KEY="your API key"
@@ -100,9 +109,9 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that has already been converted into vectors. We'll use this data to create an index in Redis and then search for similar vectors.
+這一段載入已經轉成向量的 embedding 資料，用它來在 Redis 建索引，再搜尋相似的向量。
 
 ```python
 import sys
@@ -158,9 +167,9 @@ data.head()
     4  [0.021524671465158463, 0.018522677943110466, -...         4
     ```
 
-## Connect to Redis
+## 連到 Redis
 
-Now that we have our Redis database running, we can connect to it using the Redis-py client. We will use the default host and port for the Redis database which is `localhost:6379`.
+Redis 資料庫已經在跑了，可以用 Redis-py client 連線。這裡用預設的 host 和 port，也就是 `localhost:6379`。
 
 
 
@@ -195,13 +204,13 @@ redis_client.ping()
     True
     ```
 
-## Creating a Search Index in Redis
+## 在 Redis 建立 Search Index
 
-The below cells will show how to specify and create a search index in Redis. We will:
+下面的 cell 示範怎麼指定並建立 Redis 的 search index。步驟是：
 
-1. Set some constants for defining our index like the distance metric and the index name
-2. Define the index schema with RediSearch fields
-3. Create the index
+1. 設定一些定義索引的常數，例如距離度量和 index 名稱
+2. 用 RediSearch 欄位定義 index schema
+3. 建立 index
 
 ```python
 # Constants
@@ -249,9 +258,9 @@ except:
 )
 ```
 
-## Load Documents into the Index
+## 把文件載入 Index
 
-Now that we have a search index, we can load documents into it. We will use the same documents we used in the previous examples. In Redis, either the HASH or JSON (if using RedisJSON in addition to RediSearch) data types can be used to store documents. We will use the HASH data type in this example. The below cells will show how to load documents into the index.
+有了 search index 之後，就可以載入文件。這裡用和前面範例相同的文件。在 Redis 裡，文件可以存成 HASH，或是 JSON（需要在 RediSearch 之外再用 RedisJSON）。這裡用 HASH。下面的 cell 示範怎麼載入文件。
 
 ```python
 def index_documents(client: redis.Redis, prefix: str, documents: pd.DataFrame):
@@ -281,9 +290,9 @@ print(f"Loaded {redis_client.info()['db0']['keys']} documents in Redis search in
     Loaded 25000 documents in Redis search index with name: embeddings-index
     ```
 
-## Simple Vector Search Queries with OpenAI Query Embeddings
+## 用 OpenAI Query Embedding 做簡單的向量搜尋
 
-Now that we have a search index and documents loaded into it, we can run search queries. Below we will provide a function that will run a search query and return the results. Using this function we run a few queries that will show how you can utilize Redis as a vector database.
+有了 search index 和載入的文件，就可以執行搜尋 query。下面提供一個執行搜尋並回傳結果的函式，用它跑幾個 query，示範怎麼把 Redis 當 vector database 使用。
 
 ```python
 def search_redis(
@@ -361,9 +370,9 @@ results = search_redis(redis_client, 'Famous battles in Scottish history', vecto
     9. William Wallace (Score: 0.835)
     ```
 
-## Hybrid Queries with Redis
+## Redis 的 Hybrid 查詢
 
-The previous examples showed how run vector search queries with RediSearch. In this section, we will show how to combine vector search with other RediSearch fields for hybrid search. In the below example, we will combine vector search with full text search.
+前面的例子示範了怎麼用 RediSearch 做向量搜尋。這一段示範怎麼把向量搜尋和其他 RediSearch 欄位結合成 hybrid search。下面的例子把向量搜尋和全文檢索結合。
 
 ```python
 def create_hybrid_field(field_name: str, value: str) -> str:
@@ -420,9 +429,13 @@ mention
 
 Up until now, we've been using the ``FLAT`` or "brute-force" index to run our queries. Redis also supports the ``HNSW`` index which is a fast, approximate index. The ``HNSW`` index is a graph-based index that uses a hierarchical navigable small world graph to store vectors. The ``HNSW`` index is a good choice for large datasets where you want to run approximate queries.
 
+到目前為止我們都用 FLAT（也就是暴力搜尋）的 index 來查詢。Redis 也支援 HNSW index，這是一種快速的近似 index。HNSW 是以圖為基礎的 index，用 hierarchical navigable small world graph 來存向量，適合資料量大、可以接受近似查詢的情況。
+
 ``HNSW`` will take longer to build and consume more memory for most cases than ``FLAT`` but will be faster to run queries on, especially for large datasets.
 
-The following cells will show how to create an ``HNSW`` index and run queries with it using the same data as before.
+多數情況下，HNSW 建索引比 FLAT 久、也吃更多記憶體，但查詢比較快，資料集越大越明顯。
+
+下面的 cell 示範怎麼建 ``HNSW`` index，並用跟前面一樣的資料跑查詢。
 
 ```python
 # re-define RediSearch vector fields to use HNSW index
@@ -540,4 +553,13 @@ time_queries()
      ------------------------
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Redis 搭配 RediSearch module 就能當 vector database，不用另外架一套向量資料庫。
+- 使用流程是：定義 index schema、把文件（含 embedding）寫進 HASH、再用 query embedding 去搜尋。
+- Hybrid 查詢可以把向量相似度和全文檢索等欄位條件組合起來。
+- FLAT 是暴力搜尋、結果精確；HNSW 是近似搜尋，建索引較慢、吃記憶體，但大資料集查詢比較快。
+
+## 練習
+1. 換一個 query 文字去呼叫頁面上的搜尋函式，看回傳的結果是否合理。
+2. 修改搜尋函式的回傳筆數（top K），比較結果變化。
+3. 把距離度量常數換成別種（例如 `L2` 換成 `COSINE`），重建 index，比較兩次搜尋結果的分數與排序。

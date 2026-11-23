@@ -1,132 +1,145 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/weaviate/getting-started-with-weaviate-and-openai.ipynb
 ---
-
-# Using Weaviate with OpenAI vectorize module for embeddings search
+# 用 Weaviate 的 OpenAI vectorize module 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/weaviate/getting-started-with-weaviate-and-openai.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/getting-started-with-weaviate-and-openai.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+你的資料還沒做過向量化，又想對它做 vector search，這篇示範用 Weaviate 搭配 OpenAI 的 `text2vec-openai` module，讓 Weaviate 自動幫你產生 embedding。流程包含建立 Weaviate instance、連線、設定 schema、匯入資料，最後跑語意搜尋。
+
+## 學完你會
+
+- 建立 Weaviate instance（雲端或 Docker），並用 OpenAI API key 連線
+- 設定 schema，指定要用哪個 embedding 模型、哪些欄位要向量化
+- 匯入資料並用文字 query 做語意搜尋，不用自己呼叫 embedding API
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY` 環境變數
+- 需要一個 Weaviate instance：Weaviate Cloud Service 帳號（免費 sandbox 就夠），或本機安裝 Docker
+- 安裝 `weaviate-client`、`datasets`、`apache-beam`
 
 
-This notebook is prepared for a scenario where:
-* Your data is not vectorized
-* You want to run Vector Search on your data
-* You want to use Weaviate with the OpenAI module ([text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai)), to generate vector embeddings for you.
+這份 notebook 適用的情境是：
+* 你的資料還沒向量化
+* 你想對資料做 Vector Search
+* 你想用 Weaviate 搭配 OpenAI module（[text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai)）幫你產生 vector embedding
 
-This notebook takes you through a simple flow to set up a Weaviate instance, connect to it (with OpenAI API key), configure data schema, import data (which will automatically generate vector embeddings for your data), and run semantic search.
+這份 notebook 會帶你走一個簡單流程：建立 Weaviate instance、（用 OpenAI API key）連線、設定資料 schema、匯入資料（會自動產生資料的 vector embedding），然後跑語意搜尋。
 
-This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
+很多客戶都有這種需求：想在安全的環境裡，用自己的資料儲存跟搜尋我們的 embedding，來支援 chatbot、主題建模等正式環境的應用。
 
-## What is Weaviate
+## Weaviate 是什麼
 
-Weaviate is an open-source vector search engine that stores data objects together with their vectors. This allows for combining vector search with structured filtering.
+Weaviate 是開源的 vector 搜尋引擎，會把資料物件跟它們的 vector 存在一起，所以可以把 vector 搜尋跟結構化過濾結合。
 
-Weaviate uses KNN algorithms to create an vector-optimized index, which allows your queries to run extremely fast. Learn more [here](https://weaviate.io/blog/why-is-vector-search-so-fast).
+Weaviate 用 KNN 演算法建立針對 vector 最佳化的索引，讓查詢跑得非常快。更多資訊看[這裡](https://weaviate.io/blog/why-is-vector-search-so-fast)。
 
-Weaviate let you use your favorite ML-models, and scale seamlessly into billions of data objects.
+Weaviate 讓你用自己喜歡的 ML 模型，也能順暢擴充到數十億個資料物件。
 
-### Deployment options
+### 部署選項
 
-Whatever your scenario or production setup, Weaviate has an option for you. You can deploy Weaviate in the following setups:
-* Self-hosted – you can deploy Weaviate with docker locally, or any server you want.
-* SaaS – you can use [Weaviate Cloud Service (WCS)](https://console.weaviate.io/) to host your Weaviate instances.
-* Hybrid-SaaS – you can deploy Weaviate in your own private Cloud Service.
+不管你的情境或正式環境怎麼配置，Weaviate 都有對應的選項。你可以用下面幾種方式部署：
+* Self-hosted：用 docker 在本機或任何伺服器上部署 Weaviate。
+* SaaS：用 [Weaviate Cloud Service (WCS)](https://console.weaviate.io/) 代管你的 Weaviate instance。
+* Hybrid-SaaS：把 Weaviate 部署在你自己的私有雲上。
 
-### Programming languages
+### 程式語言
 
-Weaviate offers four [client libraries](https://weaviate.io/developers/weaviate/client-libraries), which allow you to communicate from your apps:
+Weaviate 提供四種 [client library](https://weaviate.io/developers/weaviate/client-libraries)，讓你的應用程式跟它溝通：
 * [Python](https://weaviate.io/developers/weaviate/client-libraries/python)
 * [JavaScript](https://weaviate.io/developers/weaviate/client-libraries/javascript)
 * [Java](https://weaviate.io/developers/weaviate/client-libraries/java)
 * [Go](https://weaviate.io/developers/weaviate/client-libraries/go)
 
-Additionally, Weaviate has a [REST layer](https://weaviate.io/developers/weaviate/api/rest/objects). Basically you can call Weaviate from any language that supports REST requests.
+另外，Weaviate 也有 [REST 層](https://weaviate.io/developers/weaviate/api/rest/objects)。基本上任何能發 REST request 的語言都能呼叫 Weaviate。
 
-## Demo Flow
-The demo flow is:
-- **Prerequisites Setup**: Create a Weaviate instance and install the required libraries
-- **Connect**: Connect to your Weaviate instance 
-- **Schema Configuration**: Configure the schema of your data
-    - *Note*: Here we can define which OpenAI Embedding Model to use
-    - *Note*: Here we can configure which properties to index
-- **Import data**: Load a demo dataset and import it into Weaviate
-    - *Note*: The import process will automatically index your data - based on the configuration in the schema
-    - *Note*: You don't need to explicitly vectorize your data, Weaviate will communicate with OpenAI to do it for you
-- **Run Queries**: Query 
-    - *Note*: You don't need to explicitly vectorize your queries, Weaviate will communicate with OpenAI to do it for you
+## Demo 流程
+流程是：
+- **前置設定**：建立 Weaviate instance，安裝需要的函式庫
+- **連線**：連到你的 Weaviate instance
+- **Schema 設定**：設定資料的 schema
+    - *注意*：這裡可以指定要用哪個 OpenAI Embedding Model
+    - *注意*：這裡可以設定要索引哪些 property
+- **匯入資料**：載入範例資料集並匯入 Weaviate
+    - *注意*：匯入時會依 schema 的設定自動建立索引
+    - *注意*：你不用自己把資料向量化，Weaviate 會替你跟 OpenAI 溝通
+- **執行查詢**：查詢
+    - *注意*：你也不用自己把 query 向量化，Weaviate 會替你跟 OpenAI 溝通
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這份 notebook 之後，你應該對 vector database 的設定跟使用有基本概念，可以繼續做更複雜、用到我們 embedding 的應用。
 
-## OpenAI Module in Weaviate
-All Weaviate instances come equipped with the [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) module.
+## Weaviate 裡的 OpenAI Module
+所有 Weaviate instance 都內建 [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) module。
 
-This module is responsible for handling vectorization during import (or any CRUD operations) and when you run a query.
+這個 module 負責在匯入（或任何 CRUD 操作）和執行查詢時處理向量化。
 
-### No need to manually vectorize data
-This is great news for you. With [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) you don't need to manually vectorize your data, as Weaviate will call OpenAI for you whenever necessary.
+### 不用手動向量化資料
+這是好消息。有了 [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai)，你不用手動把資料向量化，Weaviate 需要時會替你呼叫 OpenAI。
 
-All you need to do is:
-1. provide your OpenAI API Key – when you connected to the Weaviate Client
-2. define which OpenAI vectorizer to use in your Schema
+你只要做兩件事：
+1. 在連接 Weaviate Client 時提供你的 OpenAI API Key
+2. 在 Schema 裡指定要用哪個 OpenAI vectorizer
 
-## Prerequisites
+## 前置需求
 
-Before we start this project, we need setup the following:
+開始這個專案前，需要先準備：
 
-* create a `Weaviate` instance
-* install libraries
+* 建立一個 `Weaviate` instance
+* 安裝函式庫
     * `weaviate-client`
     * `datasets`
     * `apache-beam`
-* get your [OpenAI API key](https://beta.openai.com/account/api-keys)
+* 取得你的 [OpenAI API key](https://beta.openai.com/account/api-keys)
 
 ===========================================================
-### Create a Weaviate instance
+### 建立 Weaviate instance
 
-To create a Weaviate instance we have 2 options:
+建立 Weaviate instance 有 2 個選項：
 
-1. (Recommended path) [Weaviate Cloud Service](https://console.weaviate.io/) – to host your Weaviate instance in the cloud. The free sandbox should be more than enough for this cookbook.
-2. Install and run Weaviate locally with Docker.
+1. （建議）[Weaviate Cloud Service](https://console.weaviate.io/)：把 Weaviate instance 代管在雲端。免費的 sandbox 對這份 cookbook 綽綽有餘。
+2. 用 Docker 在本機安裝並執行 Weaviate。
 
-#### Option 1 – WCS Installation Steps
+#### 選項 1：WCS 安裝步驟
 
-Use [Weaviate Cloud Service](https://console.weaviate.io/) (WCS) to create a free Weaviate cluster.
-1. create a free account and/or login to [WCS](https://console.weaviate.io/)
-2. create a `Weaviate Cluster` with the following settings:
-    * Sandbox: `Sandbox Free`
-    * Weaviate Version: Use default (latest)
-    * OIDC Authentication: `Disabled`
-3. your instance should be ready in a minute or two
-4. make a note of the `Cluster Id`. The link will take you to the full path of your cluster (you will need it later to connect to it). It should be something like: `https://your-project-name.weaviate.network` 
+用 [Weaviate Cloud Service](https://console.weaviate.io/)（WCS）建立免費的 Weaviate cluster。
+1. 建立免費帳號，或登入 [WCS](https://console.weaviate.io/)
+2. 用下列設定建立一個 `Weaviate Cluster`：
+    * Sandbox：`Sandbox Free`
+    * Weaviate Version：用預設值（最新版）
+    * OIDC Authentication：`Disabled`
+3. 你的 instance 一兩分鐘內就會準備好
+4. 記下 `Cluster Id`。這個連結會帶你到 cluster 的完整路徑（之後連線會用到），大概長這樣：`https://your-project-name.weaviate.network` 
 
-#### Option 2 – local Weaviate instance with Docker
+#### 選項 2：用 Docker 在本機執行 Weaviate
 
-Install and run Weaviate locally with Docker.
-1. Download the [./docker-compose.yml](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/docker-compose.yml) file
-2. Then open your terminal, navigate to where your docker-compose.yml file is located, and start docker with: `docker-compose up -d`
-3. Once this is ready, your instance should be available at [http://localhost:8080](http://localhost:8080)
+用 Docker 在本機安裝並執行 Weaviate。
+1. 下載 [./docker-compose.yml](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/docker-compose.yml) 檔案
+2. 打開終端機，切到 docker-compose.yml 所在的目錄，用這個指令啟動 docker：`docker-compose up -d`
+3. 準備好之後，你的 instance 就能在 [http://localhost:8080](http://localhost:8080) 使用
 
-Note. To shut down your docker instance you can call: `docker-compose down`
+注意：要關掉 docker instance 可以執行：`docker-compose down`
 
-##### Learn more
-To learn more, about using Weaviate with Docker see the [installation documentation](https://weaviate.io/developers/weaviate/installation/docker-compose).
+##### 延伸閱讀
+想進一步了解怎麼用 Docker 跑 Weaviate，請看[安裝文件](https://weaviate.io/developers/weaviate/installation/docker-compose)。
 
 ===========================================================    
-## Install required libraries
+## 安裝需要的函式庫
 
-Before running this project make sure to have the following libraries:
+執行這個專案前，請確認已經裝好下面的函式庫：
 
 ### Weaviate Python client
 
-The [Weaviate Python client](https://weaviate.io/developers/weaviate/client-libraries/python) allows you to communicate with your Weaviate instance from your Python project.
+[Weaviate Python client](https://weaviate.io/developers/weaviate/client-libraries/python) 讓你從 Python 專案跟 Weaviate instance 溝通。
 
-### datasets & apache-beam
+### datasets 和 apache-beam
 
-To load sample data, you need the `datasets` library and its dependency `apache-beam`.
+要載入範例資料，需要 `datasets` 函式庫和它的相依套件 `apache-beam`。
 
 ```python
 # Install the Weaviate client for Python
@@ -137,13 +150,13 @@ To load sample data, you need the `datasets` library and its dependency `apache-
 ```
 
 ===========================================================
-## Prepare your OpenAI API key
+## 準備你的 OpenAI API key
 
-The `OpenAI API key` is used for vectorization of your data at import, and for running queries.
+`OpenAI API key` 用在匯入時的資料向量化，以及執行查詢。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+如果你還沒有 OpenAI API key，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY`.
+拿到 key 之後，請把它加到環境變數 `OPENAI_API_KEY`。
 
 ```python
 # Export OpenAI API Key
@@ -164,17 +177,17 @@ else:
     print ("OPENAI_API_KEY environment variable not found")
 ```
 
-## Connect to your Weaviate instance
+## 連到你的 Weaviate instance
 
-In this section, we will:
+這一節我們會：
 
-1. test env variable `OPENAI_API_KEY` – **make sure** you completed the step in [#Prepare-your-OpenAI-API-key](#Prepare-your-OpenAI-API-key)
-2. connect to your Weaviate with your `OpenAI API Key`
-3. and test the client connection
+1. 測試環境變數 `OPENAI_API_KEY`，**務必**先完成 [#Prepare-your-OpenAI-API-key](#Prepare-your-OpenAI-API-key) 那一步
+2. 用你的 `OpenAI API Key` 連到 Weaviate
+3. 測試 client 連線
 
-### The client 
+### Client 
 
-After this step, the `client` object will be used to perform all Weaviate-related operations.
+這一步之後，所有 Weaviate 相關操作都會用 `client` 物件來做。
 
 ```python
 import weaviate
@@ -198,31 +211,31 @@ client.is_ready()
 
 # Schema
 
-In this section, we will:
-1. configure the data schema for your data
-2. select OpenAI module
+這一節我們會：
+1. 設定資料的 schema
+2. 選擇 OpenAI module
 
-> This is the second and final step, which requires OpenAI specific configuration.
-> After this step, the rest of the instructions will only touch on Weaviate, as the OpenAI tasks will be handled automatically.
+> 這是第二步，也是最後一個需要 OpenAI 專屬設定的步驟。
+> 這之後的說明只會碰到 Weaviate，因為 OpenAI 的工作會自動處理。
 
 
-## What is a schema
+## Schema 是什麼
 
-In Weaviate you create __schemas__ to capture each of the entities you will be searching.
+在 Weaviate 裡，你用 __schema__ 描述每一種要搜尋的實體。
 
-A schema is how you tell Weaviate:
-* what embedding model should be used to vectorize the data
-* what your data is made of (property names and types)
-* which properties should be vectorized and indexed
+Schema 是你告訴 Weaviate 這些事的方式：
+* 要用哪個 embedding 模型把資料向量化
+* 你的資料由什麼組成（property 名稱和型別）
+* 哪些 property 要向量化並建索引
 
-In this cookbook we will use a dataset for `Articles`, which contains:
+這份 cookbook 用 `Articles` 資料集，裡面有：
 * `title`
 * `content`
 * `url`
 
-We want to vectorize `title` and `content`, but not the `url`.
+我們要向量化 `title` 和 `content`，但不向量化 `url`。
 
-To vectorize and query the data, we will use `text-embedding-3-small`.
+向量化和查詢資料都會用 `text-embedding-3-small`。
 
 ```python
 # Clear up the schema, so that we can recreate it
@@ -266,16 +279,16 @@ client.schema.create_class(article_schema)
 client.schema.get()
 ```
 
-## Import data
+## 匯入資料
 
-In this section we will:
-1. load the Simple Wikipedia dataset
-2. configure Weaviate Batch import (to make the import more efficient)
-3. import the data into Weaviate
+這一節我們會：
+1. 載入 Simple Wikipedia 資料集
+2. 設定 Weaviate Batch 匯入（讓匯入更有效率）
+3. 把資料匯入 Weaviate
 
-> Note: <br/>
-> Like mentioned before. We don't need to manually vectorize the data.<br/>
-> The [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) module will take care of that.
+> 注意： <br/>
+> 如前面所說，我們不需要手動向量化資料。<br/>
+> [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) module 會處理。
 
 ```python
 ### STEP 1 - load the dataset
@@ -358,9 +371,9 @@ print(test_article['url'])
 print(test_article['content'])
 ```
 
-### Search Data
+### 搜尋資料
 
-As above, we'll fire some queries at our new Index and get back results based on the closeness to our existing vectors
+跟前面一樣，我們對新建的索引發幾個查詢，依結果跟既有 vector 的接近程度取回資料
 
 ```python
 def query_weaviate(query, collection_name):
@@ -405,6 +418,18 @@ for i, article in enumerate(query_result):
     print(f"{i+1}. { article['title']} (Score: {round(article['_additional']['certainty'],3) })")
 ```
 
-Thanks for following along, you're now equipped to set up your own vector databases and use embeddings to do all kinds of cool things - enjoy! For more complex use cases please continue to work through other cookbook examples in this repo.
+謝謝你跟著做，現在你已經能自己架 vector database，並用 embedding 做各種有趣的事，盡情玩吧！想看更複雜的應用，請繼續看這個 repo 裡的其他 cookbook 範例。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 用 `text2vec-openai` module，Weaviate 會在匯入和查詢時自動呼叫 OpenAI 產生 embedding，你不用自己向量化。
+- OpenAI API key 在連線 client 時提供，embedding 模型在 schema 裡指定。
+- Schema 決定資料結構，以及哪些 property 會被向量化（例如 `title`、`content` 要，`url` 不要）。
+- Weaviate 把物件和 vector 存在一起，所以 vector 搜尋可以結合結構化過濾。
+- Weaviate 可以自己架、用雲端或放在私有雲，client 有多種語言，也能用 REST 呼叫。
+
+## 練習
+
+1. 把 schema 裡的 embedding 模型換成別的 OpenAI 模型，重新匯入，看搜尋結果有沒有變。
+2. 改 schema，讓 `url` 也一起向量化（或只向量化 `title`），比較搜尋結果的差異。
+3. 把搜尋 query 換成你自己的問題，並調整回傳筆數，看排名前幾名的文章合不合理。

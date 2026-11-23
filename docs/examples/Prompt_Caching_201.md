@@ -1,43 +1,64 @@
 ---
-translated: false
+translated: true
 source: examples/Prompt_Caching_201.ipynb
 ---
-
 # Prompt Caching 201
 
 > 原文：[examples/Prompt_Caching_201.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Prompt_Caching_201.ipynb)
 
-Cookbook for improving prompt caching hit rate, latency, and cost.
+用來提高 prompt caching 命中率、降低延遲跟成本的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-> **Note:** This guide applies only to models before GPT-5.6. For GPT-5.6 and later, see the [Prompt Caching guide](https://developers.openai.com/api/docs/guides/prompt-caching).
+這篇講怎麼讓 prompt caching 的命中率更高，包含原理、對成本跟延遲的影響、怎麼量測，以及一整套實戰優化做法。重點是 prefix 要穩、路由要設計好。
 
-A practical guide to prompt caching: fundamentals, performance impact, measurement, and optimization strategies.
-## 1. Prompt Caching Basics
-Model prompts often include repeated content - such as system instructions, tools, and messages. When a request contains a prefix the system has recently processed, OpenAI can route it to a server that already computed that prefix, allowing the model to reuse prior work instead of recomputing it from scratch.
-Prompt Caching can reduce time-to-first-token latency by up to 80% and input token costs by up to 90%. It works automatically on all API requests and has no additional fees. 
-The goal of this cookbook is to go deeper on optimizing for cache hits. Review our [API docs](https://developers.openai.com/api/docs/guides/prompt-caching) and [Prompt Caching 101](https://developers.openai.com/cookbook/examples/prompt_caching101/) for a great overview - let’s dive in! 
-### 1.1 Basics
-- Cache hits require an exact, repeated prefix match and works automatically for prompts containing 1024 tokens or more, with cache hits occurring in increments of 128 tokens.  
-- The entire request prefix is cacheable: messages, images, audio, tool definitions, and structured output schemas.
-- In-memory prompt caching works automatically on all your API requests. Extended prompt caching increases that to 24hrs. 
-- Caching only works if two requests share the same prefix and land on the same machine. Take advantage of the optional parameter `prompt_cache_key` for traffic that shares common prefixes to improve that routing.
-- Carefully consider the impact of caching from context engineering techniques like compaction.
-- Monitor caching, cost and latency via request logs or the Usage dashboard while iterating.
+## 學完你會
 
-## 2. Why caching matters
-### 2.1 Core Technical Reason: Skipping Prefill Compute
-The forward pass through transformer layers over the input tokens is the main driver of inference cost and latency. In the transformer stack, prompt caching applies specifically to the key and value projections inside the attention layers. Attention is the mechanism that allows models to weigh the importance of different parts of an input sequence when processing a specific token, enabling them to capture context and long-range dependencies.
+- 解釋 prompt caching 為什麼省錢又省時間，以及 cache 命中的條件
+- 用 `cached_tokens` 量測命中率，並用 `prompt_cache_key`、`allowed_tools` 等手法拉高命中率
+- 判斷哪些做法會讓 cache 失效（改 tool、塞 timestamp、壓縮對話等）
 
-When you make a request to OpenAI, we'll create token embeddings that are then transformed into three vectors: a query (Q) that represents what that token would need to self-contextualize, a key (K) that encodes what each token represents, and a value (V) that contains the information that can be incorporated if it were to be relevant. The model compares the current token’s query to all tokens’ keys (via dot products) to produce attention scores. After a softmax, these scores become weights that determine how much each token’s value contributes to the updated representation. For example, in the phrase “she sat by the river bank,” the word “river” provides important context to “bank,” pushing its meaning toward the aquatic rather than the financial. The KV cache stores the key and value tensors for that prefix across all layers and heads.
+## 開跑前
 
-If you then make another request — “she sat by the river bank on a cloudy day” — the first part of the prefix is identical. When processing the new, unseen suffix, the model reuses the cached tensors and only computes attention for the new tokens.
+需要 OpenAI API key。範例會用到 Responses API，部分功能（Flex、extended caching）要看帳號與模型是否支援。
 
-Crucially, the strong semantic relationship between “river” and “bank” has already been encoded into those cached key and value representations during the earlier forward pass. The model does not need to recompute how “bank” aligns with “river.” Instead, new tokens like “cloudy” and “day” generate their own queries and attend over the cached keys from the prefix. In other words, the semantic groundwork has already been laid; the model simply builds on top of that existing attention state rather than recalculating it from scratch.
+> **注意：** 這份指南只適用於 GPT-5.6 之前的模型。GPT-5.6 以後請看 [Prompt Caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)。
 
-### 2.2 Cost Impact
-Cache discounts can be significant. Discount magnitude varies by model family - as our inference stack has become more efficient, our newest models have been able to offer steeper cache discounts. Here are some examples, but see our pricing page for all models. Prompt Caching is enabled for all recent models, gpt-4o and newer. 
+這是一份實用指南：基本觀念、對效能的影響、怎麼量測，以及優化策略。
+
+## 1. Prompt Caching 基礎
+
+模型的 prompt 常常包含重複的內容，例如 system instructions、tools 跟 messages。當請求帶有系統最近處理過的 prefix 時，OpenAI 可以把它導到已經算過那段 prefix 的伺服器，讓模型重用之前的運算，不用從頭再算。
+
+Prompt Caching 最多可以降低 80% 的 time-to-first-token 延遲，並降低 90% 的 input token 成本。所有 API 請求都會自動套用，沒有額外費用。
+
+這份 cookbook 要更深入講怎麼優化 cache 命中。概觀可以先看 [API docs](https://developers.openai.com/api/docs/guides/prompt-caching) 跟 [Prompt Caching 101](https://developers.openai.com/cookbook/examples/prompt_caching101/)，我們開始吧！
+
+### 1.1 基本觀念
+
+- Cache 命中需要 prefix 完全一樣、而且重複出現。prompt 達 1024 個 token 以上才會自動生效，命中以 128 token 為單位增加。
+- 整個請求的 prefix 都能被 cache：messages、圖片、音訊、tool 定義，還有 structured output 的 schema。
+- In-memory prompt caching 對所有 API 請求自動生效。Extended prompt caching 則把保留時間拉長到 24 小時。
+- 要命中 cache，兩個請求必須有相同的 prefix，而且落在同一台機器。對於共用 prefix 的流量，可以用選填參數 `prompt_cache_key` 改善路由。
+- 要仔細評估像 compaction 這類 context engineering 技巧對 cache 的影響。
+- 迭代時透過 request log 或 Usage dashboard 監控 cache、成本跟延遲。
+
+## 2. 為什麼 caching 很重要
+
+### 2.1 核心技術原因：跳過 prefill 運算
+
+對輸入 token 跑 transformer 各層的 forward pass，是推論成本跟延遲的主要來源。在 transformer 裡，prompt caching 針對的是 attention 層內的 key 跟 value projection。Attention 讓模型在處理某個 token 時，能衡量輸入序列中各部分的重要性，抓到 context 跟長距離的依賴關係。
+
+當你對 OpenAI 發請求時，系統會先產生 token embedding，再轉成三個向量：query (Q) 代表這個 token 為了理解自己所需要的內容，key (K) 編碼每個 token 代表什麼，value (V) 則是在相關時可以被納入的資訊。模型把當前 token 的 query 跟所有 token 的 key 做內積，得到 attention 分數。經過 softmax 後，這些分數變成權重，決定每個 token 的 value 對更新後的表示貢獻多少。舉例來說，在 “she sat by the river bank” 這句話裡，“river” 給了 “bank” 重要的上下文，把它的意思推向河岸而不是銀行。KV cache 儲存的就是這段 prefix 在所有層跟所有 head 的 key 與 value tensor。
+
+如果你接著發另一個請求 “she sat by the river bank on a cloudy day”，前面那段 prefix 是一樣的。處理新的、沒看過的後綴時，模型會重用 cache 的 tensor，只對新的 token 算 attention。
+
+關鍵是，“river” 跟 “bank” 之間的強語意關聯，已經在上一次 forward pass 時編進那些 cached 的 key 跟 value 裡了。模型不需要重算 “bank” 跟 “river” 怎麼對應。像 “cloudy”、“day” 這樣的新 token 會產生自己的 query，去對 prefix 的 cached key 做 attention。換句話說，語意的基礎已經打好了，模型只是在既有的 attention 狀態上往下蓋，不用從頭再算。
+
+### 2.2 成本影響
+
+Cache 折扣可以很可觀。折扣幅度依模型系列而異，隨著我們的推論架構越來越有效率，最新的模型能提供更高的 cache 折扣。以下是一些例子，完整模型請看定價頁。Prompt Caching 對所有近期模型（gpt-4o 以後）都有開。
+
 | Model | Input <br>(per 1M tokens) | Cached input <br>(per 1M tokens) | Caching Discount |
 | --- | --- | --- | --- |
 | gpt-4o | $2.50 | $1.25 | 50.00% |
@@ -47,16 +68,21 @@ Cache discounts can be significant. Discount magnitude varies by model family - 
 | gpt-realtime (audio) | $32.00 | $0.40 | 98.75% |
 
 
-### 2.3 Latency Impact
-Reducing time-to-first-token (TTFT) is a primary motivation for improving cache rates. Cached tokens can reduce latency by up to ~80%.
-Caching keeps latency roughly proportional to generated output length rather than total conversation length because the full historical context is not re-prefilled. When we get cache hits, sampling the model is linear rather than quadratic.
-I ran a series of prompts 2300 times and plotted the cached vs uncached requests. For the shortest prompts (1024 tokens), cached requests are 7% faster, but at the longer end (150k+ tokens) we’re seeing 67% faster TTFT.  The longer the input, the bigger the impact of caching on that first-token latency. 
+### 2.3 延遲影響
+
+降低 time-to-first-token (TTFT) 是提升 cache 命中率的主要動機。Cached token 最多可以降低約 80% 的延遲。
+
+有 caching 的話，延遲大致跟輸出長度成正比，而不是跟整段對話長度成正比，因為完整的歷史 context 不用重新 prefill。cache 命中時，取樣模型的成本是線性的，而不是平方成長。
+
+我把一系列 prompt 跑了 2300 次，畫出 cached 跟 uncached 請求的比較。最短的 prompt（1024 token）cached 請求快 7%，到了最長的一端（150k+ token）TTFT 快了 67%。輸入越長，caching 對首 token 延遲的影響越大。
 
 ![Figure 2](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt-caching-201/figure-2.svg)
 
-## 3. Measure caching first (so you can iterate)
-### 3.1 Per-request: `cached_tokens`
-Responses include usage fields indicating how many prompt tokens were served from the cache. All requests will display a `cached_tokens` field of the `usage.prompt_tokens_details` [Response](https://developers.openai.com/api/docs/api-reference/responses/object) or [Chat](https://developers.openai.com/api/docs/api-reference/chat/object) object indicating how many of the prompt tokens were cached.
+## 3. 先量測 caching（這樣才能迭代）
+
+### 3.1 單一請求：`cached_tokens`
+
+回應裡有 usage 欄位，告訴你有多少 prompt token 是從 cache 取得的。所有請求的 [Response](https://developers.openai.com/api/docs/api-reference/responses/object) 或 [Chat](https://developers.openai.com/api/docs/api-reference/chat/object) 物件，在 `usage.prompt_tokens_details` 底下都有 `cached_tokens` 欄位，表示有多少 prompt token 被 cache 了。
 
 
 ```
@@ -77,43 +103,48 @@ Responses include usage fields indicating how many prompt tokens were served fro
 
 
 
-You can also get a high level overview by filtering selected cached / uncached tokens for the measures in the usage dashboard
+你也可以在 usage dashboard 裡篩選 cached / uncached token，看高層次的概況。
 
 ![Figure 3](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt-caching-201/figure-3.png)
 
-## 4. Improve cache hit rate (tactical playbook)
+## 4. 提高 cache 命中率（實戰手冊）
 
-What’s a cache hit? That’s when a request starts with the same prefix as a previous request, allowing the system to reuse previously computed key/value tensors instead of recomputing them.  Increasing the cache hit rate — maximizing how often prefixes can be reused — directly improves both performance and efficiency, so maximizing this is our goal!
+什麼叫 cache 命中？就是請求的開頭跟之前某個請求有相同的 prefix，系統可以重用先前算好的 key/value tensor，不用重算。提高 cache 命中率，也就是盡量讓 prefix 能被重用，會直接改善效能跟效率，所以這就是我們的目標。
 
 
-### 4.1 Send a Prompt over 1024 tokens
-It can feel counterintuitive, but in some cases, making your prompt slightly longer can reduce overall cost.
-Say you have a 900 token prompt -  you’ll never get a cache hit.  If you lengthen your prompt to 1100 tokens and get a 50% cache rate you’ll save 33% on the token costs. If you get a 70% cache rate, you’d save 55%. Once you cross the caching threshold and achieve meaningful reuse, the marginal cost of those repeated tokens drops substantially. That means a slightly longer but stable prefix can be cheaper than a shorter prompt that never caches.
+### 4.1 送出超過 1024 token 的 prompt
 
-### 4.2 Stabilize the Prefix
-This is the lowest-effort, highest-impact optimization: keep the early portion of the prompt stable.
-Place durable content at the beginning:
+聽起來反直覺，但有時候把 prompt 加長一點，反而能降低總成本。
+
+假設你的 prompt 是 900 token，永遠不會有 cache 命中。如果加長到 1100 token，並拿到 50% 的 cache 比率，token 成本可以省 33%。如果 cache 比率是 70%，可以省 55%。一旦跨過 caching 門檻、有了足夠的重用，重複 token 的邊際成本就大幅下降。也就是說，稍微長一點但穩定的 prefix，可能比短但永遠不會被 cache 的 prompt 更便宜。
+
+### 4.2 讓 prefix 保持穩定
+
+這是最省力、效果最大的優化：讓 prompt 前面的部分保持不變。
+
+把不會變的內容放在開頭：
 - Instructions
-- Tool definitions
+- Tool 定義
 - Schemas
 
-Move volatile content (e.g., user input, dynamic values, session-specific data) to the end. Even small changes in early tokens will invalidate exact prefix matching and prevent cache hits.
+把會變動的內容（例如使用者輸入、動態值、session 專屬資料）移到最後。前面的 token 就算只有一點小改動，也會讓 exact prefix 比對失效，沒辦法命中 cache。
 
-**Learnings from Codex**
-When our engineering team outlined how they [architected the Codex agent loop](https://openai.com/index/unrolling-the-codex-agent-loop/), they emphasized prompt structure as a first-class performance surface and caching as a top priority. In the Codex CLI, system instructions, tool definitions, sandbox configuration, and environment context are kept identical and consistently ordered between requests to preserve long, stable prompt prefixes. The agent loop appends new messages (rather than modifying earlier ones) when runtime configurations change mid-conversation (e.g. new working directory or approval mode). By avoiding changes to the original prefix, the system preserves exact-prefix matches, which are required for prompt cache hits. 
+**從 Codex 學到的**
+我們的工程團隊在說明 [Codex agent loop 的架構](https://openai.com/index/unrolling-the-codex-agent-loop/)時，強調 prompt 結構是第一等的效能要素，caching 是最優先的事。在 Codex CLI 裡，system instructions、tool 定義、sandbox 設定跟環境 context，在請求之間都保持一致、順序也固定，以維持又長又穩定的 prompt prefix。當對話中途 runtime 設定改變（例如換工作目錄或 approval mode），agent loop 是在後面追加新 message，而不是修改前面的內容。不去動原本的 prefix，就能保住 cache 命中所需的 exact prefix 比對。
 
-**Tip: Use metadata**
-We’ve seen customers accidentally invalidate their cache by including a timestamp early in their request for later lookup/debugging. Move that to `metadata` where it will not impact the cache!
+**Tip：用 metadata**
+我們看過客戶不小心讓 cache 失效，原因是在請求前面放了 timestamp，想之後查詢或除錯用。把它移到 `metadata`，就不會影響 cache。
 
-### 4.3 Keep Tools and Schemas Identical
-Tools, schemas, and their ordering contribute to the cached prefix - they get injected before developer instructions which means that changing them would invalidate the cache. This includes: 
-- Schema key changes
-- Tool ordering changes
-- Changes to instructions
+### 4.3 保持 tools 跟 schemas 一致
+
+Tools、schemas 跟它們的順序都屬於 cached prefix 的一部分，它們會被插在 developer instructions 之前，所以改動它們就會讓 cache 失效。包含：
+- Schema 的 key 改變
+- Tool 順序改變
+- Instructions 改變
 
 
-**Tip: Adjust tools without breaking prompt caching**
-Leverage [`allowed_tools`](https://developers.openai.com/api/docs/guides/function-calling/#tool-choice) `tool_choice` option. It allows you to restrict the tools the model can call on a request without changing the tools array and busting the cache. List your full toolkit in tools, and then use an `allowed_tools` block to specify which tool can be used on a single turn.
+**Tip：調整 tools 又不破壞 prompt caching**
+善用 [`allowed_tools`](https://developers.openai.com/api/docs/guides/function-calling/#tool-choice) 這個 `tool_choice` 選項。它可以限制模型在單次請求能呼叫的 tools，而不用改 tools 陣列、也不會讓 cache 失效。把完整工具組都列在 tools 裡，再用 `allowed_tools` 區塊指定這一回合可以用哪些 tool。
 
 
 ```
@@ -129,49 +160,51 @@ allowed_tools = {"mode":"auto", "tools":["get_weather","get_location"]}
 
 
 
-### 4.4 Use `prompt_cache_key` to Improve Routing Stickiness
-Caching only works if two requests share the same prefix and land on the same machine. Requests are routed to inference engines based on a hash of the first ~256 tokens of the prompt. When you provide a `prompt_cache_key`, it is combined with that hash to increase routing stickiness - meaning requests with the same prefix are more likely to land on the same engine and reuse cached KV state.  It’s effective - one of our coding customers saw an improved hit rate from 60% to 87% when they started using `prompt_cache_key`. 
+### 4.4 用 `prompt_cache_key` 改善路由黏著度
 
-`prompt_cache_key` is especially useful when you are sending different requests that have the same initial set of context (i.e. first 256 tokens) but then vary later as it lets you intentionally group related requests. 
+Caching 要生效，兩個請求必須有相同 prefix 且落在同一台機器。請求會依據 prompt 前約 256 個 token 的 hash 被導到推論引擎。當你提供 `prompt_cache_key`，它會跟這個 hash 結合，增加路由的黏著度，也就是有相同 prefix 的請求更可能落在同一個引擎、重用 cached 的 KV 狀態。這很有效：我們有一位做 coding 的客戶，開始用 `prompt_cache_key` 後，命中率從 60% 提升到 87%。
 
-Inference engines can handle roughly ~15 requests per minute per prefix + `prompt_cache_key` combination. If traffic exceeds that rate — for example, if you send thousands of requests sharing the same prefix and key — the system will distribute the excess requests across additional machines for load balancing. Each new machine is a one-time cache miss. 
+當你送出的請求開頭 context 相同（也就是前 256 個 token），之後才不一樣時，`prompt_cache_key` 特別有用，因為它讓你可以刻意把相關請求分在一組。
 
-That means you should choose a key granularity that can keep each prefix + key combination below ~15 RPM.
+每個推論引擎對每個 prefix + `prompt_cache_key` 組合，大約能處理每分鐘 15 個請求。如果流量超過這個速率，例如你送出幾千個共用同一個 prefix 跟 key 的請求，系統會把多出來的請求分散到額外的機器做 load balancing。每台新機器都會有一次 cache miss。
 
-For coding use cases we’ve seen:
-- Per-user keys improve reuse across related conversations (e.g., working in the same codebase).
-- Per-conversation keys scale better when users run many unrelated threads in parallel.
-Grouping several users to share a key can also be a good approach. A simple algorithm for this would be to hash and mod a user id by number of "buckets” to aim close to 15RPM to aim for to maximize caching performance.
+所以你應該選一個粒度，讓每個 prefix + key 組合維持在約 15 RPM 以下。
+
+在 coding 的情境我們看到：
+- 每個使用者一個 key，可以提升相關對話之間的重用率（例如在同一個 codebase 工作）。
+- 每個對話一個 key，在使用者同時跑很多不相關 thread 時比較好擴展。
+也可以讓幾個使用者共用一個 key。簡單的做法是把 user id 做 hash 再對 bucket 數取餘數，讓每個 bucket 的流量接近 15 RPM，這樣 caching 效果最好。
 
 
-**Tip: Test Flex Processing instead of the Batch API**
-If you have latency insensitive workflow you may be using the Batch API. For more flexibility around caching, consider using Flex Processing. Flex offers the same 50% token discount as Batch but runs through the Responses API with `service_tier="flex"` specified per request. This gives you more flexibility:
+**Tip：試試 Flex Processing，取代 Batch API**
+如果你的工作流程對延遲不敏感，可能會用 Batch API。想在 caching 上有更多彈性，可以考慮 Flex Processing。Flex 提供跟 Batch 一樣的 50% token 折扣，但是透過 Responses API 並在每個請求指定 `service_tier="flex"`。這樣你有更多彈性：
 
-- Control over request rate (RPM)
-- Access to extended prompt caching
-- Ability to include a prompt_cache_key
+- 可以控制請求速率 (RPM)
+- 可以使用 extended prompt caching
+- 可以帶 prompt_cache_key
+因為你可以更精準地調整路由跟 cache 的位置，Flex 在某些工作負載下可以達到更高的 cache 命中率。它特別適合原型開發，或推論量不大但仍想省成本的 production 工作負載。
 
-Because you can tune routing and cache locality more precisely, Flex can achieve higher cache hit rates in some workloads. It is particularly well suited for prototyping or production workloads that are not inference-intensive but still benefit from cost optimization.
-
-I ran a head-to-head test of 10,000 identical requests. Flex (using extended prompt caching and `prompt_cache_key`) produced an 8.5% increase in cache hit rate compared to the Batch job. That improvement translates into a 23% reduction in input token cost. 
+我做了一個 10,000 個相同請求的對比測試。Flex（使用 extended prompt caching 加 `prompt_cache_key`）的 cache 命中率比 Batch job 高 8.5%，換算下來 input token 成本少了 23%。
 
 ![Figure 4](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt-caching-201/figure-4.svg)
 
-There isn’t model parity for caching on the Batch API - pre-GPT-5 models are not supported, so if you’re using o3 or o4-mini, you should consider switching to Flex to take advantage of caching. Check the most up to date info on this in our [pricing docs](https://developers.openai.com/api/docs/pricing?latest-pricing=flex). 
+Batch API 在 caching 上沒有跟各模型對等：GPT-5 之前的模型不支援，所以如果你在用 o3 或 o4-mini，可以考慮改用 Flex 來享受 caching。最新資訊請看[定價文件](https://developers.openai.com/api/docs/pricing?latest-pricing=flex)。
 
 
-**Insight: `prompt_cache_key` as shard key**
-It might be helpful to think of the `prompt_cache_key` as a database shard key when thinking about how we route the request on the backend - the considerations are very similar when optimizing for the parameter. Like shard keys, granularity is a balancing act. Each machine can only handle about ~15 RPM for a given prefix, so if you use the same key on too many requests, requests will overflow to multiple machines. For each new machine, you’ll start the cache anew. On the other hand, if your key is too narrow, traffic spreads out across machines and you lose the benefit of cache reuse. Routing is still load-balanced - `prompt_cache_key` increases the chance similar prompts hit the same server but does not guarantee stickiness - caching is always best-effort!
+**Insight：把 `prompt_cache_key` 當成 shard key**
+想後端怎麼路由請求時，可以把 `prompt_cache_key` 想成資料庫的 shard key，優化時要考量的事情非常類似。跟 shard key 一樣，粒度是個取捨。每台機器對同一個 prefix 大約只能處理 15 RPM，所以如果同一個 key 用在太多請求上，請求會溢出到多台機器，每台新機器都要重新建立 cache。另一方面，如果 key 太細，流量會分散到各台機器，就失去 cache 重用的好處。路由仍然有 load balancing，`prompt_cache_key` 只是提高相似 prompt 打到同一台伺服器的機率，並不保證黏著，caching 永遠是 best-effort。
 
-### 4.5 Use the Responses API instead of Chat Completions
-As we outlined in [Why we built the Responses API](https://developers.openai.com/blog/responses-api/), our internal benchmarks show a 40-80% better cache utilization on requests when compared to Chat Completions. 
-This is because, unlike Chat Completions, the raw chain of thought tokens get persisted in the Responses API between turns via `previous_response_id` (or [encrypted reasoning items](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#encrypted-reasoning-items) if you’re stateless). Chat Completions does not offer a way to persist these tokens. If you aren't leveraging reasoning models, there's no caching improvement. [Better performance from reasoning models using the Responses API](https://developers.openai.com/cookbook/examples/responses_api/reasoning_items#caching) is an excellent guide to understanding this in more depth. 
+### 4.5 用 Responses API 取代 Chat Completions
 
-### 4.6 Be thoughtful about Context Engineering
-At its core, context engineering is about deciding what goes into the model’s input on each request. Every model has a fixed context window, but curating what you pass on each request isn’t just about staying under the limit. As the input grows, you’re not only approaching truncation - you’re also increasing replay cost and asking the model to distribute its attention across more tokens. Effective context engineering is the practice of managing that constraint intentionally. 
-However, when you drop, summarize or compact earlier turns in a conversation, you’ll break the cache. In that regard, context engineering and prompt caching are inherently at odds - one prioritizes dynamism, the other stability.
+如同 [Why we built the Responses API](https://developers.openai.com/blog/responses-api/) 所說，我們內部的 benchmark 顯示，相比 Chat Completions，Responses API 的 cache 使用率高 40-80%。
+原因是 Responses API 會透過 `previous_response_id`（如果是 stateless，則用 [encrypted reasoning items](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#encrypted-reasoning-items)）在回合之間保留原始的 chain of thought token，Chat Completions 沒辦法保留這些 token。如果你沒有用 reasoning 模型，就不會有 caching 上的改善。想更深入了解，可以看 [Better performance from reasoning models using the Responses API](https://developers.openai.com/cookbook/examples/responses_api/reasoning_items#caching)。
 
-With the rise of longer running agents and native compaction tools, it’s important to keep caching in mind when architecting to ensure the right balance of cost versus intelligence savings. 
+### 4.6 小心處理 Context Engineering
+
+Context engineering 的核心，是決定每次請求要把什麼放進模型的輸入。每個模型的 context window 都是固定的，但精選每次傳什麼，不只是為了不超過上限。輸入變長時，你不只是接近被截斷，還會增加重送的成本，也讓模型要把注意力分散到更多 token 上。有效的 context engineering，就是有意識地管理這個限制。
+不過，當你丟掉、摘要或壓縮對話中較早的回合，cache 就會被破壞。從這個角度看，context engineering 跟 prompt caching 本質上互相拉扯，一個重視動態，一個重視穩定。
+
+隨著長時間運行的 agent 跟原生 compaction 工具變多，設計架構時要把 caching 放在心上，在成本跟智慧之間取得平衡。
 
 
 ```
@@ -185,25 +218,26 @@ response = client.responses.create(
 
 
 
-A common failure mode is an overgrown tool set that introduces ambiguity about which tool should be invoked. Keeping the tool surface minimal improves decision quality and long-term context. When curating tools on a per-request basis, use tip 4.3 and leverage the [`allowed_tools`](https://developers.openai.com/api/docs/guides/function-calling/#tool-choice) `tool_choice` option for pruning.
+常見的失敗情形是 tool 太多，讓模型搞不清楚該呼叫哪一個。保持精簡的 tool 範圍，可以提升決策品質，也對長期 context 比較好。如果要針對每次請求挑選 tools，用 4.3 的技巧，靠 [`allowed_tools`](https://developers.openai.com/api/docs/guides/function-calling/#tool-choice) 這個 `tool_choice` 選項來做篩減。
 
 
-**Practical rule**
-Leverage your evals to choose the compaction method and frequency that balances cost (both from reducing total input tokens via truncation/summarization as well as caching) and intelligence gained from careful context engineering
+**實用原則**
+用你的 eval 來選 compaction 的方法跟頻率，在成本（截斷或摘要減少的總 input token，以及 caching）跟 context engineering 帶來的智慧之間取得平衡。
 
-## 5. Troubleshooting: why you might see lower caching:
-Common causes:
-- Tool or response format schema changes
-- Naive truncation from hitting the models' context window
-- Changes to instructions or system prompts
-- Changes to reasoning effort
-- Cache Expiration: too much time passes and the saved prefix is dropped.
-- Adding in a space, timestamp or other dynamic content
-- Using Chat Completions with reasoning models, since the hidden chain-of-thought tokens are dropped
+## 5. 疑難排解：為什麼 cache 命中率偏低
 
-## 6. Extended Prompt Caching & Zero Data Retention
+常見原因：
+- Tool 或 response format 的 schema 改變
+- 碰到模型 context window 上限時的粗暴截斷
+- Instructions 或 system prompt 改變
+- Reasoning effort 改變
+- Cache 過期：時間太久，存起來的 prefix 被丟掉
+- 多加了空格、timestamp 或其他動態內容
+- 對 reasoning 模型使用 Chat Completions，因為隱藏的 chain-of-thought token 會被丟掉
 
-[Extended Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching#extended-prompt-cache-retention) works by offloading the key/value tensors to GPU-local storage when memory is full, significantly increasing the storage capacity available for caching. For `gpt-5.5`, `gpt-5.5-pro`, and all future models, the default is `24h` and `in_memory` is not supported.
+## 6. Extended Prompt Caching 與 Zero Data Retention
+
+[Extended Prompt Caching](https://developers.openai.com/api/docs/guides/prompt-caching#extended-prompt-cache-retention) 的做法是，當記憶體滿了，就把 key/value tensor 卸載到 GPU 本地儲存，大幅增加可用於 caching 的容量。對 `gpt-5.5`、`gpt-5.5-pro` 以及之後所有模型，預設是 `24h`，不支援 `in_memory`。
 
 ```
 {
@@ -215,19 +249,20 @@ Common causes:
 
 
 
-KV tensors are the intermediate representation from the model’s attention layers produced during prefill. Only the key/value tensors may be persisted in local storage; all original input content is only retained in memory.
+KV tensor 是 prefill 期間由模型 attention 層產生的中間表示。只有 key/value tensor 可能被存在本地儲存，所有原始輸入內容只會保留在記憶體裡。
 
-**Insight: What Is Actually Cached?**
-The KV cache just holds the model’s key/value tensors (linear projections of the hidden‑states) so we can reuse them on the next inference step. The KV cache is an intermediate representation. It’s essentially just a bunch of numbers internal to the model - that means no raw text/multi-modal inputs are ever stored, regardless of retention policy.
+**Insight：到底 cache 了什麼？**
+KV cache 只保存模型的 key/value tensor（hidden state 的線性投影），這樣下一步推論就能重用。KV cache 是一種中間表示，基本上就是模型內部的一堆數字，所以不管保留政策是什麼，原始的文字或多模態輸入都不會被儲存。
 
 ## 7. Realtime API
 
-Caching in the Realtime API works the same as with the Responses API - all the audio, text or images passed in will be cached, and any change to the prefix will break the cache.  However, given the shorter context window of the Realtime API (currently 32k), managing truncation is especially relevant.  A 32k context model with 4,096 max output tokens can only include 28,224 tokens in the context before truncation occurs. 
+Realtime API 的 caching 跟 Responses API 運作方式一樣：傳進去的所有音訊、文字或圖片都會被 cache，prefix 只要有任何改變就會破壞 cache。不過 Realtime API 的 context window 比較短（目前是 32k），所以管理截斷特別重要。一個 32k context、max output 為 4,096 token 的模型，在發生截斷前，context 裡只能放 28,224 個 token。
 
 ### 7.1 Retention Ratio
-By default `(truncation: "auto")`, the server removes just enough old messages to fit within the context window. This “just-in-time” pruning shifts the start of the conversation slightly on every turn once you’re over the limit. However, this naive strategy causes frequent cache misses.
-The [`retention_ratio`](https://developers.openai.com/api/docs/guides/realtime-costs/#truncation) setting changes this by letting you control how much of the earlier context to keep vs. drop. It’s a configurable truncation strategy that lets developers control how much of the token context window is retained, balancing context preservation with cache-hit optimization.
-For example, `retention_ratio: 0.7` means that when truncation happens, the system keeps roughly 70% of the existing conversation window and drops the oldest ~30%. The drop happens in one larger truncation event (instead of small incremental removals).
+
+預設 `(truncation: "auto")` 時，伺服器只會移除剛好夠塞進 context window 的舊 message。這種「剛好就好」的修剪，會在超過上限之後每一回合都稍微移動對話的開頭，這個天真的策略會造成頻繁的 cache miss。
+[`retention_ratio`](https://developers.openai.com/api/docs/guides/realtime-costs/#truncation) 設定改變了這點，讓你控制要保留多少較早的 context、丟掉多少。這是一個可設定的截斷策略，讓開發者控制 token context window 保留多少，在保留 context 跟優化 cache 命中之間取得平衡。
+例如 `retention_ratio: 0.7` 表示截斷發生時，系統大約保留現有對話視窗的 70%，丟掉最舊的約 30%。這一次丟掉的量比較大，是單次的截斷事件，而不是一小段一小段地移除。
 
 
 ```
@@ -244,17 +279,30 @@ For example, `retention_ratio: 0.7` means that when truncation happens, the syst
 
 
 
-This creates a more stable prefix that survives across multiple turns, reducing repeated cache busting.
-The trade-off is that truncation happens in bigger chunks, so you can lose more conversation history at once. That means the model may suddenly “forget” earlier parts of the dialogue sooner than with gradual truncation. You’re effectively trading off memory depth for cache stability (more consistent prefix).
-Here’s what this impact looks like in the naive per-turn truncation approach vs using `retention_ratio`. 
+這樣會產生更穩定的 prefix，可以跨好幾個回合存活，減少重複破壞 cache。
+代價是截斷一次會砍掉比較大塊，所以一次可能失去更多對話歷史，模型可能比逐步截斷更早突然「忘記」對話前面的部分。你等於是用記憶深度換取 cache 穩定性（prefix 更一致）。
+下圖是天真的逐回合截斷，跟使用 `retention_ratio` 的影響比較。
 
 ![Figure 5](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt-caching-201/figure-5.svg)
 
 
-## Conclusion
-Prompt caching is one of the highest-leverage optimizations available on the OpenAI platform. When your prefixes are stable and your routing is well-shaped, you can materially reduce both cost and latency without changing model behavior or quality.
-The key ideas are simple but powerful: stabilize the prefix, monitor `cached_tokens`, be mindful of the ~15 RPM limit, and use `prompt_cache_key` thoughtfully. For higher-volume or latency-insensitive workloads, consider Flex Processing and extended retention to further improve cache locality.
-Caching is best-effort and routing-aware, but when engineered intentionally, it can deliver dramatic improvements in efficiency. Treat it like any other performance system: measure first, iterate deliberately, and design your prompts with reuse in mind.
+## 結論
+
+Prompt caching 是 OpenAI 平台上槓桿最高的優化之一。當你的 prefix 穩定、路由設計得當，就能大幅降低成本跟延遲，而且不用改變模型行為或品質。
+核心觀念很簡單但很有力：穩定 prefix、監控 `cached_tokens`、留意約 15 RPM 的限制，並謹慎使用 `prompt_cache_key`。對高流量或不在意延遲的工作負載，可以考慮 Flex Processing 跟 extended retention 來進一步提升 cache 的局部性。
+Caching 是 best-effort 而且跟路由有關，但只要有意識地設計，就能帶來很大的效率提升。把它當成任何其他效能系統來對待：先量測、有條理地迭代，並在設計 prompt 時就想著重用。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Cache 命中要求 prefix 完全一致，而且落在同一台機器。prompt 要 1024 token 以上才會生效。
+- 穩定的東西（instructions、tools、schemas）放前面，會變的東西放後面，動態值如 timestamp 改放 `metadata`。
+- `prompt_cache_key` 像 shard key，粒度要抓到每個 prefix + key 組合約 15 RPM 以下。
+- 用 Responses API 搭配 reasoning 模型，cache 使用率會比 Chat Completions 高。
+- Context engineering（截斷、摘要、compaction）跟 caching 互相拉扯，要用 eval 找平衡。
+
+## 練習
+
+1. 在你的請求之後印出 `usage.prompt_tokens_details.cached_tokens`，連續送同一個長 prompt 兩次，比較第一次跟第二次的數字。
+2. 把 prompt 開頭加一個 timestamp 再重送，觀察 `cached_tokens` 掉多少，然後把它改放到 `metadata` 再測一次。
+3. 把 tools 陣列固定，改用 `allowed_tools` 在不同請求限制可用的 tool，確認 `cached_tokens` 沒有掉下來。

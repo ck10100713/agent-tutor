@@ -1,29 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_count_tokens_with_tiktoken.ipynb
 ---
 
-# How to count tokens with Tiktoken
+# 用 Tiktoken 計算 Token 數量
 
 > 原文：[examples/How_to_count_tokens_with_tiktoken.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_count_tokens_with_tiktoken.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+介紹 OpenAI 的開源 tokenizer `tiktoken`，示範怎麼把文字切成 token、還原回文字，以及比較不同 encoding。最後教你替 chat completions 的 messages（包含 tool calls）估算 token 數。
+
+## 學完你會
+- 用 `tiktoken.get_encoding()` 和 `encoding_for_model()` 載入 encoding，並用 `encode()` 算出字串的 token 數。
+- 用 `decode()` 和 `decode_single_token_bytes()` 把 token 轉回文字，並避開單一 token 解碼的陷阱。
+- 寫函式估算 chat messages 和帶 tool 的請求會用掉多少 token。
+
+## 開跑前
+- 需要安裝 `tiktoken`（`pip install tiktoken`）。第一次載入 encoding 時要連網下載。
+
+[`tiktoken`](https://github.com/openai/tiktoken/blob/main/README.md) 是 OpenAI 做的快速開源 tokenizer。
+
+給定一個文字字串（例如 `"tiktoken is great!"`）和一個 encoding（例如 `"cl100k_base"`），tokenizer 可以把字串切成 token 的列表（例如 `["t", "ik", "token", " is", " great", "!"]`）。
+
+把字串切成 token 很有用，因為 GPT 模型是以 token 的形式看文字。知道字串有多少 token，可以告訴你 (a) 字串對文字模型來說會不會太長，以及 (b) 一次 OpenAI API 呼叫要花多少錢（因為用量是按 token 計價）。
 
 
-[`tiktoken`](https://github.com/openai/tiktoken/blob/main/README.md) is a fast open-source tokenizer by OpenAI.
+## Encoding
 
-Given a text string (e.g., `"tiktoken is great!"`) and an encoding (e.g., `"cl100k_base"`), a tokenizer can split the text string into a list of tokens (e.g., `["t", "ik", "token", " is", " great", "!"]`).
+Encoding 決定文字怎麼轉成 token。不同模型用不同的 encoding。
 
-Splitting text strings into tokens is useful because GPT models see text in the form of tokens. Knowing how many tokens are in a text string can tell you (a) whether the string is too long for a text model to process and (b) how much an OpenAI API call costs (as usage is priced by token).
-
-
-## Encodings
-
-Encodings specify how text is converted into tokens. Different models use different encodings.
-
-`tiktoken` supports three encodings used by OpenAI models:
+`tiktoken` 支援 OpenAI 模型用的幾種 encoding：
 
 | Encoding name           | OpenAI models                                       |
 |-------------------------|-----------------------------------------------------|
@@ -32,23 +40,23 @@ Encodings specify how text is converted into tokens. Different models use differ
 | `p50k_base`             | Codex models, `text-davinci-002`, `text-davinci-003`|
 | `r50k_base` (or `gpt2`) | GPT-3 models like `davinci`                         |
 
-You can retrieve the encoding for a model using `tiktoken.encoding_for_model()` as follows:
+你可以用 `tiktoken.encoding_for_model()` 取得某個模型的 encoding，如下：
 ```python
 encoding = tiktoken.encoding_for_model('gpt-4o-mini')
 ```
 
-Note that `p50k_base` overlaps substantially with `r50k_base`, and for non-code applications, they will usually give the same tokens.
+注意 `p50k_base` 和 `r50k_base` 有大量重疊，非程式碼的應用通常會切出一樣的 token。
 
-## Tokenizer libraries by language
+## 各語言的 Tokenizer 函式庫
 
-For `o200k_base`, `cl100k_base` and `p50k_base` encodings:
+`o200k_base`、`cl100k_base` 和 `p50k_base` encoding：
 - Python: [tiktoken](https://github.com/openai/tiktoken/blob/main/README.md)
 - .NET / C#: [SharpToken](https://github.com/dmitry-brazhenko/SharpToken), [TiktokenSharp](https://github.com/aiqinxuancai/TiktokenSharp)
 - Java: [jtokkit](https://github.com/knuddelsgmbh/jtokkit)
 - Golang: [tiktoken-go](https://github.com/pkoukk/tiktoken-go)
 - Rust: [tiktoken-rs](https://github.com/zurawiki/tiktoken-rs)
 
-For `r50k_base` (`gpt2`) encodings, tokenizers are available in many languages.
+`r50k_base`（`gpt2`）encoding 則有很多語言的 tokenizer 可用。
 - Python: [tiktoken](https://github.com/openai/tiktoken/blob/main/README.md) (or alternatively [GPT2TokenizerFast](https://huggingface.co/docs/transformers/model_doc/gpt2#transformers.GPT2TokenizerFast))
 - JavaScript: [gpt-3-encoder](https://www.npmjs.com/package/gpt-3-encoder)
 - .NET / C#: [GPT Tokenizer](https://github.com/dluc/openai-tools)
@@ -57,16 +65,16 @@ For `r50k_base` (`gpt2`) encodings, tokenizers are available in many languages.
 - Golang: [tiktoken-go](https://github.com/pkoukk/tiktoken-go)
 - Rust: [tiktoken-rs](https://github.com/zurawiki/tiktoken-rs)
 
-(OpenAI makes no endorsements or guarantees of third-party libraries.)
+（OpenAI 不對第三方函式庫背書或做任何保證。）
 
 
-## How strings are typically tokenized
+## 字串通常怎麼被切成 token
 
-In English, tokens commonly range in length from one character to one word (e.g., `"t"` or `" great"`), though in some languages tokens can be shorter than one character or longer than one word. Spaces are usually grouped with the starts of words (e.g., `" is"` instead of `"is "` or `" "`+`"is"`). You can quickly check how a string is tokenized at the [OpenAI Tokenizer](https://beta.openai.com/tokenizer), or the third-party [Tiktokenizer](https://tiktokenizer.vercel.app/) webapp.
+在英文裡，token 的長度通常從一個字元到一個單字不等（例如 `"t"` 或 `" great"`），不過在某些語言裡，token 可能比一個字元還短，或比一個單字還長。空白通常會跟單字的開頭放在一起（例如 `" is"`，而不是 `"is "` 或 `" "`+`"is"`）。你可以在 [OpenAI Tokenizer](https://beta.openai.com/tokenizer) 或第三方的 [Tiktokenizer](https://tiktokenizer.vercel.app/) 網頁應用快速查看字串怎麼被切。
 
-## 0. Install `tiktoken`
+## 0. 安裝 `tiktoken`
 
-If needed, install `tiktoken` with `pip`:
+需要的話，用 `pip` 安裝 `tiktoken`：
 
 ```python
 %pip install --upgrade tiktoken -q
@@ -86,33 +94,33 @@ If needed, install `tiktoken` with `pip`:
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-## 1. Import `tiktoken`
+## 1. 匯入 `tiktoken`
 
 ```python
 import tiktoken
 ```
 
-## 2. Load an encoding
+## 2. 載入 encoding
 
-Use `tiktoken.get_encoding()` to load an encoding by name.
+用 `tiktoken.get_encoding()` 依名稱載入 encoding。
 
-The first time this runs, it will require an internet connection to download. Later runs won't need an internet connection.
+第一次執行時需要連網下載，之後就不用了。
 
 ```python
 encoding = tiktoken.get_encoding("cl100k_base")
 ```
 
-Use `tiktoken.encoding_for_model()` to automatically load the correct encoding for a given model name.
+用 `tiktoken.encoding_for_model()`，可以依模型名稱自動載入正確的 encoding。
 
 ```python
 encoding = tiktoken.encoding_for_model("gpt-4o-mini")
 ```
 
-## 3. Turn text into tokens with `encoding.encode()`
+## 3. 用 `encoding.encode()` 把文字轉成 token
 
 
 
-The `.encode()` method converts a text string into a list of token integers.
+`.encode()` 方法會把文字字串轉成 token 整數的列表。
 
 ```python
 encoding.encode("tiktoken is great!")
@@ -124,7 +132,7 @@ encoding.encode("tiktoken is great!")
     [83, 8251, 2488, 382, 2212, 0]
     ```
 
-Count tokens by counting the length of the list returned by `.encode()`.
+算 `.encode()` 回傳列表的長度，就是 token 數。
 
 ```python
 def num_tokens_from_string(string: str, encoding_name: str) -> int:
@@ -144,9 +152,9 @@ num_tokens_from_string("tiktoken is great!", "o200k_base")
     6
     ```
 
-## 4. Turn tokens into text with `encoding.decode()`
+## 4. 用 `encoding.decode()` 把 token 轉回文字
 
-`.decode()` converts a list of token integers to a string.
+`.decode()` 會把 token 整數列表轉成字串。
 
 ```python
 encoding.decode([83, 8251, 2488, 382, 2212, 0])
@@ -158,9 +166,9 @@ encoding.decode([83, 8251, 2488, 382, 2212, 0])
     'tiktoken is great!'
     ```
 
-Warning: although `.decode()` can be applied to single tokens, beware that it can be lossy for tokens that aren't on utf-8 boundaries.
+警告：`.decode()` 雖然可以用在單一 token，但如果 token 不在 utf-8 邊界上，結果可能會失真。
 
-For single tokens, `.decode_single_token_bytes()` safely converts a single integer token to the bytes it represents.
+對單一 token，用 `.decode_single_token_bytes()` 可以安全地把單一整數 token 轉成它代表的 bytes。
 
 ```python
 [encoding.decode_single_token_bytes(token) for token in [83, 8251, 2488, 382, 2212, 0]]
@@ -172,11 +180,11 @@ For single tokens, `.decode_single_token_bytes()` safely converts a single integ
     [b't', b'ikt', b'oken', b' is', b' great', b'!']
     ```
 
-(The `b` in front of the strings indicates that the strings are byte strings.)
+（字串前面的 `b` 表示它們是 byte string。）
 
-## 5. Comparing encodings
+## 5. 比較不同的 encoding
 
-Different encodings vary in how they split words, group spaces, and handle non-English characters. Using the methods above, we can compare different encodings on a few example strings.
+不同的 encoding 在切字、合併空白、處理非英文字元上各有差異。用上面的方法，可以在幾個範例字串上比較不同的 encoding。
 
 ```python
 def compare_encodings(example_string: str) -> None:
@@ -276,15 +284,15 @@ compare_encodings("お誕生日おめでとう")
     token bytes: [b'\xe3\x81\x8a', b'\xe8\xaa', b'\x95', b'\xe7\x94\x9f\xe6\x97\xa5', b'\xe3\x81\x8a', b'\xe3\x82\x81', b'\xe3\x81\xa7', b'\xe3\x81\xa8\xe3\x81\x86']
     ```
 
-## 6. Counting tokens for chat completions API calls
+## 6. 計算 chat completions API 呼叫的 token
 
-ChatGPT models like `gpt-4o-mini` and `gpt-4` use tokens in the same way as older completions models, but because of their message-based formatting, it's more difficult to count how many tokens will be used by a conversation.
+`gpt-4o-mini` 和 `gpt-4` 這類 ChatGPT 模型使用 token 的方式跟舊的 completions 模型一樣，但因為它們是以 message 為單位的格式，要算一段對話會用掉多少 token 比較難。
 
-Below is an example function for counting tokens for messages passed to `gpt-3.5-turbo`, `gpt-4`, `gpt-4o` and `gpt-4o-mini`.
+下面是一個範例函式，用來計算傳給 `gpt-3.5-turbo`、`gpt-4`、`gpt-4o` 和 `gpt-4o-mini` 的 messages 的 token 數。
 
-Note that the exact way that tokens are counted from messages may change from model to model. Consider the counts from the function below an estimate, not a timeless guarantee.
+注意，從 message 計算 token 的確切方式可能因模型而異。請把下面函式算出的數字當成估計值，不要當成永遠不變的保證。
 
-In particular, requests that use the optional functions input will consume extra tokens on top of the estimates calculated below.
+特別是，使用選用的 functions 輸入的請求，會在下面估算的結果之外再多消耗 token。
 
 ```python
 def num_tokens_from_messages(messages, model="gpt-4o-mini-2024-07-18"):
@@ -418,11 +426,11 @@ for model in [
     124 prompt tokens counted by the OpenAI API.
     ```
 
-## 7. Counting tokens for chat completions with tool calls
+## 7. 計算含 tool call 的 chat completions 的 token
 
-Next, we will look into how to apply this calculations to messages that may contain function calls. This is not immediately trivial, due to the formatting of the tools themselves. 
+接下來看怎麼把這個計算套用到可能含有 function call 的 messages。因為 tools 本身的格式，這件事並不是一眼就能解決。 
 
-Below is an example function for counting tokens for messages that contain tools, passed to `gpt-3.5-turbo`, `gpt-4`, `gpt-4o` and `gpt-4o-mini`.
+下面是一個範例函式，用來計算含 tools、傳給 `gpt-3.5-turbo`、`gpt-4`、`gpt-4o` 和 `gpt-4o-mini` 的 messages 的 token 數。
 
 ```python
 def num_tokens_for_tools(functions, messages, model):
@@ -581,4 +589,13 @@ for model in [
     101 prompt tokens counted by the OpenAI API.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- GPT 模型看到的是 token，不是字元；token 數決定能不能塞進 context 和 API 要花多少錢。
+- 不同模型用不同 encoding，所以要用 `encoding_for_model()` 依模型取對的那個。
+- 單一 token 的 `decode()` 可能因為不在 utf-8 邊界而失真，要看原始 bytes 用 `decode_single_token_bytes()`。
+- Chat messages 和 tool 定義會帶來額外的格式 token，函式算出的數字只是估計。
+
+## 練習
+1. 載入 `o200k_base` 和 `cl100k_base`，對一句中文和一句英文各算 token 數，比較差異。
+2. 把 `encode()` 回傳的 token 列表逐個用 `decode_single_token_bytes()` 印出來，找出哪些字被拆成非完整字元的 bytes。
+3. 修改 chat messages 的計數函式，加上一個你自己的 tool 定義，比較加入前後算出的 token 數差多少。

@@ -1,77 +1,90 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/dispute_agent.ipynb
 ---
-
-# Automating Dispute Management with Agents SDK and Stripe API
+# 用 Agents SDK 和 Stripe API 自動處理交易爭議
 
 > 原文：[examples/agents_sdk/dispute_agent.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/dispute_agent.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Agents SDK 搭配 Stripe API，做一套自動處理 dispute（交易爭議）的流程。三個 agent 分工：triage agent 判斷要接受還是升級調查，acceptance agent 負責接受爭議，investigator agent 蒐集證據。
+
+## 學完你會
+
+- 用 `function_tool` 把 Python 函式（查訂單、查 Stripe payment intent、關閉 dispute）變成 agent 能呼叫的 tool。
+- 用 handoff 讓 triage agent 把案子轉給不同的專責 agent。
+- 跑兩種情境（公司出錯、客人對 final sale 提爭議），看 agent 怎麼走不同路線。
+
+## 開跑前
+
+- OpenAI API key。
+- Stripe 帳號，使用 Test Secret Key。
+- 把兩把 key 放進 `.env` 檔。
 
 
-We recently announced our new open-source **Agents SDK**, designed to help you build agentic AI applications using a lightweight, easy-to-use package with minimal abstractions.
+我們最近發表了開源的 **Agents SDK**，用來打造 agentic AI 應用，套件輕量、抽象層很少。
 
-This cookbook demonstrates how you can leverage the Agents SDK in combination with Stripe's API to handle dispute management, a common operational challenge many businesses face. Specifically, we focus on two real-world scenarios:
+這篇示範怎麼把 Agents SDK 跟 Stripe API 搭起來處理 dispute management，這是很多公司都會碰到的營運問題。我們看兩個實際情境：
 
-1. **Company Mistake:**  
-   A scenario where the company clearly made an error, such as failing to fulfill an order, where accepting the dispute the appropriate action.
+1. **公司出錯：**  
+   公司明顯有錯，例如沒出貨，這時合理的做法是直接接受爭議。
 
-2. **Customer Dispute (Final Sale):**  
-   A scenario where a customer knowingly disputes a transaction despite receiving the correct item and understanding that the purchase was final sale, requiring further investigation to gather supporting evidence.
+2. **客人提出爭議（final sale）：**  
+   客人明明收到正確商品，也知道這筆是 final sale，卻還是提爭議，這時要進一步調查、蒐集佐證。
 
-To address these scenarios, we'll introduce three distinct agents:
+為了處理這兩種情境，我們會用三個 agent：
 
-- **Triage Agent:**  
-  Determines whether to accept or escalate a dispute based on the fulfillment status of the order.
+- **Triage Agent：**  
+  根據訂單的出貨狀態，決定接受還是升級處理。
 
-- **Acceptance Agent:**  
-  Handles clear-cut cases by automatically accepting disputes, providing concise reasoning.
+- **Acceptance Agent：**  
+  處理明確的案子，自動接受爭議並簡短說明理由。
 
-- **Investigator Agent:**  
-Performs thorough investigations into disputes by analyzing communication records and order information to collect essential evidence.
+- **Investigator Agent：**  
+  分析通訊紀錄和訂單資訊，蒐集必要的證據，做完整調查。
 
-Throughout this cookbook, we’ll guide you step-by-step, illustrating how custom agentic workflows can automate dispute management and support your business operations.
-
-
-## Prerequisites
-
-Before running this cookbook, you must set up the following accounts and complete a few setup actions. These prerequisites are essential to interact with the APIs used in this project.
-
-#### 1. OpenAI Account
-
-- **Purpose:**  
-  You need an OpenAI account to access language models and use the Agents SDK featured in this cookbook.
-
-- **Action:**  
-  [Sign up for an OpenAI account](https://openai.com) if you don’t already have one. Once you have an account, create an API key by visiting the [OpenAI API Keys page](https://platform.openai.com/api-keys).
-
-#### 2. Stripe Account
-
-- **Purpose:**  
-  A Stripe account is required to simulate payment processing, manage disputes, and interact with the Stripe API as part of our demo workflow.
-
-- **Action:**  
-  Create a free Stripe account by visiting the [Stripe Signup Page](https://dashboard.stripe.com/register).
-
-- **Locate Your API Keys:**  
-  Log in to your Stripe dashboard and navigate to **Developers > API keys**.
-
-- **Use Test Mode:**  
-  Use your **Test Secret Key** for all development and testing.
+接下來一步步看自訂的 agentic workflow 怎麼自動化爭議處理。
 
 
-#### 3. Create a .env file with your OpenAI API and Stripe API Keys
+## 事前準備
+
+跑這篇之前要先準備下面幾個帳號並做好設定，不然後面的 API 都呼叫不了。
+
+#### 1. OpenAI 帳號
+
+- **用途：**  
+  需要 OpenAI 帳號才能用語言模型和 Agents SDK。
+
+- **要做的事：**  
+  還沒有帳號的話先[註冊 OpenAI 帳號](https://openai.com)，再到 [OpenAI API Keys 頁面](https://platform.openai.com/api-keys)建立 API key。
+
+#### 2. Stripe 帳號
+
+- **用途：**  
+  用 Stripe 帳號來模擬付款、管理 dispute，並在 demo 流程裡呼叫 Stripe API。
+
+- **要做的事：**  
+  到 [Stripe 註冊頁](https://dashboard.stripe.com/register)建立免費帳號。
+
+- **找到 API keys：**  
+  登入 Stripe dashboard，進到 **Developers > API keys**。
+
+- **用 Test Mode：**  
+  開發和測試一律用 **Test Secret Key**。
+
+
+#### 3. 建立 .env 檔，放 OpenAI 和 Stripe 的 API key
 
 ```
 OPENAI_API_KEY=
 STRIPE_SECRET_KEY=
 ```
 
-### Environment Setup
-First we will install the necessary dependencies, then import the libraries and write some utility functions that we will use later on.
+### 環境設定
+先裝需要的套件，再 import 函式庫，並寫幾個後面會用到的工具函式。
 
 ```python
 %pip install python-dotenv --quiet
@@ -99,13 +112,13 @@ logger = logging.getLogger(__name__)
 stripe.api_key = os.getenv("STRIPE_SECRET_KEY")
 ```
 
-#### Define Function Tools
-This section defines several helper function tools that support the dispute processing workflow. 
+#### 定義 Function Tools
+這段定義幾個支援爭議處理流程的 function tool。
 <br>
  
-- `get_order`, `get_phone_logs` and `get_emails` simulate external data lookups by returning order details and email/phone records based on provided identifiers.
-- `retrieve_payment_intent`  interacts with the Stripe API to fetch payment intent details.
-- `close_dispute`  automatically closes a Stripe dispute using the provided dispute ID, ensuring that disputes are properly resolved and logged.
+- `get_order`、`get_phone_logs`、`get_emails` 用傳入的識別碼回傳訂單詳情和 email/電話紀錄，模擬外部資料查詢。
+- `retrieve_payment_intent` 呼叫 Stripe API 取得 payment intent 的詳細資料。
+- `close_dispute` 用 dispute ID 自動關閉 Stripe 上的爭議，確保爭議有被正確處理並留下紀錄。
 
 
 ```python
@@ -241,12 +254,12 @@ async def close_dispute(dispute_id: str) -> dict:
         return {}
 ```
 
-### Define the Agents
+### 定義 Agents
 
-- The **Dispute Intake Agent (investigator_agent)** is responsible for investigating disputes by gathering all relevant evidence and providing a report.
-- The **Accept a Dispute Agent (accept_dispute_agent)** handles disputes that are determined to be valid by automatically closing them and providing a brief explanation for the decision.
-- The **Triage Agent (triage_agent)** serves as the decision-maker by extracting the order ID from the payment intent's metadata, retrieving detailed order information, and then deciding whether to escalate the dispute to the investigator or to pass it to the accept dispute agent.
-- Together, these agents form a modular workflow that automates and streamlines the dispute resolution process by delegating specific tasks to specialized agents.
+- **Dispute Intake Agent（investigator_agent）** 負責調查爭議，蒐集所有相關證據並產出報告。
+- **Accept a Dispute Agent（accept_dispute_agent）** 處理被判定有理的爭議，自動關閉並簡短說明決定的原因。
+- **Triage Agent（triage_agent）** 是決策者：從 payment intent 的 metadata 取出 order ID，查詳細訂單資訊，再決定要升級給 investigator，還是交給 accept dispute agent。
+- 這幾個 agent 組成模組化的 workflow，把各項工作分給專責的 agent，讓爭議處理流程自動化、更順。
 
 
 ```python
@@ -307,8 +320,8 @@ triage_agent = Agent(
 )
 ```
 
-#### Retrieve the Dispute and Initiate the Agentic Workflow
-This function retrieves the dispute details from Stripe using the provided `payment_intent_id` and initiates the dispute-handling workflow by passing the retrieved dispute information to the specified `triage_agent`.
+#### 取得 Dispute 並啟動 Agentic Workflow
+這個函式用傳入的 `payment_intent_id` 從 Stripe 取得 dispute 詳情，再把資料交給指定的 `triage_agent`，啟動爭議處理流程。
 
 
 ```python
@@ -339,8 +352,8 @@ async def process_dispute(payment_intent_id, triage_agent):
     return relevant_data, result.final_output
 ```
 
-#### Scenario 1: Company Mistake (Product Not Received)
-This scenario represents a situation where the company has clearly made an error—for instance, failing to fulfill or ship an order. In such cases, it may be appropriate to accept the dispute rather than contest it.
+#### 情境 1：公司出錯（商品沒收到）
+這個情境是公司明顯有錯，例如沒出貨。這種情況通常直接接受爭議比較合理，不用去抗辯。
 
 ```python
 payment = stripe.PaymentIntent.create(
@@ -355,8 +368,8 @@ payment = stripe.PaymentIntent.create(
 relevant_data, triage_result = await process_dispute(payment.id, triage_agent)
 ```
 
-#### Scenario 2: Customer Dispute (Final Sale)
-This scenario describes a situation where a customer intentionally disputes a transaction, despite having received the correct product and being fully aware that the purchase was clearly marked as a "final sale" (no refunds or returns). Such disputes typically require further investigation to collect evidence in order to effectively contest the dispute.
+#### 情境 2：客人提出爭議（Final Sale）
+這個情境是客人故意提爭議，但他其實收到正確商品，也清楚知道這筆明確標示為「final sale」（不退貨不退款）。這類爭議通常要進一步調查、蒐集證據，才能有效抗辯。
 
 ```python
 payment = stripe.PaymentIntent.create(
@@ -371,18 +384,30 @@ payment = stripe.PaymentIntent.create(
 relevant_data, triage_result = await process_dispute(payment.id, triage_agent)
 ```
 
-## Conclusion
+## 結論
 
-In this Jupyter Notebook, we explored the capabilities of the **OpenAI Agents SDK**, demonstrating how to efficiently create agent-based AI applications using a simple, Python-first approach. Specifically, we showcased the following SDK features:
+這份 notebook 用 Python 優先的簡單做法，示範了怎麼用 **OpenAI Agents SDK** 建立 agent 應用。用到的 SDK 功能有：
 
-- **Agent Loop**: Manages tool calls, communicates results to the LLM, and loops until completion.
-- **Handoffs**: Enables coordination and delegation tasks between multiple specialized agents.
-- **Function Tools**: Converts Python functions into tools with automatic schema generation and validation.
+- **Agent Loop**：處理 tool 呼叫、把結果回傳給 LLM，一直迴圈到完成。
+- **Handoffs**：讓多個專責 agent 之間協調、分派工作。
+- **Function Tools**：把 Python 函式轉成 tool，自動產生 schema 並驗證。
 
-Additionally, the SDK offers built-in **Tracing**, accessible via the OpenAI dashboard. Tracing helps you visualize, debug, and monitor your agent workflows during both development and production phases. It also integrates smoothly with OpenAI’s evaluation, fine-tuning, and distillation tools.
+另外 SDK 內建 **Tracing**，可以在 OpenAI dashboard 看到，開發和上線時都能用來視覺化、除錯、監控 agent workflow，也能和 OpenAI 的 eval、fine-tuning、distillation 工具整合。
 
-While we didn't cover it directly in this notebook, implementing **Guardrails** is strongly recommended for production applications to validate inputs and proactively detect errors.
+這份 notebook 沒有直接示範 **Guardrails**，但正式上線的應用強烈建議加上，用來驗證輸入並提早抓出錯誤。
 
-Overall, this notebook lays a clear foundation for further exploration, emphasizing how the OpenAI Agents SDK facilitates intuitive and effective agent-driven workflows.
+整體來說，這份 notebook 打了個基礎，讓你看到 OpenAI Agents SDK 怎麼做出直覺又有效的 agent workflow。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Agent loop 會自動處理 tool 呼叫和結果回傳，直到任務完成，你不用自己寫迴圈。
+- 把一個大流程拆成 triage、acceptance、investigator 三個專責 agent，每個的 instructions 都可以寫得很單純。
+- Handoff 讓 triage agent 依訂單狀態決定下一棒交給誰。
+- Function tool 的 schema 是從 Python 函式簽名自動產生，所以型別和 docstring 要寫清楚。
+- 正式上線要加 guardrails，tracing 則幫你除錯和監控。
+
+## 練習
+
+1. 改 triage agent 的 instructions，讓它在訂單已出貨但追蹤顯示未送達時也走 investigator，再跑一次情境 1 看路線有沒有變。
+2. 在 `get_order` 的模擬資料裡新增一筆訂單（例如部分退款），寫一個情境 3，觀察 triage agent 怎麼判斷。
+3. 給 `close_dispute` 加一個 guardrail 或簡單的檢查（例如 dispute ID 格式不對就拒絕），確認 accept agent 遇到錯誤時的反應。

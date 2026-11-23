@@ -1,41 +1,53 @@
 ---
-translated: false
+translated: true
 source: examples/Assistants_API_overview_python.ipynb
 ---
 
-# Assistants API Overview (Python SDK)
+# Assistants API 總覽（Python SDK）
 
 > 原文：[examples/Assistants_API_overview_python.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Assistants_API_overview_python.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Python SDK 從頭走一遍 Assistants API：建立 Assistant、開 Thread、加 Message、跑 Run、讀回應，再接上 Code Interpreter、File Search 和自訂 Function 三種 tool。範例是一個 Math Tutor。
+
+## 學完你會
+
+- 分清楚 Assistant、Thread、Run 各自負責什麼，並用 `client.beta` 的 API 建出來
+- 用輪詢（polling）等 Run 完成，然後按時間倒序讀 Thread 裡的 Message
+- 幫 Assistant 加上 tool，處理 `requires_action` 狀態，把 function 的輸出用 `submit_tool_outputs` 送回去
+
+## 開跑前
+
+需要 OpenAI API key（呼叫模型會計費），並且把 `openai` Python SDK 更新到支援 Assistants API 的版本。
 
 
 
-The new [Assistants API](https://platform.openai.com/docs/assistants/overview) is a stateful evolution of our [Chat Completions API](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) meant to simplify the creation of assistant-like experiences, and enable developer access to powerful tools like Code Interpreter and File Search.
+新的 [Assistants API](https://platform.openai.com/docs/assistants/overview) 是 [Chat Completions API](https://platform.openai.com/docs/guides/text-generation/chat-completions-api) 的有狀態（stateful）進化版，目的是簡化類似助理的體驗的建置，也讓開發者能用 Code Interpreter 和 File Search 這些強大的 tool。
 
 ![Assistants API Diagram](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_diagram.png)
 
-## Chat Completions API vs Assistants API
+## Chat Completions API 與 Assistants API 的差別
 
-The primitives of the **Chat Completions API** are `Messages`, on which you perform a `Completion` with a `Model` (`gpt-4o`, `gpt-4o-mini`, etc). It is lightweight and powerful, but inherently stateless, which means you have to manage conversation state, tool definitions, retrieval documents, and code execution manually.
+**Chat Completions API** 的基本單位是 `Messages`，你用某個 `Model`（`gpt-4o`、`gpt-4o-mini` 等）對它們做 `Completion`。它輕巧又強大，但本質上是無狀態的，也就是對話狀態、tool 定義、檢索文件和程式碼執行都要自己手動管理。
 
-The primitives of the **Assistants API** are
+**Assistants API** 的基本單位是：
 
-- `Assistants`, which encapsulate a base model, instructions, tools, and (context) documents,
-- `Threads`, which represent the state of a conversation, and
-- `Runs`, which power the execution of an `Assistant` on a `Thread`, including textual responses and multi-step tool use.
+- `Assistants`：封裝基礎模型、instructions、tools 和（context）文件，
+- `Threads`：代表對話的狀態，
+- `Runs`：負責讓 `Assistant` 在某個 `Thread` 上執行，包含文字回應和多步驟的 tool 使用。
 
-We'll take a look at how these can be used to create powerful, stateful experiences.
+接下來看這些東西怎麼組合出強大的有狀態體驗。
 
 
-## Setup
+## 環境設定
 
 ### Python SDK
 
 > **Note**
-> We've updated our [Python SDK](https://github.com/openai/openai-python) to add support for the Assistants API, so you'll need to update it to the latest version (`1.59.4` at time of writing).
+> 我們更新了 [Python SDK](https://github.com/openai/openai-python)，加入對 Assistants API 的支援，所以你需要更新到最新版（寫這篇時是 `1.59.4`）。
 
 
 ```python
@@ -62,7 +74,7 @@ We'll take a look at how these can be used to create powerful, stateful experien
     Requirement already satisfied: pydantic-core==2.20.1 in /Users/lee.spacagna/myenv/lib/python3.12/site-packages (from pydantic<3,>=1.9.0->openai) (2.20.1)
     ```
 
-And make sure it's up to date by running:
+並執行下面的指令確認是最新版：
 
 
 ```python
@@ -75,7 +87,7 @@ And make sure it's up to date by running:
     Version: 1.59.4
     ```
 
-### Pretty Printing Helper
+### 漂亮輸出的輔助函式
 
 
 ```python
@@ -85,25 +97,25 @@ def show_json(obj):
     display(json.loads(obj.model_dump_json()))
 ```
 
-## Complete Example with Assistants API
+## Assistants API 完整範例
 
 
 ### Assistants
 
 
-The easiest way to get started with the Assistants API is through the [Assistants Playground](https://platform.openai.com/playground).
+開始使用 Assistants API 最簡單的方式是 [Assistants Playground](https://platform.openai.com/playground)。
 
 
 ![Assistants Playground](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_assistants_playground.png)
 
 
-Let's begin by creating an assistant! We'll create a Math Tutor just like in our [docs](https://platform.openai.com/docs/assistants/overview).
+先來建立一個 assistant！我們照 [文件](https://platform.openai.com/docs/assistants/overview) 的做法建一個 Math Tutor。
 
 
 ![Creating New Assistant](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_new_assistant.png)
 
 
-You can also create Assistants directly through the Assistants API, like so:
+你也可以直接透過 Assistants API 建立 Assistant，像這樣：
 
 
 ```python
@@ -143,16 +155,16 @@ show_json(assistant)
      'top_p': 1.0}
     ```
 
-Regardless of whether you create your Assistant through the Dashboard or with the API, you'll want to keep track of the Assistant ID. This is how you'll refer to your Assistant throughout Threads and Runs.
+不管你是用 Dashboard 還是 API 建立 Assistant，都要記下 Assistant ID。之後在 Threads 和 Runs 裡就是用它來指定這個 Assistant。
 
 
-Next, we'll create a new Thread and add a Message to it. This will hold the state of our conversation, so we don't have re-send the entire message history each time.
+接著建立新的 Thread 並加入一則 Message。它會保存我們的對話狀態，所以不用每次都重送整段訊息歷史。
 
 
 ### Threads
 
 
-Create a new thread:
+建立新的 thread：
 
 
 ```python
@@ -171,7 +183,7 @@ show_json(thread)
      'tool_resources': {'code_interpreter': None, 'file_search': None}}
     ```
 
-Then add the Message to the thread:
+然後把 Message 加進 thread：
 
 
 ```python
@@ -207,19 +219,19 @@ show_json(message)
     ```
 
 > **Note**
-> Even though you're no longer sending the entire history each time, you will still be charged for the tokens of the entire conversation history with each Run.
+> 雖然你不再每次都送出整段歷史，但每次 Run 還是會按整段對話歷史的 token 計費。
 
 
 ### Runs
 
-Notice how the Thread we created is **not** associated with the Assistant we created earlier! Threads exist independently from Assistants, which may be different from what you'd expect if you've used ChatGPT (where a thread is tied to a model/GPT).
+注意我們建立的 Thread **沒有**跟先前建立的 Assistant 綁在一起！Threads 是獨立於 Assistants 存在的，如果你用過 ChatGPT（thread 會綁定某個 model/GPT），這點可能跟你預期的不一樣。
 
-To get a completion from an Assistant for a given Thread, we must create a Run. Creating a Run will indicate to an Assistant it should look at the messages in the Thread and take action: either by adding a single response, or using tools.
+要讓 Assistant 針對某個 Thread 產生回應，必須建立一個 Run。建立 Run 會通知 Assistant 去看 Thread 裡的 messages 並採取行動：要嘛加入單一回應，要嘛使用 tools。
 
 > **Note**
-> Runs are a key difference between the Assistants API and Chat Completions API. While in Chat Completions the model will only ever respond with a single message, in the Assistants API a Run may result in an Assistant using one or multiple tools, and potentially adding multiple messages to the Thread.
+> Run 是 Assistants API 和 Chat Completions API 的關鍵差異。Chat Completions 裡模型只會回一則 message，但在 Assistants API 裡，一次 Run 可能讓 Assistant 用到一個或多個 tool，並且可能在 Thread 加入多則 messages。
 
-To get our Assistant to respond to the user, let's create the Run. As mentioned earlier, you must specify _both_ the Assistant and the Thread.
+要讓 Assistant 回應使用者，來建立 Run。如前所述，你必須同時指定 Assistant 和 Thread。
 
 
 ```python
@@ -268,9 +280,9 @@ show_json(run)
      'tool_resources': {}}
     ```
 
-Unlike creating a completion in the Chat Completions API, **creating a Run is an asynchronous operation**. It will return immediately with the Run's metadata, which includes a `status` that will initially be set to `queued`. The `status` will be updated as the Assistant performs operations (like using tools and adding messages).
+跟 Chat Completions API 建立 completion 不同，**建立 Run 是非同步的操作**。它會立刻回傳 Run 的 metadata，其中的 `status` 一開始會是 `queued`。Assistant 執行操作（像是用 tool 和加入 message）時，`status` 會跟著更新。
 
-To know when the Assistant has completed processing, we can poll the Run in a loop. (Support for streaming is coming soon!) While here we are only checking for a `queued` or `in_progress` status, in practice a Run may undergo a [variety of status changes](https://platform.openai.com/docs/api-reference/runs/object#runs/object-status) which you can choose to surface to the user. (These are called Steps, and will be covered later.)
+要知道 Assistant 什麼時候處理完，可以用迴圈輪詢 Run。（streaming 支援即將推出！）這裡只檢查 `queued` 或 `in_progress` 狀態，但實際上 Run 可能經歷[多種狀態變化](https://platform.openai.com/docs/api-reference/runs/object#runs/object-status)，你可以選擇把它們顯示給使用者看。（這些叫做 Steps，後面會講。）
 
 
 ```python
@@ -335,7 +347,7 @@ show_json(run)
 ### Messages
 
 
-Now that the Run has completed, we can list the Messages in the Thread to see what got added by the Assistant.
+現在 Run 完成了，可以列出 Thread 裡的 Messages，看 Assistant 加了什麼。
 
 
 ```python
@@ -386,10 +398,10 @@ show_json(messages)
      'has_more': False}
     ```
 
-As you can see, Messages are ordered in reverse-chronological order – this was done so the most recent results are always on the first `page` (since results can be paginated). Do keep a look out for this, since this is the opposite order to messages in the Chat Completions API.
+可以看到 Messages 是按時間倒序排列的，這樣最新的結果永遠在第一個 `page`（因為結果可能分頁）。要留意這點，因為它跟 Chat Completions API 裡 messages 的順序相反。
 
 
-Let's ask our Assistant to explain the result a bit further!
+來請 Assistant 把結果再解釋得詳細一點！
 
 
 ```python
@@ -439,18 +451,18 @@ show_json(messages)
      'has_more': False}
     ```
 
-This may feel like a lot of steps to get a response back, especially for this simple example. However, you'll soon see how we can add very powerful functionality to our Assistant without changing much code at all!
+為了拿到一個回應要走這麼多步驟，特別是這麼簡單的例子，可能會覺得有點繁瑣。不過你很快就會看到，幾乎不用改多少程式碼，就能幫 Assistant 加上很強大的功能！
 
 
-### Example
+### 範例
 
 
-Let's take a look at how we could potentially put all of this together. Below is all the code you need to use an Assistant you've created.
+來看看怎麼把這些全部組合起來。下面就是使用你建好的 Assistant 所需的全部程式碼。
 
-Since we've already created our Math Assistant, I've saved its ID in `MATH_ASSISTANT_ID`. I then defined two functions:
+因為我們已經建好 Math Assistant，我把它的 ID 存在 `MATH_ASSISTANT_ID`。然後定義了兩個函式：
 
-- `submit_message`: create a Message on a Thread, then start (and return) a new Run
-- `get_response`: returns the list of Messages in a Thread
+- `submit_message`：在 Thread 上建立 Message，然後啟動（並回傳）一個新的 Run
+- `get_response`：回傳 Thread 裡的 Message 清單
 
 
 ```python
@@ -474,9 +486,9 @@ def get_response(thread):
     return client.beta.threads.messages.list(thread_id=thread.id, order="asc")
 ```
 
-I've also defined a `create_thread_and_run` function that I can reuse (which is actually almost identical to the [`client.beta.threads.create_and_run`](https://platform.openai.com/docs/api-reference/runs/createThreadAndRun) compound function in our API ;) ). Finally, we can submit our mock user requests each to a new Thread.
+我也定義了一個可重複使用的 `create_thread_and_run` 函式（其實跟 API 裡的 [`client.beta.threads.create_and_run`](https://platform.openai.com/docs/api-reference/runs/createThreadAndRun) 複合函式幾乎一樣 ;) ）。最後，我們把每個模擬的使用者請求各自送到新的 Thread。
 
-Notice how all of these API calls are asynchronous operations; this means we actually get async behavior in our code without the use of async libraries! (e.g. `asyncio`)
+注意這些 API 呼叫全都是非同步操作，也就是說，不用任何 async 函式庫（例如 `asyncio`），我們的程式碼就有了非同步的行為！
 
 
 ```python
@@ -496,7 +508,7 @@ thread3, run3 = create_thread_and_run("I don't like math. What can I do?")
 # Now all Runs are executing...
 ```
 
-Once all Runs are going, we can wait on each and get the responses.
+所有 Run 都啟動後，就可以逐一等待並取得回應。
 
 
 ```python
@@ -561,24 +573,24 @@ pretty_print(get_response(thread3))
     assistant: You're welcome! If you have any more questions, feel free to ask!
     ```
 
-Et voilà!
+大功告成！
 
-You may have noticed that this code is not actually specific to our math Assistant at all... this code will work for any new Assistant you create simply by changing the Assistant ID! That is the power of the Assistants API.
+你可能發現這段程式碼其實跟我們的 math Assistant 完全無關⋯⋯只要改 Assistant ID，這段程式碼就能用在你建立的任何新 Assistant。這就是 Assistants API 的威力。
 
 
 ## Tools
 
-A key feature of the Assistants API is the ability to equip our Assistants with Tools, like Code Interpreter, File Search, and custom Functions. Let's take a look at each.
+Assistants API 的一個關鍵功能是能替 Assistant 配備 Tools，像是 Code Interpreter、File Search 和自訂 Functions。我們逐一來看。
 
 ### Code Interpreter
 
-Let's equip our Math Tutor with the [Code Interpreter](https://platform.openai.com/docs/assistants/tools/code-interpreter) tool, which we can do from the Dashboard...
+幫我們的 Math Tutor 加上 [Code Interpreter](https://platform.openai.com/docs/assistants/tools/code-interpreter) tool，可以從 Dashboard 操作⋯⋯
 
 
 ![Enabling code interpreter](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_enable_code_interpreter.png)
 
 
-...or the API, using the Assistant ID.
+⋯⋯或是用 API，透過 Assistant ID 更新。
 
 
 ```python
@@ -611,7 +623,7 @@ show_json(assistant)
      'top_p': 1.0}
     ```
 
-Now, let's ask the Assistant to use its new tool.
+現在，請 Assistant 用它的新 tool。
 
 
 ```python
@@ -630,14 +642,14 @@ pretty_print(get_response(thread))
     assistant: The first 20 Fibonacci numbers are: 0, 1, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 987, 1597, 2584, 4181.
     ```
 
-And that's it! The Assistant used Code Interpreter in the background, and gave us a final response.
+這樣就好了！Assistant 在背景用了 Code Interpreter，然後給我們最後的回應。
 
-For some use cases this may be enough – however, if we want more details on what precisely an Assistant is doing we can take a look at a Run's Steps.
+有些情境這樣就夠了。不過，如果想知道 Assistant 到底做了什麼，可以看 Run 的 Steps。
 
 ### Steps
 
 
-A Run is composed of one or more Steps. Like a Run, each Step has a `status` that you can query. This is useful for surfacing the progress of a Step to a user (e.g. a spinner while the Assistant is writing code or performing retrieval).
+一個 Run 由一個或多個 Steps 組成。跟 Run 一樣，每個 Step 都有可以查詢的 `status`。這很適合用來把 Step 的進度顯示給使用者（例如 Assistant 寫程式或做檢索時顯示 spinner）。
 
 
 ```python
@@ -646,7 +658,7 @@ run_steps = client.beta.threads.runs.steps.list(
 )
 ```
 
-Let's take a look at each Step's `step_details`.
+來看每個 Step 的 `step_details`。
 
 
 ```python
@@ -678,22 +690,22 @@ for step in run_steps.data:
     null
     ```
 
-We can see the `step_details` for two Steps:
+我們看到兩個 Step 的 `step_details`：
 
-1. `tool_calls` (plural, since it could be more than one in a single Step)
+1. `tool_calls`（用複數，因為單一 Step 裡可能有不只一個）
 2. `message_creation`
 
-The first Step is a `tool_calls`, specifically using the `code_interpreter` which contains:
+第一個 Step 是 `tool_calls`，具體是用 `code_interpreter`，裡面包含：
 
-- `input`, which was the Python code generated before the tool was called, and
-- `output`, which was the result of running the Code Interpreter.
+- `input`：呼叫 tool 之前產生的 Python 程式碼，
+- `output`：Code Interpreter 執行後的結果。
 
-The second Step is a `message_creation`, which contains the `message` that was added to the Thread to communicate the results to the user.
+第二個 Step 是 `message_creation`，裡面是加到 Thread 用來向使用者傳達結果的 `message`。
 
 
 ### File search
 
-Another powerful tool in the Assistants API is [File search](https://platform.openai.com/docs/assistants/tools/file-search). This allows the uploading of files to the Assistant to be used as a knowledge base when answering questions.
+Assistants API 另一個強大的 tool 是 [File search](https://platform.openai.com/docs/assistants/tools/file-search)。它讓你把檔案上傳給 Assistant，當成回答問題時的知識庫。
 
 
 ![Enabling retrieval](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_enable_retrieval.png)
@@ -788,7 +800,7 @@ pretty_print(get_response(thread))
     ```
 
 > **Note**
-> There are more intricacies in File Search, like [Annotations](https://platform.openai.com/docs/assistants/how-it-works/managing-threads-and-messages), which may be covered in another cookbook.
+> File Search 還有更多細節，像是 [Annotations](https://platform.openai.com/docs/assistants/how-it-works/managing-threads-and-messages)，可能會在另一份 cookbook 講。
 
 
 ```python
@@ -804,19 +816,19 @@ client.beta.vector_stores.delete(vector_store.id)
 
 ### Functions
 
-As a final powerful tool for your Assistant, you can specify custom [Functions](https://platform.openai.com/docs/assistants/tools/function-calling) (much like the [Function Calling](https://platform.openai.com/docs/guides/function-calling) in the Chat Completions API). During a Run, the Assistant can then indicate it wants to call one or more functions you specified. You are then responsible for calling the Function, and providing the output back to the Assistant.
+Assistant 最後一個強大的 tool，是你可以指定自訂的 [Functions](https://platform.openai.com/docs/assistants/tools/function-calling)（很像 Chat Completions API 的 [Function Calling](https://platform.openai.com/docs/guides/function-calling)）。在 Run 期間，Assistant 可以表示它想呼叫你指定的一個或多個 function。接著由你負責呼叫 Function，並把輸出送回給 Assistant。
 
-Let's take a look at an example by defining a `display_quiz()` Function for our Math Tutor.
+來看一個例子，幫 Math Tutor 定義一個 `display_quiz()` Function。
 
-This function will take a `title` and an array of `question`s, display the quiz, and get input from the user for each:
+這個 function 接收一個 `title` 和一個 `question` 陣列，顯示測驗，並取得使用者對每題的輸入：
 
 - `title`
 - `questions`
   - `question_text`
-  - `question_type`: [`MULTIPLE_CHOICE`, `FREE_RESPONSE`]
-  - `choices`: ["choice 1", "choice 2", ...]
+  - `question_type`：[`MULTIPLE_CHOICE`, `FREE_RESPONSE`]
+  - `choices`：["choice 1", "choice 2", ...]
 
-I'll mocking out responses with `get_mock_response...`. This is where you'd get the user's actual input.
+我用 `get_mock_response...` 來模擬回應，實際上這裡就是取得使用者真正輸入的地方。
 
 
 ```python
@@ -853,7 +865,7 @@ def display_quiz(title, questions):
     return responses
 ```
 
-Here's what a sample quiz would look like:
+測驗的範例長這樣：
 
 
 ```python
@@ -887,7 +899,7 @@ print("Responses:", responses)
     Responses: ["I don't know.", 'a']
     ```
 
-Now, let's define the interface of this function in JSON format, so our Assistant can call it:
+接著用 JSON 格式定義這個 function 的介面，讓 Assistant 能呼叫它：
 
 
 ```python
@@ -920,13 +932,13 @@ function_json = {
 }
 ```
 
-Once again, let's update our Assistant either through the Dashboard or the API.
+同樣地，透過 Dashboard 或 API 更新我們的 Assistant。
 
 
 ![Enabling custom function](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/assistants_overview_enable_function.png)
 
 > **Note**
-> Pasting the function JSON into the Dashboard was a bit finicky due to indentation, etc. I just asked ChatGPT to format my function the same as one of the examples on the Dashboard :).
+> 把 function JSON 貼到 Dashboard 時，縮排之類的細節有點麻煩。我就請 ChatGPT 把我的 function 格式化成跟 Dashboard 上某個範例一樣 :)。
 
 
 ```python
@@ -980,7 +992,7 @@ show_json(assistant)
      'top_p': 1.0}
     ```
 
-And now, we ask for a quiz.
+現在，來要求產生一份測驗。
 
 
 ```python
@@ -997,7 +1009,7 @@ run.status
     'requires_action'
     ```
 
-Now, however, when we check the Run's `status` we see `requires_action`! Let's take a closer.
+這次檢查 Run 的 `status` 時，我們看到的是 `requires_action`！來仔細看看。
 
 
 ```python
@@ -1050,10 +1062,10 @@ show_json(run)
     ... (省略 21 行)
     ```
 
-The `required_action` field indicates a Tool is waiting for us to run it and submit its output back to the Assistant. Specifically, the `display_quiz` function! Let's start by parsing the `name` and `arguments`.
+`required_action` 欄位表示有一個 Tool 在等我們執行並把輸出送回給 Assistant，具體來說就是 `display_quiz` function！先解析 `name` 和 `arguments`。
 
 > **Note**
-> While in this case we know there is only one Tool call, in practice the Assistant may choose to call multiple tools.
+> 這個例子裡我們知道只有一個 Tool call，但實際上 Assistant 可能選擇呼叫多個 tools。
 
 
 ```python
@@ -1083,7 +1095,7 @@ arguments
        'choices': ['0', '1', '2', '3']}]}
     ```
 
-Now let's actually call our `display_quiz` function with the arguments provided by the Assistant:
+現在用 Assistant 提供的參數真的呼叫 `display_quiz` function：
 
 
 ```python
@@ -1108,9 +1120,9 @@ print("Responses:", responses)
     Responses: ["I don't know.", 'a']
     ```
 
-Great! (Remember these responses are the one's we mocked earlier. In reality, we'd be getting input from the back from this function call.)
+很好！（記得這些回應是我們先前模擬出來的。實際上，我們會從這次 function 呼叫取得使用者的輸入。）
 
-Now that we have our responses, let's submit them back to the Assistant. We'll need the `tool_call` ID, found in the `tool_call` we parsed out earlier. We'll also need to encode our `list`of responses into a `str`.
+有了回應之後，把它們送回給 Assistant。我們需要先前解析出來的 `tool_call` 裡的 `tool_call` ID，還要把回應的 `list` 編碼成 `str`。
 
 
 ```python
@@ -1168,7 +1180,7 @@ show_json(run)
     ... (省略 18 行)
     ```
 
-We can now wait for the Run to complete once again, and check our Thread!
+現在可以再次等 Run 完成，然後檢查 Thread！
 
 
 ```python
@@ -1203,22 +1215,34 @@ pretty_print(get_response(thread))
        - Feedback: The correct answer is B) 1. The integration \(\int_{0}^{1} 2x \, dx \) evaluates to 1.
     ```
 
-Woohoo 🎉
+太棒了 🎉
 
 
-## Conclusion
+## 結論
 
-We covered a lot of ground in this notebook, give yourself a high-five! Hopefully you should now have a strong foundation to build powerful, stateful experiences with tools like Code Interpreter, Retrieval, and Functions!
+這篇涵蓋了很多內容，給自己擊個掌吧！希望你現在有了穩固的基礎，能用 Code Interpreter、Retrieval 和 Functions 這些 tool 打造強大的有狀態體驗！
 
-There's a few sections we didn't cover for the sake of brevity, so here's a few resources to explore further:
+為了精簡，有幾個部分沒有涵蓋，這裡列出一些可以繼續探索的資源：
 
-- [Annotations](https://platform.openai.com/docs/assistants/how-it-works/managing-threads-and-messages): parsing file citations
-- [Files](https://platform.openai.com/docs/api-reference/assistants/file-object): Thread scoped vs Assistant scoped
-- [Parallel Function Calls](https://platform.openai.com/docs/guides/function-calling/parallel-function-calling): calling multiple tools in a single Step
-- Multi-Assistant Thread Runs: single Thread with Messages from multiple Assistants
-- Streaming: coming soon!
+- [Annotations](https://platform.openai.com/docs/assistants/how-it-works/managing-threads-and-messages)：解析檔案引用
+- [Files](https://platform.openai.com/docs/api-reference/assistants/file-object)：Thread 範圍 vs Assistant 範圍
+- [Parallel Function Calls](https://platform.openai.com/docs/guides/function-calling/parallel-function-calling)：單一 Step 裡呼叫多個 tools
+- Multi-Assistant Thread Runs：單一 Thread 裡有來自多個 Assistants 的 Messages
+- Streaming：即將推出！
 
-Now go off and build something ama[zing](https://www.youtube.com/watch?v=xvFZjo5PgG0&pp=ygUQcmljayByb2xsIG5vIGFkcw%3D%3D)!
+現在去做點很棒的東西吧！[zing](https://www.youtube.com/watch?v=xvFZjo5PgG0&pp=ygUQcmljayByb2xsIG5vIGFkcw%3D%3D)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Assistants API 是有狀態的：Assistant 放設定，Thread 放對話，Run 負責執行，三者獨立存在。
+- Run 是非同步的，要輪詢 `status`，而且一次 Run 可能用多個 tool、產生多則 message。
+- Thread 的 messages 預設最新的在前面，跟 Chat Completions 相反。
+- Steps 讓你看到 Run 內部做了什麼，像 tool 呼叫和 message 建立，適合做進度顯示。
+- 自訂 Function 時，Run 會進入 `requires_action`，由你執行 function 再把輸出送回去。
+
+## 練習
+
+1. 把 Math Tutor 的 `instructions` 改成別的角色（例如英文寫作教練），只換 Assistant 設定，重跑 `submit_message` 和 `get_response`，確認其他程式碼不用動。
+2. 在輪詢迴圈裡把每次的 `run.status` 印出來，並加上 `time.sleep` 的間隔調整，觀察 Run 會經過哪些狀態。
+3. 仿照 `display_quiz`，另外定義一個自己的 function（例如 `get_weather(city)`），寫 JSON 介面、更新 Assistant，並處理 `requires_action` 把結果送回去。

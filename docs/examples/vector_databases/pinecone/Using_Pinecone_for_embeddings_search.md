@@ -1,42 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/pinecone/Using_Pinecone_for_embeddings_search.ipynb
 ---
 
-# Using Pinecone for embeddings search
+# 用 Pinecone 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/pinecone/Using_Pinecone_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/pinecone/Using_Pinecone_for_embeddings_search.ipynb)
 
+## 這篇在做什麼
+走一遍完整流程：載入已經 embed 好的資料，建到 Pinecone 這個託管式向量資料庫，再用語意搜尋查詢。一個 index 裡用不同 namespace 分開 title 和 content。
+
+## 學完你會
+- 建立 Pinecone index，並用 namespace 分隔 title 和 content 的向量
+- 把 embedding 寫進對應的 namespace
+- 對各個 namespace 下相似度搜尋 query，驗證結果
+
+## 開跑前
+到 [Pinecone](https://www.pinecone.io) 註冊，並把 API key 存成環境變數 `PINECONE_API_KEY`。另外需要 OpenAI API key。
+
+這個 notebook 帶你走一個簡單流程：下載資料、做 embedding，再用向量資料庫建索引並搜尋。很多客戶想在安全的環境裡儲存、搜尋自己資料的 embedding，來支援聊天機器人、主題建模等正式環境的用途，這就是常見的需求。
+
+### 什麼是向量資料庫
+
+向量資料庫是專門用來儲存、管理和搜尋 embedding 向量的資料庫。近年 AI 在自然語言、影像辨識等非結構化資料的應用越來越有效，把文字、音訊、影片等非結構化資料編碼成向量給機器學習模型使用的做法也快速成長，向量資料庫就成了企業落地這些應用並擴大規模的有效方案。
+
+### 為什麼要用向量資料庫
+
+向量資料庫讓企業能把這個 repo 裡分享過的許多 embedding 用例（例如問答、聊天機器人、推薦服務），放到安全、可擴展的環境中運行。很多客戶在小規模時 embedding 能解決問題，但效能和安全性擋住了上線，我們認為向量資料庫是解決這件事的關鍵元件。這份指南會走過基本流程：embed 文字資料、存進向量資料庫，並用來做語意搜尋。
 
 
-<!-- tutor:goals -->
-
-
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
-
-### What is a Vector Database
-
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
-
-### Why use a Vector Database
-
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
-
-
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
+### Demo 流程
+流程如下：
+- **設定**：import 套件、設定需要的變數
+- **載入資料**：載入資料集，並用 OpenAI embedding 處理
 - **Pinecone**
-    - *Setup*: Here we'll set up the Python client for Pinecone. For more details go [here](https://docs.pinecone.io/docs/quickstart)
-    - *Index Data*: We'll create an index with namespaces for __titles__ and __content__
-    - *Search Data*: We'll test out both namespaces with search queries to confirm it works
+    - *設定*：這裡設定 Pinecone 的 Python client，詳情看[這裡](https://docs.pinecone.io/docs/quickstart)
+    - *建索引*：建立一個 index，用 namespace 分開 __titles__ 和 __content__
+    - *搜尋*：用搜尋 query 測試兩個 namespace，確認可以正常運作
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這個 notebook，你應該對向量資料庫怎麼設定和使用有基本概念，之後可以進一步做更複雜、運用 embedding 的用例。
 
-## Setup
+## 設定
 
-Import the required libraries and set the embedding model that we'd like to use.
+import 需要的函式庫，並設定想用的 embedding 模型。
 
 ```python
 # We'll need to install the Pinecone client
@@ -96,9 +102,9 @@ warnings.filterwarnings("ignore", category=DeprecationWarning)
       from tqdm.autonotebook import tqdm
     ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared [in this article](../../Embedding_Wikipedia_articles_for_search.md).
+這一節載入我們在[這篇文章](../../Embedding_Wikipedia_articles_for_search.md)準備好的 embed 資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -187,25 +193,25 @@ article_df.info(show_counts=True)
 
 ## Pinecone
 
-The next option we'll look at is **Pinecone**, a managed vector database which offers a cloud-native option.
+下一個選項是 **Pinecone**，一個託管式向量資料庫，提供雲原生的選擇。
 
-Before you proceed with this step you'll need to navigate to [Pinecone](https://www.pinecone.io), sign up and then save your API key as an environment variable titled ```PINECONE_API_KEY```.
+進行這一步前，你需要先到 [Pinecone](https://www.pinecone.io) 註冊，並把 API key 存成名為 ```PINECONE_API_KEY``` 的環境變數。
 
-For section we will:
-- Create an index with multiple namespaces for article titles and content
-- Store our data in the index with separate searchable "namespaces" for article **titles** and **content**
-- Fire some similarity search queries to verify our setup is working
+這一節我們會：
+- 建一個有多個 namespace 的 index，分別放文章 title 和 content
+- 把資料存進 index，讓文章 **title** 和 **content** 各有獨立可搜尋的 "namespace"
+- 下幾個相似度搜尋 query，確認設定正常
 
 ```python
 api_key = os.getenv("PINECONE_API_KEY")
 pinecone.init(api_key=api_key)
 ```
 
-### Create Index
+### 建立 Index
 
-First we will need to create an index, which we'll call `wikipedia-articles`. Once we have an index, we can create multiple namespaces, which can make a single index searchable for various use cases. For more details, consult [Pinecone documentation](https://docs.pinecone.io/docs/namespaces#:~:text=Pinecone%20allows%20you%20to%20partition,different%20subsets%20of%20your%20index.).
+首先要建一個 index，叫 `wikipedia-articles`。有了 index 之後，就能建多個 namespace，讓同一個 index 能支援不同用途的搜尋。詳情請看 [Pinecone 文件](https://docs.pinecone.io/docs/namespaces#:~:text=Pinecone%20allows%20you%20to%20partition,different%20subsets%20of%20your%20index.)。
 
-If you want to batch insert to your index in parallel to increase insertion speed then there is a great guide in the Pinecone documentation on [batch inserts in parallel](https://docs.pinecone.io/docs/insert-data#sending-upserts-in-parallel).
+如果想平行批次寫入 index 來加快速度，Pinecone 文件有一份很好的[平行批次寫入指南](https://docs.pinecone.io/docs/insert-data#sending-upserts-in-parallel)。
 
 ```python
 # Models a simple batch generator that make chunks out of an input DataFrame
@@ -296,9 +302,9 @@ index.describe_index_stats()
      'total_vector_count': 50000}
     ```
 
-### Search data
+### 搜尋資料
 
-Now we'll enter some dummy searches and check we get decent results back
+現在輸入幾個測試用的搜尋，確認能得到不錯的結果
 
 ```python
 # First we'll create dictionaries mapping vector IDs to their outputs so we can retrieve the text for our search results
@@ -380,4 +386,13 @@ content_query_output = query_article("Famous battles in Scottish history",'conte
     Robert I of Scotland (score = 0.846214116)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Pinecone 是託管式向量資料庫，不用自己維運，需要 API key。
+- namespace 讓同一個 index 可以分割成不同子集，這裡拿來分開 title 和 content。
+- 每個 namespace 獨立搜尋，所以可以選要對標題還是內文做語意比對。
+- 大量寫入時可以平行批次 upsert 加速。
+
+## 練習
+1. 換一句自己的 query，分別搜 title 和 content namespace。
+2. 改搜尋的 `top_k`，看回傳筆數和排序變化。
+3. 新增第三個 namespace（例如只放文章前 200 字的摘要向量），並對它做搜尋。

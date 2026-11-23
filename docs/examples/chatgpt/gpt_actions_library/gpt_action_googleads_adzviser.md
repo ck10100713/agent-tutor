@@ -1,65 +1,73 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_googleads_adzviser.ipynb
 ---
 
-# GPT Actions library - Google Ads via Adzviser
+# GPT Actions 範例庫：透過 Adzviser 連 Google Ads
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_googleads_adzviser.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_googleads_adzviser.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 Adzviser 當中介，把 Google Ads 的報表資料（曝光、點擊、花費等）接到 ChatGPT。你用自然語言問問題，Adzviser 會去查 Google Ads，把結果轉成 CSV 回傳給 ChatGPT 的 Data Analysis 分析。
+
+## 學完你會
+- 了解 Adzviser 怎麼把 Google Ads Query Language 的結果轉成 CSV 並回傳給 GPT。
+- 把 Custom GPT 的 Instructions 和 OpenAPI schema 設好，讓 GPT 能查 campaign、ad group、ad 層級的指標。
+- 用 Adzviser 提供的 URL 在 ChatGPT 設好 OAuth，並排解 Google Ads 帳號清單是空的問題。
+
+## 開跑前
+- 需要一個 Google Ads 帳號，且有唯讀、Standard 或 Admin 權限。
+- 需要註冊 Adzviser 並啟用訂閱（$0.99 起），並建立 workspace 連接 Google Ads 帳號。
+
+## 簡介
+
+這一頁是給開發者的說明，教你替特定應用程式做 GPT Action。開始之前，建議先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions Library 簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零打造 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
+
+這份指南說明怎麼把 **Google Ads** 的報表資料接到 ChatGPT，取得 campaign、ad group 或 ad 層級的曝光、點擊和花費等關鍵績效指標。為了簡化流程，你會用 [Adzviser](https://adzviser.com) 當中介，確保 Google Ads API 回傳的資料格式正確，可以直接在 ChatGPT 的 [Data Analysis](https://help.openai.com/en/articles/8437071-data-analysis-with-chatgpt) 環境分析。
+
+**Adzviser 的運作方式：** 首先，透過 [OAuth](https://docs.adzviser.com/getStarted/workspace) 把你的 Google Ads 帳號連到 [Adzviser](https://adzviser.com/set-up)。當你在 ChatGPT 問「上個月每個 campaign 花了多少？」這類問題，Adzviser 會送出 [Google Ads Query Language](https://developers.google.com/google-ads/api/docs/query/overview) 請求，並把回應轉成 CSV 檔（小於 10MB）。這個檔案接著會[回傳給 ChatGPT](https://platform.openai.com/docs/actions/sending-files/returning-files) 做分析。有了 Adzviser，你可以輕鬆檢視和分析 campaign 的表現，同時根據歷史資料的洞察一起想優化策略。
 
 
+### 價值與商業情境範例
 
-## Introduction
+**價值**：Google Ads 行銷人員現在可以用 ChatGPT 的自然語言能力，輕鬆查詢績效指標和帳號設定，不用進 Google Ads 介面操作。整個過程不需要上傳或下載任何檔案。
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+**情境範例**： 
+- 電商老闆想快速查看 Google Ads campaign 上個月的廣告投資報酬率（ROAS）
+- 品牌行銷人員想用過去 3 個月的報表資料做關鍵字和搜尋字詞分析，找出哪些關鍵字該暫停或加碼，哪些搜尋字詞該加入否定關鍵字。
+- 代理商行銷人員需要產生月報，包含每次點擊費用（CPC）、每次轉換費用（CPA）、搜尋曝光占比等關鍵指標，並做月對月比較。
+- 自由工作者在接新客戶時，需要稽核對方的 Google Ads 帳號，評估績效並找出優化機會。
 
-This guide explains how to connect **Google Ads** reporting data to ChatGPT to retrieve key performance metrics like impressions, clicks and cost at campaign, ad group or ad level. To simplify this process, you will use [Adzviser](https://adzviser.com) as middleware, which ensures that the data returned from the Google Ads API is properly formatted and ready for analysis in ChatGPT’s [Data Analysis](https://help.openai.com/en/articles/8437071-data-analysis-with-chatgpt) environment.
-
-**How Adzviser works:** First, connect your Google Ads account to [Adzviser](https://adzviser.com/set-up) via [OAuth](https://docs.adzviser.com/getStarted/workspace). When you ask questions like “How much did I spend per campaign last month?” in ChatGPT, Adzviser sends a [Google Ads Query Language](https://developers.google.com/google-ads/api/docs/query/overview) request and transforms the response into a CSV file (under 10MB). This file is then [returned to ChatGPT](https://platform.openai.com/docs/actions/sending-files/returning-files) for analysis. Adzviser enables you to easily review and analyze your campaign performance while brainstorming optimization strategies based on historical data insights.
-
-
-### Value + Example Business Use Cases
-
-**Value**: Google Ads marketers can now leverage ChatGPT’s natural language capabilities to easily query performance metrics and account settings without navigating the Google Ads UI. No need to upload or download any files in the entire process.
-
-**Example Use Cases**: 
-- An eCommerce business owner wants to quickly check the Return on Ad Spend (ROAS) for their Google Ads campaigns from the previous month
-- A brand marketer aims to conduct keyword and search term analysis using reporting data from the past 3 months to identify which keywords to pause or scale, and which search terms to add as negative keywords.
-- An agency marketer needs to generate a monthly report featuring key metrics such as Cost-per-Click (CPC), Cost-per-Conversion (CPA), and Search Impression Share with month-over-month comparisons.
-- A freelance marketer needs to audit a new client’s Google Ads account to evaluate performance and find optimization opportunities during the onboarding process.
-
-## Demo/Example
+## Demo / 範例
 
 ![GPT Search Term Analysis Part 1](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_googleads_search_term_analysis_1.png)![GPT Search Term Analysis Part 2](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_googleads_search_term_analysis_2.png)
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- How to create a workspace on Adzviser: https://docs.adzviser.com/getStarted/workspace
-- Adzviser Custom GPT Documentation: https://docs.adzviser.com/chatgpt/expert
-- Google Ads prompt library: https://docs.adzviser.com/chatgpt/googleAdsPromptTemplates
+開始前先看看這些連結：
+- 如何在 Adzviser 建立 workspace：https://docs.adzviser.com/getStarted/workspace
+- Adzviser Custom GPT 文件：https://docs.adzviser.com/chatgpt/expert
+- Google Ads prompt 範本庫：https://docs.adzviser.com/chatgpt/googleAdsPromptTemplates
 
-### Application Prerequisites
+### 應用程式前置條件
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Confirm that you have [Read-only, Standard, or Admin access](https://support.google.com/google-ads/answer/9978556?hl=en) to a Google Ads account.
-- [Sign up](https://adzviser.com/signup) for an account on Adzviser and  activate a subscription (starting at $0.99).
-- Connect your Google Ads account to Adzviser by creating a workspace
+開始前，請先在應用程式環境完成下面的事：
+- 確認你對某個 Google Ads 帳號有[唯讀、Standard 或 Admin 權限](https://support.google.com/google-ads/answer/9978556?hl=en)。
+- 在 Adzviser [註冊](https://adzviser.com/signup)帳號並啟用訂閱（$0.99 起）。
+- 建立 workspace，把你的 Google Ads 帳號連到 Adzviser
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 ***Context***:
@@ -90,7 +98,7 @@ Step 2. Use '/google_ads_audit/<specfic_section_to_check>' function to retrieve 
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)，裡面有更詳細的說明。
 
 ```python
 {
@@ -485,28 +493,37 @@ Once you've created a Custom GPT, copy the text below in the Actions panel. Have
 }
 ```
 
-## Authentication Instructions
+## 驗證設定說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面是跟這個第三方應用程式設定驗證的步驟。有疑問可以看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started)。
 
 ![GPT OAuth Settings](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_adzviser_oauth.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡設定
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點 "Authentication"，選 **"OAuth"**，填入下面的資訊。 
 
-- **Client ID**: (Leave blank)
-- **Client Secret**: (Leave blank)
-- **Authorization URL**: https://adzviser.com/authorize-gpt
-- **Token URL**: https://adzviser.com/api/oauth-exchange-token-gpt
-- **Scope**: (Leave blank)
-- **Token Exchange Method**: Default (POST)
+- **Client ID**：（留空）
+- **Client Secret**：（留空）
+- **Authorization URL**：https://adzviser.com/authorize-gpt
+- **Token URL**：https://adzviser.com/api/oauth-exchange-token-gpt
+- **Scope**：（留空）
+- **Token Exchange Method**：Default (POST)
 
-### FAQ & Troubleshooting
+### FAQ 與疑難排解
 
-- *Empty Google Ads account list*: If you encounter an empty Google Ads accounts list when trying to connect your Google Ads account, it is likely that you have not yet named your Google Ads account yet. To solve it, go to ads.google.com and sign in. Then follow the instructions [here](https://support.google.com/google-ads/answer/7519527?hl=en) to name your Google Ads account.
+- *Google Ads 帳號清單是空的*：如果連接 Google Ads 帳號時看到空的帳號清單，很可能是你的 Google Ads 帳號還沒命名。解法是到 ads.google.com 登入，再照[這裡](https://support.google.com/google-ads/answer/7519527?hl=en)的說明幫帳號命名。
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想要我們優先支援的整合嗎？整合有錯誤嗎？歡迎到 GitHub 開 PR 或 issue，我們會看。*
 
 
-<!-- tutor:summary -->
+## 重點整理
+- Adzviser 是中介層：接 Google Ads API，把結果轉成小於 10MB 的 CSV，讓 ChatGPT 的 Data Analysis 直接讀。
+- 使用者不用手動上傳或下載檔案，用自然語言問就好。
+- 驗證走 OAuth，但 Client ID、Secret 和 Scope 都留空，授權流程由 Adzviser 的兩個 URL 處理。
+- 帳號清單空的，多半是 Google Ads 帳號沒命名。
+
+## 練習
+1. 在 Custom GPT 的 Instructions 加一句，要求每次回答前先確認使用者要看的時間範圍。
+2. 參考 Adzviser 的 prompt 範本庫，設計一個 prompt 問「過去 3 個月哪些搜尋字詞該加為否定關鍵字」，看 GPT 的分析結果。
+3. 在 Instructions 裡要求 GPT 產出月報時，固定包含 CPC、CPA、搜尋曝光占比三個指標和月對月比較。

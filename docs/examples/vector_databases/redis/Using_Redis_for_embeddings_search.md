@@ -1,42 +1,54 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/redis/Using_Redis_for_embeddings_search.ipynb
 ---
-
-# Using Redis for embeddings search
+# 用 Redis 做 embedding 搜尋
 
 > 原文：[examples/vector_databases/redis/Using_Redis_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis/Using_Redis_for_embeddings_search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Docker 跑一個 Redis Stack，把已經做過 embedding 的資料建成索引，再用 vector 搜尋和「vector 加全文搜尋」的 hybrid 搜尋來查資料。用的是 redis-py client 和 RediSearch module。
+
+## 學完你會
+
+- 用 Docker 啟動帶 RediSearch 的 Redis Stack，並用 redis-py 連線
+- 定義索引 schema（含 vector 欄位和距離指標），把文件以 HASH 存進 Redis
+- 寫出只回傳指定欄位的 vector 查詢，以及結合全文搜尋的 hybrid 查詢
+
+## 開跑前
+
+- 需要 Docker 來跑 Redis Stack
+- 需要 `OPENAI_API_KEY` 環境變數
 
 
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
+這份 notebook 帶你走一個簡單流程：下載一些資料、做 embedding，然後用幾種 vector database 建索引並搜尋。很多客戶都有這種需求：想在安全的環境裡，用自己的資料儲存跟搜尋我們的 embedding，來支援 chatbot、主題建模等正式環境的應用。
 
-### What is a Vector Database
+### Vector Database 是什麼
 
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
+Vector database 是專門用來儲存、管理和搜尋 embedding vector 的資料庫。近年用 embedding 把非結構化資料（文字、音訊、影片等）編碼成 vector，再交給機器學習模型使用的做法爆炸性成長，因為 AI 在自然語言、影像辨識等非結構化資料的應用上越來越有效。Vector database 成為企業交付並擴充這些應用的有效方案。
 
-### Why use a Vector Database
+### 為什麼要用 Vector Database
 
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
+Vector database 讓企業可以把我們在這個 repo 分享的許多 embedding 應用（例如問答、chatbot 和推薦服務），放到安全、可擴充的環境裡使用。很多客戶在小規模時用 embedding 解決了問題，但效能和安全性擋住了他們上線，我們認為 vector database 是解決這件事的關鍵元件。這份指南會走過基本流程：對文字資料做 embedding、存進 vector database，再拿來做語意搜尋。
 
 
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
+### Demo 流程
+流程是：
+- **Setup**：匯入套件並設定需要的變數
+- **載入資料**：載入資料集，並用 OpenAI embedding 做向量化
 - **Redis**
-    - *Setup*: Set up the Redis-Py client. For more details go [here](https://github.com/redis/redis-py)
-    - *Index Data*: Create the search index for vector search and hybrid search (vector + full-text search) on all available fields.
-    - *Search Data*: Run a few example queries with various goals in mind.
+    - *Setup*：設定 Redis-Py client。更多細節看[這裡](https://github.com/redis/redis-py)
+    - *建立索引*：對所有可用欄位建立 vector 搜尋和 hybrid 搜尋（vector 加全文搜尋）用的搜尋索引。
+    - *搜尋資料*：針對不同目標跑幾個範例查詢。
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這份 notebook 之後，你應該對 vector database 的設定跟使用有基本概念，可以繼續做更複雜、用到我們 embedding 的應用。
 
 ## Setup
 
-Import the required libraries and set the embedding model that we'd like to use.
+匯入需要的函式庫，並設定我們要用的 embedding 模型。
 
 ```python
 # We'll need to install the Redis client
@@ -69,9 +81,9 @@ warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWa
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared previous to this session.
+這一節載入我們在這次之前就準備好的 embedding 資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -160,9 +172,9 @@ article_df.info(show_counts=True)
 
 # Redis
 
-The next vector database covered in this tutorial is **[Redis](https://redis.io)**. You most likely already know Redis. What you might not be aware of is the [RediSearch module](https://github.com/RediSearch/RediSearch). Enterprises have been using Redis with the RediSearch module for years now across all major cloud providers, Redis Cloud, and on premise. Recently, the Redis team added vector storage and search capability to this module in addition to the features RediSearch already had.
+這份教學接下來介紹的 vector database 是 **[Redis](https://redis.io)**。你很可能已經認識 Redis，但你可能不知道它有 [RediSearch module](https://github.com/RediSearch/RediSearch)。企業使用 Redis 搭配 RediSearch module 已經很多年了，涵蓋所有主要雲端供應商、Redis Cloud 以及地端環境。最近 Redis 團隊在這個 module 裡，除了 RediSearch 原有的功能，還加上了 vector 儲存和搜尋能力。
 
-Given the large ecosystem around Redis, there are most likely client libraries in the language you need. You can use any standard Redis client library to run RediSearch commands, but it's easiest to use a library that wraps the RediSearch API. Below are a few examples, but you can find more client libraries [here](https://redis.io/resources/clients/).
+因為 Redis 周邊生態很大，你需要的語言多半都有 client library。你可以用任何標準 Redis client library 執行 RediSearch 指令，但用包好 RediSearch API 的函式庫最方便。下面列幾個例子，更多 client library 可以看[這裡](https://redis.io/resources/clients/)。
 
 | Project | Language | License | Author | Stars |
 |----------|---------|--------|---------|-------|
@@ -204,23 +216,23 @@ Given the large ecosystem around Redis, there are most likely client libraries i
 [redisearch-api-rs-stars]: https://img.shields.io/github/stars/RediSearch/redisearch-api-rs.svg?style=social&amp;label=Star&amp;maxAge=2592000
 
 
-In the below cells, we will walk you through using Redis as a vector database. Since many of you are likely already used to the Redis API, this should be familiar to most.
+接下來的 cell 會帶你把 Redis 當 vector database 來用。你們很多人應該已經習慣 Redis API，所以大部分內容看起來會很熟悉。
 
 ## Setup
 
-There are many ways to deploy Redis with RediSearch. The easiest way to get started is to use Docker, but there are many potential options for deployment. For other deployment options, see the [Redis directory](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis) in this repo.
+部署帶 RediSearch 的 Redis 有很多種方式。最簡單的起步方式是用 Docker，不過還有許多可行的部署選項。其他部署方式請看這個 repo 裡的 [Redis 目錄](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/redis)。
 
-For this tutorial, we will use Redis Stack on Docker.
+這份教學會在 Docker 上用 Redis Stack。
 
-Start a version of Redis with RediSearch (Redis Stack) by running the following docker command
+執行下面的 docker 指令，啟動帶 RediSearch 的 Redis 版本（Redis Stack）
 
 ```bash
 $ cd redis
 $ docker compose up -d
 ```
-This also includes the [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) GUI for managing your Redis database which you can view at [http://localhost:8001](http://localhost:8001) once you start the docker container.
+這也包含管理 Redis 資料庫用的 [RedisInsight](https://redis.com/redis-enterprise/redis-insight/) GUI，docker container 啟動後可以在 [http://localhost:8001](http://localhost:8001) 看到。
 
-You're all set up and ready to go! Next, we import and create our client for communicating with the Redis database we just created.
+設定完成，準備好了！接下來匯入並建立 client，用來跟剛建好的 Redis 資料庫溝通。
 
 ```python
 import redis
@@ -253,13 +265,13 @@ redis_client.ping()
     True
     ```
 
-## Creating a Search Index
+## 建立搜尋索引
 
-The below cells will show how to specify and create a search index in Redis. We will
+下面的 cell 會示範怎麼在 Redis 指定並建立搜尋索引。我們會：
 
-1. Set some constants for defining our index like the distance metric and the index name
-2. Define the index schema with RediSearch fields
-3. Create the index
+1. 設定一些定義索引用的常數，例如距離指標和索引名稱
+2. 用 RediSearch 欄位定義索引 schema
+3. 建立索引
 
 
 ```python
@@ -308,9 +320,9 @@ except:
     )
 ```
 
-## Load Documents into the Index
+## 把文件載入索引
 
-Now that we have a search index, we can load documents into it. We will use the same documents we used in the previous examples. In Redis, either the Hash or JSON (if using RedisJSON in addition to RediSearch) data types can be used to store documents. We will use the HASH data type in this example. The below cells will show how to load documents into the index.
+有了搜尋索引，就可以把文件載入。我們會用前面範例用過的同一批文件。在 Redis 裡，文件可以用 Hash 或 JSON（如果除了 RediSearch 還有用 RedisJSON）資料型別儲存。這個範例用 HASH 型別。下面的 cell 會示範怎麼把文件載入索引。
 
 ```python
 def index_documents(client: redis.Redis, prefix: str, documents: pd.DataFrame):
@@ -340,12 +352,12 @@ print(f"Loaded {redis_client.info()['db0']['keys']} documents in Redis search in
     Loaded 25000 documents in Redis search index with name: embeddings-index
     ```
 
-## Running Search Queries
+## 執行搜尋查詢
 
-Now that we have a search index and documents loaded into it, we can run search queries. Below we will provide a function that will run a search query and return the results. Using this function we run a few queries that will show how you can utilize Redis as a vector database. Each example will demonstrate specific features to keep in mind when developing your search application with Redis.
+現在有了搜尋索引，也載入了文件，就可以執行搜尋查詢了。下面會提供一個函式，負責執行搜尋查詢並回傳結果。我們用這個函式跑幾個查詢，示範怎麼把 Redis 當 vector database 用。每個範例會展示用 Redis 開發搜尋應用時要留意的特定功能。
 
-1. **Return Fields**: You can specify which fields you want to return in the search results. This is useful if you only want to return a subset of the fields in your documents and doesn't require a separate call to retrieve documents. In the below example, we will only return the `title` field in the search results.
-2. **Hybrid Search**: You can combine vector search with any of the other RediSearch fields for hybrid search such as full text search, tag, geo, and numeric. In the below example, we will combine vector search with full text search.
+1. **Return Fields**：你可以指定搜尋結果要回傳哪些欄位。如果你只想回傳文件的一部分欄位，這很有用，而且不用另外呼叫去取文件。下面的範例只會在搜尋結果回傳 `title` 欄位。
+2. **Hybrid Search**：你可以把 vector 搜尋跟其他 RediSearch 欄位（例如全文搜尋、tag、geo 和 numeric）結合，做 hybrid 搜尋。下面的範例會把 vector 搜尋跟全文搜尋結合。
 
 
 ```python
@@ -423,9 +435,9 @@ results = search_redis(redis_client, 'Famous battles in Scottish history', vecto
     9. William Wallace (Score: 0.835)
     ```
 
-## Hybrid Queries with Redis
+## 用 Redis 做 Hybrid 查詢
 
-The previous examples showed how run vector search queries with RediSearch. In this section, we will show how to combine vector search with other RediSearch fields for hybrid search. In the below example, we will combine vector search with full text search.
+前面的範例示範了怎麼用 RediSearch 跑 vector 搜尋查詢。這一節會示範怎麼把 vector 搜尋跟其他 RediSearch 欄位結合，做 hybrid 搜尋。下面的範例會把 vector 搜尋跟全文搜尋結合。
 
 ```python
 def create_hybrid_field(field_name: str, value: str) -> str:
@@ -480,6 +492,18 @@ mention
     'In Europe, after the Middle Ages, there was a "Renaissance" which means "rebirth". People rediscovered science and artists were allowed to paint subjects other than religious subjects. People like Michelangelo and Leonardo da Vinci still painted religious pictures, but they also now could paint mythological pictures too. These artists also invented perspective where things in the distance look smaller in the picture. This was new because in the Middle Ages people would paint all the figures close up and just overlapping each other. These artists used nudity regularly in their art.'
     ```
 
-For more example with Redis as a vector database, see the README and examples within the ``vector_databases/redis`` directory of this repository
+想看更多把 Redis 當 vector database 的範例，請看這個 repo 裡 ``vector_databases/redis`` 目錄下的 README 和範例
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Vector database 讓 embedding 應用能放到安全、可擴充的環境，是從原型走向正式上線的關鍵元件。
+- Redis 靠 RediSearch module 同時支援 vector 搜尋和原有的全文、tag、geo、numeric 搜尋。
+- 流程是先定義索引 schema（欄位、vector 維度、距離指標），再把文件載入，最後才查詢。
+- 查詢時可以指定回傳欄位，省掉再取文件的一次呼叫。
+- Hybrid 搜尋把 vector 相似度和欄位條件結合，適合需要同時考慮語意和精確條件的場景。
+
+## 練習
+
+1. 把查詢函式的回傳欄位多加一個（例如 `text`），看輸出有什麼變化。
+2. 換一個搜尋 query，調整回傳筆數，觀察排名結果合不合理。
+3. 修改 hybrid 查詢裡的全文搜尋條件，比較只用 vector 搜尋和加了全文條件之後的結果差異。

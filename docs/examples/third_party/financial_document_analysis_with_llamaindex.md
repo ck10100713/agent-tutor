@@ -1,54 +1,61 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/financial_document_analysis_with_llamaindex.ipynb
 ---
 
-# Financial document analysis with LlamaIndex
+# 用 LlamaIndex 做財報文件分析
 
 > 原文：[examples/third_party/financial_document_analysis_with_llamaindex.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/financial_document_analysis_with_llamaindex.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 [**LlamaIndex**](https://gpt-index.readthedocs.io/en/latest/) 框架，只寫幾行程式就對 Uber 和 Lyft 的 10-K 財報做分析。從單一文件的簡單問答，到跨文件比較的進階問答。
+
+## 學完你會
+- 載入 PDF 並建立 in-memory 的 `VectorStoreIndex`
+- 設定 `QueryEngine`，用 `similarity_top_k` 控制檢索的 chunk 數量
+- 用 `SubQuestionQueryEngine` 把比較類的複雜問題拆成子問題，跨多份文件回答
+
+## 開跑前
+需要 OpenAI API key。PDF 每份超過 100 頁，載入和建索引（要呼叫 OpenAI API 算 embedding）都會花一些時間。
+
+這份範例 notebook 示範怎麼用 [**LlamaIndex**](https://gpt-index.readthedocs.io/en/latest/) 框架，只寫幾行程式就對 [**10-K**](https://en.wikipedia.org/wiki/Form_10-K) 文件做財務分析。
+
+## Notebook 大綱
+* [簡介](#Introduction)
+* [環境設定](#Setup)
+* [資料載入與索引](#Data-Loading-and-Indexing)
+* [簡單問答](#Simple-QA)
+* [進階問答：比較與對照](#Advanced-QA---Compare-and-Contrast)
 
 
-
-In this example notebook, we showcase how to perform financial analysis over [**10-K**](https://en.wikipedia.org/wiki/Form_10-K) documents with the [**LlamaIndex**](https://gpt-index.readthedocs.io/en/latest/) framework with just a few lines of code.
-
-## Notebook Outline
-* [Introduction](#Introduction)
-* [Setup](#Setup)
-* [Data Loading & Indexing](#Data-Loading-and-Indexing)
-* [Simple QA](#Simple-QA)
-* [Advanced QA - Compare and Contrast](#Advanced-QA---Compare-and-Contrast)
-
-
-## Introduction
+## 簡介
 
 ### LLamaIndex
-[LlamaIndex](https://gpt-index.readthedocs.io/en/latest/) is a data framework for LLM applications.
-You can get started with just a few lines of code and build a retrieval-augmented generation (RAG) system in minutes.
-For more advanced users, LlamaIndex offers a rich toolkit for ingesting and indexing your data, modules for retrieval and re-ranking, and composable components for building custom query engines.
+[LlamaIndex](https://gpt-index.readthedocs.io/en/latest/) 是 LLM 應用的資料框架。
+只要幾行程式就能開始，幾分鐘內就能建出一個 retrieval-augmented generation (RAG) 系統。
+對進階使用者，LlamaIndex 提供豐富的工具組，用來匯入和索引資料，還有檢索和 re-ranking 的模組，以及可組合的元件來建構自訂的 query engine。
 
-See [full documentation](https://gpt-index.readthedocs.io/en/latest/) for more details.
+更多細節請看[完整文件](https://gpt-index.readthedocs.io/en/latest/)。
 
-### Financial Analysis over 10-K documents
-A key part of a financial analyst's job is to extract information and synthesize insight from long financial documents.
-A great example is the 10-K form - an annual report required by the U.S. Securities and Exchange Commission (SEC), that gives a comprehensive summary of a company's financial performance.
-These documents typically run hundred of pages in length, and contain domain-specific terminology that makes it challenging for a layperson to digest quickly.
+### 10-K 文件的財務分析
+財務分析師工作的一大部分，是從冗長的財務文件裡抽取資訊並整合出洞見。
+10-K 表格就是很好的例子，這是美國證券交易委員會 (SEC) 要求的年度報告，全面總結公司的財務表現。
+這類文件通常長達數百頁，還有領域專用術語，外行人很難快速消化。
 
 
-We showcase how LlamaIndex can support a financial analyst in quickly extracting information and synthesize insights **across multiple documents** with very little coding. 
+我們示範 LlamaIndex 怎麼用很少的程式碼，幫財務分析師快速抽取資訊，並**跨多份文件**整合出洞見。
 
-## Setup
+## 環境設定
 
-To begin, we need to install the llama-index library
+首先要安裝 llama-index 函式庫
 
 ```python
 !pip install llama-index pypdf
 ```
 
-Now, we import all modules used in this tutorial
+接著匯入這份教學用到的所有模組
 
 ```python
 from langchain import OpenAI
@@ -60,26 +67,26 @@ from llama_index.tools import QueryEngineTool, ToolMetadata
 from llama_index.query_engine import SubQuestionQueryEngine
 ```
 
-Before we start, we can configure the LLM provider and model that will power our RAG system.  
-Here, we pick `gpt-3.5-turbo-instruct` from OpenAI.  
+開始之前，可以先設定驅動 RAG 系統的 LLM 供應商和模型。
+這裡我們選 OpenAI 的 `gpt-3.5-turbo-instruct`。
 
 ```python
 llm = OpenAI(temperature=0, model_name="gpt-3.5-turbo-instruct", max_tokens=-1)
 ```
 
-We construct a `ServiceContext` and set it as the global default, so all subsequent operations that depends on LLM calls will use the model we configured here.
+我們建立一個 `ServiceContext` 並設成全域預設，之後所有依賴 LLM 呼叫的操作，都會使用我們在這裡設定的模型。
 
 ```python
 service_context = ServiceContext.from_defaults(llm=llm)
 set_global_service_context(service_context=service_context)
 ```
 
-## Data Loading and Indexing
+## 資料載入與索引
 
-Now, we load and parse 2 PDFs (one for Uber 10-K in 2021 and another for Lyft 10-k in 2021).    
-Under the hood, the PDFs are converted to plain text `Document` objects, separate by page.  
+現在載入並解析 2 份 PDF（一份是 Uber 2021 年的 10-K，另一份是 Lyft 2021 年的 10-K）。
+底層會把 PDF 轉成純文字的 `Document` 物件，按頁分開。
 
-> Note: this operation might take a while to run, since each document is more than 100 pages.
+> 注意：每份文件都超過 100 頁，這個操作可能要跑一段時間。
 
 ```python
 lyft_docs = SimpleDirectoryReader(input_files=["../data/10k/lyft_2021.pdf"]).load_data()
@@ -98,21 +105,21 @@ print(f'Loaded Uber 10-K with {len(uber_docs)} pages')
     Loaded Uber 10-K with 307 pages
     ```
 
-Now, we can build an (in-memory) `VectorStoreIndex` over the documents that we've loaded.  
+現在可以對載入的文件建立一個（in-memory 的）`VectorStoreIndex`。
 
-> Note: this operation might take a while to run, since it calls OpenAI API for computing vector embedding over document chunks.
+> 注意：這個操作要呼叫 OpenAI API 對文件 chunk 計算向量 embedding，所以可能要跑一段時間。
 
 ```python
 lyft_index = VectorStoreIndex.from_documents(lyft_docs)
 uber_index = VectorStoreIndex.from_documents(uber_docs)
 ```
 
-## Simple QA
+## 簡單問答
 
-Now we are ready to run some queries against our indices!  
-To do so, we first configure a `QueryEngine`, which just captures a set of configurations for how we want to query the underlying index.
+現在可以對我們的索引跑一些查詢了！
+做法是先設定一個 `QueryEngine`，它只是記錄我們想怎麼查詢底層索引的一組設定。
 
-For a `VectorStoreIndex`, the most common configuration to adjust is `similarity_top_k` which controls how many document chunks (which we call `Node` objects) are retrieved to use as context for answering our question.
+對 `VectorStoreIndex` 來說，最常調整的設定是 `similarity_top_k`，它控制要檢索多少個文件 chunk（我們稱為 `Node` 物件）當 context 來回答問題。
 
 ```python
 lyft_engine = lyft_index.as_query_engine(similarity_top_k=3)
@@ -122,7 +129,7 @@ lyft_engine = lyft_index.as_query_engine(similarity_top_k=3)
 uber_engine = uber_index.as_query_engine(similarity_top_k=3)
 ```
 
-Let's see some queries in action!
+來看幾個實際的查詢！
 
 ```python
 response = await lyft_engine.aquery('What is the revenue of Lyft in 2021? Answer in millions with page reference')
@@ -154,12 +161,12 @@ print(response)
     $17,455 (page 53)
     ```
 
-## Advanced QA - Compare and Contrast
+## 進階問答：比較與對照
 
-For more complex financial analysis, one often needs to reference multiple documents.  
+比較複雜的財務分析常需要參考多份文件。
 
-As a example, let's take a look at how to do compare-and-contrast queries over both Lyft and Uber financials.  
-For this, we build a `SubQuestionQueryEngine`, which breaks down a complex compare-and-contrast query, into simpler sub-questions to execute on respective sub query engine backed by individual indices.
+舉例來說，我們看看怎麼對 Lyft 和 Uber 的財務資料做比較對照的查詢。
+為此我們建立一個 `SubQuestionQueryEngine`，它會把複雜的比較對照查詢，拆成比較簡單的子問題，分別交給各自由單一索引支撐的子 query engine 執行。
 
 ```python
 query_engine_tools = [
@@ -176,7 +183,7 @@ query_engine_tools = [
 s_engine = SubQuestionQueryEngine.from_defaults(query_engine_tools=query_engine_tools)
 ```
 
-Let's see these queries in action!
+來看這些查詢的實際效果！
 
 ```python
 response = await s_engine.aquery('Compare and contrast the customer segments and geographies that grew the fastest')
@@ -243,4 +250,13 @@ print(response)
     The revenue growth of Uber from 2020 to 2021 was 57%, or 54% on a constant currency basis, while the revenue growth of Lyft from 2020 to 2021 was 36%. This means that Uber had a higher revenue growth than Lyft from 2020 to 2021.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- LlamaIndex 把載入文件、切 chunk、算 embedding、建索引、查詢包成幾行程式。
+- `QueryEngine` 只是查詢設定，`similarity_top_k` 決定每次檢索多少個 chunk 當 context。
+- 長文件（像 10-K）按頁切成 `Document`，再建成向量索引來檢索。
+- 跨文件比較的問題適合用 `SubQuestionQueryEngine` 拆成子問題，各自查詢再整合。
+
+## 練習
+1. 調整 `similarity_top_k`（例如 1 和 5），比較同一個問題的回答差異。
+2. 把 `gpt-3.5-turbo-instruct` 換成別的 OpenAI 模型，看回答品質有沒有變化。
+3. 在子問題引擎裡再加入第三家公司的 10-K，問一個三家公司的比較問題。

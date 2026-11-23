@@ -1,59 +1,69 @@
 ---
-translated: false
+translated: true
 source: examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.ipynb
 ---
-
-# MCP-Powered Agentic Voice Framework
+# 用 MCP 驅動的語音 Agent 框架
 
 > 原文：[examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.ipynb)
 
+## 這篇在做什麼
 
+用 OpenAI Agents SDK 搭一個語音 agent，背後的 tool 全部透過 MCP 提供：自建的 MCP server 負責 RAG 檢索和 web search，現成的 SQLite MCP server 負責資料庫查詢。流程是語音轉文字、Planner agent 決定呼叫哪些 tool、再把回答轉成語音，範例情境是保險問答。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 `FastMCP` 寫自己的 MCP server，並用 `MCPServerSse` 和 `MCPServerStdio` 把它和現成的 SQLite server 接到 agent 上。
+- 設計 Planner agent 的 instructions，讓它知道什麼時候該用檢索、資料庫或網路搜尋。
+- 串起 STT、agent、TTS 的語音流程，並用 Traces 看每一步的延遲。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`。
+- 本機要裝 `ffmpeg`，mac 用 `brew install ffmpeg`。
+- 需要同目錄的 `search_server.py` 和 `database.db`，RAG 索引會建立在 OpenAI 的 vector store 上。
 
 ### Agents
-Agents are becoming the de-facto framework in which we orchestrate various, often specialized, LLMs applications to work with one another. Many practical applications require the use of external tools to create a complex workflow for LLM-based agents.
+Agent 已經成為協調各種（通常是專門化的）LLM 應用彼此合作的主流框架。許多實際應用需要外部 tool，才能為 LLM 型 agent 建出複雜的工作流程。
 
-Model Context Protocol (MCP) has quickly become the open standard for building Agentic systems. The protocol provides easy integration of common tool services and the interoperability between models across the AI ecosystem.
+Model Context Protocol（MCP）很快成為建構 agent 系統的開放標準。這個協定讓常見的 tool 服務容易整合，也讓 AI 生態系中不同模型之間可以互通。
 
-### What is MCP?
-Model Context Protocol (MCP) is an open protocol designed to standardize how AI models - especially large language models (LLMs) - interface with external tools, data sources, and context providers in a secure, modular, and composable way. MCP provides a unified framework for sending structured requests from an agent or application to a set of “tool services,” such as databases, APIs, or custom logic modules. By adopting MCP, developers can,
-* Decouple agent logic from tool implementations: Agents can call out to tools (like a database or search service) using a standard protocol, rather than relying on hardcoded integrations.
-* Enforce consistent security and governance: MCP defines authentication, authorization, and data boundary controls between the model and external resources.
-* Support modular, reusable agent architectures: Tools can be swapped, updated, or extended without changing the agent code, making it easy to evolve complex workflows.
-* Run tools locally or remotely: The same protocol works whether a tool is running in the customer’s environment or in the cloud, supporting privacy and data residency requirements.
+### 什麼是 MCP？
+Model Context Protocol（MCP）是一個開放協定，目的是用安全、模組化、可組合的方式，標準化 AI 模型（尤其是 LLM）和外部 tool、資料來源、context 提供者之間的介面。MCP 提供統一的框架，讓 agent 或應用把結構化的請求送給一組「tool 服務」，例如資料庫、API 或自訂的邏輯模組。採用 MCP 之後，開發者可以：
+* 把 agent 邏輯和 tool 實作分開：agent 用標準協定呼叫 tool（像資料庫或搜尋服務），不用依賴寫死的整合。
+* 落實一致的安全與治理：MCP 定義了模型和外部資源之間的認證、授權和資料邊界控制。
+* 支援模組化、可重用的 agent 架構：tool 可以抽換、更新或擴充，不用改 agent 程式碼，複雜的工作流程容易演進。
+* 在本機或遠端執行 tool：不管 tool 跑在客戶的環境還是雲端，都是同一套協定，能滿足隱私和資料所在地的要求。
 
-MCP acts as the “middleware” that bridges AI models and the external world, enabling secure, flexible, and maintainable integration of real-world context and capabilities into conversational or autonomous agents.
+MCP 就是連接 AI 模型和外部世界的「middleware」，讓真實世界的 context 和能力，能安全、有彈性、好維護地整合進對話式或自主的 agent。
 
-### Agents in the enterprise
-In today’s enterprise landscape, conversational agents - especially voice-powered ones—are quickly becoming a standard for customer support, internal helpdesks, and task automation. Yet, building robust, scalable voice agents is challenging due to fragmented tooling, integration complexity, and the need for reliable orchestration of backend systems. A common pattern seen across the enterprise landscape is to develop agents that are backed by knowledge bases (both structured and unstructured). These bots are divided into several categories:
- - copilots for internal use, and 
- - customer-facing assistants. 
-The latter of the two use cases, i.e. customer-facing assistants, tends to have a higher requirement for both accuracy, usability and design. Additionally, one common requirement for customer-facing chatbots is the need to add voice as a modality for user interface (i.e. for phone call automation).
+### 企業裡的 Agent
+在現在的企業環境，對話式 agent（尤其是語音 agent）正快速成為客服、內部 helpdesk 和任務自動化的標配。但要建出穩健、可擴展的語音 agent 並不容易，原因是工具零散、整合複雜，還需要可靠地協調後端系統。企業裡常見的做法，是開發以知識庫（結構化和非結構化都有）為後盾的 agent。這類機器人分成幾種：
+ - 內部使用的 copilot，以及
+ - 面向客戶的助理。
+後者對準確度、易用性和設計的要求比較高。另外，面向客戶的聊天機器人常見的需求，是加上語音作為使用者介面的一種形式（例如電話自動化）。
 
-These Q&A chatbots apply to a wide range of industries, including healthcare, government, and legal services, that require an easy way to retrieve knowledge.
+這類問答機器人適用很多產業，包括醫療、政府和法律服務，這些產業都需要簡單的知識檢索方式。
 
-One such industry is insurance, where we've seen tremendous value for customers we work with in the space. Insurance policies are complex, and the system can be difficult for policyholders to navigate.
+保險就是其中一個產業，我們在這個領域的客戶身上看到很大的價值。保單很複雜，保戶不容易看懂這套制度。
 
-### What's in this Cookbook?
-In this cookbook, we provide an end-to-end modular recipe leveraging MCP for building voice-enabled agents using the [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/). In particular, we demonstrate how we can use it for dynamic context management and using agentic tool-calling. We demonstrate the capabilities of such a system for the aforementioned insurance use-case. In this example, we demonstrate the use of MCP for various tools that you may want for your application. Specifically, we showcase the use of custom MCP servers (for text retrieval and web search) as well as using predefined MCP servers (for SQLite). 
+### 這份 Cookbook 有什麼？
+這份 cookbook 提供一套端到端、模組化的做法，用 MCP 搭配 [OpenAI Agents SDK](https://openai.github.io/openai-agents-python/) 建立語音 agent。我們特別示範如何做動態的 context 管理和 agent 式的 tool calling，並以前面提到的保險情境展示這種系統的能力。範例中用 MCP 提供應用可能需要的各種 tool：自訂的 MCP server（文字檢索和 web search），以及預先定義好的 MCP server（SQLite）。
 
-### End-to-end Flow
+### 端到端流程
 
-This section outlines a straightforward setup for deploying microservices for tools within the MCP framework, specifically focusing on RAG, database lookup, and web search functionalities. The MCP servers are responsible not only for hosting these services but also for performing RAG indexing to support backend operations.
+這一節說明一個簡單的設定，把 tool 部署成 MCP 框架下的微服務，主要是 RAG、資料庫查詢和 web search。MCP server 除了託管這些服務，也負責做 RAG 索引來支援後端運作。
 
-We employ a "chained" approach for voice input and output throughout the system. During inference, the workflow begins by capturing a user's voice input, which is transcribed to text using a speech-to-text system. This transcribed text is then sent to the Planner agent, which determines which tools to invoke and makes requests to the appropriate microservices. After retrieving tool outputs, the Planner agent synthesizes a cohesive, contextually appropriate response. This textual response is subsequently converted to audio using a text-to-speech system, delivering the final voice response to the user.
+整個系統的語音輸入輸出採用「串接式」做法。推論時，流程從擷取使用者的語音開始，用語音轉文字系統轉成文字。這段文字送給 Planner agent，由它決定要呼叫哪些 tool，並向對應的微服務發出請求。取得 tool 輸出之後，Planner agent 會整合成一個連貫、符合情境的回答。這個文字回答再用文字轉語音系統轉成音訊，把最後的語音回應交給使用者。
 
-The end-to-end workflow is summarized in the diagram below:
+端到端流程如下圖：
 
 
 ![Cookbook_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_mcp_Cookbook.svg)
 
-### Installing dependencies
-First, we install the library dependencies for the project.
+### 安裝相依套件
+先安裝專案需要的函式庫。
 
-> Note: One specific dependency that may be needed on your machine, is to install `ffmpeg`. If you are using a mac, you will need to install this separately using `brew install ffmpeg`.
+> 注意：你的機器可能需要另外安裝 `ffmpeg`。如果用 mac，要自己用 `brew install ffmpeg` 安裝。
 
 
 ```python
@@ -75,9 +85,9 @@ First, we install the library dependencies for the project.
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-### Setup
+### 設定
 
-To execute this cookbook, you'll need to install the following packages providing access to OpenAI's API, the Agents SDK, MCP, and libraries for audio processing. Additionally, you can set your OpenAI API key for use by the agents via the `set_default_openai_key` function.
+要執行這份 cookbook，需要安裝下列套件，它們提供 OpenAI API、Agents SDK、MCP 和音訊處理的函式庫。另外，你可以用 `set_default_openai_key` 函式設定 agent 要用的 OpenAI API key。
 
 ```python
 import socket
@@ -107,25 +117,25 @@ async def wait_for_server_ready(port: int = 8000, timeout: float = 10) -> None:
     raise RuntimeError("❌ SSE server did not become ready in time.")
 ```
 
-### Defining Tool-use Agents through custom MCP services
+### 透過自訂 MCP 服務定義會用 tool 的 Agent
 
-First, we define a custom MCP service that host the RAG and web search tools using the `FastMCP` interface. Specifically, we add `@mcp.tool` functions for:
+首先，用 `FastMCP` 介面定義一個自訂的 MCP 服務，託管 RAG 和 web search 這兩個 tool。具體來說，我們加上 `@mcp.tool` 函式來做：
 
-1.   Retrieving information from a RAG service
-2.   Searching the broader internet for information using OpenAI's `web_search`
+1.   從 RAG 服務檢索資訊
+2.   用 OpenAI 的 `web_search` 搜尋更廣的網路資訊
 
 
-For the purpose in this cookbook, we'll run both tools under the same service.
+這份 cookbook 裡，兩個 tool 都跑在同一個服務下。
 
-The below code has been provided in `search_server.py` within the same directory. Run the code to start the server. As the server runs, your files will be indexed and stored in the vector store. 
+下面的程式碼已經放在同目錄的 `search_server.py`。執行它來啟動 server。server 執行時，你的檔案會被建索引並存進 vector store。
 
-You can run the `search_server.py` file by running the following command:
+可以用下面的指令執行 `search_server.py`：
 
     ```bash
     uv run python search_server.py         
     ```
 
-Once the server is running, you can access the vector store and files at https://platform.openai.com/storage/files and https://platform.openai.com/storage/vector_stores respectively, and continue with running the next cells in the notebook.
+server 跑起來之後，你可以到 https://platform.openai.com/storage/files 和 https://platform.openai.com/storage/vector_stores 看檔案和 vector store，然後繼續執行 notebook 後面的 cell。
 
 ```python
 # search_server.py
@@ -238,22 +248,22 @@ if __name__ == "__main__":
     mcp.run(transport="sse")
 ```
 
-As seen above, we also include the RAG indexing as part of this workflow. In real-world applications, this will not be necessary for every run and if you have a large corpus of data, you may put this in a separate process.
+如上所示，我們把 RAG 索引也放進這個流程。實際應用中不需要每次執行都做，如果資料量很大，可以把它放到獨立的程序。
 
-In addition to simple RAG retrieval, we add an extra step to summarize the RAG output. This step is not always necessary, though we've found this to provide more succinct responses to the planner. Whether to do this depends on your system and your latency requirements.
+除了單純的 RAG 檢索，我們還多加一個步驟來摘要 RAG 的輸出。這一步不一定需要，不過我們發現它能讓給 planner 的回應更精簡。要不要做，取決於你的系統和延遲要求。
 
 
-### Using Pre-defined MCP Servers
+### 使用預先定義的 MCP Server
 
-While implementing custom MCPs servers is relatively straightforward, the power of MCP is the ability to use pre-defined servers that others have built and maintain. Using existing implementations enables more rapid development, has a consistent interface with other tools, and makes data integration more seamless. 
+自己實作 MCP server 其實不難，但 MCP 的威力在於可以用別人建好並維護的現成 server。用現有的實作能加快開發、跟其他 tool 保持一致的介面，資料整合也更順暢。
 
-For our database lookup tool, we use the prebuilt [SQLite server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite) implementation. As you will see below, we can implement this simply with just a command line prompt and providing it with a `*.db` file with the data.
+資料庫查詢的 tool 用的是預先建好的 [SQLite server](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/sqlite) 實作。你會看到，只要一行命令列指令，再給它一個放資料的 `*.db` 檔就能用。
 
-### Defining the Planner Agent
+### 定義 Planner Agent
 
-Next, we can define how the MCP server will generate meaningful responses. The planner agent is a key component within MCP’s agent orchestration pipeline. Its primary function is to decompose user requests into actionable steps and decide which tools, APIs, or agents should be called at each stage. Given the input as text, the planner parses and analyzes the request, maintaining context across multiple turns. Based on the conversation state, it invokes MCP tool services by dispatching tool calls via the MCP server’s orchestration layer. The agent then collects intermediate results, synthesizes responses, and guides the conversation toward resolution.
+接下來定義 MCP server 怎麼產生有意義的回應。Planner agent 是 MCP agent 協調流程裡的關鍵元件，主要工作是把使用者的請求拆成可執行的步驟，並決定每個階段要呼叫哪些 tool、API 或 agent。拿到文字輸入後，planner 會解析請求，並在多輪對話之間維持 context。依照對話狀態，它透過 MCP server 的協調層派送 tool call，呼叫 MCP tool 服務。agent 接著收集中間結果、整合回應，並引導對話走向解決。
 
-A key design consideration is the model selection for the planner. While larger models like `4.1` offer superior reasoning, low end-to-end latency is critical in voice-driven applications. For this reason, we select the `4.1-mini` model, which achieves a strong balance between reasoning ability and response speed.
+設計 planner 時有個關鍵考量是模型的選擇。`4.1` 這種較大的模型推理能力比較強，但語音應用要求端到端延遲很低，所以我們選 `4.1-mini`，它在推理能力和回應速度之間取得不錯的平衡。
 
 ```python
 from agents import Agent, trace
@@ -308,13 +318,13 @@ async def create_insurance_agents(mcp_servers: list[MCPServer]) -> Agent:
     }
     ```
 
-In the agent definition, we clearly specify when each tool should be used. This ensures better control over responses and improves answer relevance. We also provide the Voice Agent with guidelines to set the desired tone and level of precision in its replies.
+在 agent 的定義裡，我們清楚指定每個 tool 該在什麼時候使用。這樣回應比較好控制，答案也更切題。我們也給 Voice Agent 一些準則，設定回覆想要的語氣和精確程度。
 
-### Defining configurations for voice 
+### 定義語音設定
 
-Next, we define the configurations for our voice module, both for speech-to-text (STT) and text-to-speech (TTS). We use the OpenAI Agent Voice library to handling both input and output of voice. As defaults, this API calls the `gpt-4o-transcribe` and `gpt-4o-mini-tts` for STT and TTS, respectively.
+接下來定義語音模組的設定，包括語音轉文字（STT）和文字轉語音（TTS）。我們用 OpenAI Agent Voice 函式庫處理語音的輸入和輸出。預設情況下，這個 API 的 STT 用 `gpt-4o-transcribe`，TTS 用 `gpt-4o-mini-tts`。
 
-For more content on defining voice assistants, see [this Cookbook](https://cookbook.openai.com/examples/agents_sdk/app_assistant_voice_agents).
+更多定義語音助理的內容，請看[這份 Cookbook](https://cookbook.openai.com/examples/agents_sdk/app_assistant_voice_agents)。
 
 ```python
 import numpy as np
@@ -377,11 +387,11 @@ class AudioStreamManager:
             print(f"Warning: Error during audio stream cleanup: {e}")
 ```
 
-In enterprise scenarios, the tone and style of audio responses are critical to system usability. Speech output should consistently reflect professionalism and align with the company's brand identity. For most applications, this means generating a realistic voice that mirrors the courteous, approachable demeanor typical of call-center representatives. With TTS, we can leverage prompt engineering to guide the model toward producing audio that better matches specific customer use cases and brand values.
+在企業情境裡，語音回應的語氣和風格對系統好不好用很關鍵。語音輸出應該一致地展現專業，並符合公司的品牌形象。對大多數應用來說，這代表要產生真實的聲音，反映客服人員那種有禮貌、親切的態度。有了 TTS，我們可以用 prompt engineering 引導模型，產生更符合特定客戶使用情境和品牌價值的音訊。
 
-### Processing Voice I/O
+### 處理語音 I/O
 
-After configuring the voice settings, the next step is to implement functions for processing incoming audio and generating spoken responses. Pay particular attention to the `silence_threshold` parameter in your configuration—this plays a crucial role in accurately detecting when a user has finished speaking and helps with speech endpoint detection.
+設定好語音之後，下一步是實作處理傳入音訊和產生語音回應的函式。要特別留意設定裡的 `silence_threshold` 參數，它在判斷使用者是否說完話上很關鍵，對語音端點偵測有幫助。
 
 ```python
 import asyncio
@@ -484,9 +494,9 @@ async def continuous_voice_conversation(agent: Agent):
                     raise
 ```
 
-### Setting up the server process
+### 設定 server 程序
 
-Next, we add a simple convenience function for bringing up servers locally: 
+接著加一個方便的函式，用來在本機啟動 server：
 
 ```python
 import shutil
@@ -529,11 +539,11 @@ class ServerProcess:
                 print(f"Warning: Error during server shutdown: {e}")
 ```
 
-### Specifying the MCP tool services
+### 指定 MCP tool 服務
 
-In our `main` function, we can bring up the various tool-use services we're interested in.
+在 `main` 函式裡，我們啟動需要的各個 tool 服務。
 
-For our custom server for (RAG and web search), we can use the `MCPServerSse` function to start a server (in this case locally). To bring up the standard MCP SQLite service, we call `MCPServerStdio` with simple arguments provided, in this case, the local `database.db` file.
+自訂的 server（RAG 和 web search）用 `MCPServerSse` 啟動（這裡是跑在本機）。標準的 MCP SQLite 服務則呼叫 `MCPServerStdio`，給一些簡單的參數，這裡是本機的 `database.db` 檔。
 
 ```python
 import os
@@ -570,14 +580,14 @@ async def main():
                     raise
 ```
 
-## Summarizing the flow
+## 整個流程總結
 
-Now that we have the various pieces in place, we can take a step back and visualize the overall workflow of our system:
+各個元件都就位之後，我們退一步看整個系統的工作流程：
 
 ![Cookbook_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/System_flow_partner_mcp.png)
 
-### Tying it all together
-Finally, we can instantiate the custom tool-use server and bring up the service:
+### 全部串起來
+最後，建立自訂的 tool server 實例並啟動服務：
 
 ```python
 import asyncio
@@ -598,11 +608,11 @@ except RuntimeError:
         raise
 ```
 
-## Example outputs
+## 範例輸出
 
-Now that we have built the system end-to-end, we can now use it to answer questions. Here, we use our system to provide answers for a few common insurance questions based on the policy information docs. Below are some sample voice outputs from our agents based on some common questions users have:
+整個系統端到端建好之後，就可以拿來回答問題。這裡我們用它回答幾個常見的保險問題，答案根據保單資訊文件。下面是 agent 針對使用者常問問題給出的一些語音輸出範例：
 
-**How are prescription drugs covered under this plan?** (uses retrieval)
+**這個方案怎麼給付處方藥？**（用檢索）
 
 ```python
 from IPython.display import display, Audio
@@ -618,45 +628,57 @@ else:
     print(f"Audio file not found at: {audio_path}")
 ```
 
-**Which policies have monthly premium less than $300?** (uses DB lookup with SQL)
+**哪些保單的月保費低於 $300？**（用資料庫查詢和 SQL）
 
 ```python
 display(Audio("sample_output/sqlite.mp3"))
 ```
 
-**What are effective treatments for diabetes?** (uses Web Search)
+**有哪些有效的糖尿病治療方式？**（用 Web Search）
 
 ```python
 display(Audio("sample_output/web_search.mp3"))
 ```
 
-## Examining Traces
-By default, model and tool calls that are used in our application are added to the [Traces](https://platform.openai.com/traces) dashboard out-of-the-box. These traces provide meaningful insight into what users experience as they use our agents. 
+## 檢視 Traces
+預設情況下，應用裡用到的模型和 tool call 會直接加進 [Traces](https://platform.openai.com/traces) 儀表板。這些 trace 能讓你看到使用者使用 agent 時實際的體驗。
 
 ![Cookbook_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/trace-sk1_partner.png)
 
-Beyond agent performance, one critical aspect of building voice agents is the latency of responses. With the Traces dashboard, we are able to view the breakdown of walltime for each step to help debug and find areas of improvement for latency: 
+除了 agent 的表現，建語音 agent 還有一個關鍵是回應延遲。Traces 儀表板可以看到每個步驟的 wall time 分解，幫你 debug 並找出延遲可以改善的地方：
 
 ![Cookbook_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/Traces-2_partner.png)
 
-Explore individual traces to see each function call and its output, as shown below.
+也可以點進個別的 trace，看每次 function call 和它的輸出，如下所示。
 
 ![image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/traces_partner_granular.png)
 
-Traces offer granular visibility into function calls and their execution times, making it easy to identify sources of latency (for example, the web search tool above). Analyzing response time variability for each tool invocation helps you pinpoint bottlenecks and opportunities for optimization in production systems.
+Traces 讓你細看 function call 和執行時間，很容易找出延遲的來源（例如上面的 web search tool）。分析每個 tool 呼叫的回應時間變化，能幫你找出正式環境中的瓶頸和可優化的地方。
 
-## Conclusion
+## 結論
 
-This cookbook has guided you through building a complete agent solution that harnesses the flexibility and strength of the MCP platform. By integrating the Voice Agents SDK, we illustrated how to develop a consumer-ready product powered by these technologies. We've shown how OpenAI’s tools and the Agents API can be effectively combined with MCP to deliver impactful applications.
+這份 cookbook 帶你建了一套完整的 agent 方案，運用 MCP 平台的彈性和能力。透過整合 Voice Agents SDK，我們示範了如何開發由這些技術驅動、可交付給消費者的產品。也展示了 OpenAI 的 tool 和 Agents API 如何有效結合 MCP，做出有影響力的應用。
 
-We hope this guide has offered both practical instruction and inspiration, helping you create your own MCP-powered voice agents tailored to your specific needs.
+希望這份指南既有實作教學，也能帶來啟發，幫你依自己的需求建出 MCP 驅動的語音 agent。
 
-### Contributors
+### 貢獻者
 
-This cookbook is a joint effort by OpenAI and [Brain Co](https://www.braincompany.ai/en/).
+這份 cookbook 是 OpenAI 和 [Brain Co](https://www.braincompany.ai/en/) 共同完成的。
 
 - [Cece Z](https://www.linkedin.com/in/cecez/)
 - [Sibon Li](https://www.linkedin.com/in/sibon-li-9a9bba34/)
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- MCP 讓 agent 邏輯和 tool 實作分開，tool 可以抽換，也可以跑在本機或遠端。
+- 自訂 tool 用 `FastMCP` 加 `@mcp.tool` 寫成 server，現成的 server（如 SQLite）只要一行指令就能掛上。
+- Planner agent 負責拆解請求、決定呼叫哪個 tool，instructions 要清楚寫出每個 tool 的使用時機。
+- 語音 agent 對延遲敏感，所以 planner 選 `4.1-mini` 這類速度和推理平衡的模型。
+- Traces 能看到每個 tool call 的耗時，是找延遲瓶頸的主要工具。
+
+## 練習
+
+1. 改 `silence_threshold` 的值，觀察語音端點偵測的變化。
+2. 把 Planner agent 的模型從 `4.1-mini` 換成別的模型，用 Traces 比較整體延遲。
+3. 在 `search_server.py` 用 `@mcp.tool` 再加一個 tool（例如查詢目前時間），並在 Planner agent 的 instructions 寫明什麼時候用它。

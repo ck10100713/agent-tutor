@@ -1,31 +1,39 @@
 ---
-translated: false
+translated: true
 source: examples/o1/Using_reasoning_for_routine_generation.ipynb
 ---
-
-# Using reasoning for routine generation
+# 用 reasoning 產生 routine
 
 > 原文：[examples/o1/Using_reasoning_for_routine_generation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/o1/Using_reasoning_for_routine_generation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 o1-preview 把客服知識庫文章（OpenAI Help Center）轉成 LLM 可以逐步執行的內部 routine，同時讓模型產生需要的 function 定義。文章會平行丟給模型處理，再把結果放進 dataframe 檢視。
+
+## 學完你會
+- 解釋什麼是 routine，以及為什麼把給人看的文件轉成逐步指令，LLM 比較不會出錯。
+- 寫一個 prompt，用 o1-preview zero-shot 把 policy 轉成含條件分支和 function call 的 SOP。
+- 平行處理多篇文章，並檢視產出的 routine。
+
+## 開跑前
+- 需要 OpenAI API key，並有 o1-preview 的使用權限（會產生 API 費用）。
 
 
 
-When developing customer service solutions, one of the initial steps involves transforming knowledge base articles into a set of routines that an LLM can comprehend and follow. A routine, in this context, refers to a set of step-by-step instructions designed specifically for the LLM to execute efficiently. Each routine is carefully structured so that a step corresponds to a clear action. Actions can include responding to a user, triggering a function call, or retrieving additional relevant knowledge.
+開發客服解決方案時，第一步通常是把知識庫文章轉成 LLM 能理解並遵循的一組 routine。這裡的 routine 指的是專為 LLM 設計、可以有效執行的一套逐步指令。每個 routine 都精心結構化，讓每一步對應一個明確的動作。動作可以是回覆使用者、觸發 function call，或是取得其他相關知識。
 
-Most internal knowledge base articles are complex and structured for human interpretation. They often include intricate diagrams, multi-step processes, and decision trees that pose challenges for LLM-based solutions to reason through in a meaningful way. By breaking down these documents into routines, each instruction can be simplified and formatted in a way that guides the LLM through a series of small, manageable tasks. This granular approach reduces ambiguity, allowing the LLM to process the information methodically and reducing the risk of hallucination or deviation from the expected path.
+多數內部知識庫文章很複雜，是為了人類閱讀而寫的。它們常包含複雜的圖表、多步驟流程和決策樹，讓 LLM 方案很難有意義地推理。把這些文件拆成 routine，就能把每個指令簡化、整理成適合引導 LLM 完成一連串小而可管理任務的格式。這種細粒度的做法能降低歧義，讓 LLM 有條理地處理資訊，也降低 hallucination 或偏離預期路徑的風險。
 
-Converting these knowledge base articles into routines can be time-consuming and challenging, especially for companies attempting to build an automated pipeline. Each routine must account for various user scenarios, where actions need to be clearly defined. For instance, when a function call is necessary, the routine must specify the exact information to retrieve or the action to execute—whether it’s triggering an API, retrieving external data, or pulling in additional context. While automating this process with traditional GPT-class models can significantly reduce the manual effort involved, it often introduces new challenges. Some challenges include designing robust instructions that are specific enough for the LLM to follow consistently, capturing unique edge cases that may arise during customer interactions, providing high-quality few-shot examples to guide the model’s behavior, and in some cases, fine-tuning the model to achieve more reliable or specialized outcomes.
+把這些知識庫文章轉成 routine 既耗時又有挑戰，尤其是想建自動化 pipeline 的公司。每個 routine 都要涵蓋各種使用者情境，動作也要定義清楚。例如需要 function call 時，routine 必須指明要取得的確切資訊或要執行的動作，不管是觸發 API、取得外部資料，還是拉進額外的 context。用傳統 GPT 類模型自動化這個流程可以大幅減少人工，但常常帶來新問題，例如：要設計夠具體、讓 LLM 能穩定遵循的指令，要涵蓋客戶互動中可能出現的獨特邊界情況，要提供高品質的 few-shot 範例來引導模型行為，有時還要 fine-tuning 模型才能得到更可靠或更專門的結果。
 
-o1 has demonstrated the capability to efficiently deconstruct these articles and convert them into sets of routines zero-shot, meaning that the LLM can understand and follow the instructions without extensive examples or prior training on similar tasks. This minimizes the prompting effort required, as the routine structure itself provides the necessary guidance for the LLM to complete each step. By breaking down tasks into specific actions and integrating function calls where needed, o1’s approach ensures that even complex workflows can be handled seamlessly by the LLM, leading to more effective and scalable customer service solutions.
+o1 已經展現出能有效拆解這些文章，並以 zero-shot 的方式轉成一組 routine 的能力。zero-shot 的意思是 LLM 不需要大量範例，或事先在類似任務上訓練，就能理解並遵循指令。這減少了需要的 prompt 工作，因為 routine 本身的結構就提供了完成每一步所需的引導。o1 的做法把任務拆成具體動作，並在需要時整合 function call，確保 LLM 連複雜的工作流程也能順暢處理，帶來更有效、更可擴展的客服方案。
 
-## Selecting Knowledge Base Articles
+## 選擇知識庫文章
 
-In this example, we will use a set of publicly available Help Center articles from the OpenAI website and convert them into internal routines that an LLM can execute. Besides transforming the policies into routines, we will also have the model generate functions that allow the LLM to perform actions on behalf of the user. This is necessary to allow the LLM to execute the same actions that human agents have, and access additional information that may not be immediately available just from the policy documentation.
+這個範例用 OpenAI 網站上公開的一組 Help Center 文章，把它們轉成 LLM 可以執行的內部 routine。除了把 policy 轉成 routine，也讓模型產生 function，讓 LLM 可以代替使用者執行動作。這是必要的，這樣 LLM 才能做人工客服做得到的事，並取得光看 policy 文件無法立即得到的額外資訊。
 
-We will begin by using the following Help Center articles for conversion into routines:
+一開始用下面這幾篇 Help Center 文章轉成 routine：
 - [How do I delete my payment method](https://help.openai.com/en/articles/8156070-how-do-i-delete-my-payment-method)
 - [How can I get a Business Associate Agreement (BAA) with OpenAI?](https://help.openai.com/en/articles/8660679-how-can-i-get-a-business-associate-agreement-baa-with-openai)
 - [How can I set up prepaid billing?](https://help.openai.com/en/articles/8264644-how-can-i-set-up-prepaid-billing)
@@ -42,13 +50,13 @@ client = OpenAI()
 MODEL = 'o1-preview'
 ```
 
-We have our articles stored in an accessible csv. We will take the articles and pass them to o1-preview in parallel and generate the initial routines.
+文章存在一個可以讀取的 csv 裡。我們把文章平行丟給 o1-preview，產生最初的 routine。
 
-Our instructions for converting the policy to a routine include:
-- Converting the policy from an external facing document to an internal SOP routine
-- Breaking down the policy in specific actions and sub-actions
-- Outlining specific conditions for moving between steps
-- Determining where external knowledge/actions may be required, and defining functions that we could use to get that information
+把 policy 轉成 routine 的指令包括：
+- 把 policy 從對外的文件轉成內部的 SOP routine
+- 把 policy 拆成具體的動作和子動作
+- 列出在步驟之間移動的具體條件
+- 判斷哪些地方可能需要外部知識/動作，並定義可以用來取得那些資訊的 function
 
 ```python
 articles = []
@@ -129,7 +137,7 @@ with ThreadPoolExecutor() as executor:
     results = list(executor.map(process_article, articles))
 ```
 
-We'll store the results of our routines in a dataframe and print them out so we can get an initial look.
+把 routine 的結果存進 dataframe 並印出來，先看個大概。
 
 ```python
 df = pd.DataFrame(results)
@@ -157,20 +165,30 @@ display_formatted_dataframe(df)
     <IPython.core.display.HTML object>
     ```
 
-## Results
+## 結果
 
-Upon reviewing the generated routines, we can derive several insights:
-- Sample Responses: The model effectively generates sample responses that the LLM can utilize when executing the policy (e.g., “Instruct the user: ‘Confirm and purchase your initial amount of credits.’”).
-- Discrete Steps: The model excels at decomposing the problem into discrete actions that the LLM needs to execute. Each instruction is clearly defined and easy to interpret.
-- Function Definitions: The routines’ outputs include clearly defined functions to retrieve external information or trigger actions (e.g., `review_and_apply_tax_exemption`, `get_billing_plan`, `update_payment_method`).
-    - This is crucial for any successful routine because LLMs often need to interact with external systems. Leveraging function calls is an effective way to interact with those systems and execute actions.
-- IFTTT Logic: The model effectively employs IFTTT (If This, Then That) logic, which is ideal for an LLM (e.g., “If the customer requests assistance, proceed to step 3f.”).
-    - This type of translation becomes extremely valuable when the original knowledge base articles contain complex workflows and diagrams. Such complexity may not be easily understood by humans, and even less so by an LLM. IFTTT logic is easily comprehensible and works well for customer service solution
+檢視產生的 routine 後，可以得到幾個觀察：
+- 範例回應：模型能有效產生 LLM 執行 policy 時可以使用的範例回應（例如 “Instruct the user: ‘Confirm and purchase your initial amount of credits.’”）。
+- 離散的步驟：模型很擅長把問題拆成 LLM 需要執行的離散動作。每個指令都定義清楚、容易理解。
+- Function 定義：routine 的輸出包含明確定義的 function，用來取得外部資訊或觸發動作（例如 `review_and_apply_tax_exemption`、`get_billing_plan`、`update_payment_method`）。
+    - 這對任何成功的 routine 都很關鍵，因為 LLM 常常需要跟外部系統互動。用 function call 是跟這些系統互動並執行動作的有效方式。
+- IFTTT 邏輯：模型有效運用了 IFTTT (If This, Then That) 邏輯，這很適合 LLM（例如 “If the customer requests assistance, proceed to step 3f.”）。
+    - 當原始知識庫文章含有複雜的工作流程和圖表時，這種轉換特別有價值。這種複雜度人類不一定看得懂，LLM 更難。IFTTT 邏輯容易理解，很適合客服方案
 
-## Where do we go from here?
+## 接下來呢？
 
-These routines can now be integrated into agentic systems to address specific customer issues. When a customer requests assistance with tasks such as setting up prepaid billing, we can employ a classifier to determine the appropriate routine to retrieve and provide that to the LLM to interact directly with the customer. Beyond providing instructions to the user on *how* to set up billing, the system can also perform the action on their behalf.
+這些 routine 現在可以整合進 agentic 系統，處理特定的客戶問題。當客戶請求協助設定 prepaid billing 之類的事情時，我們可以用 classifier 判斷該用哪個 routine，取出來交給 LLM 直接跟客戶互動。系統不只可以告訴使用者「怎麼」設定帳單，還可以代替他們執行這個動作。
 
-Before deploying these routines into production, we should develop comprehensive evaluations to test and validate the quality of the model’s responses. This process may necessitate adjusting the routines to ensure compliance and effectiveness.
+在把這些 routine 部署到正式環境之前，應該建立完整的 eval 來測試並驗證模型回應的品質。這個過程可能需要調整 routine，以確保合規性和有效性。
 
-<!-- tutor:summary -->
+## 重點整理
+- Routine 是把給人看的 policy 拆成 LLM 可逐步執行的動作，每一步對應一個明確動作。
+- o1 可以 zero-shot 做這個轉換，不需要大量範例或 fine-tuning。
+- 好的 routine 要有範例回應、離散步驟、function 定義和 IFTTT 條件分支。
+- Function 定義讓 LLM 能跟外部系統互動，代替使用者執行動作。
+- 上線前要先建 eval 驗證品質，再回頭調整 routine。
+
+## 練習
+1. 在頁面的 csv 裡多加一篇 Help Center 文章，一起丟給 o1-preview 產生 routine。
+2. 修改轉換指令，要求每個 routine 的每一步都附上一句範例回應，看輸出有什麼變化。
+3. 挑一個產生出來的 routine，手動檢查每個 function 的參數是否足夠，把缺的補進指令後重跑。

@@ -1,113 +1,125 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/chatgpt_prompt_guide/chatgpt_prompt_guide.md
 ---
 
-# ChatGPT Enterprise Prompting Guide
+# ChatGPT Enterprise Prompting 指南
 
 > 原文：[examples/chatgpt/chatgpt_prompt_guide/chatgpt_prompt_guide.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/chatgpt_prompt_guide/chatgpt_prompt_guide.md)
 
-Cookbook for writing better prompts for everyday work in ChatGPT Enterprise.
+在 ChatGPT Enterprise 裡寫出更好的日常工作 prompt 的 Cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這是一份給 ChatGPT Enterprise 使用者的 prompt 寫法指南，不需要進階技術背景。它從心態、界定範圍、結構化寫 prompt、meta-prompting 到提高準確度，一路用實際例子帶你把日常任務寫清楚。
+
+## 學完你會
+
+- 用 `# Context`、`# Instructions`、`# Additional Information` 三段結構寫出清楚的 prompt
+- 把一個太大的任務縮成「一個 prompt 對一個產出」，換到更有深度的結果
+- 用 meta-prompting 讓 ChatGPT 幫你改 prompt，並加上來源、自我檢查等準確度護欄
+
+## 開跑前
+
+需要有 ChatGPT Enterprise 帳號。想直接套用的話，可以裝文中提供的 Skill。
 
 
-This guide is for Enterprise users who want more reliable results from ChatGPT without needing advanced technical expertise. It is a practical, example-driven guide that is easy to apply to your everyday work, whether that’s summarizing documents, drafting emails, translating content, analyzing simple scenarios, or brainstorming narratives.
+這份指南是給想從 ChatGPT 得到更穩定結果的 Enterprise 使用者，不需要進階技術背景。內容偏實務、以例子為主，容易套用在日常工作上，不管是摘要文件、起草 email、翻譯內容、分析簡單情境，還是發想敘事。
 
-Note, there is no single perfect prompt template. This guide is designed to help you make your task clear enough for ChatGPT to produce reliable, useful results.
+注意，並沒有一個完美的 prompt 範本。這份指南的目的是幫你把任務講得夠清楚，讓 ChatGPT 能產出可靠又有用的結果。
 
 > <details>
-> <summary><strong>Start using this right away</strong> — install the accompanying Skill and apply these best practices immediately</summary>
+> <summary><strong>馬上開始用</strong>：安裝附帶的 Skill，立刻套用這些最佳做法</summary>
 > 
-> Don't have time to read the full guide right now? You can start applying these prompting best practices immediately by installing the accompanying Skill in ChatGPT.
+> 現在沒時間讀完整份指南？可以在 ChatGPT 安裝附帶的 Skill，馬上套用這些 prompt 最佳做法。
 > 
-> **Download the Skill here:** [Prompting Best Practices Skill](https://cdn.openai.com/cookbook/chatgpt-prompt-guide/prompt-redrafter.zip)
+> **在這裡下載 Skill：** [Prompting Best Practices Skill](https://cdn.openai.com/cookbook/chatgpt-prompt-guide/prompt-redrafter.zip)
 > 
-> Skills are small reusable add-ons that teach ChatGPT how to perform a specific task or follow a repeatable workflow. This Skill is designed to help apply the guidance in this guide more consistently, so you can get better results with less setup each time.
+> Skill 是小型、可重複使用的附加功能，教 ChatGPT 怎麼做特定任務或照固定流程做事。這個 Skill 幫你更一致地套用這份指南的建議，每次不用多做設定就能得到比較好的結果。
 > 
-> **To install it:**
-> 1. Download the Skill from the link above
-> 2. Log into ChatGPT
-> 3. Click your profile icon in ChatGPT
-> 4. Select Skills in the pop-up menu
-> 5. Click **New Skill**
-> 6. Select **Upload from your computer**
-> 7. Upload the downloaded file
-> 8. Start a new chat and use it in your everyday work
+> **安裝步驟：**
+> 1. 從上面的連結下載 Skill
+> 2. 登入 ChatGPT
+> 3. 點 ChatGPT 的個人頭像
+> 4. 在跳出的選單選 Skills
+> 5. 點 **New Skill**
+> 6. 選 **Upload from your computer**
+> 7. 上傳剛下載的檔案
+> 8. 開新對話，在日常工作中使用
 > 
-> Then, when you have time, come back to this guide for the deeper explanations, examples, and reasoning behind the approach.
+> 等你有時間，再回來讀這份指南，看更深入的說明、例子和背後的道理。
 > </details>
 
-## **Table of Contents**
-1. [Introduction](#1-introduction)
-2. [Mindset](#2-mindset)
-3. [Scope the problem](#3-scope-the-problem)
-4. [Write the prompt clearly](#4-write-the-prompt-clearly)
-5. [Use ChatGPT to help you prompt (meta-prompting)](#5-use-chatgpt-to-help-you-prompt-meta-prompting)
-6. [Improve accuracy](#6-improve-accuracy)
-7. [Conclusion](#7-conclusion)
-8. [Prompting 101 Examples](#prompting-101-examples)
+## **目錄**
+1. [簡介](#1-introduction)
+2. [心態](#2-mindset)
+3. [界定問題範圍](#3-scope-the-problem)
+4. [把 prompt 寫清楚](#4-write-the-prompt-clearly)
+5. [用 ChatGPT 幫你寫 prompt（meta-prompting）](#5-use-chatgpt-to-help-you-prompt-meta-prompting)
+6. [提高準確度](#6-improve-accuracy)
+7. [結論](#7-conclusion)
+8. [Prompting 101 範例](#prompting-101-examples)
 
-## 1. Introduction
-Prompt engineering is the art and science of designing and optimizing prompts to effectively interact with language models and to get responses that are accurate, concise, and relevant.
+## 1. 簡介
+Prompt engineering 是設計和優化 prompt 的藝術與科學，目的是跟語言模型有效互動，得到準確、簡潔又切題的回應。
 
-Large language models generate responses by predicting the next word based on patterns learned from data. That’s why the way you ask matters so much: your prompt is the model’s starting point for what “good” looks like.
+大型語言模型是根據從資料學到的模式，一個字一個字預測下一個字來產生回應。所以你怎麼問很重要：你的 prompt 就是模型判斷「好」長什麼樣子的起點。
 
-A few key themes to guide these next sections: 
-- Prompting isn’t about tricking the model - it’s about being clear about the job, the context, and what success looks like.
-- Prompting is iterative (and that’s normal) – Don’t expect your first prompt to work perfectly. Try something, fail, learn from the failure, and build a better prompt. You should expect to refine prompts over time.
+接下來幾節有幾個主軸：
+- Prompting 不是要騙模型，而是要把工作、背景和成功的標準講清楚。
+- Prompting 是反覆調整的過程（這很正常）。不要期待第一個 prompt 就完美。試一下、失敗、從失敗學到東西，再寫出更好的 prompt。你應該預期 prompt 要隨時間一直調整。
 
-## 2. Mindset
-**Treat your prompt like a “handoff” to a new intern**
+## 2. 心態
+**把 prompt 當成交給新實習生的 "handoff"**
 
-Imagine you’re assigning work to a smart intern on their first week. They’re eager and capable — but they don’t know your project, your preferences, or what your team considers “good.” They can’t fill in missing context the way a longtime coworker can.
+想像你要把工作交給一位剛到職第一週的聰明實習生。他很積極也有能力，但不知道你的專案、你的偏好，或你的團隊覺得什麼算「好」。他沒辦法像資深同事那樣自己補上缺少的背景。
 
-If you were handing off a task, especially to a new intern, you’d usually include:
-* What you’re working on (background + why it matters)
-* What you want them to do (the specific task)
-* What “good” looks like (audience, tone, format, and any must-include points)
+如果你要交付一項任務，尤其是交給新實習生，通常會交代：
+* 你在做什麼（背景加上為什麼重要）
+* 你要他做什麼（具體任務）
+* 「好」長什麼樣（對象、語氣、格式，還有一定要包含的重點）
 
-The same mindset works for prompts. You’re not just asking a question — you’re defining a task so ChatGPT can deliver something you can actually use.
+寫 prompt 也是同樣的心態。你不只是問一個問題，而是在定義一項任務，讓 ChatGPT 交出你真的能用的東西。
 
-**Optimize for clarity, not cleverness**
+**追求清楚，不要追求聰明**
 
-Many prompts fail for simple reasons: the model wasn’t told the audience, the format, or the decision criteria. If you make those explicit, quality tends to jump quickly.
+很多 prompt 失敗的原因很單純：沒告訴模型讀者是誰、要什麼格式、用什麼標準做決定。把這些講明白，品質通常會快速提升。
 
-**Sanity check:** If you showed your prompt to someone outside your role or your organization, would they understand what you want without additional explanation?
+**自我檢查：** 如果你把 prompt 給不同職務或不同組織的人看，他們不用額外解釋就能懂你要什麼嗎？
 
-## 3. Scope the problem 
+## 3. 界定問題範圍
 
-Scoping is defining success and limits before you start. Good scope prevents long, flailing prompts and reduces wasted iterations. It also makes results easier to trust because you’ve clearly defined what “good” looks like.
+界定範圍就是在開始之前先定義成功的標準和界線。範圍抓得好，就不會寫出又長又散的 prompt，也能減少白費的來回修改。因為你已經清楚定義了「好」是什麼，結果也比較容易讓人信任。
 
-### A. Before you write anything, think carefully 
+### A. 動筆之前，先仔細想
 
-* **What context do I need to feed the model to understand this task?**
-* **What is the single output I want?**
-Examples: “a 300‑word executive summary,” “an email reply draft,” “a table of key facts.”
-* **What formatting and settings matter?**
-Length, tone, bullets vs. paragraph, legal/regulatory restrictions, which data sources to use.
-* **What will I judge as “good”?**
-Clarity, accuracy, style, or a checklist of items the reply must include.
+* **模型需要什麼背景才能理解這個任務？**
+* **我要的單一產出是什麼？**
+例如：「300 字的主管摘要」、「一封回信草稿」、「一張重點事實表」。
+* **哪些格式和設定很重要？**
+長度、語氣、條列還是段落、法律或法規限制、要用哪些資料來源。
+* **我會用什麼標準判斷「好」？**
+清晰度、正確性、風格，或是回覆必須包含的項目清單。
 
-**Rule of thumb:** If you can’t describe “good” in one or two sentences, the model can’t reliably hit it either.
+**經驗法則：** 如果你沒辦法用一兩句話描述「好」，模型也沒辦法穩定做到。
 
-### B. Scope the problem to what a prompt can do
-**Remember: A single prompt can only do so much.** If you keep expanding a prompt to include more tasks, more formats, and more edge cases, you’re more likely to get shallow, inconsistent, or incomplete results. Tight scope usually beats a “do everything” prompt.
+### B. 把問題縮到 prompt 做得到的範圍
+**記住：單一 prompt 能做的事有限。** 如果你一直擴充 prompt，加進更多任務、更多格式、更多邊界情況，就更可能得到淺薄、不一致或不完整的結果。範圍收緊通常勝過「什麼都做」的 prompt。
 
-**Why?** ChatGPT typically produces a similar amount of output each time. If you ask it to cover more things, it spreads that same amount of attention across everything — which means less depth per item. More tasks → thinner answers.
+**為什麼？** ChatGPT 每次產出的量通常差不多。你要它涵蓋的東西越多，同樣的注意力就分散到每一項，每項的深度就變少。任務越多，答案越薄。
 
-So when a prompt feels vague or overloaded, shrink it until it’s clearly one deliverable.
+所以當 prompt 感覺模糊或塞太滿，就把它縮到清楚只有一個交付物。
 
-For example, if you ask ChatGPT to “Write a biography for each president of the US”, it will likely return 45 1-sentence summaries. But if you ask ChatGPT to “Write a section of a biography of the 6th president of the US, focusing only on his first year in office”, then it will return a lot of depth on major highlights of 1 year in office
+例如，你叫 ChatGPT「幫每一任美國總統寫傳記」，它大概會回 45 個一句話的摘要。但如果你說「寫第 6 任美國總統傳記的一個段落，只聚焦在他上任第一年」，它就會對那一年的重點事件講得很深入。
 
-**Smaller scope → better depth and control.** Break up your prompts into multiple separate prompts if required.
+**範圍越小，深度和掌控度越好。** 必要的話，把 prompt 拆成多個獨立的 prompt。
 
-## 4. Write the prompt clearly 
-**Before you write the full prompt, take 30 seconds to outline the job in a simple structure. The easiest way is to use headings.**
+## 4. 把 prompt 寫清楚
+**寫完整的 prompt 之前，先花 30 秒用簡單的結構把工作列出來。最簡單的方法是用標題。**
 
-All LLMs understand a language called “markdown” – the easiest aspect to master in markdown is that “#” is a label for “Header”. So in ChatGPT, the model understands that a line that starts with “#” is a section or header title in a document. It helps both you and ChatGPT quickly see what each part of the prompt is doing.
+所有 LLM 都看得懂一種叫 "markdown" 的語言，其中最容易學會的是用 "#" 代表標題。所以在 ChatGPT 裡，模型知道以 "#" 開頭的那行是文件的段落或標題。這能讓你和 ChatGPT 很快看出 prompt 每個部分在做什麼。
 
-We recommend the prompt layout below. Below are several examples using real use cases.
+我們建議用下面的 prompt 版面。下面也有幾個實際使用情境的例子。
 
 ```md
 # Context
@@ -120,12 +132,12 @@ Exactly what you want ChatGPT to do.
 Anything it must follow: tone, length, rules, constraints, etc.
 ```
 
-This is a minimal recommended structure, not a fixed template. You can add, remove, or rename headers as needed to fit the task.
+這是最精簡的建議結構，不是固定範本。你可以依任務需要新增、刪除或改標題名稱。
 
 ### Context
-In Context, we recommend you encourage the model to adopt a persona.
+在 Context 這段，建議讓模型扮演某個角色（persona）。
 
-**Examples**
+**範例**
 
 * “You are a program manager writing a weekly status update.”
 * “You are a customer support lead drafting a calm, helpful reply.”
@@ -134,9 +146,9 @@ In Context, we recommend you encourage the model to adopt a persona.
 
 ### Instructions
 
-In Instructions, you should clearly list exactly what you want ChatGPT to do. 
+在 Instructions 這段，清楚列出你要 ChatGPT 做的每一件事。
 
-**Examples**
+**範例**
 * “Extract relevant information and present it in a clean, organized format.”
 * “Read the document and produce a 3–5 bullet executive summary”
 * “Provide a recommendation with 2–3 supporting reasons.”
@@ -144,61 +156,61 @@ In Instructions, you should clearly list exactly what you want ChatGPT to do.
 
 ### Additional Information
 
-In Additional Information, below are some examples of what to include to improve output quality:
+在 Additional Information 這段，以下是一些可以加進去提高輸出品質的項目：
 
-* Goal: What does “good” look like? <br>
-Examples: “3‑sentence executive summary with actions,” “CSV of extracted table rows,” “policy draft for managers.”
-* Audience / tone: Who’s reading it? <br>
-Senior exec, legal, developer, customer, internal team - each implies different language and detail level.
-* Format & length: What shape should the output take? <br>
-Bulleted list, table, JSON, 100–200 words, or “one slide worth of content.”
-* Coverage: What must it consider, and what can it ignore? <br>
-Which documents, time period, departments, or regions matter?
-* Constraints: Anything non‑negotiable. <br>
-Deadlines, data privacy rules, prohibited content, “don’t invent facts,” “don’t include names,” etc.
-* Acceptance criteria: How you’ll decide it’s correct. <br>
-Examples: “contains 3 action items,” “matches our template,” “valid CSV that parses.”
+* 目標（Goal）：「好」長什麼樣？ <br>
+例如：「附行動項目的 3 句主管摘要」、「抽出表格資料列的 CSV」、「給主管用的政策草稿」。
+* 對象與語氣（Audience / tone）：誰會讀？ <br>
+資深主管、法務、開發者、客戶、內部團隊，每種都對應不同的用語和細節程度。
+* 格式與長度（Format & length）：輸出該是什麼形狀？ <br>
+條列、表格、JSON、100 到 200 字，或「一張投影片的內容量」。
+* 涵蓋範圍（Coverage）：必須考慮什麼、可以忽略什麼？ <br>
+哪些文件、時間範圍、部門或地區重要？
+* 限制（Constraints）：不可妥協的事。 <br>
+截止時間、資料隱私規則、禁止內容、「不要捏造事實」、「不要包含姓名」等。
+* 驗收標準（Acceptance criteria）：你怎麼判斷它對不對。 <br>
+例如：「包含 3 個行動項目」、「符合我們的範本」、「可以被解析的有效 CSV」。
 
-## 5. Use ChatGPT to help you prompt (meta-prompting)
+## 5. 用 ChatGPT 幫你寫 prompt（meta-prompting）
 
-Meta-prompting is when you use ChatGPT to **write or improve your prompt.** You're essentially asking the model to help you give it better instructions. This is especially helpful when you know what you want, but you're not sure how to phrase it clearly or consistently.
+Meta-prompting 是用 ChatGPT 來**寫或改進你的 prompt**。本質上是請模型幫你給它更好的指示。當你知道自己要什麼、但不確定怎麼清楚或一致地表達時，特別有用。
 
-To do this, simply paste in your messy notes to ChatGPT (or use the speech feature to talk to it directly) and ask ChatGPT for help making the prompt clearer: ask it to ask you questions, ask it to play back what you're trying to do, identify missing gaps, etc.
+做法很簡單：把你零散的筆記貼給 ChatGPT（或用語音功能直接跟它講），請它幫你把 prompt 寫得更清楚，例如請它反問你問題、請它複述你想做的事、找出缺漏的地方等等。
 
-You can also use a **Skill** to assist with this. For example, if you find yourself repeatedly asking ChatGPT to clean up rough prompts in a consistent way, a prompt-redrafting Skill can turn that into a more repeatable workflow.
+你也可以用 **Skill** 來輔助。例如，你常常要 ChatGPT 用固定方式整理粗糙的 prompt，prompt 重寫的 Skill 就能把它變成可重複的流程。
 
-**Example Prompt**
+**範例 prompt**
 
 ```
 Help me build a prompt that I can feed to a GenAI language model. I'm going to paste my draft prompt below - you ask me questions, then write up a clean prompt summarizing what we covered. The final prompt should have 3 sections ("# Context", "# Instructions", and "# Additional Information").
 ```
 
-**When *not* to meta‑prompt**
+**什麼時候*不要*用 meta-prompting**
 
-Meta‑prompting isn't the right tool when:
+下面這些情況，meta-prompting 不是對的工具：
 
-* The task is already simple and you can write the prompt directly
-* The missing piece is **source material** (you need the right document or data, not a prettier prompt)
-* You're trying to "prompt your way" out of unclear requirements - scoping still comes first
+* 任務已經很簡單，直接寫 prompt 就好
+* 缺的是**原始資料**（你需要的是對的文件或資料，不是更漂亮的 prompt）
+* 你想靠「prompt」硬解決需求不清楚的問題，界定範圍還是要先做
 
-Skills can help make meta-prompting more consistent, but they do not replace good scoping or the need for the right source material.
+Skill 可以讓 meta-prompting 更一致，但取代不了好的範圍界定，也取代不了正確的原始資料。
 
-## 6. Improve accuracy
+## 6. 提高準確度
 
-If the output must be factual or high‑stakes, add simple guardrails:
+如果輸出必須符合事實，或風險很高，就加上簡單的護欄：
 
-* **Ask for sources** (or ask it to quote directly from the provided material when possible).
-* **Mark uncertainty:** “Label anything uncertain with (needs verification).”
-* **Add a quality checklist** at the end of your prompt:
+* **要求提供來源**（或在可能時要求直接引用你提供的資料）。
+* **標示不確定的地方：**「不確定的地方請標上 (needs verification)。」
+* **在 prompt 最後加品質檢查清單：**
     * “Make sure the output includes X, Y, Z; avoid A, B.”
-* **Request self‑checks:**
+* **要求自我檢查：**
     * “Before finishing, list any assumptions you made.”
 
-This is one of the fastest ways to catch “confident guesses” early.
+這是及早抓到「很有自信的亂猜」最快的方法之一。
 
-Additionally, make sure the model has all the context it needs. For example, make sure to upload relevant files and/or connect to relevant ChatGPT Apps. 
+另外，要確保模型有它需要的所有背景。例如記得上傳相關檔案，或連接相關的 ChatGPT Apps。
 
-To test accuracy, we recommend running a small evaluation. Come up with 5-10 questions (where you know the answer). Then ask ChatGPT to write up its answers and compare the results. Alternatively, you could even ask ChatGPT to review an output, with a prompt like this: 
+要測試準確度，建議跑一個小型 eval。想 5 到 10 個你知道答案的問題，請 ChatGPT 寫出答案，再比對結果。你也可以請 ChatGPT 檢查一份輸出，用像這樣的 prompt：
 
 ```
 Check the output for:
@@ -209,39 +221,38 @@ Check the output for:
 - Assumptions: Are any guesses clearly labeled?
 ```
 
-## 7. Conclusion
-The fastest way to get more reliable results from ChatGPT Enterprise is to treat each prompt like a clear handoff: share the minimum background, define the task, and describe what "good" looks like. When you do that, you'll spend less time wrestling with inconsistent outputs and more time shipping work you can actually use.
+## 7. 結論
+想從 ChatGPT Enterprise 得到更可靠的結果，最快的方法是把每個 prompt 當成一次清楚的 handoff：提供最少必要的背景、定義任務、描述「好」長什麼樣。這樣做的話，你花在對付不一致輸出的時間會變少，花在交出真正能用的成果的時間會變多。
 
-Remember:
-* Scope first: one prompt, one deliverable. Smaller scope leads to better depth and fewer surprises.
-* Structure your prompt: use simple headings like # Context, # Instructions, and # Additional Information / Constraints to remove ambiguity.
-* Iterate intentionally: if the first result is off, refine the prompt based on what went wrong (missing context, unclear format, unclear audience, overloaded asks).
-* Add accuracy guardrails when it matters: ask for sources or quotes when possible.
+記住：
+* 先界定範圍：一個 prompt 對一個交付物。範圍越小，深度越好，意外也越少。
+* 結構化你的 prompt：用 # Context、# Instructions、# Additional Information / Constraints 這類簡單標題，消除模糊空間。
+* 有意識地反覆調整：第一次結果不對，就根據出錯的地方改 prompt（缺背景、格式不清楚、對象不清楚、要求塞太多）。
+* 重要的時候加上準確度護欄：盡量要求提供來源或引用。
+如果你一直照著這些原則做，輸出會更清楚、更可信，也更快變成有價值的成果。接下來我們用一些 prompt 範例把這些東西具體化，針對常見的日常任務，示範 OK → Good → Excellent 的 prompt 寫法。
 
-If you follow this guidance consistently, you'll get outputs that are clearer, more trustworthy, and faster to turn into valuable work. Next, we'll make this concrete with some prompt examples showing OK → Good → Excellent prompts across common everyday tasks.
+## Prompting 101 範例
 
-## Prompting 101 Examples
+為了說明普通、好、優秀 prompt 的差別，先從一個簡單的例子開始。
 
-To illustrate the difference between okay, good, and excellent prompts, let’s start with a simple example.
-
-#### Okay prompt (task)  
+#### Okay prompt（任務）  
 ```md
 Tell me about perennial gardening.
 ```
 
-#### Good prompt (+ context / persona)
+#### Good prompt（加上 context / persona）
 ```md
 I am a novice gardener living in Northern Virginia. Tell me about perennial gardening. I am interested in planting some perennials in a 10 ft x 10 ft flower bed in front of my house.
 ```
 
-#### Excellent prompt (+ output) 
+#### Excellent prompt（再加上輸出要求） 
 ```md
 I am a novice gardener living in Northern Virginia. Tell me about perennial gardening. I am interested in planting some perennials in a 10 ft x 10 ft flower bed in front of my house. Provide a beginners guide to perennial gardening in my area with step by step instructions. Include a list of recommended plants for my area and a shopping list of supplies I need to buy. 
 ```
 
-With that foundation in mind, here are a few practical use cases.
+有了這個基礎，接下來看幾個實用情境。
 
-### 1. Summarize a Document
+### 1. 摘要文件
 
 #### 1. Okay prompt
 ```md 
@@ -324,7 +335,7 @@ Create a decision-ready summary of the document below.
 - If there are multiple sections, preserve structure by grouping takeaways by section
 ```
 
-### 2. Search for (Apps)
+### 2. 搜尋（Apps）
 
 #### 1. Okay prompt
 ```md
@@ -407,7 +418,7 @@ If two docs disagree:
 - Keep it concise and skimmable
 ```
 
-### 3. Adopt a Persona
+### 3. 扮演角色（Persona）
 
 #### 1. Okay prompt
 
@@ -484,7 +495,7 @@ Review the memo below as if it’s headed to an exec approval meeting. Pressure-
 [paste memo here or attach as file]
 ```
 
-### 4. Research for… (Deep Research)
+### 4. 研究（Deep Research）
 
 #### 1. Okay prompt
 ```md
@@ -563,4 +574,16 @@ For each city:
 5) Sources
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 把 prompt 當成交給新實習生的 handoff：背景、任務、「好」的標準都要講。
+- 一個 prompt 對一個交付物，範圍越小深度越好。
+- 用 Context、Instructions、Additional Information 三段結構消除模糊。
+- Meta-prompting 適合「知道要什麼但不會講」，缺原始資料或需求不清時沒用。
+- 重要任務加上來源、不確定標記、自我檢查，並用 5 到 10 題已知答案的小 eval 驗證。
+
+## 練習
+
+1. 挑一個你這週真的要做的任務（例如摘要一份文件），先寫成 Okay prompt，再照三段結構改成 Excellent prompt，比較兩次輸出。
+2. 把一個「寫每個部門的年度報告」這種過大的 prompt，拆成三個各只有一個交付物的 prompt，看每份的深度有什麼差別。
+3. 用 meta-prompting 讓 ChatGPT 反問你問題來改寫你的 prompt，然後設計 5 題你知道答案的題目，跑一次小 eval，看改寫前後準確度有沒有變。

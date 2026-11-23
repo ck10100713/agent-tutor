@@ -1,54 +1,63 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_jira.ipynb
 ---
-
-# GPT Actions library - Jira
+# GPT Actions 範例庫：Jira
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_jira.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_jira.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼做一個連到 Jira Cloud 的 GPT Action，讓使用者用自然語言讀寫某個專案裡的 issue。內容包含 Custom GPT 的 Instructions、OpenAPI schema，以及 Atlassian 的 OAuth 2.0 設定。
+
+## 學完你會
+- 在 Atlassian Developer Console 建一個 OAuth 2.0 (3LO) 應用，設定 Jira 的讀寫 scope。
+- 把 Instructions 和 OpenAPI schema 貼到 Custom GPT，並正確填入 `<CLOUD_ID>`。
+- 在 ChatGPT 填好 OAuth 欄位，再把 callback URL 回填到 Atlassian。
+
+## 開跑前
+- 需要一個 Atlassian Cloud（Jira）帳號，並有權限在 [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/) 建立應用。
+- 需要能建立 Custom GPT 的 ChatGPT 帳號。
 
 
 
-## Introduction
+## 簡介
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+這一頁是給要為特定應用開發 GPT Action 的開發者看的說明和指南。開始前，請先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions 範例庫簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零打造 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to Jira, Atlassian's tool for project and ticket management. This action assumes a user’s context and allows them to read and write to issues in a given project.
+這個 GPT Action 說明怎麼連到 Jira，也就是 Atlassian 的專案與工單管理工具。這個 action 以使用者自己的身分運作，可以讀寫指定專案裡的 issue。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to Jira Cloud
+**價值**：使用者可以用 ChatGPT 的自然語言能力，直接連到 Jira Cloud
 
-**Example Use Cases**: 
-- A user can load up recent issues for a particular project and use ChatGPT to provide solutions
-- A user can create and alter issues and sub-tasks and assign to specific users by instructing ChatGPT
+**使用情境範例**： 
+- 使用者載入某個專案最近的 issue，請 ChatGPT 提供解決方案
+- 使用者下指令讓 ChatGPT 建立、修改 issue 和 sub-task，並指派給特定人員
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
-- Application Website: https://<YOUR_SUBDOMAIN>.atlassian.net/jira
-- Application API Documentation: https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/
-- Application OAuth 2.0 Documentation: https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/
+開始前先看看這些連結：
+- 應用程式網站：https://<YOUR_SUBDOMAIN>.atlassian.net/jira
+- 應用程式 API 文件：https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/
+- 應用程式 OAuth 2.0 文件：https://developer.atlassian.com/cloud/jira/platform/oauth-2-3lo-apps/
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Ensure you have the access and permissions to create an application in the [Atlassian Cloud Developer Console](https://developer.atlassian.com/console/myapps/)
+開始前，先在應用程式環境完成下面的步驟：
+- 確認你有權限在 [Atlassian Cloud Developer Console](https://developer.atlassian.com/console/myapps/) 建立應用
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions 
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
 ```python
 **Context**: you are specialized GPT designed to create and edit issues through API connections to Jira Cloud. This GPT can create, read, and edit project issues based on user instructions.
@@ -63,9 +72,9 @@ Once you've created a Custom GPT, copy the text below in the Instructions panel.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
-*NOTE: Replace the placeholder <CLOUD_ID> in url with your cloud environment's unique ID. You can find this value by visiting https://<YOUR_SUBDOMAIN>.atlassian.net/_edge/tenant_info*
+*注意：把 url 裡的佔位符 <CLOUD_ID> 換成你雲端環境專屬的 ID。可以到 https://<YOUR_SUBDOMAIN>.atlassian.net/_edge/tenant_info 查到這個值*
 
 
 ```python
@@ -272,76 +281,85 @@ security:
       - write:jira-work
 ```
 
-## Authentication Instructions
+## 驗證設定說明
 
-Below are instructions on setting up authentication with Jira. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面說明怎麼設定 Jira 的驗證。有疑問的話，看 [Getting Started 範例](https://platform.openai.com/docs/actions/getting-started) 會有更詳細的說明。
 
 
-### Jira Steps
+### Jira 步驟
 
-1. <b>Create an Application</b>: The first step is to create a new application in Jira for the integration with ChatGPT. This can be done by visiting the [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/), Clicking **Create** and selecting **OAuth 2.0 Integration**. 
+1. <b>建立應用</b>：第一步是在 Jira 建一個新應用，用來跟 ChatGPT 整合。到 [Atlassian Developer Console](https://developer.atlassian.com/console/myapps/)，點 **Create**，選 **OAuth 2.0 Integration**。 
 
 ![gptactions_jira_devconsole.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_devconsole.png)
 
-From here, simply enter the name of your integration and click **Create**.
+接著輸入整合的名稱，點 **Create**。
 
 ![gptactions_jira_newapplication.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_newapplication.png)
 
-2. <b>Define Permissions</b>: Next we need to provide the required permissions to our application. Within the new application, open the **Permissions** menu from the sidebar, locate **Jira API** and click **Add** and then **Configure**.
+2. <b>設定權限</b>：接下來要給應用所需的權限。在新應用裡，從側邊欄打開 **Permissions** 選單，找到 **Jira API**，點 **Add**，再點 **Configure**。
 
 ![gptactions_jira_permissions.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_permissions.png)
 
-Required permissions will vary depending on the intended functionality of the GPT. In this scenario we wish to read and write to Jira issues, so select the following scopes under **Jira platform REST API** by clicking **Edit Scopes**:
+需要哪些權限取決於這個 GPT 要做什麼。這裡我們要讀寫 Jira issue，所以點 **Edit Scopes**，在 **Jira platform REST API** 底下選這幾個 scope：
 
 - read:jira-work
 - write:jira-work
 - read:jira-user
 
-Once selected, click **Save**
+選好後點 **Save**
 
 ![gptactions_jira_scopes.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_scopes.png)
 
-3. <b>Configure Placeholder Callback URL</b>: In order to complete the following step and obtain a **Client ID** and **Secret** for enabling secure authentication between ChatGPT and Jira, we first need to add a placeholder callback URL. We can achieve this by clicking on **Authorization** in the sidebar, and **Configure** next to **OAuth 2.0 (3LO)**. From here simply enter a placeholder URL and click **Save Changes**.
+3. <b>設定佔位用的 Callback URL</b>：要取得 **Client ID** 和 **Secret**（用來讓 ChatGPT 和 Jira 之間安全驗證），得先加一個佔位用的 callback URL。做法是點側邊欄的 **Authorization**，再點 **OAuth 2.0 (3LO)** 旁邊的 **Configure**。在這裡隨便輸入一個佔位 URL，點 **Save Changes**。
 
 
 ![gptactions_jira_placeholder.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_placeholder.png)
 
-4. <b>Application Client ID/Secret</b>: The next step is to locate the **Client ID** and **Secret** for enabling secure authentication between ChatGPT and Jira. We can find these values by clicking on **Settings** in the sidebar and scrolling down to **Authentication Details**. 
+4. <b>應用的 Client ID/Secret</b>：接著找出 **Client ID** 和 **Secret**。點側邊欄的 **Settings**，往下捲到 **Authentication Details** 就能看到。 
 
-      Keep this page open as we will require these values in the next stage of configuration!
+      這個頁面先不要關，下一階段的設定會用到這些值！
 
 ![gptactions_jira_clientsecret.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_clientsecret.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點 "Authentication"，選 **"OAuth"**，填入下面的資訊。 
 
-- **Client ID**: The **Client ID** from **Step 3** of Jira Configuration
-- **Client Secret**: The **Secret** from **Step 3** of Jira Configuration
-- **Authorization URL**: https://auth.atlassian.com/authorize
-- **Token URL**: https://auth.atlassian.com/oauth/token
-- **Scope**: read:jira-work write:jira-work read:jira-user 
-- **Token Exchange Method**: Default (POST Request)
+- **Client ID**：Jira 設定 **步驟 3** 取得的 **Client ID**
+- **Client Secret**：Jira 設定 **步驟 3** 取得的 **Secret**
+- **Authorization URL**：https://auth.atlassian.com/authorize
+- **Token URL**：https://auth.atlassian.com/oauth/token
+- **Scope**：read:jira-work write:jira-work read:jira-user 
+- **Token Exchange Method**：Default (POST Request)
 
-### Post-Action Steps
+### Action 設定後的步驟
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+在 ChatGPT 設好驗證之後，照下面的步驟回到應用程式完成 Action 的設定。
 
-- Copy the callback URL from the GPT Action
+- 從 GPT Action 複製 callback URL
 
 ![gptactions_jira_redirect.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_redirect.png)
 
-- In your application in the Atlassian Developer Console, navigate to the **Authorization** sidebar tab, next to **OAuth 2.0 (3L0)** click **Configure**, and add your callback URL under **Callback URL**
+- 在 Atlassian Developer Console 的應用裡，進到 **Authorization** 側邊欄分頁，點 **OAuth 2.0 (3L0)** 旁邊的 **Configure**，把你的 callback URL 加到 **Callback URL**
 
 
 ![gptactions_jira_callback.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_jira_callback.png)
 
-### FAQ & Troubleshooting
+### FAQ 與疑難排解
 
-- **Callback URL Error**: If you get a callback URL error in ChatGPT, double check the Callback URL value as it can occasionally change depending on any alterations made to the authentication
-
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- **Callback URL 錯誤**：如果在 ChatGPT 看到 callback URL 錯誤，請再確認 Callback URL 的值，因為驗證設定有改動時，它偶爾會變
 
 
-<!-- tutor:summary -->
+*有想要我們優先處理的整合嗎？我們的整合有錯誤嗎？歡迎在 github 提 PR 或 issue，我們會去看。*
+
+
+## 重點整理
+- GPT Action 由三塊組成：Custom GPT 的 Instructions、OpenAPI schema、驗證設定。
+- Jira 用 OAuth 2.0 (3LO)，scope 決定 GPT 能讀寫什麼，這裡只開 issue 與使用者的讀寫。
+- OpenAPI schema 的 URL 要帶自己的 `<CLOUD_ID>`，從 tenant_info 查得到。
+- 設定順序有個來回：先用佔位 callback URL 拿到 Client ID/Secret，ChatGPT 設完再把真正的 callback URL 回填 Atlassian。
+
+## 練習
+1. 查出你自己的 `<CLOUD_ID>`，換進頁面的 OpenAPI schema 的 url。
+2. 把 Custom GPT Instructions 改成只允許查詢、不允許建立 issue，並對應移除 `write:jira-work` scope。
+3. 在 OpenAPI schema 裡多加一個你需要的 Jira REST 端點（例如查詢單一 issue 的 comments），讓 GPT 能呼叫它。

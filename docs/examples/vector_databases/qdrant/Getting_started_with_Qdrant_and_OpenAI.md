@@ -1,40 +1,46 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/qdrant/Getting_started_with_Qdrant_and_OpenAI.ipynb
 ---
-
-# Using Qdrant as a vector database for OpenAI embeddings
+# 用 Qdrant 當 OpenAI embedding 的向量資料庫
 
 > 原文：[examples/vector_databases/qdrant/Getting_started_with_Qdrant_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/qdrant/Getting_started_with_Qdrant_and_OpenAI.ipynb)
 
+## 這篇在做什麼
+一步步示範把 Qdrant（用 Rust 寫的高效能向量搜尋資料庫）當向量資料庫，存 OpenAI embedding 並做最近鄰搜尋。資料用事先算好的 Wikipedia embedding，Qdrant 跑在本機。
 
+## 學完你會
+- 用 Docker 啟動本機 Qdrant，並用 `qdrant-client` 連線
+- 建一個同時有 title 和 content 兩種向量的 collection，並把資料載入
+- 把 query 轉成 embedding，用 `vector_name` 切換 title 或 content 搜尋
 
-<!-- tutor:goals -->
+## 開跑前
+- 本機有 Docker 可以啟動 Qdrant server
+- OpenAI API key，設成環境變數 `OPENAI_API_KEY`
 
+這個 notebook 帶你一步步用 **`Qdrant`** 當 OpenAI embedding 的向量資料庫。[Qdrant](https://qdrant.tech) 是用 Rust 寫的高效能向量搜尋資料庫，提供 RESTful 和 gRPC API 來管理 embedding。官方有 Python 的 [qdrant-client](https://github.com/qdrant/qdrant_client)，方便整合進你的應用。
 
-This notebook guides you step by step on using **`Qdrant`** as a vector database for OpenAI embeddings. [Qdrant](https://qdrant.tech) is a high-performant vector search database written in Rust. It offers RESTful and gRPC APIs to manage your embeddings. There is an official Python [qdrant-client](https://github.com/qdrant/qdrant_client) that eases the integration with your apps.
+完整流程是：
+1. 使用 OpenAI API 事先算好的 embedding。
+2. 把 embedding 存到本機的 Qdrant instance。
+3. 用 OpenAI API 把文字 query 轉成 embedding。
+4. 用 Qdrant 在建好的 collection 裡做最近鄰搜尋。
 
-This notebook presents an end-to-end process of:
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in a local instance of Qdrant.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using Qdrant to perform the nearest neighbour search in the created collection.
+### 什麼是 Qdrant
 
-### What is Qdrant
+[Qdrant](https://qdrant.tech) 是開源向量資料庫，可以把 neural embedding 連同 metadata（也就是 [payload](https://qdrant.tech/documentation/payload/)）一起存。payload 不只能保存某個 point 的額外屬性，也能拿來過濾。[Qdrant](https://qdrant.tech) 有獨特的過濾機制，直接內建在向量搜尋階段，所以非常有效率。
 
-[Qdrant](https://qdrant.tech) is an Open Source vector database that allows storing neural embeddings along with the metadata, a.k.a [payload](https://qdrant.tech/documentation/payload/). Payloads are not only available for keeping some additional attributes of a particular point, but might be also used for filtering. [Qdrant](https://qdrant.tech) offers a unique filtering mechanism which is built-in into the vector search phase, what makes it really efficient.
+### 部署方式
 
-### Deployment options
+[Qdrant](https://qdrant.tech) 有多種啟動方式，可以依應用的目標負載選擇託管方式：
 
-[Qdrant](https://qdrant.tech) might be launched in various ways, depending on the target load on the application it might be hosted:
+- 本機或地端，用 Docker container
+- 在 Kubernetes cluster，用 [Helm chart](https://github.com/qdrant/qdrant-helm)
+- 用 [Qdrant Cloud](https://cloud.qdrant.io/)
 
-- Locally or on premise, with Docker containers
-- On Kubernetes cluster, with the [Helm chart](https://github.com/qdrant/qdrant-helm)
-- Using [Qdrant Cloud](https://cloud.qdrant.io/)
+### 整合
 
-### Integration
-
-[Qdrant](https://qdrant.tech) provides both RESTful and gRPC APIs which makes integration easy, no matter the programming language you use. However, there are some official clients for the most popular languages available, and if you use Python then the [Python Qdrant client library](https://github.com/qdrant/qdrant_client) might be the best choice.
+[Qdrant](https://qdrant.tech) 同時提供 RESTful 和 gRPC API，不管你用什麼程式語言都很容易整合。另外也有針對主流語言的官方 client，如果你用 Python，[Python Qdrant client library](https://github.com/qdrant/qdrant_client) 大概是最好的選擇。
 
 ```python
 ! docker compose up -d
@@ -48,7 +54,7 @@ This notebook presents an end-to-end process of:
     [?25h
     ```
 
-We might validate if the server was launched successfully by running a simple curl command:
+可以用簡單的 curl 指令確認 server 是否啟動成功：
 
 ```python
 ! curl http://localhost:6333
@@ -60,22 +66,22 @@ We might validate if the server was launched successfully by running a simple cu
     {"title":"qdrant - vector search engine","version":"1.3.0"}
     ```
 
-### Install requirements
+### 安裝套件
 
-This notebook obviously requires the `openai` and `qdrant-client` packages, but there are also some other additional libraries we will use. The following command installs them all:
+這個 notebook 當然需要 `openai` 和 `qdrant-client`，還會用到一些其他函式庫。下面的指令一次裝好：
 
 
 ```python
 ! pip install openai qdrant-client pandas wget
 ```
 
-### Prepare your OpenAI API key
+### 準備 OpenAI API key
 
-The OpenAI API key is used for vectorization of the documents and queries.
+OpenAI API key 用來把文件和 query 向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+沒有 OpenAI API key 的話，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY` by running following command:
+拿到 key 之後，執行下面的指令把它加到環境變數 `OPENAI_API_KEY`：
 
 ```python
 ! export OPENAI_API_KEY="your API key"
@@ -101,9 +107,9 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Connect to Qdrant
+## 連線到 Qdrant
 
-Connecting to a running instance of Qdrant server is easy with the official Python library:
+用官方 Python 函式庫連到運行中的 Qdrant server 很簡單：
 
 ```python
 import qdrant_client
@@ -114,7 +120,7 @@ client = qdrant_client.QdrantClient(
 )
 ```
 
-We can test the connection by running any available method:
+可以執行任何可用的方法來測試連線：
 
 ```python
 client.get_collections()
@@ -126,9 +132,9 @@ client.get_collections()
     CollectionsResponse(collections=[])
     ```
 
-## Load data
+## 載入資料
 
-In this section we are going to load the data prepared previous to this session, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一節載入這次練習之前就準備好的資料，所以你不必花自己的額度重算 Wikipedia 文章的 embedding。
 
 ```python
 import wget
@@ -149,7 +155,7 @@ wget.download(embeddings_url)
     'vector_database_wikipedia_articles_embedded (9).zip'
     ```
 
-The downloaded file has to be then extracted:
+下載下來的檔案要再解壓縮：
 
 ```python
 import zipfile
@@ -158,7 +164,7 @@ with zipfile.ZipFile("vector_database_wikipedia_articles_embedded.zip","r") as z
     zip_ref.extractall("../data")
 ```
 
-And we can finally load it from the provided CSV file:
+最後從提供的 CSV 檔載入：
 
 ```python
 import pandas as pd
@@ -204,11 +210,11 @@ article_df.head()
     4  [0.021524671465158463, 0.018522677943110466, -...          4
     ```
 
-## Index data
+## 資料建索引
 
-Qdrant stores data in __collections__ where each object is described by at least one vector and may contain an additional metadata called __payload__. Our collection will be called **Articles** and each object will be described by both **title** and **content** vectors. Qdrant does not require you to set up any kind of schema beforehand, so you can freely put points to the collection with a simple setup only.
+Qdrant 把資料存在 __collection__ 裡，每個物件至少由一個向量描述，也可以帶額外的 metadata，叫 __payload__。我們的 collection 叫 **Articles**，每個物件同時有 **title** 和 **content** 向量。Qdrant 不需要事先設定任何 schema，所以只要簡單設定，就能自由把 point 放進 collection。
 
-We will start with creating a collection, and then we will fill it with our precomputed embeddings.
+我們先建一個 collection，再把預先算好的 embedding 填進去。
 
 ```python
 from qdrant_client.http import models as rest
@@ -270,9 +276,9 @@ client.count(collection_name="Articles")
     CountResult(count=25000)
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into Qdrant we will start querying the collection for the closest vectors. We may provide an additional parameter `vector_name` to switch from title to content based search. Since the precomputed embeddings were created with `text-embedding-ada-002` OpenAI model we also have to use it during search.
+資料放進 Qdrant 之後，就能查詢 collection 裡最接近的向量。可以多帶一個 `vector_name` 參數，在 title 和 content 搜尋之間切換。因為預先算好的 embedding 是用 OpenAI 的 `text-embedding-ada-002` 模型產生的，搜尋時也必須用同一個模型。
 
 
 ```python
@@ -361,4 +367,13 @@ for i, article in enumerate(query_results):
     20. Second War of Scottish Independence (Score: 0.823)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Qdrant 把向量和 payload（metadata）一起存，payload 可以用來過濾，過濾直接內建在向量搜尋階段。
+- 不用事先定 schema，一個 collection 可以用具名向量同時放 title 和 content 兩種 embedding。
+- 存和搜的 embedding 模型要一致，這裡是 `text-embedding-ada-002`。
+- Qdrant 同時提供 REST 和 gRPC，部署可以用 Docker、Kubernetes 或雲端。
+
+## 練習
+1. 換一句自己的 query，分別用 `vector_name` 為 title 和 content 搜尋。
+2. 改搜尋回傳的筆數（limit），看結果變化。
+3. 在 collection 的 payload 加一個欄位，搜尋時用 payload filter 過濾結果。

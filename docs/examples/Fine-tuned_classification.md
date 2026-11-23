@@ -1,18 +1,24 @@
 ---
-translated: false
+translated: true
 source: examples/Fine-tuned_classification.ipynb
 ---
 
-# Fine tuning classification example
+# Fine-tuning 分類範例
 
 > 原文：[examples/Fine-tuned_classification.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Fine-tuned_classification.ipynb)
 
+## 這篇在做什麼
+fine-tune 一個 `babbage-002` 分類器（`ada` 系列的替代品），讓它區分棒球和冰球兩種運動的郵件。流程包含準備資料、跑資料整理工具、訓練、看驗證結果，最後用模型做預測。
 
+## 學完你會
+- 把 newsgroup 資料集整理成 prompt 和 completion 的 jsonl 格式
+- 用資料整理工具加上分隔符號、切出訓練與驗證集，並啟動 fine-tuning
+- 用 fine-tuned 模型做單一 token 的分類預測，並用 logprobs 看各類別機率
 
-<!-- tutor:goals -->
+## 開跑前
+需要 OpenAI API key，fine-tuning 與推論都會產生費用。
 
-
-We will fine-tune a `babbage-002` classifier (replacement for the `ada` models) to distinguish between the two sports: Baseball and Hockey.
+我們要 fine-tune 一個 `babbage-002` 分類器（`ada` 模型的替代品），區分兩種運動：棒球和冰球。
 
 ```python
 from sklearn.datasets import fetch_20newsgroups
@@ -26,8 +32,8 @@ categories = ['rec.sport.baseball', 'rec.sport.hockey']
 sports_dataset = fetch_20newsgroups(subset='train', shuffle=True, random_state=42, categories=categories)
 ```
 
- ## Data exploration
- The newsgroup dataset can be loaded using sklearn. First we will look at the data itself:
+ ## 資料探索
+ newsgroup 資料集可以用 sklearn 載入。先看看資料本身：
 
 ```python
 print(sports_dataset['data'][0])
@@ -84,10 +90,10 @@ print(f"Total examples: {len_all}, Baseball examples: {len_baseball}, Hockey exa
     Total examples: 1197, Baseball examples: 597, Hockey examples: 600
     ```
 
-One sample from the baseball category can be seen above. It is an email to a mailing list. We can observe that we have 1197 examples in total, which are evenly split between the two sports.
+上面是棒球類別的一個樣本，是寄到郵件群組的一封信。可以看到總共有 1197 筆，兩種運動平均分布。
 
-## Data Preparation
-We transform the dataset into a pandas dataframe, with a column for prompt and completion. The prompt contains the email from the mailing list, and the completion is a name of the sport, either hockey or baseball. For demonstration purposes only and speed of fine-tuning we take only 300 examples. In a real use case the more examples the better the performance.
+## 資料準備
+我們把資料集轉成 pandas dataframe，有 prompt 和 completion 兩欄。prompt 是郵件群組的信，completion 是運動名稱，hockey 或 baseball。為了示範和加快 fine-tuning，我們只取 300 筆。實際使用時，範例越多效果越好。
 
 ```python
 import pandas as pd
@@ -109,14 +115,14 @@ df.head()
     4  Subject: Let it be Known\nFrom: <ISSBTL@BYUVM....   baseball
     ```
 
-Both baseball and hockey are single tokens. We save the dataset as a jsonl file.
+baseball 和 hockey 都是單一 token。我們把資料集存成 jsonl 檔。
 
 ```python
 df.to_json("sport2.jsonl", orient='records', lines=True)
 ```
 
-### Data Preparation tool
-We can now use a data preparation tool which will suggest a few improvements to our dataset before fine-tuning. Before launching the tool we update the openai library to ensure we're using the latest data preparation tool. We additionally specify `-q` which auto-accepts all suggestions.
+### 資料整理工具
+接著可以用資料整理工具，它會在 fine-tuning 前對資料集提出一些改進建議。啟動工具前先更新 openai 函式庫，確保用的是最新的資料整理工具。我們另外指定 `-q`，自動接受所有建議。
 
 ```python
 !openai tools fine_tunes.prepare_data -f sport2.jsonl -q
@@ -155,16 +161,16 @@ We can now use a data preparation tool which will suggest a few improvements to 
     Once your model starts training, it'll approximately take 30.8 minutes to train a `curie` model, and less for `ada` and `babbage`. Queue will approximately take half an hour per job ahead of you.
     ```
 
-The tool helpfully suggests a few improvements to the dataset and splits the dataset into training and validation set.
+工具貼心地給了一些資料集的改進建議，並把資料集切成訓練集和驗證集。
 
-A suffix between a prompt and a completion is necessary to tell the model that the input text has stopped, and that it now needs to predict the class. Since we use the same separator in each example, the model is able to learn that it is meant to predict either baseball or hockey following the separator.
-A whitespace prefix in completions is useful, as most word tokens are tokenized with a space prefix.
-The tool also recognized that this is likely a classification task, so it suggested to split the dataset into training and validation datasets. This will allow us to easily measure expected performance on new data.
+prompt 和 completion 之間需要一個分隔字串（suffix），告訴模型輸入文字已經結束，接下來要預測類別。因為每個範例都用相同的分隔符號，模型就能學到在分隔符號之後要預測 baseball 或 hockey。
+completion 前面加空白字元也有用，因為大部分單字 token 都帶空白前綴。
+工具也認出這很可能是分類任務，所以建議把資料集切成訓練集和驗證集，讓我們能輕鬆衡量模型在新資料上的預期表現。
 
 ## Fine-tuning
-The tool suggests we run the following command to train the dataset. Since this is a classification task, we would like to know what the generalization performance on the provided validation set is for our classification use case.
+工具建議我們執行下面的指令來訓練。因為這是分類任務，我們想知道在提供的驗證集上，分類用例的泛化表現如何。
 
-We can simply copy the suggested command from the CLI tool. We specifically add `-m ada` to fine-tune a cheaper and faster ada model, which is usually comparable in performance to slower and more expensive models on classification use cases. 
+直接複製 CLI 工具建議的指令就行。我們特別加上 `-m ada`，fine-tune 較便宜、較快的 ada 模型，在分類用例上它的表現通常和較慢、較貴的模型差不多。
 
 ```python
 train_file = client.files.create(file=open("sport2_prepared_train.jsonl", "rb"), purpose="fine-tune")
@@ -181,9 +187,9 @@ print(fine_tuning_job)
     FineTuningJob(id='ftjob-REo0uLpriEAm08CBRNDlPJZC', created_at=1704413736, error=None, fine_tuned_model=None, finished_at=None, hyperparameters=Hyperparameters(n_epochs='auto', batch_size='auto', learning_rate_multiplier='auto'), model='babbage-002', object='fine_tuning.job', organization_id='org-9HXYFy8ux4r6aboFyec2OLRf', result_files=[], status='validating_files', trained_tokens=None, training_file='file-82XooA2AUDBAUbN5z2DuKRMs', validation_file='file-wTOcQF8vxQ0Z6fNY2GSm0z4P')
     ```
 
-The model is successfully trained in about ten minutes. You can watch the finetune happen on [https://platform.openai.com/finetune/](https://platform.openai.com/finetune/)
+模型大約十分鐘就訓練完成。你可以到 [https://platform.openai.com/finetune/](https://platform.openai.com/finetune/) 看 fine-tune 的進度。
 
-You can also check on its status programmatically:
+也可以用程式查狀態：
 
 ```python
 fine_tune_results = client.fine_tuning.jobs.retrieve(fine_tuning_job.id)
@@ -196,8 +202,8 @@ print(fine_tune_results.finished_at)
     1704414393
     ```
 
-### [Advanced] Results and expected model performance
-We can now download the results file to observe the expected performance on a held out validation set.
+### [進階] 結果與預期模型表現
+現在可以下載結果檔，看在保留的驗證集上的預期表現。
 
 ```python
 fine_tune_results = client.fine_tuning.jobs.retrieve(fine_tuning_job.id).result_files
@@ -220,14 +226,14 @@ results[results['train_accuracy'].notnull()].tail(1)
     2843  2844         0.0             1.0         NaN                        NaN
     ```
 
-The accuracy reaches 99.6%. On the plot below we can see how accuracy on the validation set increases during the training run. 
+準確率達到 99.6%。下面的圖可以看到訓練過程中驗證集的準確率怎麼上升。
 
 ```python
 results[results['train_accuracy'].notnull()]['train_accuracy'].plot()
 ```
 
-## Using the model
-We can now call the model to get the predictions.
+## 使用模型
+現在可以呼叫模型取得預測。
 
 ```python
 test = pd.read_json('sport2_prepared_valid.jsonl', lines=True)
@@ -245,7 +251,7 @@ test.head()
     4  From: warped@cs.montana.edu (Doug Dolven)\nSub...   baseball
     ```
 
-We need to use the same separator following the prompt which we used during fine-tuning. In this case it is `\n\n###\n\n`. Since we're concerned with classification, we want the temperature to be as low as possible, and we only require one token completion to determine the prediction of the model.
+prompt 後面要用和 fine-tuning 時相同的分隔符號，這裡是 `\n\n###\n\n`。因為我們關心的是分類，所以 temperature 要盡量低，而且只需要一個 token 的 completion 就能得到模型的預測。
 
 ```python
 ft_model = fine_tune_results.fine_tuned_model
@@ -261,7 +267,7 @@ res.choices[0].text
     ' hockey'
     ```
 
-To get the log probabilities, we can specify logprobs parameter on the completion request
+要取得 log probability，可以在 completion 請求指定 logprobs 參數
 
 ```python
 res = client.completions.create(model=ft_model, prompt=test['prompt'][0] + '\n\n###\n\n', max_tokens=1, temperature=0, logprobs=2)
@@ -274,10 +280,10 @@ res.choices[0].logprobs.top_logprobs
     [{' hockey': 0.0, ' Hockey': -22.504879}]
     ```
 
-We can see that the model predicts hockey as a lot more likely than baseball, which is the correct prediction. By requesting log_probs, we can see the prediction (log) probability for each class.
+可以看到模型預測 hockey 的機率比 baseball 高很多，這是正確的預測。請求 log_probs 後，就能看到每個類別的預測（log）機率。
 
-### Generalization
-Interestingly, our fine-tuned classifier is quite versatile. Despite being trained on emails to different mailing lists, it also successfully predicts tweets.
+### 泛化
+有趣的是，我們 fine-tune 的分類器相當通用。雖然是用寄到不同郵件群組的信訓練的，它也能成功預測推文。
 
 ```python
 sample_hockey_tweet = """Thank you to the 
@@ -301,4 +307,14 @@ res = client.completions.create(model=ft_model, prompt=sample_baseball_tweet + '
 res.choices[0].text
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 分類任務可以用 fine-tuning，把類別名稱當成單一 token 的 completion。
+- prompt 結尾要有固定的分隔符號，推論時也要用同一個，模型才知道該輸出類別。
+- 分類時 temperature 設低、只要一個 token，並用 logprobs 看各類別的機率。
+- 切出驗證集才能衡量模型在新資料上的表現。
+- 即使訓練資料是郵件，模型也能泛化到推文這類不同形式的文字。
+
+## 練習
+1. 把取樣的 300 筆改成 100 筆重新 fine-tune，比較驗證準確率。
+2. 推論時把分隔符號拿掉，看預測結果會不會變差。
+3. 換成自己寫的幾句棒球或冰球推文，用 logprobs 檢查模型對每個類別的信心。

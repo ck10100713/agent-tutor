@@ -1,197 +1,207 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/context_personalization.ipynb
 ---
-
-# Context Engineering for Personalization - State Management with Long-Term Memory Notes
+# Context Engineering 與個人化：用長期記憶筆記管理 State
 
 > 原文：[examples/agents_sdk/context_personalization.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/context_personalization.ipynb)
 
-Cookbook to build personalized agents with long-term memory state using the Agents SDK.
+用 Agents SDK 做出帶有長期記憶 state 的個人化 agent。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 Agents SDK 做一個旅遊 concierge agent，讓它記得使用者的偏好。做法是把使用者資料和記憶筆記放在本機的 state 物件裡，session 開始時注入 system prompt，過程中用 tool 擷取新記憶，結束後再整併成長期記憶。
 
+## 學完你會
 
-Modern AI agents are no longer just reactive assistants—they’re becoming adaptive collaborators. The leap from “responding” to “remembering” defines the new frontier of **context engineering**. At its core, context engineering is about shaping what the model knows at any given moment. By managing what’s stored, recalled, and injected into the model’s working memory, we can make an agent that feels personal, consistent, and context-aware.
+- 用 `RunContextWrapper` 定義結構化 profile 加記憶筆記的 state 物件，並用 YAML frontmatter + Markdown 注入 system prompt
+- 用 tool 做即時的 memory distillation，並用 hooks 和 TrimmingSession 管理 context 生命週期
+- 寫一個 session 結束後的 consolidation 步驟（去重、衝突處理、遺忘），並知道怎麼評估和加 guardrail
 
-The `RunContextWrapper` in the **OpenAI Agents SDK** provides the foundation for this. It allows developers to define structured state objects that persist across runs, enabling memory, notes, or even preferences to evolve over time. When paired with hooks and context-injection logic, this becomes a powerful system for **context personalization**—building agents that learn who you are, remember past actions, and tailor their reasoning accordingly.
+## 開跑前
 
-This cookbook shows a **state-based long-term memory** pattern:
+- 需要 OpenAI 帳號和 `OPENAI_API_KEY`，執行時會產生 API 費用
+- 需要安裝 `openai-agents`
 
-* **State object** = your local-first memory store (structured profile + notes)
-* **Distill** memories during a run (tool call → session notes)
-* **Consolidate** session notes into global notes at the end (dedupe + conflict resolution)
-* **Inject** a well-crafted state at the start of each run (with precedence rules)
+現代的 AI agent 已經不只是被動回應的助理，而是會適應使用者的協作者。從「回應」到「記住」，是 **context engineering** 的新前線。context engineering 的核心，是決定模型在每個時間點知道什麼。透過管理儲存什麼、回想什麼、注入什麼到模型的工作記憶，我們可以讓 agent 感覺有個人特色、前後一致、懂 context。
 
+**OpenAI Agents SDK** 裡的 `RunContextWrapper` 就是這件事的基礎。它讓開發者定義結構化的 state 物件，可以跨 run 保留，讓記憶、筆記甚至偏好隨時間演進。搭配 hooks 和 context 注入的邏輯，就成了強大的 **context personalization** 系統：做出會認識你是誰、記得過去行為、並據此調整推理的 agent。
 
+這份 cookbook 示範的是 **state-based 長期記憶** 模式：
 
-
- ## Why Context Personalization Matters
-
- Context personalization is the **“magic moment”** when an AI agent stops feeling generic and starts feeling like *your* agent.
-
- It’s when the system remembers your coffee order, your company’s tone of voice, your past support tickets, or your preferred aisle seat—and uses that knowledge naturally, without being prompted.
-
- From a user perspective, this builds trust and delight: the agent appears to genuinely understand them. From a company perspective, it creates a **strategic moat**—a way to continuously capture, refine, and apply high-quality behavioral data. If implemented carefully, you can capture denser, higher-signal information about your users than typical clicks, impressions, or history data. Each interaction becomes a signal for better service, higher retention, and deeper insight into user needs.
-
- This value extends beyond the agent itself. When managed rigorously and safely, personalized context can also empower **human-facing roles**—support agents, account managers, travel advisors—by giving them a richer, longitudinal understanding of the customer. Over time, analyzing accumulated memories reveals how user preferences, behaviors, and goals evolve, enabling smarter product decisions and more adaptive systems.
-
- In practice, effective personalization means maintaining structured state—preferences, constraints, prior outcomes—and injecting only the *relevant* slices into the agent’s context at the right moment. Different agents demand different memory lifecycles: a life-coaching agent may require fast-evolving, nuanced memories, while an IT troubleshooting agent benefits from slower, more predictable state. Done well, personalization transforms a stateless chatbot into a persistent digital collaborator.
-
-## Real-World Scenario: Travel Concierge Agent
-
-We’ll ground this tutorial in a **travel concierge** agent that helps users book flights, hotels, and car rentals with a high degree of personalization.
-
-In this tutorial, you’ll build an agent that:
-
-* starts each session with a structured user profile and curated memory notes
-* captures new durable preferences (for example, “I’m vegetarian”) via a dedicated tool
-* consolidates those preferences into long-term memory at the end of each run
-* resolves conflicts using a clear precedence order: **latest user input → session overrides → global defaults**
+* **State 物件** = 你本機優先（local-first）的記憶儲存（結構化 profile + 筆記）
+* **Distill**：在 run 當中把記憶蒸餾出來（tool call → session notes）
+* **Consolidate**：結束時把 session notes 整併進 global notes（去重 + 解決衝突）
+* **Inject**：每次 run 開始時注入一份精心整理的 state（附優先順序規則）
 
 
-**Architecture at a Glance**
-
-This section summarizes how state and memory flow across sessions.
-
-1. Before the Session Starts
-
-* A **state object** (user profile + global memory notes) is stored locally in your system.
-* This state represents the agent’s long-term understanding of the user.
-
-2. At the Start of a New Session
-
-* The state object is injected into the **system prompt**:
-  * Structured fields are included as **YAML frontmatter**
-  * Unstructured memories are included as a **Markdown memory list**
-
-3. During the Session
-
-* As the agent interacts with the user, it captures candidate memories using
-  `save_memory_note(...)`.
-* These notes are written to **session memory** within the state object.
-
-4. When the Context Is Trimmed
-
-* If context trimming occurs (e.g., to avoid hitting the context limit):
-  * Session-scoped memory notes are reinjected into the system prompt
-  * This preserves important short-term context across long-running sessions
-
-5. At the End of the Session
-
-* A **consolidation job** runs asynchronously:
-  * Session notes are merged into global memory
-  * Conflicts are resolved and duplicates are removed
-
-6. Next Run
-
-* The updated state object is reused.
-* The lifecycle repeats from the beginning.
 
 
-## AI Memory Architecture Decisions
+ ## 為什麼 Context Personalization 很重要
 
-AI memory is still a new concept, and there is no one-size-fits-all solution. In this cookbook, we make design decisions based on a well-defined use case: a Travel Concierge agent.
+ Context personalization 是 AI agent 不再給人通用感、開始像是*你的* agent 的**「神奇時刻」**。
 
-## 1. Retrieval-Based vs State-Based Memory
+ 就是系統記得你的咖啡口味、你公司的語氣、你過去的客服單，或你偏好的走道座位，而且自然地用上這些知識，不需要你提醒。
 
-Considering the many challenges in retrieval-based memory mechanisms including the need to train the model, state-based memory is better suited than retrieval-based memory for a travel concierge AI agent because travel decisions depend on continuity, priorities, and evolving preferences—not ad-hoc search. A travel agent must reason over a *current, coherent user state* (loyalty programs, seat preferences, budgets, visa constraints, trip intent, and temporary overrides like “this time I want to sleep”) and consistently apply it across flights, hotels, insurance, and follow-ups. 
+ 從使用者的角度，這會建立信任和驚喜：agent 看起來真的懂他們。從公司的角度，這是一道**策略護城河**：持續擷取、精煉並運用高品質行為資料的方式。如果做得謹慎，你能拿到比一般點擊、曝光或歷史紀錄更密集、訊號更高的使用者資訊。每次互動都是改善服務、提高留存、深入理解需求的訊號。
 
-Retrieval-based memory treats past interactions as loosely related documents, making it brittle to phrasing, prone to missing overrides, and unable to reconcile conflicts or updates over time. In contrast, state-based memory encodes user knowledge as structured, authoritative fields with clear precedence (global vs session), supports belief updates instead of fact accumulation, and enables deterministic decision-making without relying on fragile semantic search. This allows the agent to behave less like a search engine and more like a persistent concierge—maintaining continuity across sessions, adapting to context, and reliably using memory whenever it is relevant, not just when it is successfully retrieved.
+ 這個價值不只在 agent 本身。在嚴謹且安全的管理下，個人化 context 也能幫助**面對客戶的人員**，例如客服、客戶經理、旅遊顧問，讓他們對客戶有更豐富、長期的理解。時間一久，分析累積的記憶，可以看出使用者的偏好、行為和目標怎麼演變，進而做出更聰明的產品決策和更能適應的系統。
 
-## 2. Shape of a Memory
+ 實務上，有效的個人化代表維護結構化的 state（偏好、限制、過去結果），並且只在對的時間把*相關*的部分注入 agent 的 context。不同 agent 需要不同的記憶生命週期：生活教練 agent 可能需要快速演變、細膩的記憶，IT 故障排除 agent 則適合較慢、較可預測的 state。做得好的話，個人化能把無狀態的聊天機器人變成持續陪伴的數位協作者。
 
-The shape of an agent’s memory is entirely driven by the use case. A reliable way to design it is to start with a simple question:
+## 實際情境：旅遊 Concierge Agent
 
-> *If this were a human agent performing the same task, what would they actively hold in working memory to get the job done? What details would they track, reference, or infer in real time?*
+這份教學以一個**旅遊 concierge** agent 為例，它幫使用者訂機票、飯店和租車，而且高度個人化。
 
-This framing grounds memory design in *task-relevance*, not arbitrary persistence.
+這份教學要做出的 agent 會：
 
-**Metaprompting for Memory Extraction**
+* 每個 session 開始時，就帶著結構化的使用者 profile 和整理好的記憶筆記
+* 透過專用 tool 擷取新的長期偏好（例如「我吃素」）
+* 每次 run 結束時，把這些偏好整併進長期記憶
+* 用明確的優先順序解決衝突：**最新的使用者輸入 → session 覆寫 → 全域預設**
 
-Use this pattern to elicit the memory schema for any workflow:
 
-**Template**
+**架構一覽**
+
+這一節整理 state 和記憶怎麼跨 session 流動。
+
+1. Session 開始前
+
+* **state 物件**（使用者 profile + 全域記憶筆記）存在你系統的本機。
+* 這個 state 代表 agent 對使用者的長期理解。
+
+2. 新 session 開始時
+
+* state 物件被注入 **system prompt**：
+  * 結構化欄位用 **YAML frontmatter**
+  * 非結構化記憶用 **Markdown 記憶清單**
+
+3. Session 進行中
+
+* agent 和使用者互動時，用
+  `save_memory_note(...)` 擷取候選記憶。
+* 這些筆記被寫進 state 物件裡的 **session memory**。
+
+4. Context 被修剪時
+
+* 如果發生 context trimming（例如避免超過 context 上限）：
+  * session 範圍的記憶筆記會重新注入 system prompt
+  * 這樣在長時間的 session 裡也能保留重要的短期 context
+
+5. Session 結束時
+
+* 一個**整併工作（consolidation job）**會非同步執行：
+  * session notes 合併進全域記憶
+  * 解決衝突並移除重複
+
+6. 下一次 run
+
+* 重複使用更新後的 state 物件。
+* 生命週期從頭再來。
+
+
+## AI 記憶架構的設計決策
+
+AI 記憶還是新概念，沒有萬用的解法。這份 cookbook 根據一個明確的使用案例（旅遊 Concierge agent）來做設計決策。
+
+## 1. Retrieval-Based vs State-Based 記憶
+
+retrieval-based 記憶有不少挑戰，包括需要訓練模型。相較之下，state-based 記憶更適合旅遊 concierge AI agent，因為旅遊決策靠的是連續性、優先順序和不斷演變的偏好，不是臨時搜尋。旅遊 agent 必須針對一個*當前、一致的使用者狀態*做推理（會員方案、座位偏好、預算、簽證限制、旅行意圖，以及像「這次我想睡一下」這種暫時覆寫），並且在機票、飯店、保險和後續跟進上一致地套用。
+
+retrieval-based 記憶把過去的互動當成鬆散相關的文件，所以對措辭很敏感、容易漏掉覆寫，也沒辦法隨時間調和衝突或更新。相反地，state-based 記憶把使用者知識編碼成結構化、有權威性的欄位，並有明確的優先順序（global vs session），支援信念更新而不是事實累積，也能做出確定性的決策，不用倚賴脆弱的語意搜尋。這讓 agent 比較不像搜尋引擎，更像一個持續服務的 concierge：跨 session 維持連續性、適應 context，而且在記憶相關時一定會用到，不是只有檢索成功時才用。
+
+## 2. 記憶的形狀
+
+agent 記憶的形狀完全由使用案例決定。一個可靠的設計方式，是從一個簡單的問題開始：
+
+> *如果由真人來做同一件任務，他會在工作記憶裡主動記住什麼才能把事情做好？他會即時追蹤、參考或推斷哪些細節？*
+
+這個問法讓記憶設計扣在「任務相關性」上，不是隨意的持久化。
+
+**用 Metaprompting 萃取記憶**
+
+用這個模式可以為任何流程導出記憶 schema：
+
+**模板**
 
 > *You are a **[USE CASE]** agent whose goal is **[GOAL]**.
 > What information would be important to keep in working memory during a single session?
 > List both **fixed attributes** (always needed) and **inferred attributes** (derived from user behavior or context).*
 
-Combining **predefined structured keys** with **unstructured memory notes** provides the right balance for a travel concierge agent—enabling reliable personalization while still capturing rich, free-form user preferences. In this design, the quality of your internal data systems becomes critical: structured fields should be consistently hydrated and kept up to date from trusted internal sources, while unstructured memories fill in the gaps where flexibility is required.
+對旅遊 concierge agent 來說，把**預先定義的結構化 key** 和**非結構化記憶筆記**結合，是剛好的平衡：既能可靠地個人化，又能擷取豐富、自由形式的使用者偏好。在這個設計裡，內部資料系統的品質變得很關鍵：結構化欄位要從可信的內部來源一致地填入並保持最新，非結構化記憶則補上需要彈性的空缺。
 
-For this cookbook, we keep things simple by sourcing memory notes only from explicit user messages. In more advanced agents, this definition naturally expands to include signals from tool calls, system actions, and full execution traces, enabling deeper and more autonomous memory formation.
+這份 cookbook 為了簡單，記憶筆記只來自使用者明確說的訊息。在更進階的 agent 裡，這個範圍自然會擴大到 tool call、系統動作和完整的執行 trace，讓記憶形成更深入也更自主。
 
-### Structured Memory (Schema-driven, machine-enforceable, predictable)
+### 結構化記憶（schema 驅動、可由機器強制、可預測）
 
-These should follow strict formats, be validated, and used directly in logic, filtering, or booking APIs.
+這些應該遵循嚴格的格式、經過驗證，並直接用在邏輯、過濾或訂位 API。
 
-**Identity & Core Profile**
-* Global customer ID
-* Full name
-* Date of birth
-* Gender
-* Passport expiry date
+**身分與核心 Profile**
+* 全域客戶 ID
+* 全名
+* 出生日期
+* 性別
+* 護照到期日
 
-**Loyalty & Programs**
-* Airline loyalty status
-* Hotel loyalty status
-* Loyalty IDs
+**會員與方案**
+* 航空公司會員等級
+* 飯店會員等級
+* 會員編號
 
-**Preferences & Coverage**
-* Seat preference
-* Insurance coverage profile:
-  * Car rental coverage type
-  * Travel medical coverage status
-  * Coverage level (e.g., primary, secondary)
+**偏好與保障**
+* 座位偏好
+* 保險保障 profile：
+  * 租車保障類型
+  * 旅遊醫療保障狀態
+  * 保障等級（例如 primary、secondary）
 
-**Constraints**
-* Visa requirements (array of country / region codes)
+**限制**
+* 簽證需求（國家 / 地區代碼陣列）
 
-### Unstructured Memory (Narrative, contextual, semantic)
+### 非結構化記憶（敘述性、情境性、語意性）
 
-These are freeform and optimized for reasoning, personalization, and human-like decision-making.
+這些是自由格式，針對推理、個人化和類似人的決策最佳化。
 
-**Global Memory Notes**
+**全域記憶筆記**
 * “User usually prefers aisle seats.”
 * “For trips shorter than a week, user generally prefers not to check bags.”
 * “User prefers coverage that includes collision damage waiver and zero deductible when available.”
 
 
-**Tip:** Do not dump all the fields from internal systems into the profile section. Make sure that every single token you add here helps the agent make better decisions. Some of these fields might instead be input parameters to a tool call that you can pass from the state object without making them visible to the model.
+**提示：** 不要把內部系統的所有欄位都倒進 profile 區塊。你放進去的每個 token，都要能幫 agent 做出更好的決策。有些欄位可能比較適合當成 tool call 的輸入參數，直接從 state 物件傳入，不用讓模型看到。
 
-Using the `RunContextWrapper`, the agent maintains a persistent `state` object containing structured data such as:
+透過 `RunContextWrapper`，agent 維護一個持久的 `state` 物件，裡面有這類結構化資料：
 
 
-## 3. Memory Scope
+## 3. 記憶範圍（Memory Scope）
 
-Separate memory by **scope** to reduce noise and make evolution safer over time.
+依**範圍**分開記憶，可以減少雜訊，也讓長期演進更安全。
 
-### User-Level Memory (Global Notes)
+### 使用者層級記憶（Global Notes）
 
-Durable preferences that should persist across sessions and influence future interactions.
+持久的偏好，應該跨 session 保留並影響未來的互動。
 
-**Examples:**
+**範例：**
 
 * “Prefers aisle seats”
 * “Vegetarian”
 * “United Gold status”
 
-These are injected at the start of each session and updated cautiously during consolidation.
+這些會在每個 session 開始時注入，並在整併時謹慎更新。
 
-### Session-Level Memory (Session Notes)
+### Session 層級記憶（Session Notes）
 
-Short-lived or contextual information relevant only to the current interaction.
+短期或情境性的資訊，只跟當前互動有關。
 
-**Examples:**
+**範例：**
 
 * “This trip is a family vacation”
 * “Budget under $2,000 for this trip”
 * “I prefer window seat this time for the red eye flight.”
 
-Session notes act as a staging area and are promoted to global memory only if they prove durable.
+session notes 是暫存區，只有證明是持久的才會升級到全域記憶。
 
-**Rule of thumb:** if it should affect future trips by default, store it globally; if it only matters now, keep it session-scoped.
+**經驗法則：** 如果它預設該影響未來的旅程，就存成全域；如果只跟現在有關，就留在 session 範圍。
 
 
  ```json
@@ -246,120 +256,119 @@ Session notes act as a staging area and are promoted to global memory only if th
  }
  ```
 
-## 4. Memory Lifecycle
+## 4. 記憶生命週期
 
-Memory is not static. Over time, you can analyze user behavior to identify different patterns, such as:
+記憶不是靜態的。時間一久，你可以分析使用者行為，找出不同的模式，例如：
 
-* **Stability** — preferences that rarely change (e.g., “seat preference is almost always aisle”)
-* **Drift** — gradual changes over time (e.g., “average trip budget has increased month over month”)
-* **Contextual variance** — preferences that depend on context (e.g., “business trips vs. family trips behave differently”)
+* **穩定性（Stability）**：很少改變的偏好（例如「座位偏好幾乎總是走道」）
+* **漂移（Drift）**：隨時間逐漸改變（例如「平均旅行預算逐月增加」）
+* **情境差異（Contextual variance）**：取決於情境的偏好（例如「商務旅行和家庭旅行的行為不同」）
 
-These signals should directly influence your memory architecture:
+這些訊號應該直接影響你的記憶架構：
 
-* Stable, repeatedly confirmed preferences can be **promoted** from free-form notes into structured profile fields.
-* Volatile or context-dependent preferences should remain as notes, often with **recency weighting**, confidence scores, or a TTL.
+* 穩定、被反覆確認的偏好，可以從自由格式筆記**升級**成結構化 profile 欄位。
+* 易變或依情境而定的偏好，應該維持成筆記，通常搭配**時間加權**、信心分數或 TTL。
 
-In other words, **memory design should evolve** as the system learns what is durable versus situational.
+也就是說，系統學到哪些是持久的、哪些只是情境性的之後，**記憶設計也該跟著演進**。
 
 ### 4.1 Memory Distillation
 
-Memory distillation extracts high-quality, durable signals from the conversation and records them as memory notes.
+Memory distillation 從對話裡抽出高品質、持久的訊號，並記錄成記憶筆記。
+這份 cookbook 的 distillation 是**在即時對話的 turn 中**透過專用 tool 進行，讓 agent 在使用者明確表達偏好和限制的當下就擷取下來。
 
-In this cookbook, distillation is performed **during live turns** via a dedicated tool, enabling the agent to capture preferences and constraints as they are explicitly expressed.
-
-An alternative approach is **post-session memory distillation**, where memories are extracted at the end of the session using the full execution trace. This can be especially useful for incorporating signals from tool usage patterns and internal reasoning that may not surface directly in user-facing turns.
+另一種做法是**session 後的 memory distillation**：在 session 結束時，用完整的執行 trace 來擷取記憶。這對於納入 tool 使用模式和內部推理這類不會直接出現在面向使用者的 turn 裡的訊號特別有用。
 
 ### 4.2 Memory Consolidation
 
-Memory consolidation runs asynchronously at the end of each session, graduating eligible session notes into global memory when appropriate.
+Memory consolidation 在每個 session 結束時非同步執行，把符合條件的 session notes 升級進全域記憶。
 
-This is the **most sensitive and error-prone stage** of the lifecycle. Poor consolidation can lead to context poisoning, memory loss, or long-term hallucinations. Common failure modes include:
+這是整個生命週期中**最敏感、最容易出錯的階段**。整併做得差，會造成 context poisoning、記憶遺失或長期幻覺。常見的失敗模式包括：
 
-* Losing meaningful information through over-aggressive pruning
-* Promoting noisy, speculative, or unreliable signals
-* Introducing contradictions or duplicate memories over time
+* 過度積極的修剪，丟掉有意義的資訊
+* 升級雜訊、臆測或不可靠的訊號
+* 隨時間引入矛盾或重複的記憶
 
-To maintain a healthy memory system, consolidation must explicitly handle:
+要維持健康的記憶系統，consolidation 必須明確處理：
 
-* **Deduplication** — merging semantically equivalent memories
-* **Conflict resolution** — choosing between competing or outdated facts
-* **Forgetting** — pruning stale, low-confidence, or superseded memories
+* **去重（Deduplication）**：合併語意相同的記憶
+* **衝突解決（Conflict resolution）**：在互相競爭或過時的事實之間做選擇
+* **遺忘（Forgetting）**：修剪過期、低信心或已被取代的記憶
 
-Forgetting is not a bug—it is essential. Without careful pruning, memory stores will accumulate redundant and outdated information, degrading agent quality over time. Well-curated prompts and strict consolidation instructions are critical to controlling the aggressiveness and safety of this step.
+遺忘不是 bug，而是必要的。沒有仔細的修剪，記憶儲存會累積多餘和過時的資訊，讓 agent 品質隨時間下降。要控制這一步的積極程度和安全性，精心設計的 prompt 和嚴格的整併指令很關鍵。
 
 
 ### 4.3 Memory Injection
 
-Inject curated memory back into the model context at the start of each session.
-In this cookbook, injection is implemented via hooks that run after context trimming and before the agent begins execution, under the global memory section. High-signal memory in the system prompt is extremely effective for latency.
+在每個 session 開始時，把整理好的記憶注入回模型的 context。
+這份 cookbook 的 injection 是透過 hooks 實作，在 context trimming 之後、agent 開始執行之前執行，放在全域記憶區塊底下。把高訊號的記憶放進 system prompt，對延遲來說非常有效。
 
 
 
-## Techniques Covered
+## 涵蓋的技巧
 
-To address these challenges, this cookbook applies a set of design decisions tailored to this specific agent, implemented using the **[OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)**. The techniques below work together to enable reliable, controllable memory and context personalization:
+為了應對這些挑戰，這份 cookbook 針對這個特定的 agent 做了一組設計決策，並用 **[OpenAI Agents SDK](https://openai.github.io/openai-agents-python/)** 實作。下面這些技巧一起運作，達成可靠、可控的記憶和 context personalization：
 
-* **State Management** – Maintain and evolve the agent’s [persistent state](https://openai.github.io/openai-agents-python/context/) using the `RunContextWrapper` class.
+* **State Management**：用 `RunContextWrapper` 類別維護並演進 agent 的[持久 state](https://openai.github.io/openai-agents-python/context/)。
 
-  * Pre-populate and curate key fields from internal systems before each session begins.
+  * 每個 session 開始前，從內部系統預先填入並整理關鍵欄位。
 
-* **Memory Injection** – Inject only the relevant portions of state into the agent’s context at the start of each session.
+* **Memory Injection**：每個 session 開始時，只把 state 中相關的部分注入 agent 的 context。
 
-  * Use **YAML frontmatter** for structured, machine-readable metadata.
-  * Use **Markdown notes** for flexible, human-readable memory.
+  * 結構化、機器可讀的 metadata 用 **YAML frontmatter**。
+  * 彈性、人類可讀的記憶用 **Markdown notes**。
 
-* **Memory Distillation** – Capture dynamic insights during active turns by writing session notes via a dedicated tool.
+* **Memory Distillation**：在進行中的 turn 裡，透過專用 tool 寫入 session notes 來擷取動態洞察。
 
-* **Memory Consolidation** – Merge session-level notes into a dense, conflict-free set of global memories.
+* **Memory Consolidation**：把 session 層級的筆記合併成密集、沒有衝突的全域記憶。
 
-  * **Forgetting**: Prune stale, overwritten, or low-signal memories during consolidation, and deduplicate aggressively over time.
+  * **遺忘（Forgetting）**：整併時修剪過期、被覆寫或低訊號的記憶，並隨時間積極去重。
 
-Two-phase memory processing (note taking → consolidation) is more reliable than one-shot build the whole memory system at once.
+兩階段的記憶處理（記筆記 → 整併）比一次到位建好整個記憶系統更可靠。
 
-All techniques in this cookbook are implemented in a **local-first** manner. Session and global memories live in your own state object. However, any profile or memory content injected into agent instructions is sent to the model API, so apply your organization’s retention and data-handling requirements before including sensitive data.
+這份 cookbook 的所有技巧都是 **local-first** 的做法。session 記憶和全域記憶都放在你自己的 state 物件裡。不過，任何注入 agent instructions 的 profile 或記憶內容都會送到模型 API，所以在放入敏感資料之前，請先套用你組織的資料保存和處理規定。
 
-These approaches are intentionally **zero-shot**—relying on prompting, orchestration, and lightweight scaffolding rather than training. Once the end-to-end design and evaluations are validated, a natural next step is **fine-tuning** to achieve stronger and more consistent memory behaviors such as extraction, consolidation, and conflict resolution.
-
-
-
-Over time, the concierge becomes more efficient and human-like:
-
-* It auto-suggests flights that match the user’s seat preference.
-* It filters hotels by loyalty tier benefits.
-* It pre-fills rental forms with known IDs and preferences.
-
-This pattern exemplifies how **context engineering + state management** turn personalization into a sustainable differentiator. Rather than retraining models or embedding static rules, you evolve the *state layer*—a dynamic, inspectable memory the model can reason over.
+這些做法刻意是 **zero-shot**，靠 prompt、orchestration 和輕量的架構，不靠訓練。等整套設計和 eval 驗證完之後，下一步自然是 **fine-tuning**，讓記憶行為（擷取、整併、衝突解決）更強、更一致。
 
 
-## Step 0 — Prerequisites
 
-Before running this cookbook, you must set up the following accounts and complete a few setup actions. These prerequisites are essential to interact with the APIs used in this project.
+時間一久，concierge 會變得更有效率、更像真人：
 
-#### Step 0.1: OpenAI Account and `OPENAI_API_KEY`
+* 自動推薦符合使用者座位偏好的航班。
+* 依會員等級權益篩選飯店。
+* 用已知的 ID 和偏好預先填好租車表單。
 
-- **Purpose:**  
-  You need an OpenAI account to access language models and use the Agents SDK featured in this cookbook.
+這個模式說明了 **context engineering + state management** 如何讓個人化成為可持續的差異化優勢。你不需要重新訓練模型或嵌入靜態規則，只要演進 *state 層*：一個動態、可檢視、模型能拿來推理的記憶。
 
-- **Action:**  
-  [Sign up for an OpenAI account](https://openai.com) if you don’t already have one. Once you have an account, create an API key by visiting the [OpenAI API Keys page](https://platform.openai.com/api-keys).
 
-**Before running the workflow, set your environment variables:**
+## Step 0：前置作業
+
+執行這份 cookbook 之前，你必須設定下列帳號並完成一些準備動作。這些是和專案用到的 API 互動的必要條件。
+
+#### Step 0.1：OpenAI 帳號與 `OPENAI_API_KEY`
+
+- **目的：**  
+  你需要 OpenAI 帳號，才能使用語言模型和這份 cookbook 用到的 Agents SDK。
+
+- **動作：**  
+  如果還沒有帳號，請[註冊 OpenAI 帳號](https://openai.com)。有了帳號之後，到 [OpenAI API Keys 頁面](https://platform.openai.com/api-keys)建立 API key。
+
+**執行流程之前，先設定環境變數：**
 
 ```
 # Your openai key
 os.environ["OPENAI_API_KEY"] = "sk-proj-..."
 ```
 
-Alternatively, you can set your OpenAI API key for use by the agents via the `set_default_openai_key` function by importing agents library .
+或者，你也可以匯入 agents 函式庫，用 `set_default_openai_key` 函式設定給 agent 使用的 OpenAI API key。
 
 ```
 from agents import set_default_openai_key
 set_default_openai_key("YOUR_API_KEY")
 ```
 
-#### Step 0.2: Install the Required Libraries
+#### Step 0.2：安裝所需的函式庫
 
-Below we install the `openai-agents` library ([OpenAI Agents SDK](https://github.com/openai/openai-agents-python))
+下面安裝 `openai-agents` 函式庫（[OpenAI Agents SDK](https://github.com/openai/openai-agents-python)）
 
 ```python
 %pip install openai-agents nest_asyncio
@@ -371,7 +380,7 @@ from openai import OpenAI
 client = OpenAI()
 ```
 
-Let's test the installed libraries by defining and running an agent.
+來定義並執行一個 agent，測試剛裝好的函式庫。
 
 ```python
 import asyncio
@@ -394,28 +403,28 @@ print(result.final_output)
     Evaluating AI agents ensures they are accurate, safe, reliable, ethical, and effective for their intended tasks.
     ```
 
-## Step 1 — Define the State Object (Local-First Memory Store)
+## Step 1：定義 State 物件（Local-First 記憶儲存）
 
-We start by defining a **local-first state object** that serves as the single source of truth for personalization and memory. This state is initialized at the beginning of each run and evolves over time.
+我們先定義一個 **local-first state 物件**，作為個人化和記憶的單一事實來源。這個 state 在每次 run 開始時初始化，並隨時間演進。
 
-The state includes:
+state 包含：
 
 * **`profile`**
-  Structured, predefined fields (often hydrated from internal systems or CRMs) that represent stable user attributes.
+  結構化、預先定義的欄位（通常從內部系統或 CRM 填入），代表穩定的使用者屬性。
 
 * **`global_memory.notes`**
-  Curated long-term memory notes that persist across sessions. Each note includes:
+  整理過的長期記憶筆記，跨 session 保留。每則筆記包含：
 
-  * **last_updated**: a timestamp that helps the model reason about recency and enables decay or pruning of outdated memories
-  * **keywords**: 2–3 short labels that summarize the memory and improve interpretability and consolidation
+  * **last_updated**：時間戳，幫助模型判斷新舊，也讓過期記憶可以衰減或修剪
+  * **keywords**：2–3 個簡短標籤，總結這則記憶，提升可解讀性並有助於整併
 
 * **`session_memory.notes`**
-  Newly captured candidate memories extracted during the current session. This acts as a **staging area** before consolidation into global memory.
+  當前 session 期間擷取的新候選記憶。這是整併進全域記憶之前的**暫存區**。
 
 * **`trip_history`**
-  A lightweight view of the user’s recent activity (for example, the last three trips), populated from your database and used to ground recommendations in recent behavior. This shows a pattern of combinations that the user preferred.
+  使用者近期活動的輕量檢視（例如最近三趟旅程），從你的資料庫填入，用來讓推薦立足於近期行為。這顯示使用者偏好的組合模式。
 
-**Tip:** store dates as ISO `YYYY-MM-DD` for reliable sorting.
+**提示：** 日期用 ISO `YYYY-MM-DD` 格式儲存，排序才可靠。
 
 ```python
 from dataclasses import dataclass, field
@@ -539,13 +548,13 @@ user_state = TravelState(
 )
 ```
 
-## Step 2 — Define Tools for Live Memory Distillation
+## Step 2：定義即時 Memory Distillation 的 Tools
 
-Live memory distillation is implemented via a **tool call** during the conversation. This follows the *memory-as-a-tool* pattern, where the model explicitly emits candidate memories in real time as it reasons through a turn.
+即時的 memory distillation 是透過對話中的 **tool call** 實作。這遵循 *memory-as-a-tool* 模式：模型在一個 turn 中推理時，會即時明確地送出候選記憶。
 
-The key design challenge is **tool definition**: clearly specifying what qualifies as a meaningful, durable memory versus transient conversational detail. Well-scoped instructions here are critical to avoid noisy or low-value memories.
+關鍵的設計挑戰在於 **tool 的定義**：要清楚說明什麼算是有意義、持久的記憶，什麼只是一時的對話細節。這裡寫好範圍明確的指令，對避免雜訊或低價值記憶很關鍵。
 
-Note that this is a **one-shot extraction** approach—the model is not fine-tuned for this tool. Instead, it relies entirely on the tool schema and prompt instructions to decide when and what to distill into memory.
+注意這是**一次性擷取（one-shot extraction）**的做法：模型沒有針對這個 tool 做 fine-tuning，完全靠 tool schema 和 prompt 指令來決定何時、要蒸餾什麼進記憶。
 
 
 ```python
@@ -636,12 +645,12 @@ def save_memory_note(
     return {"ok": True}  # metadata only, avoid CoT distraction
 ```
 
-## Step 3 — Define Trimming Session for Context Management
+## Step 3：定義 Trimming Session 做 Context 管理
 
 
-Long-running agents need to manage the context window. A practical baseline is to keep only the last N *user turns*. A “turn” = one user message and everything after it (assistant + tool calls/results) up to the next user message. We'll use the [TrimmingSession](https://cookbook.openai.com/examples/agents_sdk/session_memory) implementation from a previous cookbook.
+長時間執行的 agent 需要管理 context window。一個實用的基準做法是只保留最後 N 個*使用者 turn*。一個「turn」= 一則使用者訊息，加上之後到下一則使用者訊息之前的所有內容（assistant + tool calls/results）。我們會用先前一份 cookbook 的 [TrimmingSession](https://cookbook.openai.com/examples/agents_sdk/session_memory) 實作。
 
-When trimming occurs, we set `state.inject_session_memories_next_turn` to trigger reinjection of session-scoped memories into the system prompt on the next turn. This preserves important short-term context that would otherwise be trimmed away, while keeping the active conversation history small and within budget.
+發生 trimming 時，我們設定 `state.inject_session_memories_next_turn`，觸發下一個 turn 把 session 範圍的記憶重新注入 system prompt。這樣能保留本來會被修剪掉的重要短期 context，同時讓進行中的對話歷史維持精簡、不超出預算。
 
 ```python
 from __future__ import annotations
@@ -764,19 +773,19 @@ session = TrimmingSession("my_session", user_state,  max_turns=20)
 
 
 
-## Step 4 — Memory injection (with precedence rules)
+## Step 4：Memory Injection（附優先順序規則）
 
-Injection is where many systems fail: old memories become “too strong,” or malicious text gets injected.
+很多系統是在 injection 這一步出問題：舊記憶變得「太強勢」，或是被注入惡意文字。
 
-**Precedence rule (recommended):**
-1) The user’s latest instruction in the current dialogue wins.
-2) Structured profile keys are generally trusted (especially if sourced/enriched internally).
-3) Global memory notes are advisory and must not override current instructions.
-4) If memory conflicts with the user’s current request, ask a clarifying question.
+**建議的優先順序規則：**
+1) 使用者在當前對話中最新的指示優先。
+2) 結構化 profile 的 key 一般可信（尤其來源或補充資料是內部的）。
+3) 全域記憶筆記只是參考，不能覆蓋當前的指示。
+4) 如果記憶和使用者當前的請求衝突，就問一個釐清問題。
 
-We’ll inject the profile and memory lists inside explicit blocks (e.g. `<user_profile>` and `<memories>`), and include a `<memory_policy>` block that tells the model how to interpret them.
+我們會把 profile 和記憶清單注入明確的區塊（例如 `<user_profile>` 和 `<memories>`），並加上一個 `<memory_policy>` 區塊，告訴模型怎麼解讀它們。
 
-This is not a security boundary, but it helps reduce accidental instruction-following from memory text.
+這不是安全邊界，但有助於減少模型不小心照著記憶文字裡的指令做。
 
 ```python
 MEMORY_INSTRUCTIONS = """
@@ -819,9 +828,9 @@ Safety:
 """
 ```
 
- ## Step 5 — Render State as YAML Frontmatter + Memories List Markdown for Injection
+ ## Step 5：把 State 渲染成 YAML Frontmatter + Markdown 記憶清單以便注入
 
- Keeping rendering deterministic avoids hallucinations in the injection layer.
+ 讓渲染保持確定性，可以避免 injection 層產生幻覺。
 
 ```python
 import yaml
@@ -846,27 +855,27 @@ def render_session_memories_md(session_notes: list[dict], k: int = 8) -> str:
     return "\n".join([f"- {n['text']}" for n in top])
 ```
 
-## Step 6 — Define Hooks for the Memory Lifecycle
+## Step 6：為記憶生命週期定義 Hooks
 
-At this point, we have:
+到目前為止，我們有：
 
-* a persistent `TravelState`
-* a way to *capture* candidate memories during the session (`save_memory_note`)
-* a trimmed conversation history
+* 一個持久的 `TravelState`
+* 一個在 session 期間*擷取*候選記憶的方法（`save_memory_note`）
+* 一份被修剪過的對話歷史
 
-What we need next is **lifecycle orchestration** — logic that runs *automatically* at well-defined points in every agent run.
+接下來需要的是**生命週期編排（lifecycle orchestration）**：在每次 agent run 的明確時間點*自動*執行的邏輯。
 
-[Hooks](https://openai.github.io/openai-agents-python/ref/lifecycle/) are the right abstraction for this.
+[Hooks](https://openai.github.io/openai-agents-python/ref/lifecycle/) 正好是適合的抽象。
 
-In this step, we define hooks that handle **both sides of the memory lifecycle**:
+這一步我們定義 hooks，處理記憶生命週期的**兩個面向**：
 
-### What the hook does
+### Hook 做什麼
 
-**At the [start of a run](https://openai.github.io/openai-agents-python/ref/lifecycle/#agents.lifecycle.RunHooksBase.on_agent_start) (`on_agent_start`)**
+**在 [run 開始時](https://openai.github.io/openai-agents-python/ref/lifecycle/#agents.lifecycle.RunHooksBase.on_agent_start)（`on_agent_start`）**
 
-* Render a **YAML frontmatter block** from structured state (profile + hard constraints).
-* Render **free-form global memories** as sorted Markdown.
-* Attach both to the state so they can be injected into the agent’s instructions.
+* 從結構化 state（profile + 硬性限制）渲染出 **YAML frontmatter 區塊**。
+* 把**自由格式的全域記憶**渲染成排序過的 Markdown。
+* 把兩者附加到 state 上，讓它們能被注入 agent 的 instructions。
 
 ```python
 from agents import AgentHooks, Agent
@@ -889,16 +898,16 @@ class MemoryHooks(AgentHooks[TravelState]):
             ctx.context.session_memories_md = ""
 ```
 
-**Tip:** If a user provides a new value for one of the fields in the profile, you can prompt the agent to use that as the latest information in the precedence rules for resolving the conflict.
+**提示：** 如果使用者提供 profile 其中一個欄位的新值，你可以在解決衝突的優先順序規則裡，提示 agent 把它當成最新資訊。
 
-## Step 7 — Define the Travel Concierge Agent
+## Step 7：定義旅遊 Concierge Agent
 
-Now we can put everything together by defining the necessary components from the Agents SDK and adding use-case-specific instructions.
+現在可以把 Agents SDK 的必要元件組合起來，並加上這個使用案例專屬的指令。
 
-We’ll inject:
+我們會注入：
 
-- base prompt + memory policy (`MEMORY_INSTRUCTIONS`)
-- frontmatter + memories (computed by hooks)
+- 基礎 prompt + 記憶政策（`MEMORY_INSTRUCTIONS`）
+- frontmatter + 記憶（由 hooks 計算）
 
 ```python
 BASE_INSTRUCTIONS = f"""
@@ -918,7 +927,7 @@ Guidelines:\n
 """
 ```
 
-Injecting user profile and memories into the agent's instructions as markdown
+把使用者 profile 和記憶以 markdown 形式注入 agent 的 instructions
 
 ```python
 
@@ -1078,16 +1087,16 @@ user_state.session_memory
        'keywords': ['seat', 'flight']}]}
     ```
 
-## Step 8 — Post Session Memory Consolidation
+## Step 8：Session 後的 Memory Consolidation
 
-**At the end of the session**
+**在 session 結束時**
 
-* Consolidate newly captured **session memories** into **global memory**.
-* Deduplicate overlapping notes.
-* Resolve conflicts using *recency wins*.
-* Clear session memory so the next run starts clean.
+* 把新擷取的 **session 記憶**整併進**全域記憶**。
+* 去除重疊的筆記。
+* 用「最新優先（recency wins）」解決衝突。
+* 清空 session 記憶，讓下一次 run 從乾淨狀態開始。
 
-This gives us a clean, repeatable memory loop: **inject → reason → distill → consolidate**
+這樣就得到一個乾淨、可重複的記憶迴圈：**inject → reason → distill → consolidate**
 
 ```python
 from __future__ import annotations
@@ -1183,7 +1192,7 @@ def consolidate_memory(state: TravelState, client, model: str = "gpt-5-mini") ->
     state.session_memory["notes"] = []
 ```
 
-**Tip:** For better guidance in conflict resolution, you can add few-shot examples as input memories and expected outputs.
+**提示：** 想在衝突解決上有更好的引導，可以加入 few-shot 範例，當成輸入記憶和預期輸出。
 
 ```python
 # Pre-consolidation session memories
@@ -1231,7 +1240,7 @@ user_state.global_memory
 consolidate_memory(user_state, client)
 ```
 
-You can see that only the first session memory—related to dietary restrictions—was promoted into global memory. The second note was intentionally discarded because it was explicitly scoped to that specific trip and was not considered durable.
+可以看到只有第一則 session 記憶（跟飲食限制有關）被升級進全域記憶。第二則筆記被刻意捨棄，因為它明確限定在那一趟旅程，不被視為持久。
 
 ```python
 user_state.global_memory
@@ -1260,122 +1269,133 @@ user_state.global_memory
        'keywords': ['dietary']}]}
     ```
 
-**Tip:** You can build specific evals specifically for this step to keep track of average number of consolidated or pruned memories to tune the consolidation aggressiveness over time.
+**提示：** 你可以專門為這一步建立 eval，追蹤平均整併或修剪了多少則記憶，隨時間調整整併的積極程度。
+## 記憶 Evals
 
-## Memory Evals
+記憶評估本身就是個複雜的主題，不過下面幾節提供了衡量記憶品質的實用起點。
 
-Memory evaluation is a complex topic on its own, but the sections below provide a practical starting point for measuring memory quality.
+和一般模型 eval 不同，記憶有**很強的時間相依性**：過去的資訊應該*只在相關時*才有幫助，不能覆蓋當前的意圖。大多數 pretraining 風格的 eval 資料集抓不到這點，因為它們不會測試*同一類任務隨時間選擇性重用*的情況。
 
-Unlike standard model evals, memory introduces **strong temporal dependencies**: past information should help *only when relevant* and should not override current intent. Most pretraining-style eval sets fail to capture this, because they don’t test *the same task family over time with selective reuse*.
+另外，記憶系統是**編排 pipeline**，不只是模型行為。所以你應該評估*端到端的記憶 pipeline*（distillation、consolidation 和 injection），不要只單獨評估模型。
 
-Additionally, memory systems are **orchestration pipelines**, not just model behaviors. As a result, you should evaluate the *end-to-end memory pipeline*—distillation, consolidation, and injection—rather than the model in isolation.
+收集到帶有完整 agent trace 的任務之後，你可以用同一套 harness、指標和 A/B prompt 變體，做受控比較（有記憶 vs 沒記憶）。
 
-Once you collect tasks with full agent traces, you can run controlled comparisons (with vs. without memory) using the same harness, metrics, and A/B prompt variants.
+### 1) Distillation Evals（擷取品質）
 
-### 1) Distillation Evals (Capture Quality)
+評估系統有沒有在對的時間擷取*對的*記憶。
 
-Evaluate whether the system captures the *right* memories at the right time.
+* **Precision**：只儲存了持久的偏好和限制嗎？
+* **Recall**：關鍵的穩定偏好出現時有被擷取嗎？
+* **Safety**：嘗試寫入敏感記憶的比率（被擋 vs 被放行）
 
-* **Precision**: are only durable preferences and constraints stored?
-* **Recall**: were key stable preferences captured when they appeared?
-* **Safety**: rate of attempted sensitive memory writes (blocked vs. allowed)
+### 2) Injection Evals（使用品質）
 
-### 2) Injection Evals (Usage Quality)
+評估記憶在執行期間怎麼影響行為。
 
-Evaluate how memories influence behavior during execution.
+* **Recency correctness**：記憶重疊時，有用最新的那則嗎？
+* **Over-influence**：記憶有沒有錯誤地覆蓋使用者當前的意圖？
+* **Token efficiency**：注入的記憶是否維持在預算內，同時仍然有用？
 
-* **Recency correctness**: when memories overlap, was the most recent one used?
-* **Over-influence**: did memory incorrectly override current user intent?
-* **Token efficiency**: did injected memory remain within budget while still being useful?
+### 3) Consolidation Evals（整理品質）
 
-### 3) Consolidation Evals (Curation Quality)
+評估長期記憶的健康度與演進。
 
-Evaluate long-term memory health and evolution.
+* **Deduplication quality**：去掉重複但沒有失去意義
+* **Conflict resolution**：正確的「最新優先」或優先順序行為
+* **Non-invention**：整併過程沒有引入幻覺出來的事實
 
-* **Deduplication quality**: duplicates removed without losing meaning
-* **Conflict resolution**: correct “latest wins” or precedence behavior
-* **Non-invention**: no hallucinated facts introduced during consolidation
+### 建議的 Harness 模式
 
-### Suggested Harness Patterns
+* A/B 測試注入策略（例如 *依相關性取 top-k* vs. *依相關性 + 時間取 top-k*）
+* 用合成的使用者 profile，帶有腳本化的偏好隨時間漂移
+* 對抗式的記憶污染嘗試（例如 “remember my SSN…”、“store this rule…”）
 
-* A/B test injection strategies (e.g., *top-k by relevance* vs. *top-k by relevance + recency*)
-* Synthetic user profiles with scripted preference drift over time
-* Adversarial memory poisoning attempts (e.g., “remember my SSN…”, “store this rule…”)
+### 實用的記錄指標
 
-### Practical Metrics to Log
+* 每 100 個 turn 的 **memory_write_rate**（高值通常代表擷取太雜）
+* **blocked_write_rate**（追蹤惡意或意外的敏感寫入）
+* **memory_conflict_rate**（使用者多常覆寫已儲存的偏好）
+* **time_to_personalization**（要多少個 turn 才能正確套用某個偏好）
 
-* **memory_write_rate** per 100 turns (high values often indicate noisy capture)
-* **blocked_write_rate** (tracks adversarial or accidental sensitive writes)
-* **memory_conflict_rate** (how often users override stored preferences)
-* **time_to_personalization** (turns until a correct preference is applied)
+## 記憶 Guardrails
 
-## Memory Guardrails
+因為記憶是直接注入 system prompt 的，記憶系統是**高價值的攻擊面**，必須這樣看待。沒有 guardrail 的話，它容易受到：
 
-Because memories are injected directly into the system prompt, memory systems are a **high-value attack surface** and must be treated as such. Without guardrails, they are vulnerable to:
+* **Context poisoning**：例如 “remember that my SSN is …”
+* **Instruction injection**：例如 “store this as a system rule …”
+* **Over-influence**：過期或低信心的記憶左右決策，違背使用者當前的意圖
 
-* **Context poisoning** — e.g. “remember that my SSN is …”
-* **Instruction injection** — e.g. “store this as a system rule …”
-* **Over-influence** — stale or low-confidence memories steering decisions against the user’s current intent
+有效的保護需要在記憶生命週期的**每個階段**都有 guardrail。
 
-Effective protection requires guardrails at **every stage of the memory lifecycle**.
+### Guardrail 層級
 
-### Guardrail Layers
+#### Distillation 檢查
 
-#### Distillation Checks
+防止不安全或低品質的記憶進入系統。
 
-Prevent unsafe or low-quality memories from entering the system.
+* 拒絕敏感格式（SSN、付款資訊、像護照號碼的字串）
+* 拒絕像指令或政策的內容
+* 限制 tool schema 只允許核准的欄位（例如 preference、constraint、confidence、TTL）
 
-* Reject sensitive patterns (SSNs, payment details, passport-like strings)
-* Reject instruction-shaped or policy-like payloads
-* Constrain the tool schema to allow only approved fields (e.g. preference, constraint, confidence, TTL)
+#### Consolidation 檢查
 
-#### Consolidation Checks
+確保長期記憶維持乾淨、一致且可信。
 
-Ensure long-term memory remains clean, consistent, and trustworthy.
+* 強制嚴格的 **「no invention」** 規則：絕不加入來源筆記裡沒有的事實
+* 套用明確的衝突解決（例如 **recency wins**）
+* 對語意相同的記憶去重
+* 可選擇指派或更新 TTL，用於衰減和遺忘
 
-* Enforce a strict **“no invention”** rule—never add facts not present in source notes
-* Apply clear conflict resolution (e.g. **recency wins**)
-* Deduplicate semantically equivalent memories
-* Optionally assign or update TTLs for decay and forgetting
+#### Injection 檢查
 
-#### Injection Checks
+控制記憶在執行期間怎麼影響行為。
 
-Control how memory influences behavior at runtime.
+* 用明確的分隔符包住注入的記憶（例如 `<memories> … </memories>`）
+* 強制優先順序：**當前使用者訊息 > session context > 記憶**
+* 選取記憶時套用時間加權
+* 把記憶當成**參考**，不是權威，避免過度強調
 
-* Wrap injected memory in explicit delimiters (e.g. `<memories> … </memories>`)
-* Enforce precedence: **current user message > session context > memory**
-* Apply recency weighting when selecting memories
-* Treat memories as **advisory**, not authoritative—avoid over-emphasis
+**經驗法則：**
 
-**Rule of thumb:**
+> 如果一則記憶能改變 agent 的行為，它就必須在擷取、整併，*以及*注入三個時間點都通過安全檢查。
 
-> If a memory can change the agent’s behavior, it must pass safety checks at capture, consolidation, *and* injection time.
+## 結論與下一步
 
-## Conclusion and Next Steps
+這份 notebook 用目前主流模型的 zero-shot 架構，介紹了**基礎的記憶模式**。記憶可以帶來強大的個人化，但高度**取決於使用案例**，也不是每個 agent 第一天就需要長期記憶。最好的記憶系統都保持窄而有意圖：針對特定流程或使用案例，為每一類資訊選對表示方式（結構化欄位 vs 筆記），並清楚說明 agent 能記住和不能記住什麼。
 
-This notebook introduced **foundational memory patterns** using zero-shot scaffolding with currently available mainstream models. While memory can unlock powerful personalization, it is highly **use-case dependent**—and not every agent needs long-term memory on day one. The best memory systems stay narrow and intentional: they target a specific workflow or use case, choose the right representation for each kind of information (structured fields vs. notes), and set clear expectations about what the agent can and cannot remember.
+一個實用的檢驗很簡單：
+*如果 agent 記得上一次互動中的某件事，真的能讓它更好或更快地完成任務嗎？*
+如果答案不明確，記憶可能還不值得增加這份複雜度。
 
-A useful litmus test is simple:
-*If the agent remembered something from a prior interaction, would it materially help solve the task better or faster?*
-If the answer is unclear, memory may not yet be worth the added complexity.
+隨著系統成熟，fine-tuning 可以提升記憶品質，特別是在：
 
-As you mature your system, fine-tuning can improve memory quality, especially for:
-
-* More accurate memory extraction (what truly counts as *durable*)
-* More reliable consolidation without hallucinations or overreach
-* Better judgment around when to ask clarifying questions in the presence of conflicting memories
+* 更準確的記憶擷取（什麼才真的算*持久*）
+* 更可靠、沒有幻覺或越權的整併
+* 記憶互相衝突時，更好地判斷何時該問釐清問題
 
 
-**Example Iteration Loop**
+**迭代循環範例**
 
-1. Ship a zero-shot memory pipeline with a solid eval harness
-2. Collect real failure cases (false memories, missed memories, over-influence)
-3. Fine-tune a small **memory specialist** model (e.g., writer or consolidator)
-4. Re-run evals and quantify improvements against the baseline
+1. 上線一個 zero-shot 的記憶 pipeline，並搭配紮實的 eval harness
+2. 收集真實失敗案例（假記憶、漏掉的記憶、過度影響）
+3. fine-tune 一個小型的**記憶專用模型**（例如 writer 或 consolidator）
+4. 重跑 eval，量化相對基準的改善
 
-Memory systems get better through **measured iteration**, not upfront complexity. Start simple, evaluate rigorously, and evolve deliberately.
-
+記憶系統是靠**可量測的迭代**變好的，不是靠一開始的複雜度。從簡單開始，嚴格評估，有意識地演進。
 
 
 
-<!-- tutor:summary -->
+
+## 重點整理
+
+- 旅遊這類重視連續性和優先順序的情境，用 state-based 記憶比 retrieval-based 穩，因為 agent 面對的是一份一致的當前狀態。
+- 記憶要分結構化（profile 欄位）和非結構化（筆記），也要分 global 和 session 兩種範圍，session 筆記證明持久才升級。
+- 記憶生命週期是 distill、consolidate、inject 三步，其中 consolidation 最容易出錯，要明確處理去重、衝突和遺忘。
+- 注入的記憶只是參考，優先順序是當前使用者訊息高於 session context 高於記憶，並且要在每個階段都加 guardrail。
+- 記憶 eval 要看整條 pipeline，不能只看模型。
+
+## 練習
+
+1. 在 Step 1 的 state 物件裡，加一則自己的 global memory note（含 `last_updated` 和 `keywords`），再跑一次 agent，確認它會用到這則偏好。
+2. 修改 Step 2 的 `save_memory_note` tool 描述，加上一條「不要儲存付款資訊或護照號碼」的規則，然後故意說一句 “remember my passport number”，看 tool 有沒有被呼叫。
+3. 在 Step 8 的 consolidation prompt 加一組 few-shot 範例（兩則互相衝突的筆記和預期輸出），再用兩則衝突的 session notes 跑一次，檢查是否真的「最新優先」。

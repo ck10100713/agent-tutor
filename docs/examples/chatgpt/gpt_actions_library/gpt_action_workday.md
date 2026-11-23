@@ -1,19 +1,27 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_workday.md
 ---
 
-# GPT Actions library - Workday
+# GPT Actions 範例庫：Workday
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_workday.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_workday.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+教你用 ChatGPT 的 Custom Actions 接上 Workday，做一個 HR 助理 GPT。它能幫員工送出 PTO（休假）申請、查員工資料、查福利方案。
 
+## 學完你會
+- 用 OAuth 把 GPT 接到 Workday，並知道 API client 要怎麼設定、需要哪些 scope。
+- 寫出讓 GPT 先取得員工 ID 再執行後續操作的 GPT Instructions。
+- 用 OpenAPI schema 定義 Request_Time_Off、Get_Workers 等 Workday API 呼叫。
 
+## 開跑前
+- 需要 Workday Admin 權限，才能取得 Client ID 和 Client Secret。
+- 需要能建立 Custom GPT 的 ChatGPT 帳號。
 
-## **Table of Contents**
+## **目錄**
 
 1. [General App Information](#general-app-information)  
 2. [Authentication from ChatGPT to Workday](#authentication-from-chatgpt-to-workday)  
@@ -21,49 +29,49 @@ source: examples/chatgpt/gpt_actions_library/gpt_action_workday.md
 4. [Additional Resources](#additional-resources)  
 5. [Conclusion](#conclusion)
 
-## General App Information
+## 應用程式基本資訊
 
-Workday is a cloud-based platform that offers solutions for human capital management, payroll, and financial management. Integrating ChatGPT with Workday through Custom Actions can enhance HR operations by providing automated responses to employee inquiries, guiding employees through HR processes, and retrieving key information from Workday.
+Workday 是雲端平台，提供人力資本管理、薪資和財務管理的解決方案。透過 Custom Actions 把 ChatGPT 接到 Workday，可以自動回覆員工的問題、帶員工走完 HR 流程，並從 Workday 撈出關鍵資訊。
 
-ChatGPT’s Custom Actions with Workday allow organizations to use AI to improve HR processes, automate tasks, and offer personalized employee support. This includes virtual HR assistants for inquiries about benefits, time off, and payroll.
+有了 Custom Actions，企業可以用 AI 改善 HR 流程、自動化工作，並提供個人化的員工支援，例如做一個虛擬 HR 助理，回答福利、休假和薪資相關問題。
 
-## Authentication from ChatGPT to Workday
+## 從 ChatGPT 驗證到 Workday
 
-To connect ChatGPT with Workday, use OAuth:
+要把 ChatGPT 接到 Workday，使用 OAuth：
 
-* Requires Workday Admin access to obtain Client ID and Client Secret.  
-* Important URLs:  
-    * **Authorization URL**: `[Workday Tenant URL]/authorize`, typically in this format: `https://wd5-impl.workday.com/<your_tenant>/authorize`  
-    * **Token URL**: `[Workday Tenant URL]/token`, typically in this format: `https://wd5-impl-services1.workday.com/ccx/oauth2/<your_tenant>/token` 
+* 需要 Workday Admin 權限來取得 Client ID 和 Client Secret。  
+* 重要的 URL：  
+    * **Authorization URL**：`[Workday Tenant URL]/authorize`，通常長這樣：`https://wd5-impl.workday.com/<your_tenant>/authorize`  
+    * **Token URL**：`[Workday Tenant URL]/token`，通常長這樣：`https://wd5-impl-services1.workday.com/ccx/oauth2/<your_tenant>/token` 
 
-*Reference the URls Workday provides once you create the API Client in Workday. They will provide the specific URLs needed based on the tenant and data center.*
+*建立 API Client 之後，以 Workday 給你的 URL 為準，它會依你的 tenant 和資料中心給出實際要用的網址。*
 
-**Steps to Set Up OAuth**:
+**設定 OAuth 的步驟**：
 
-1. Use the Register API client task in Workday.
-2. Set your API client settings in workday similar to the provided example below.  
-3. Scopes will vary depending on the actions being performed by GPT. For this use-case, you will need: `Staffing`, `Tenant Non-Configurable`, `Time Off and Leave`, `Include Workday Owned Scope`
-4. Enter the **Redirection URI** from the GPT into the API client settings.
-5. Store the **Client ID** and **Client Secret** for later use in GPT.  
-6. Add the OAuth details into the GPT Authentication section as shown below.  
+1. 在 Workday 執行 Register API client 這個 task。
+2. 照下面的範例圖設定 API client。  
+3. Scope 依 GPT 要做的動作而定。這個案例需要：`Staffing`、`Tenant Non-Configurable`、`Time Off and Leave`、`Include Workday Owned Scope`
+4. 把 GPT 裡的 **Redirection URI** 填進 API client 設定。
+5. 把 **Client ID** 和 **Client Secret** 存起來，等一下要貼進 GPT。  
+6. 照下圖，把 OAuth 資訊填進 GPT 的 Authentication 區塊。  
 
-*The redirection URI is retrieved from the GPT setup once OAuth has been selected as authentication, on the GPT set-up screen.* 
+*Redirection URI 要在 GPT 設定頁選了 OAuth 當驗證方式之後才看得到。* 
 
 ![workday-cgpt-oauth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/workday-cgpt-oauth.png)
 
 ![workday-api-client.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/workday-api-client.png)
 
-The [Workday Community page on API client](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/(https:/doc.workday.com/admin-guide/en-us/authentication-and-security/authentication/oauth/dan1370797831010.html)) can be a good resource to go deeper *(this requires a community account)*.
+想深入了解可以看 [Workday Community 的 API client 頁面](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/(https:/doc.workday.com/admin-guide/en-us/authentication-and-security/authentication/oauth/dan1370797831010.html))*（需要 community 帳號）*。
 
-## Sample Use Case: PTO Submission and Benefit Plan Inquiry
+## 範例情境：PTO 申請與福利方案查詢
 
-### Overview
+### 概述
 
-This use case demonstrates how to help employees submit PTO requests, retrieve worker details, and view benefit plans through a RAAS report.
+這個情境示範怎麼幫員工送出 PTO 申請、取得員工資料，並透過 RAAS report 查看福利方案。
 
 ## GPT Instructions
 
-Use the following instructions to cover PTO Submission use-cases, Worker details retrieval and benefit plan inquiry:
+用下面的 instructions 處理 PTO 申請、員工資料查詢和福利方案查詢：
 
 ```
 # **Context:** You support employees by providing detailed information about their PTO submissions, worker details, and benefit plans through the Workday system. You help them submit PTO requests, retrieve personal and job-related information, and view their benefit plans. Assume the employees are familiar with basic HR terminologies.
@@ -84,27 +92,27 @@ Use the following instructions to cover PTO Submission use-cases, Worker details
 2. Present a summary of the benefits.
 ```
 
-### Creating request on behalf of the employee
+### 代替員工建立申請
 
-As employee ID is required to take actions on Workday onto the employee, this information will need to be retrieved before doing any queries. We have accomplished this by calling a RAAS report in workday after authentication that provides the user who is logging in. There may be another way to do this via just a REST API call itself. Once the ID has been returned it will be used in all other actions.
+在 Workday 對員工執行動作需要員工 ID，所以在做任何查詢之前要先取得。我們的做法是在驗證完成後呼叫一個 Workday RAAS report，它會回傳目前登入的使用者。也許光用 REST API 呼叫也能做到。ID 取回來之後，其他所有動作都會用它。
 
-Sample RAAS Report: Using the field Current User will return the worker who has authenticated via OAuth.    
+RAAS report 範例：使用 Current User 欄位，會回傳透過 OAuth 驗證的那位員工。    
 ![custom-report-workday-01.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/custom-report-workday-01.png)
 
 ![custom-report-workday-02.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/custom-report-workday-02.png)
 
 ### OpenAPI Schema
 
-Below is an example OpenAPI schema generated using the Workday REST API Reference and [ActionsGPT](https://chatgpt.com/g/g-TYEliDU6A-actionsgpt).
+下面是用 Workday REST API Reference 和 [ActionsGPT](https://chatgpt.com/g/g-TYEliDU6A-actionsgpt) 產生的 OpenAPI schema 範例。
 
-We're using the following API calls:
-* **\[POST\] Request\_Time\_Off**: Creates a time off request for an employee.  
-* **\[GET\] Get\_Workers**: Retrieves information on worker details.  
-* **\[GET\] Get\_eligibleAbsenceTypes**: Retrieves eligible time off plans.  
-* **\[GET\] Get\_Report\_As\_A\_Service (RAAS)**: Pulls reports, including custom RAAS reports, for benefit details.
+我們用到這幾個 API 呼叫：
+* **\[POST\] Request\_Time\_Off**：幫員工建立休假申請。  
+* **\[GET\] Get\_Workers**：取得員工資料。  
+* **\[GET\] Get\_eligibleAbsenceTypes**：取得可用的休假方案。  
+* **\[GET\] Get\_Report\_As\_A\_Service (RAAS)**：拉報表，包含自訂的 RAAS report，用來查福利明細。
 
 
-Replace the paths with the correct tenant ID and configure them to the appropriate servers. Ensure the required IDs are set correctly for different PTO types.
+路徑要換成正確的 tenant ID，並設定到對應的 server。不同 PTO 類型所需的 ID 也要確認設對。
 
 ```yaml
 openapi: 3.1.0
@@ -402,14 +410,24 @@ components:
 
 ```
 
-## Conclusion
+## 結論
 
-Congratulations on setting up a GPT for Workday with capabilities such as PTO submission, employee details retrieval, and benefits plan inquiry!
+恭喜，你已經做好一個 Workday GPT，具備 PTO 申請、員工資料查詢和福利方案查詢的功能。
 
-This integration can streamline HR processes, provide quick access to personal details, and make it easy for employees to request PTO. This guide provides a customizable framework for implementing ChatGPT with Workday, allowing you to easily add more actions and enhance GPT capabilities further.
+這個整合可以簡化 HR 流程，讓員工快速查到個人資料，也讓請 PTO 變簡單。這份指南是個可調整的框架，你可以很容易地加入更多 action，進一步擴充 GPT 的能力。
 
 ![workday-gpt.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/workday-gpt.png)
 
 ![pto-request.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/../images/pto-request.png)
 
-<!-- tutor:summary -->
+## 重點整理
+- Custom Actions 用 OAuth 連 Workday，Client ID 和 Secret 來自 Workday 的 API client，Redirection URI 來自 GPT。
+- Scope 要依 GPT 要做的事來選，給太多或太少都會出問題。
+- 對員工做的操作都需要員工 ID，所以流程上要先用 RAAS report 取得目前登入者。
+- OpenAPI schema 決定 GPT 能呼叫哪些 Workday API，要加功能就加 path。
+- Instructions 負責告訴 GPT 什麼情況呼叫哪個 action，是行為的主要控制點。
+
+## 練習
+1. 在 OpenAPI schema 裡找出 Request_Time_Off 的 path，把 server 和 tenant 換成你自己的值。
+2. 修改 GPT Instructions，讓 GPT 在送出 PTO 申請前，先列出日期和休假類型請使用者確認。
+3. 照 Get_Workers 的寫法，在 schema 加一個新的 GET 操作（例如查主管資訊），並在 Instructions 裡說明何時使用。

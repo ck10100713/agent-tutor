@@ -1,26 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/Custom-LLM-as-a-Judge.ipynb
 ---
-
-# Custom LLM as a Judge to Detect Hallucinations with Braintrust
+# 用 Braintrust 自訂 LLM as a Judge 偵測 hallucination
 
 > 原文：[examples/Custom-LLM-as-a-Judge.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Custom-LLM-as-a-Judge.ipynb)
 
+## 這篇在做什麼
 
+用 LLM 當評審（LLM-as-a-judge）來判斷客服 bot 的答案有沒有 hallucination。這篇用 CoQA 資料集造出已知的 hallucination，依序試三種 judge：數字評分、加推理的評分、改成分類，再用「抓到 hallucination 的比例」來比較哪種最準。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 LLM 產生已知錯誤的答案，當作 judge 的測試資料
+- 用 Braintrust 的 `Eval` 跑 meta-evaluation，量測 judge 本身準不準
+- 理解為什麼把「打 1 到 10 分」改成「依明確標準分類」，準確率會明顯提升
 
-Let's say you're working on a customer service bot and trying to evaluate the quality of its responses. Consider a question like "What is your return policy?" If the correct answer is "You can return items within 30 days of purchase," but your bot generates "You can return items within 30 days," how would you evaluate whether this is a good response?
+## 開跑前
 
-A heuristic like the `Levenshtein` string distance would indicate that the response is incorrect. However, a better approach is to use an LLM-as-a-judge to assess the accuracy of the response. LLM-as-a-judge is a technique that leverages an LLM to score the quality of answers. LLMs can reason about language beyond surface-level string comparisons, enabling them to evaluate answers more accurately.
+- OpenAI API key（`OPENAI_API_KEY`）
+- Braintrust 帳號和 `BRAINTRUST_API_KEY`（第三方評測平台，使用前請看它的服務條款和隱私政策）
+- 呼叫模型會產生費用
 
-In this cookbook, we'll walk through how to build an LLM-as-a-judge scorer that can detect hallucinations using [Braintrust](https://www.braintrust.dev/), a third-party evaluation platform that is compatible with OpenAI's models.
+假設你在做一個客服 bot，想評估它的回答品質。看這個問題：「你們的退貨政策是什麼？」如果正確答案是「購買後 30 天內可以退貨」，但 bot 回答「30 天內可以退貨」，你要怎麼判斷這是不是好答案？
 
-## Installing dependencies
+像 `Levenshtein` 字串距離這種 heuristic 會判定這個回答是錯的。比較好的做法是用 LLM-as-a-judge 評估回答的準確度。LLM-as-a-judge 是用 LLM 來給答案品質打分的技巧。LLM 能推理語言，不只是表面的字串比對，所以評估答案更準確。
 
-Let's install a few basic dependencies. We'll use the CoQA dataset (via DuckDB), [Braintrust](https://www.braintrust.dev/) for evals, and [OpenAI's models](https://platform.openai.com/docs/models). Please note that Braintrust is a third-party evaluation platform and you should review their [terms of service and privacy policy](https://www.braintrust.dev/legal/terms-of-service) before proceeding.
+這篇 cookbook 會帶你一步步做出能偵測 hallucination 的 LLM-as-a-judge scorer，用的是 [Braintrust](https://www.braintrust.dev/)，一個跟 OpenAI 模型相容的第三方評測平台。
+
+## 安裝依賴
+
+先裝幾個基本的套件。我們會用 CoQA 資料集（透過 DuckDB）、做 evals 用的 [Braintrust](https://www.braintrust.dev/)，還有 [OpenAI 的模型](https://platform.openai.com/docs/models)。注意 Braintrust 是第三方評測平台，繼續之前請先看它的[服務條款和隱私政策](https://www.braintrust.dev/legal/terms-of-service)。
 
 
 ```python
@@ -33,9 +43,9 @@ Let's install a few basic dependencies. We'll use the CoQA dataset (via DuckDB),
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-Next, let's initialize the OpenAI client. We'll use the `AsyncOpenAI` client so that we can parallelize our requests. The `braintrust.wrap_openai` function
-wraps the OpenAI client to enable logging LLM calls to [Braintrust](https://www.braintrust.dev/). We'll use Braintrust to facilitate the evaluations below.
-Before proceeding, you should sign up for a [Braintrust account](https://www.braintrust.dev/signup) and set `BRAINTRUST_API_KEY` in your environment to a valid API key.
+接著初始化 OpenAI client。我們用 `AsyncOpenAI` client，這樣可以平行處理請求。`braintrust.wrap_openai` 函式
+會包裝 OpenAI client，讓 LLM 呼叫能記錄到 [Braintrust](https://www.braintrust.dev/)。下面的評測會用 Braintrust 來進行。
+繼續之前，你要先註冊一個 [Braintrust 帳號](https://www.braintrust.dev/signup)，並把 `BRAINTRUST_API_KEY` 設成有效的 API key 放在環境變數裡。
 
 
 ```python
@@ -48,10 +58,9 @@ braintrust.login(api_key=os.environ["BRAINTRUST_API_KEY"])
 client = braintrust.wrap_openai(AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"]))
 ```
 
-## Explore the dataset
+## 探索資料集
 
-We'll use the [CoQA dataset](https://stanfordnlp.github.io/coqa/) which contains a diverse set of passages, questions, and answers. Because CoQA is quite large, we'll just look at the first several passages. As with any public dataset, there's a chance that the underlying LLMs have memorized aspects of the dataset, so when developing your own scorers, it's a good idea to test them using
-your own private data.
+我們用 [CoQA 資料集](https://stanfordnlp.github.io/coqa/)，它包含各式各樣的文章段落、問題和答案。CoQA 很大，所以我們只看前幾篇文章。跟任何公開資料集一樣，底層的 LLM 有可能已經記住資料集的某些部分，所以開發自己的 scorer 時，最好用你自己的私有資料來測。
 
 
 ```python
@@ -107,7 +116,7 @@ print(single_result[3]["input_text"][0])
     Floyd Mayweather and Manny Pacquiao
     ```
 
-The data contains a series of passages, each with a number of questions and answers. Let's flatten this into a list of `(passage, question, answer)` tuples.
+資料是一系列的文章，每篇有好幾組問答。我們把它攤平成 `(passage, question, answer)` 的 tuple 清單。
 
 
 ```python
@@ -142,10 +151,9 @@ print(len(qa_pairs))
     629
     ```
 
-### Adding hallucinations
+### 加入 hallucination
 
-Because Braintrust's scorer is designed to test hallucinations, we can use the QA pairs to generate known hallucinations. We'll create hallucinated answers by asking an
-LLM to confidently generate an answer to each question without using the passage.
+Braintrust 的 scorer 是設計來測 hallucination 的，所以我們可以用這些問答對來產生已知的 hallucination。做法是請 LLM 不看文章，自信地針對每個問題生成答案，作為 hallucinated 的答案。
 
 
 ```python
@@ -237,19 +245,19 @@ print("\n\nNumber of hallucinations:", len(hallucinations))
     Number of hallucinations: 270
     ```
 
-## Creating the evaluators
+## 建立評估器
 
-We'll consider a few popular approaches for creating an LLM-as-a-judge. For each approach, we'll create a scorer and then "meta-evaluate" it to see how it performs.
-Since we know that the hallucinated answers are incorrect, we'll assess the quality of an evaluator by testing how often it scores the hallucinated answers as `0`.
+我們會看幾種常見的 LLM-as-a-judge 做法。每種做法都先做一個 scorer，再對它做「meta-evaluation」，看它表現如何。
+因為我們知道 hallucinated 的答案是錯的，所以要評估 evaluator 的品質，就看它把 hallucinated 答案打成 `0` 的頻率。
 
 
-### LLM-as-a-judge #1: Numeric rater
+### LLM-as-a-judge #1：數字評分
 
-A common initial intuition when creating an LLM-as-a-judge is asking the LLM to rate the answer on a scale of 1 to 5. The benefit of this approach is that
-it's easy to convert the LLM's output into a numeric score.
+建立 LLM-as-a-judge 時，常見的第一直覺是請 LLM 用 1 到 5 分幫答案評分。這種做法的好處是，
+很容易把 LLM 的輸出轉成數字分數。
 
-We'll use a modified version of the [Factuality](https://github.com/braintrustdata/autoevals/blob/main/templates/factuality.yaml) template, but ask the LLM to
-rate the answer on a scale of 1 to 10.
+我們用 [Factuality](https://github.com/braintrustdata/autoevals/blob/main/templates/factuality.yaml) 模板的修改版，不過請 LLM
+用 1 到 10 分評分。
 
 
 ```python
@@ -337,11 +345,11 @@ print(
     0.0
     ```
 
-This looks promising! Now that we have sanity checked it on a single example, let's run a proper evaluation and see how it performs on a wider set of data. An evaluation consists of three components:
+看起來有希望！我們已經拿單一範例做過 sanity check，現在來跑一次正式的評測，看它在更多資料上的表現。一次評測有三個部分：
 
-- **Data**: In this case, the `input` is the question, hallucinated answer, and ground truth answer. The scorer will convert this into a score between 0 and 1. The expected score is 0, since it's a hallucination.
-- **Task**: The task is simply calling the numeric rater for each input.
-- **Scores**: We'll assess the quality of the generated score by comparing it with the ground truth score. Since we know both numbers are between 0 and 1, we can use the normalized difference as the score.
+- **Data**：這裡的 `input` 是問題、hallucinated 的答案和 ground truth 答案。Scorer 會把它轉成 0 到 1 之間的分數。預期分數是 0，因為它是 hallucination。
+- **Task**：Task 很簡單，就是對每個 input 呼叫數字評分器。
+- **Scores**：我們把產生的分數跟 ground truth 分數比較，來評估分數的品質。因為兩個數字都在 0 到 1 之間，可以用正規化後的差距當分數。
 
 
 ```python
@@ -406,19 +414,19 @@ await Eval(
     EvalResultWithSummary(summary="...", results=[...])
     ```
 
-It looks like the numeric rater scored almost 94% in total. That's not bad, but if 6% of your evals are incorrectly judged, that could make it very hard to trust them. Let's dig into the Braintrust
-UI to get some insight into what's going on.
+看起來數字評分器總共拿到將近 94%。不算差，但如果你的 eval 有 6% 被判錯，會讓人很難信任它們。我們到 Braintrust
+UI 看看到底發生什麼事。
 
 ![Partial credit](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/Custom-LLM-as-a-Judge-Partial-Credit.gif)
 
-It looks like a number of the incorrect answers were scored with numbers between 1 and 10. However, we do not currently have any insight into why the model gave these scores. Let's see if we can
-fix that next.
+看起來有一些錯誤的答案被打了 1 到 10 之間的分數。但是我們現在看不出模型為什麼給這些分數。接著看看能不能
+解決這點。
 
 
-### LLM-as-a-judge #2: Adding reasoning
+### LLM-as-a-judge #2：加入推理
 
-Let's tweak the prompt to get the LLM to also reason about its rating. This method is called [Chain of Thought Reasoning](https://en.wikipedia.org/wiki/Chain_of_thought_reasoning). In addition
-to potentially improving the score, it will give us some insight into why the model gave these scores.
+調整 prompt，讓 LLM 同時說明它評分的理由。這個方法叫做 [Chain of Thought Reasoning](https://en.wikipedia.org/wiki/Chain_of_thought_reasoning)。除了可能提升分數，
+它也能讓我們看出模型為什麼給這些分數。
 
 
 ```python
@@ -534,24 +542,24 @@ await Eval(
     EvalResultWithSummary(summary="...", results=[...])
     ```
 
-It doesn't look like adding reasoning helped the score (in fact, it's 3% percent worse). However, if we look at one of the failures, we'll get some insight into
-what the model was thinking. Here is an example of a hallucinated answer:
+加入推理似乎沒有讓分數變好（其實還差了 3%）。不過看其中一個失敗案例，可以看出
+模型當時在想什麼。這是一個 hallucinated 答案的例子：
 
 ![Output](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/Custom-LLM-as-a-Judge-Output.png)
 
-And the score along with its reasoning:
+以及分數和它的理由：
 
 ![Reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/Custom-LLM-as-a-Judge-Reasoning.png)
 
 
-It looks like the model is applying its own judgement to compute partial credit. This is a common problem with numeric rating—both for models and for humans—and can often be solved
-by using better prompting.
+看起來模型用自己的判斷去算部分分數。這是數字評分常見的問題，模型和人類都會這樣，通常可以靠更好的 prompt
+解決。
 
 
-### LLM-as-a-judge #3: Classifying instead of rating
+### LLM-as-a-judge #3：用分類取代評分
 
-Next, we'll spell out specific criteria and ask the model to classify the answer according to those criteria. This method allows us to more precisely guide the model
-towards the hallucinations we're testing for. Intuitively, giving the model specific criteria to rate will result in a more accurate score.
+接下來我們把具體的標準寫清楚，請模型依這些標準對答案分類。這個方法可以更精準地引導模型
+找出我們要測的 hallucination。直覺上，給模型具體的評分標準，分數會更準確。
 
 
 ```python
@@ -714,11 +722,11 @@ await Eval(
     EvalResultWithSummary(summary="...", results=[...])
     ```
 
-The classifier scored 98% which is a significant improvement!
+分類器拿到 98%，進步很多！
 
-### Codifying this pattern
+### 把這個模式寫成程式
 
-The classifier above can simply be rewritten as:
+上面的分類器可以簡單改寫成：
 
 ```python
 PROMPT = """\
@@ -754,11 +762,23 @@ Classifier = autoevals.LLMClassifier(
 )
 ```
 
-## Next steps
+## 下一步
 
-As a next step, you could dig into the individual improvements and regressions to assess them and consider future improvements to the prompt. You could also test it on your own data, and double check that the results hold for your use case.
-You could also measure a model like o1, try fine-tuning a smaller model and see if the results are reproducible, or use few-shot prompting to align the model with more subjective criteria.
-In all cases, you should strive to evaluate your results, so you can rigorously assess the impact of each change.
+下一步，你可以深入看每個進步和退步的案例來評估它們，並思考未來 prompt 要怎麼改進。你也可以用自己的資料測試，再確認結果在你的使用情境下也成立。
+你還可以量測 o1 之類的模型、試著 fine-tune 較小的模型看結果能不能重現，或用 few-shot prompting 讓模型對齊更主觀的標準。
+無論如何，都要努力評估你的結果，才能嚴謹地判斷每次改動的影響。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 字串距離這類 heuristic 抓不到語意相同的答案，LLM-as-a-judge 可以推理語意，評得更準。
+- 評 judge 本身要有 ground truth：先造出已知的 hallucination，看 judge 把它們打成 0 的比例。
+- 要 LLM 打 1 到 10 分容易讓它自己給部分分數，加推理能看出原因，但不一定讓分數變好。
+- 給明確標準、改成分類，比開放式的數字評分更準（這篇從約 94% 提升到 98%）。
+- 公開資料集可能被模型記過，真正開發 scorer 時要用自己的私有資料驗證。
+
+## 練習
+
+1. 把數字評分器 prompt 的量表從 1 到 10 改成 1 到 5，重跑 eval，看分數有沒有變。
+2. 在分類器的 prompt 裡改一條分類標準的描述（例如放寬或收緊「hallucination」的定義），重跑並比較準確率。
+3. 自己造一組不是 hallucination 的正確答案放進資料，測 judge 把它們判成對的比例，驗證分類器不只是什麼都判成錯。

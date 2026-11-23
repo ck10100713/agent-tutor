@@ -1,53 +1,66 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_salesforce.ipynb
 ---
 
-# GPT Actions library - Salesforce
+# GPT Actions library：Salesforce
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_salesforce.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_salesforce.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-## Introduction
+教你替 Salesforce Service Cloud 建一個 GPT Action，讓使用者直接在 ChatGPT 裡查詢和更新 case。內容包含 Custom GPT 的 Instructions、OpenAPI schema，以及在 Salesforce 建 Connected App 並設定 OAuth 的完整步驟。
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
+## 學完你會
+
+- 把 Instructions 和 OpenAPI schema 貼進 Custom GPT，讓它能呼叫 Salesforce API。
+- 在 Salesforce 建立 Connected App，設定好 OAuth 相關選項。
+- 在 ChatGPT 填入 OAuth 資訊，並把 callback URL 回填到 Salesforce 完成驗證。
+
+## 開跑前
+
+- 需要有 Salesforce 帳號，且有權限建立 App。
+- 需要能建立 Custom GPT 的 ChatGPT 帳號。
+
+## 簡介
+
+這一頁是給開發者的指引，說明怎麼替特定的應用程式建一個 GPT Action。開始之前，請先熟悉以下內容：
 - [Introduction to GPT Actions](https://platform.openai.com/docs/actions/introduction)
 - [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
 - [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
 
-This particular GPT Action provides an overview of how to connect to Salesforce, specifically, Salesforce Service Cloud. This schema detailed in this Action allows the user to pull case data and update cases directly from ChatGPT. The setup process to create Actions for other Salesforce Cloud solutions uses the same Connected App and authentication setup, but will require a different API schema.
+這個 GPT Action 說明怎麼連到 Salesforce，具體來說是 Salesforce Service Cloud。這個 Action 的 schema 讓使用者直接在 ChatGPT 裡抓取 case 資料並更新 case。為其他 Salesforce Cloud 產品建立 Action 時，Connected App 和驗證的設定方式一樣，只是需要不同的 API schema。
 
-### Value + Example Business Use Cases
+### 價值與商業使用情境範例
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to Salesforce
+**價值**：使用者現在能用 ChatGPT 的自然語言能力直接連到 Salesforce
 
-**Example Use Cases**: 
-- Reduce average response time to customers
-- Reduce time to troubleshoot cases or issues
-- Ensure more consistent brand voice in response to customers when combined with knowledge and instructions in the GPT
+**使用情境範例**：
+- 縮短對客戶的平均回應時間
+- 縮短排查 case 或問題的時間
+- 搭配 GPT 裡的知識和 instructions，讓回覆客戶的品牌語氣更一致
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式的重要連結
 
-Check out these links from the application before you get started:
+開始之前，先看看這些來自該應用程式的連結：
 - [Create Lightning Apps in Salesforce](https://help.salesforce.com/s/articleView?id=sf.apps_lightning_create.htm&type=5)
 - [OAuth Tokens and Scopes](https://help.salesforce.com/s/articleView?id=sf.remoteaccess_oauth_tokens_scopes.htm&type=5)
 - [Salesforce API Docs](https://developer.salesforce.com/docs/apis)
 
-### Application Prerequisites
+### 應用程式的前置條件
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Ensure you have permissions to create an App in Salesforce
+開始之前，請先在你的應用程式環境完成以下步驟：
+- 確認你有在 Salesforce 建立 App 的權限
 
-## ChatGPT Steps
+## ChatGPT 的步驟
 
 ### Custom GPT Instructions
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Instructions 面板。有問題的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) 了解這一步的細節。
 
 ```python
 **Context**: Your purpose is to pull information from Service Cloud, and push updates to cases. A user is going to ask you a question and ask you to make updates.
@@ -62,7 +75,7 @@ User: Help me solve case 00001104 in Service Cloud.
 
 ### OpenAPI Schema 
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 之後，把下面的文字複製到 Actions 面板。有問題的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) 了解這一步的細節。
 
 ```python
 openapi: 3.1.0
@@ -173,92 +186,103 @@ paths:
           description: Not Found - case number does not exist
 ```
 
-## Authentication Instructions
+## 驗證設定說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+以下是設定這個第三方應用程式驗證的步驟。有問題的話，看 [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) 了解這一步的細節。
 
-### Pre-Action Steps
+### Action 之前的步驟
 
-Before you set up authentication in ChatGPT, please take the following steps in the application.
+在 ChatGPT 設定驗證之前，請先在應用程式裡做以下步驟。
 
-Before you set up authentication in ChatGPT, please take the following steps in the application.
-1. Navigate to Salesforce Setup
+1. 進入 Salesforce Setup
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_setup.png)
 
-2. Search for “App Manager”
+2. 搜尋 “App Manager”
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_manager.png)
 
-3. Click “New Connected App”
-4. Enter a Connected App Name
-5. Enter contact email (your email)
-6. Check the box to enable OAuth settings
-7. Insert a callback URL (use a placeholder like https://chat.openai.com/aip//oauth/callback for now, you’ll update this later when you create the Action in ChatGPT) 
+3. 點 “New Connected App”
+4. 輸入 Connected App 名稱
+5. 輸入聯絡 email（你自己的 email）
+6. 勾選啟用 OAuth settings
+7. 填入 callback URL（先用佔位的，例如 https://chat.openai.com/aip//oauth/callback，之後在 ChatGPT 建好 Action 再更新） 
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_oauth2.png)
 
-8. Select “Selected OAuth Scopes” and grant the appropriate permissions. Scope these based on your internal security policies. 
+8. 選 “Selected OAuth Scopes” 並給予適當權限。範圍請依你們內部的資安政策決定。 
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_scope.png)
 
-9. Ensure the following boxes are checked:
+9. 確認以下選項都已勾選：
 - Enable Client Credentials Flow
 - Enable Authorization Code and Credentials FLow
 - Enable Token Exchange Flow
-10. Ensure the following box is unchecked: 
+10. 確認以下選項沒有勾選： 
 - Require Proof Key for Code Exchange (PKCE) Extension for Supported Authorization Flows
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_settings_condensed.png) 
 
-11. Save your New Connected App
-12. Under “Consumer Key and Secret” click “Manage Consumer Details”. Verify your access using the code emailed to your account, and then copy the key and secret. 
+11. 儲存你的 New Connected App
+12. 在 “Consumer Key and Secret” 下點 “Manage Consumer Details”。用寄到你帳號 email 的驗證碼驗證身分，然後複製 key 和 secret。 
 - Salesforce Consumer Key = ChatGPT Client ID
 - Salesforce Consumer Secret = ChatGPT Client Secret
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_credentials.png)
 
-13. Return to App page
-14. Click “Manage” 
-15. Click “Edit Policies”
-16. Under OAuth Policies, check the “Enable Token Exchange Flow” box
+13. 回到 App 頁面
+14. 點 “Manage” 
+15. 點 “Edit Policies”
+16. 在 OAuth Policies 底下，勾選 “Enable Token Exchange Flow”
 
 
 ![gptactions_salesforce.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt_actions_salesforce_token.png)
 
-17. Click save!
+17. 按儲存
 
-### In ChatGPT
+### 在 ChatGPT 裡
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點 "Authentication" 並選 **"OAuth"**，填入下列資訊。 
 
-- **Client ID**: use Client ID from steps above 
-- **Client Secret**: use Client Secret from steps above
-- **Authorization URL**: https://[inserturlhere].my.salesforce.com/services/oauth2/authorize
-- **Token URL**: https://[inserturlhere].my.salesforce.com/services/oauth2/token 
-- **Scope**: full
-- **Token**: Default (POST)
+- **Client ID**：用前面步驟取得的 Client ID 
+- **Client Secret**：用前面步驟取得的 Client Secret
+- **Authorization URL**：https://[inserturlhere].my.salesforce.com/services/oauth2/authorize
+- **Token URL**：https://[inserturlhere].my.salesforce.com/services/oauth2/token 
+- **Scope**：full
+- **Token**：Default (POST)
 
-### Post-Action Steps
-
-
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
-
-- Copy the callback URL from the GPT Action
-- Navigate back to your Connected App in Salesforce, and add your callback URL.
+### Action 之後的步驟
 
 
-### FAQ & Troubleshooting
+在 ChatGPT 設定好驗證之後，照下面的步驟在應用程式裡完成 Action 的設定。
 
-- *Callback URL Error:*  If you get a callback URL error in ChatGPT, pay close attention to the screenshot above. You need to add the callback URL directly into Salesforce for the action to authenticate correctly
-- *Internal Server Error:* Ensure all the correct boxes are checked and/or unchecked in the OAuth settings for your connected app. 
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- 從 GPT Action 複製 callback URL
+- 回到 Salesforce 的 Connected App，把你的 callback URL 加進去。
 
 
-<!-- tutor:summary -->
+### FAQ 與疑難排解
+
+- *Callback URL 錯誤：* 如果在 ChatGPT 看到 callback URL 錯誤，請仔細看上面的截圖。你需要把 callback URL 直接加到 Salesforce，Action 才能正確驗證
+- *Internal Server Error：* 確認 Connected App 的 OAuth 設定裡，該勾的和不該勾的選項都正確 
+
+*有哪些整合希望我們優先做？我們的整合有錯誤嗎？歡迎到 GitHub 提 PR 或 issue，我們會處理。*
+
+
+## 重點整理
+
+- GPT Action 由三塊組成：Custom GPT 的 Instructions、OpenAPI schema、驗證設定。
+- 換成其他 Salesforce Cloud 產品時，Connected App 和驗證不用變，只要換 API schema。
+- Salesforce 的 Consumer Key 和 Secret 就是 ChatGPT 的 Client ID 和 Client Secret。
+- OAuth 選項要勾對，而且 PKCE 要關掉，否則會出 Internal Server Error。
+- callback URL 要等 ChatGPT 產生後，再回填到 Salesforce。
+
+## 練習
+
+1. 把 Instructions 裡的回覆語氣規則改成你們公司的風格，測試 GPT 回覆 case 的口吻有沒有變。
+2. 在 OpenAPI schema 裡限制只保留查詢 case 的 endpoint，移除更新的，確認 GPT 就不能改 case 了。
+3. 故意不要把 callback URL 填回 Salesforce，重現 callback URL 錯誤，再修好它。

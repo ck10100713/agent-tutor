@@ -1,30 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/web-search-evaluation.ipynb
 ---
 
-# Evals API Use-case - Web Search Evaluation
+# Evals API 使用案例：Web Search 評估
 
 > 原文：[examples/evaluation/use-cases/web-search-evaluation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/web-search-evaluation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 OpenAI **Evals** 框架和自訂的 in-memory 資料集，評估模型從網路上找出正確答案的能力。流程包含定義資料集、設定 LLM grader、跑 eval 並檢視結果。
+
+## 學完你會
+- 定義一份問答配對的 in-memory 資料集當 eval 資料
+- 設定 LLM-based 的 pass/fail grader 和 eval 設定
+- 對 `gpt-4.1` 和 `gpt-4.1-mini` 跑評估、輪詢完成狀態，並檢視輸出
+
+## 開跑前
+需要 OpenAI API key。結果可以在 https://platform.openai.com/evaluations 的 evals dashboard 查看。
+
+這份 notebook 示範怎麼用 OpenAI **Evals** 框架和自訂的 in-memory 資料集，評估模型從網路上找出正確答案的能力。
+
+**目標：**
+- 示範怎麼設定並執行 web search 品質的評估。
+- 提供評估 LLM 資訊檢索能力的範本。
 
 
 
-This notebook demonstrates how to evaluate a model's ability to retrieve correct answers from the web using the OpenAI **Evals** framework with a custom in-memory dataset.
+## 環境設定
 
-**Goals:**
-- Show how to set up and run an evaluation for web search quality.
-- Provide a template for evaluating information retrieval capabilities of LLMs.
-
-
-
-## Environment Setup
-
-We begin by importing the required libraries and configuring the OpenAI client.  
-This ensures we have access to the OpenAI API and all necessary utilities for evaluation.
+先匯入需要的函式庫，並設定 OpenAI client。
+這樣就能存取 OpenAI API 和評估需要的所有工具。
 
 ```python
 # Update OpenAI client
@@ -53,13 +60,13 @@ client = OpenAI(
 )
 ```
 
-## Define the Custom Evaluation Dataset
+## 定義自訂的評估資料集
 
-We define a small, in-memory dataset of question-answer pairs for web search evaluation.  
-Each item contains a `query` (the user's search prompt) and an `answer` (the expected ground truth).
+我們為 web search 評估定義一個小型的 in-memory 問答配對資料集。
+每個項目包含 `query`（使用者的搜尋 prompt）和 `answer`（預期的標準答案）。
 
-> **Tip:**  
-> You can modify or extend this dataset to suit your own use case or test broader search scenarios.
+> **提示：**
+> 你可以修改或擴充這份資料集，適應自己的使用情境，或測試更廣的搜尋情境。
 
 ```python
 def get_dataset(limit=None):
@@ -108,15 +115,15 @@ def get_dataset(limit=None):
     return dataset[:limit] if limit else dataset
 ```
 
-## Define Grading Logic
+## 定義評分邏輯
 
-To evaluate the model’s answers, we use an LLM-based pass/fail grader:
+評估模型的答案時，我們用 LLM-based 的 pass/fail grader：
 
-- **Pass/Fail Grader:**  
-  An LLM-based grader that checks if the model’s answer (from web search) matches the expected answer (ground truth) or contains the correct information.
+- **Pass/Fail Grader：**
+  一個 LLM-based grader，檢查模型的答案（來自 web search）是否符合預期答案（標準答案），或是否包含正確的資訊。
 
-> **Best Practice:**  
-> Using an LLM-based grader provides flexibility for evaluating open-ended or fuzzy responses.
+> **最佳實務：**
+> 用 LLM-based grader 在評估開放式或模糊的回應時比較有彈性。
 
 ```python
 pass_fail_grader = """
@@ -143,18 +150,18 @@ pass_fail_grader_user_prompt = """
 """
 ```
 
-## Define the Evaluation Configuration
+## 定義評估設定
 
-We now configure the evaluation using the OpenAI Evals framework.  
+現在用 OpenAI Evals 框架設定評估。
 
-This step specifies:
-- The evaluation name and dataset.
-- The schema for each item (what fields are present in each Q&A pair).
-- The grader(s) to use (LLM-based pass/fail).
-- The passing criteria and labels.
+這一步會指定：
+- 評估名稱和資料集。
+- 每個項目的 schema（每組問答裡有哪些欄位）。
+- 要使用的 grader（LLM-based pass/fail）。
+- 通過的標準和標籤。
 
-> **Best Practice:**  
-> Clearly defining your evaluation schema and grading logic up front ensures reproducibility and transparency.
+> **最佳實務：**
+> 事先清楚定義評估 schema 和評分邏輯，能確保可重現且透明。
 
 ```python
 # Create the evaluation definition using the OpenAI Evals client.
@@ -193,14 +200,14 @@ logs_eval = client.evals.create(
 )
 ```
 
-## Run the Model and Poll for Completion
+## 執行模型並輪詢完成狀態
 
-We now run the evaluation for the selected models (`gpt-4.1` and `gpt-4.1-mini`).  
+現在對選定的模型（`gpt-4.1` 和 `gpt-4.1-mini`）執行評估。
 
-After launching the evaluation run, we poll until it is complete (either `completed` or `failed`).
+啟動評估 run 後，我們會輪詢，直到它完成（`completed` 或 `failed`）。
 
-> **Best Practice:**  
-> Polling with a delay avoids excessive API calls and ensures efficient resource usage.
+> **最佳實務：**
+> 輪詢時加入延遲，可以避免過多的 API 呼叫，並有效使用資源。
 
 ```python
 # Launch the evaluation run for gpt-4.1 using web search
@@ -312,12 +319,12 @@ poll_runs(logs_eval.id, [gpt_4one_responses_run.id, gpt_4one_mini_responses_run.
     evalrun_68477e712bb48191bc7368b084f8c52c completed ResultCounts(errored=0, failed=0, passed=10, total=10)
     ```
 
-## Display and Interpret Model Outputs
+## 顯示並解讀模型輸出
 
-Finally, we display the outputs from the model for manual inspection and further analysis.
+最後顯示模型的輸出，供人工檢查和進一步分析。
 
-- Each answer is printed for each query in the dataset.
-- You can compare the outputs to the expected answers to assess quality, relevance, and correctness.
+- 資料集裡每個查詢的答案都會印出來。
+- 可以把輸出跟預期答案比較，評估品質、相關性和正確性。
 
 
 ```python
@@ -372,25 +379,34 @@ display(df)
     9  Elon Musk is the CEO and largest shareholder o...
     ```
 
-You can visualize the results in the evals dashboard by going to https://platform.openai.com/evaluations as shown in the image below:
+你可以到 https://platform.openai.com/evaluations 在 evals dashboard 視覺化結果，如下圖：
 
 ![evals-websearch-dashboard](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/evals_websearch_dashboard.png)
 
 
-In this notebook, we demonstrated a workflow for evaluating the web search capabilities of language models using the OpenAI Evals framework.
+這份 notebook 示範了用 OpenAI Evals 框架評估語言模型 web search 能力的工作流程。
 
-**Key points covered:**
-- Defined a focused, custom dataset for web search evaluation.
-- Configured an LLM-based grader for robust assessment.
-- Ran a reproducible evaluation with the latest OpenAI models and web search tool.
-- Retrieved and displayed model outputs for inspection.
+**涵蓋的重點：**
+- 為 web search 評估定義聚焦的自訂資料集。
+- 設定 LLM-based grader 做穩健的評估。
+- 用最新的 OpenAI 模型和 web search 工具執行可重現的評估。
+- 取回並顯示模型輸出以供檢查。
 
-**Next steps and suggestions:**
-- **Expand the dataset:** Add more diverse and challenging queries to better assess model capabilities.
-- **Analyze results:** Summarize pass/fail rates, visualize performance, or perform error analysis to identify strengths and weaknesses.
-- **Experiment with models/tools:** Try additional models, adjust tool configurations, or test on other types of information retrieval tasks.
-- **Automate reporting:** Generate summary tables or plots for easier sharing and decision-making.
+**後續步驟和建議：**
+- **擴充資料集：** 加入更多樣、更有挑戰性的查詢，更好地評估模型能力。
+- **分析結果：** 彙整 pass/fail 比率、視覺化表現，或做錯誤分析找出強項和弱點。
+- **試驗模型和工具：** 試試其他模型、調整工具設定，或測試其他類型的資訊檢索任務。
+- **自動化報告：** 產生摘要表格或圖表，方便分享和決策。
 
-For more information, see the [OpenAI Evals documentation](https://platform.openai.com/docs/guides/evals).
+更多資訊請看 [OpenAI Evals 文件](https://platform.openai.com/docs/guides/evals)。
 
-<!-- tutor:summary -->
+## 重點整理
+- Eval 由資料集、item schema、grader 和通過標準組成，事先定好才能重現。
+- 問答型的開放式回答適合用 LLM-based grader 判 pass/fail，比字串比對有彈性。
+- 輪詢 run 狀態時要加延遲，避免過度呼叫 API。
+- 光看 pass/fail 不夠，還要看輸出內容做錯誤分析。
+
+## 練習
+1. 在資料集裡多加幾筆不同領域的問答，重新跑評估。
+2. 修改 grader 的評分指示，讓它對「答案部分正確」也能區分出來。
+3. 把評估的模型清單加上另一個模型，比較三者的 pass 比率。

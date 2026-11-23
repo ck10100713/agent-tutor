@@ -1,23 +1,30 @@
 ---
-translated: false
+translated: true
 source: examples/Code_search_using_embeddings.ipynb
 ---
 
-# Code search using embeddings
+# 用 embedding 做程式碼搜尋
 
 > 原文：[examples/Code_search_using_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Code_search_using_embeddings.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇示範怎麼用 embedding 做語意式的程式碼搜尋。範例對象是我們自己的 [openai-python 程式庫](https://github.com/openai/openai-python)。
+我們寫了一個簡單版的檔案解析器，從 Python 檔案裡抽出 function，再做 embedding、建索引和查詢。
 
-## Code search using embeddings
+## 學完你會
+- 寫解析函式，從整個程式庫抽出每個 function 的程式碼和資訊。
+- 用 `text-embedding-3-small` 替這些 function 取得 embedding。
+- 用自然語言描述搜尋 function，靠 cosine similarity 排序找出最相關的結果。
 
-This notebook shows how Ada embeddings can be used to implement semantic code search. For this demonstration, we use our own [openai-python code repository](https://github.com/openai/openai-python). We implement a simple version of file parsing and extracting of functions from python files, which can be embedded, indexed, and queried.
+## 開跑前
+- 需要 OpenAI API key，embedding 會產生少量費用。
+- 需要本機有 openai-python 程式庫的資料夾可以讀。
 
-### Helper Functions
+## 輔助函式
 
-We first setup some simple parsing functions that allow us to extract important information from our codebase.
+先寫幾個簡單的解析函式，讓我們從程式庫抽出重要資訊。
 
 ```python
 import pandas as pd
@@ -93,7 +100,7 @@ def extract_functions_from_repo(code_root):
 ```
 
 
-We'll first load the openai-python folder and extract the needed information using the functions we defined above.
+接著載入 openai-python 資料夾，用上面定義的函式抽出需要的資訊。
 
 ```python
 # Set user root directory to the 'openai-python' repository
@@ -113,7 +120,7 @@ all_funcs = extract_functions_from_repo(code_root)
     Total number of functions extracted: 97
     ```
 
-Now that we have our content, we can pass the data to the `text-embedding-3-small` model and get back our vector embeddings.
+拿到內容之後，把資料送給 `text-embedding-3-small` 模型，取回向量 embedding。
 
 ```python
 from utils.embeddings_utils import get_embedding
@@ -143,15 +150,15 @@ df.head()
     4  openai/util.py  [0.05337328091263771, 0.03697286546230316, -0....
     ```
 
-### Testing
+### 測試
 
-Let's test our endpoint with some simple queries. If you're familiar with the `openai-python` repository, you'll see that we're able to easily find functions we're looking for only a simple English description.
+用幾個簡單查詢來測試。如果你熟悉 `openai-python` 這個 repo，會發現只要一句簡單的英文描述，就能輕鬆找到想要的 function。
 
-We define a search_functions method that takes our data that contains our embeddings, a query string, and some other configuration options. The process of searching our database works like such:
+我們定義了 search_functions 方法，它接收含 embedding 的資料、查詢字串和一些設定選項。搜尋流程如下：
 
-1. We first embed our query string (code_query) with `text-embedding-3-small`. The reasoning here is that a query string like 'a function that reverses a string' and a function like 'def reverse(string): return string[::-1]' will be very similar when embedded.
-2. We then calculate the cosine similarity between our query string embedding and all data points in our database. This gives a distance between each point and our query.
-3. We finally sort all of our data points by their distance to our query string and return the number of results requested in the function parameters. 
+1. 先用 `text-embedding-3-small` 對查詢字串（code_query）取 embedding。原因是「a function that reverses a string」這樣的查詢和「def reverse(string): return string[::-1]」這樣的 function，取完 embedding 後會非常相近。
+2. 再計算查詢字串 embedding 與資料庫中所有資料點之間的 cosine similarity，得到每個點和查詢的距離。
+3. 最後依距離排序，回傳 function 參數指定的結果數量。
 
 ```python
 from utils.embeddings_utils import cosine_similarity
@@ -271,4 +278,13 @@ res = search_functions(df, 'Command line interface for fine-tuning', n=1, n_line
     ----------------------------------------------------------------------
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 程式碼和自然語言可以放進同一個 embedding 空間，所以能用英文描述找 function。
+- 搜尋流程是：查詢取 embedding、算相似度、排序取前幾名。
+- 切分粒度是關鍵，這裡以 function 為單位，每個結果就是一段完整可讀的程式。
+- embedding 只需建一次，之後每次查詢只多一次查詢字串的 embedding 呼叫。
+
+## 練習
+1. 換幾個不同描述的查詢（例如「處理 API 錯誤的 function」），看前幾名結果合不合理。
+2. 調整 search_functions 回傳的結果數量，觀察排名後面的結果相關性怎麼下降。
+3. 把解析函式改成連 class 或 method 也一起抽出來，重新做 embedding，比較搜尋結果。

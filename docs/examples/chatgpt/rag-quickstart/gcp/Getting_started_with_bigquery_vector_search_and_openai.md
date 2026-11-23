@@ -1,68 +1,63 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.ipynb
 ---
-
-# GCP BigQuery Vector Search with GCP Functions and GPT Actions in ChatGPT
+# 用 GCP Functions 把 BigQuery 向量搜尋接到 ChatGPT 的 GPT Actions
 
 > 原文：[examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 Google Cloud BigQuery 當向量資料庫，存 OpenAI 產生的 embedding，再包一個 Google Cloud Function 當 API，最後接到 ChatGPT 的 Custom GPT。整套 RAG 基礎設施都留在 GCP 裡，只對外開一個 endpoint 給 ChatGPT 之類的平台用。
 
-This notebook provides step-by-step instructions on using Google Cloud BigQuery as a database with vector search capabilities, with OpenAI embeddings, then creating a Google Cloud Function on top to plug into a Custom GPT in ChatGPT.
+## 學完你會
 
-This can be a solution for customers looking to set up RAG infrastructure contained within Google Cloud Platform (GCP), and exposing it as an endpoint to integrate that with other platforms such as ChatGPT.
+- 把文件切 chunk、產生 embedding、用 gpt-4o 補 metadata，存成 CSV
+- 在 BigQuery 建表，上傳向量，跑純向量搜尋和帶 metadata 過濾的搜尋
+- 用 gcloud 部署 Cloud Function，並產生 OpenAPI spec 讓 Custom GPT 呼叫
 
-Google Cloud BigQuery is a fully-managed, serverless data warehouse that enables super-fast SQL queries using the processing power of Google's infrastructure. It allows developers to store and analyze massive datasets with ease.
+## 開跑前
 
-Google Cloud Functions is a lightweight, event-based, asynchronous compute solution that allows you to create small, single-purpose functions that respond to cloud events without managing servers or runtime environments.
-
-## Pre-requisites:
-
-To run this cookbook, you must have:
-- A GCP project you have access to
-- GCP user with permission to create a BigQuery dataset and Google Cloud Function
-- [GCP CLI](https://cloud.google.com/sdk/docs/downloads-interactive) installed and connected
+- 一個 GCP 專案，帳號要有建 BigQuery dataset 和 Cloud Function 的權限
+- 裝好並登入 [GCP CLI](https://cloud.google.com/sdk/docs/downloads-interactive)
 - OpenAI API key
-- ChatGPT Plus, Teams or Enterprise subscription
+- ChatGPT Plus、Teams 或 Enterprise 訂閱
 
+## 整體架構
 
-## Architecture
-
-Below is a diagram of the architecture of this solution, which we'll walk through step-by-step:
+下面是這個方案的架構圖，後面會一步一步走過：
 
 ![bigquery-rag-architecture.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/bigquery_rag_architecture.png)
 
-## Table of Contents
+## 目錄
 
-1. **[Setup of Environment](#set-up-environment)** Setup environment by installing and importing the required libraries and configuring our GCP settings. Includes:
-    - [Install and Import Required Libraries](#install-and-import-required-libraries)
-    - [Configure GCP project](#configure-gcp-project)
-    - [Configure OpenAI Settings](#configure-openai-settings)
+1. **[環境設定](#set-up-environment)** 安裝並匯入需要的套件，設定 GCP。包含：
+    - [安裝並匯入套件](#install-and-import-required-libraries)
+    - [設定 GCP 專案](#configure-gcp-project)
+    - [設定 OpenAI](#configure-openai-settings)
 
 
-2. **[Prepare Data](#prepare-data)** Prepare the data for uploading by embedding the documents, as well as capturing additional metadata. We will use a subset of OpenAI's docs as example data for this.
+2. **[準備資料](#prepare-data)** 把文件做 embedding，順便抓額外的 metadata。範例資料用的是一小部分 OpenAI 文件。
 
-3. **[Create BigQuery Table with Vector search](#create-bigquery-table-with-vector-search)**  
-Create a BigQuery table and upload the data we've prepared. Includes:
+3. **[建立有向量搜尋的 BigQuery 表](#create-bigquery-table-with-vector-search)**  
+建 BigQuery 表並上傳準備好的資料。包含：
 
-    - [Create Dataset](#create-bigquery-dataset): Steps to create a dataset in BigQuery.
-    - [Create Table and upload data](#creating-table-and-upload-data): Instructions to create a table in BigQuery.
+    - [建立 Dataset](#create-bigquery-dataset)：在 BigQuery 建 dataset。
+    - [建表並上傳資料](#creating-table-and-upload-data)：在 BigQuery 建表。
 
-4. **[Create GCP Function](#create-gcp-function)** using gcloud CLI and environment variables computed previously
+4. **[建立 GCP Function](#create-gcp-function)** 用 gcloud CLI 加上前面算好的環境變數
 
-5. **[Input in a Custom GPT in ChatGPT](#input-in-a-custom-gpt-in-chatgpt)** Perform searches on the embedded data in BigQuery:
+5. **[接進 ChatGPT 的 Custom GPT](#input-in-a-custom-gpt-in-chatgpt)** 對 BigQuery 裡的 embedding 資料做搜尋：
 
-    - [Vector Search](#test-search): Steps to perform vector-based search queries.
-    - [Metadata filtering Search](#perform-search-with-metadata-filtering): Instructions for performing metadata filtering.
+    - [向量搜尋](#test-search)：跑向量搜尋查詢。
+    - [Metadata 過濾搜尋](#perform-search-with-metadata-filtering)：加上 metadata 過濾。
 
-# Set up environment
+# 環境設定
 
-## Install and import required libraries
-The below libraries can be categorized as standard Python libraries, third-party libraries, and GCP-related libraries.
+## 安裝並匯入套件
+下面的套件可以分成 Python 標準函式庫、第三方套件和 GCP 相關套件。
 
 ```python
 ! pip install -q google-auth
@@ -104,9 +99,9 @@ from google.cloud import bigquery
 from google.cloud import functions_v1
 ```
 
-## Configure GCP project
+## 設定 GCP 專案
 
-If not already set-up, we'll install GCP CLI's, authenticate to GCP and set your default project.
+如果還沒設定過，這裡會安裝 GCP CLI、登入 GCP 並設定預設專案。
 
 ```python
 # Add gcloud to PATH
@@ -131,9 +126,9 @@ project_id = "<insert_project_id>"  # Replace with your actual project ID
 ! gcloud services enable bigquery.googleapis.com
 ```
 
-## Configure OpenAI settings
+## 設定 OpenAI
 
-This section guides you through setting up authentication for  OpenAI. Before going through this section, make sure you have your OpenAI API key.
+這段設定 OpenAI 的認證，開始前先準備好你的 OpenAI API key。
 
 ```python
 openai_api_key = os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as an env var>") # Saving this as a variable to reference in function app in later step
@@ -141,9 +136,9 @@ openai_client = OpenAI(api_key=openai_api_key)
 embeddings_model = "text-embedding-3-small" # We'll use this by default, but you can change to your text-embedding-3-large if desired
 ```
 
-## Configure GCP BigQuery with Vector Search capabilities
+## 設定有向量搜尋功能的 GCP BigQuery
 
-This section explains how to create a dataset in BigQuery and store vectors of float, used for embeddings & vector search.
+這段說明怎麼在 BigQuery 建 dataset，並存浮點數向量，用來做 embedding 和向量搜尋。
 
 ```python
 from google.auth import default
@@ -154,14 +149,14 @@ region = "us-central1" # e.g: "us-central1"
 print("Default Project ID:", project_id)
 ```
 
-# Prepare data
-We're going to embed and store a few pages of the OpenAI docs in the oai_docs folder. We'll first embed each, add it to a CSV, and then use that CSV to upload to the index.
+# 準備資料
+我們會把 oai_docs 資料夾裡幾頁 OpenAI 文件做 embedding 並存起來。先逐一 embed，寫進 CSV，再用這個 CSV 上傳到索引。
 
-We are going to use some techniques highlighted in [this cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_long_inputs.ipynb). This is a quick way to embed text, without taking into account variables like sections, using our vision model to describe images/graphs/diagrams, overlapping text between chunks for longer documents, etc. 
+這裡用到[這份 cookbook](https://github.com/openai/openai-cookbook/blob/main/examples/Embedding_long_inputs.ipynb) 提過的技巧。這是一個很快的 embed 做法，沒有考慮章節結構，沒有用 vision 模型描述圖表，長文件的 chunk 之間也沒有重疊。
 
-In order to handle longer text files beyond the context of 8191 tokens, we can either use the chunk embeddings separately, or combine them in some way, such as averaging (weighted by the size of each chunk).
+要處理超過 8191 tokens 上限的長文字，可以把每個 chunk 的 embedding 分開用，或是合併，例如依 chunk 大小加權平均。
 
-We will take a function from Python's own cookbook that breaks up a sequence into chunks.
+先拿 Python 官方 cookbook 裡把序列切成 chunk 的函式。
 
 ```python
 def batched(iterable, n):
@@ -174,9 +169,9 @@ def batched(iterable, n):
         yield batch
 ```
 
-Now we define a function that encodes a string into tokens and then breaks it up into chunks. We'll use tiktoken, a fast open-source tokenizer by OpenAI.
+接著定義一個函式，把字串編碼成 token 再切成 chunk。用的是 OpenAI 開源的快速 tokenizer，tiktoken。
 
-To read more about counting tokens with Tiktoken, check out [this cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken). 
+想多了解怎麼用 tiktoken 算 token，看[這份 cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken)。
 
 
 
@@ -192,12 +187,12 @@ def chunked_tokens(text, chunk_length, encoding_name='cl100k_base'):
     yield from chunks_iterator
 ```
 
-Finally, we can write a function that safely handles embedding requests, even when the input text is longer than the maximum context length, by chunking the input tokens and embedding each chunk individually. The average flag can be set to True to return the weighted average of the chunk embeddings, or False to simply return the unmodified list of chunk embeddings.
+最後寫一個安全處理 embedding 請求的函式，輸入文字超過最大 context 長度也沒問題，做法是把 token 切 chunk，每個 chunk 各自 embed。`average` 設成 True 會回傳 chunk embedding 的加權平均，設成 False 就直接回傳原本的 chunk embedding 列表。
 
-> Note: there are other techniques you can take here, including:
-> - using GPT-4o to capture images/chart descriptions for embedding
-> - chunking based on paragraphs or sections
-> - adding more descriptive metadata about each article.
+> 注意：這裡還有其他做法：
+> - 用 GPT-4o 抓圖片或圖表的描述再拿去 embed
+> - 依段落或章節切 chunk
+> - 為每篇文章加更多描述性的 metadata。
 
 ```python
 EMBEDDING_CTX_LENGTH = 8191
@@ -226,7 +221,7 @@ def len_safe_get_embedding(text, model=embeddings_model, max_tokens=EMBEDDING_CT
     return chunk_embeddings, chunk_texts
 ```
 
-Next, we can define a helper function that will capture additional metadata about the documents. In this example, I'll choose from a list of categories to use later on in a metadata filter
+接著定義一個 helper 來抓文件的額外 metadata。這個例子是從一份類別清單裡挑一個，之後用來做 metadata 過濾。
 
 ```python
 categories = ['authentication','models','techniques','tools','setup','billing_limits','other']
@@ -256,7 +251,7 @@ def categorize_text(text, categories):
 # Example usage
 ```
 
-Now, we can define some helper functions to process the .txt files in the oai_docs folder. Feel free to use this on your own data, this supports both .txt and .pdf files.
+再定義幾個 helper 來處理 oai_docs 資料夾裡的 .txt 檔。你可以拿去處理自己的資料，它支援 .txt 和 .pdf。
 
 ```python
 def extract_text_from_pdf(pdf_path):
@@ -309,9 +304,9 @@ def process_file(file_path, idx, categories, embeddings_model):
     return data
 ```
 
-We'll now use this helper function to process our OpenAI documentation. Feel free to update this to use your own data by changing the folder in process_files below.
+現在用這個 helper 處理 OpenAI 文件。想換成自己的資料，改下面 process_files 的資料夾就好。
 
-Note that this will process the documents in chosen folder concurrently, so this should take <30 seconds if using txt files, and slightly longer if using PDFs.
+注意它會並行處理資料夾裡的文件，txt 檔大概 30 秒內跑完，PDF 會稍微久一點。
 
 ```python
 ## Customize the location below if you are using different data besides the OpenAI documentation. Note that if you are using a different dataset, you will need to update the categories list as well.
@@ -350,15 +345,15 @@ article_df["category"] = article_df["category"].apply(str)
 article_df.head()
 ```
 
-We now have an `embedded_data.csv` file with six columns that we can upload to our vector database! 
+現在有一個 `embedded_data.csv`，六個欄位，可以上傳到向量資料庫了！
 
-# Create BigQuery table with Vector Search
+# 建立有向量搜尋的 BigQuery 表
 
-## Create BigQuery dataset
+## 建立 BigQuery dataset
 
-We'll leverage Google SDK and create a dataset named "oai_docs" with a table name of "embedded_data", but feel free to change those variables (you can also change regions).
+用 Google SDK 建一個叫 "oai_docs" 的 dataset，表名叫 "embedded_data"，這些變數和 region 都可以改。
 
-*PS: We won't create a BigQuery index, that could improve the performance of the vector search, because such index requires more than 1k rows in our dataset which we don't have in our example, but feel free to leverage that for your own use-case.*
+*PS：我們不建 BigQuery index。index 能提升向量搜尋效能，但需要資料超過 1k 筆，我們的範例沒那麼多。你自己的案例可以考慮加。*
 
 ```python
 # Create bigquery table
@@ -395,12 +390,12 @@ df = pd.read_csv(csv_file_path, engine='python', quotechar='"', quoting=1)
 df.head()
 ```
 
-## Creating table and upload data
+## 建表並上傳資料
 
-We'll create the table with the attribute name and types. Note the 'content_vector' attribute that allows to store a vector of float for a single row, which we'll use for our vector search.
+建表時要指定欄位名稱和型別。注意 'content_vector' 這個欄位，它讓每一筆可以存一組浮點數向量，之後向量搜尋就靠它。
 
-This code will then loop on our CSVs previously created to insert the rows into Bigquery. 
-If you run this code multiple time, multiple identical rows will be inserted which will give less accurate results when doing search (you could put uniqueness on IDs or clean the DB each time).
+這段程式會迴圈讀前面產生的 CSV，把資料插入 BigQuery。
+如果重複執行，會插入多筆一模一樣的資料，搜尋結果會比較不準（你可以對 ID 加唯一限制，或每次先清空資料庫）。
 
 ```python
 # Read the CSV file, properly handling multiline fields
@@ -452,12 +447,10 @@ else:
     print(f"Successfully loaded data into {dataset_id}:{final_table_id}")
 ```
 
-# Test search
-Now that the data is uploaded, we'll test both pure vector similarity search and with metadata filtering locally below to make sure it is working as expected.
+# 測試搜尋
+資料上傳後，先在本機測試純向量相似度搜尋和帶 metadata 過濾的搜尋，確認運作正常。
 
-You can test both a pure vector search and metadata filtering.
-
-The query below is pure vector search, where we don't filter out on category.
+下面這個查詢是純向量搜尋，沒有用 category 過濾。
 
 ```python
 query = "What model should I use to embed?"
@@ -487,10 +480,10 @@ for row in results:
     print(f"query_id: {row['query_id']}, base_id: {row['base_id']}, distance: {row['distance']}, text_truncated: {row['text'][0:100]}")
 ```
 
-## Perform search with metadata filtering
-Metadata filtering allows to restrict findings that have certain attributes on top of having the closest semantic findings of vector search.
+## 帶 metadata 過濾的搜尋
+Metadata 過濾可以在語意最接近的結果之上，再限制必須符合某些屬性。
 
-The provided code snippet demonstrates how to execute a query with metadata filtering:
+下面的程式示範怎麼執行帶 metadata 過濾的查詢：
 
 ```python
 
@@ -524,13 +517,13 @@ for row in results:
     print(f"category: {row['category']}, title: {row['title']}, base_id: {row['base_id']}, distance: {row['distance']}, text_truncated: {row['text'][0:100]}")
 ```
 
-# Create GCP function
+# 建立 GCP Function
 
-## Exporting variables
+## 匯出變數
 
-We'll deploy the function in `main.py` in this folder (also available [here](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/gcp/main.py)).
+我們要部署這個資料夾裡的 `main.py`（也可以看[這裡](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/gcp/main.py)）。
 
-In a first step, we'll export the variables to target our table/dataset as well as to generate Embeddings using OpenAI's API.
+第一步，匯出變數，讓它知道要查哪個表和 dataset，以及用 OpenAI API 產生 embedding 要用的設定。
 
 ```python
 # Create a dictionary to store the environment variables (they were used previously and are just retrieved)
@@ -549,9 +542,9 @@ with open('env.yml', 'w') as yaml_file:
 print("env.yml file created successfully.")
 ```
 
-## Deploying the function
+## 部署 Function
 
-We will now create a google function called "openai_docs_search" for our current project, for that we'll launch the CLI command below, leveraging the previously created environment variables. Note that this function can be called from everywhere without authentication, do not use that for production or add additional authentication mechanism.
+接著為目前的專案建立一個叫 "openai_docs_search" 的 Google Function，執行下面的 CLI 指令，用到前面建立的環境變數。注意這個 function 不用認證，任何地方都能呼叫，正式環境不要這樣用，或是自己加認證機制。
 
 ```python
 ! gcloud functions deploy openai_docs_search \
@@ -561,17 +554,17 @@ We will now create a google function called "openai_docs_search" for our current
   --env-vars-file env.yml
 ```
 
-# Input in a Custom GPT in ChatGPT
+# 接進 ChatGPT 的 Custom GPT
 
-Now that we have a GCP Function that queries this Vector Search Index, let's put it as a GPT Action!
+現在有了查詢這個向量索引的 GCP Function，把它變成 GPT Action 吧！
 
-See documentation [here](https://openai.com/index/introducing-gpts/) on GPTs and [here](https://platform.openai.com/docs/actions) on GPT Actions. Use the below as the instructions for the GPT and as the OpenAPI spec for the GPT Action.
+GPTs 的文件看[這裡](https://openai.com/index/introducing-gpts/)，GPT Actions 看[這裡](https://platform.openai.com/docs/actions)。下面的內容拿來當 GPT 的 instructions 和 GPT Action 的 OpenAPI spec。
 
-## Create OpenAPI Spec
+## 建立 OpenAPI Spec
 
-Below is a sample OpenAPI spec. When we run the block below, a functional spec should be copied to the clipboard to paste in the GPT Action.
+下面是一份 OpenAPI spec 範例。執行下面的區塊後，可用的 spec 會複製到剪貼簿，貼到 GPT Action 裡就行。
 
-Note that this does not have any authentication by default, but you can set up GCP Functions with Auth by following GCP's docs [here](https://cloud.google.com/functions/docs/securing/authenticating).
+注意預設沒有任何認證，不過你可以照 GCP 的[文件](https://cloud.google.com/functions/docs/securing/authenticating)幫 GCP Functions 加上認證。
 
 ```python
 spec = f"""
@@ -637,9 +630,9 @@ pyperclip.copy(spec)
 print("OpenAPI spec copied to clipboard")
 ```
 
-## Create GPT Instructions
+## 建立 GPT Instructions
 
-Feel free to modify instructions as you see fit. Check out our docs [here](https://platform.openai.com/docs/guides/prompt-engineering) for some tips on prompt engineering.
+Instructions 可以自己改。prompt engineering 的技巧看我們的[文件](https://platform.openai.com/docs/guides/prompt-engineering)。
 
 ```python
 instructions = f'''
@@ -657,16 +650,28 @@ print("GPT Instructions copied to clipboard")
 print(instructions)
 ```
 
-# Recap
+# 回顧
 
-We've now successfully integrated GCP BigQuery Vector Search with GPT Actions in ChatGPT by doing the following:
-1. Embedded docs using OpenAI's embeddings, while adding some additional metadata using gpt-4o.
-2. Uploaded that data to GCP BigQuery (raw data and vectors of embeddings)
-3. Created an endpoint on GCP Functions to retrieve those
-4. Incorporated it into a custom GPT.
+我們已經把 GCP BigQuery 向量搜尋接到 ChatGPT 的 GPT Actions，做了這幾件事：
+1. 用 OpenAI embeddings 對文件做 embedding，並用 gpt-4o 補上一些 metadata。
+2. 把資料（原文和 embedding 向量）上傳到 GCP BigQuery。
+3. 在 GCP Functions 建一個 endpoint 來取資料。
+4. 把它接進 Custom GPT。
 
-Our GPT can now retrieve information to help answer user queries, making it much more accurate and customized to our data. Here's the GPT in action:
+這個 GPT 現在能檢索資料來回答使用者問題，答案會更準確，也更貼近你的資料。下面是實際運作的樣子：
 
 ![gcp-rag-quickstart-gpt.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gcp_rag_quickstart_gpt.png)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 整個 RAG 流程可以全放在 GCP：BigQuery 存向量，Cloud Function 當查詢 API，ChatGPT 透過 GPT Action 呼叫。
+- 長文件超過 embedding 模型的 token 上限時，要切 chunk 各自 embed，再視情況取加權平均。
+- 存向量時順便存 metadata（例如類別），搜尋時就能同時用語意和屬性過濾。
+- 範例的 Function 沒有認證，正式環境一定要加。
+- 重複上傳會產生重複資料，影響搜尋品質，要自己處理唯一性。
+
+## 練習
+
+1. 把 process_files 的資料夾換成你自己的 .txt 文件，重跑一次，看 `embedded_data.csv` 的內容。
+2. 修改 metadata 的類別清單，加一個你自己的類別，再用帶過濾的查詢確認只回傳該類別的結果。
+3. 把 chunk 之間加一點重疊（改切 chunk 的函式），比較搜尋結果有沒有改善。

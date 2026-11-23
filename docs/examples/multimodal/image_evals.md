@@ -1,100 +1,88 @@
 ---
-translated: false
+translated: true
 source: examples/multimodal/image_evals.ipynb
 ---
-
-# Image Evals for Image Generation and Editing Use Cases
+# 圖像生成與編輯的 Image Evals
 
 > 原文：[examples/multimodal/image_evals.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/multimodal/image_evals.ipynb)
 
-Cookbook to build image evals for image generation and editing use cases.
+這份 cookbook 教你怎麼替圖像生成和圖像編輯的場景建 eval。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+做一套可重複使用的 vision eval harness，用 LLM-as-judge 去評 UI mockup、行銷海報、虛擬試穿和 logo 編輯的輸出。重點是針對每個 workflow 設計 rubric，而不是只問「好不好看」。
 
-## Introduction
+## 學完你會
 
-Image models are increasingly used in real product workflows—design
-mockups, marketing assets, virtual try-on, and high-precision edits to
-existing brand materials. To trust these systems in production, you need
-more than “does it look good?” You need **repeatable, workflow-specific
-evaluation** that measures whether outputs satisfy requirements, fail
-safely, and improve predictably over time.
+- 用 test case、runner、grader 三個插件組出一套 vision eval harness
+- 為生成類和編輯類任務設計 gate（pass/fail）加 0–5 分的 rubric，並寫成 judge prompt
+- 把分數轉成單一 pass/fail 的 verdict 規則，並用 failure tag 追蹤問題
 
-Vision evaluations(or vision evals) are harder than text evals because the “answer” is an image
-that mixes:
+## 開跑前
 
-- **Hard constraints**: exact text, counts, attributes, locality
-  (“change only this region”).  
-- **Perceptual quality**: sharpness, coherence, realism, aesthetic
-  match.  
-- **Hidden failure modes**: subtle distortions, unintended edits, or
-  small text errors that look fine at a glance but break product
-  requirements—especially in editing.
+- 需要 `OPENAI_API_KEY`，生成、編輯和 judge 都會呼叫付費的 OpenAI API
+- 範例會把圖片存在本機的 `images/` 資料夾
 
-A good vision eval does **not** score “a pretty picture.” It scores
-whether the model is **reliable for a specific workflow**. Many images
-that look visually strong still fail because text is wrong, style is
-off-brand, or edits spill beyond the intended area. Image evals measure
-**quality, controllability, and usability** for real prompts—not just
-visual appeal.
+## 前言
 
-#### What this guide covers
+圖像模型愈來愈常出現在真實的產品流程裡，像設計 mockup、行銷素材、虛擬試穿，還有對既有品牌素材做高精度修改。要在 production 信任這些系統，光問「好不好看」不夠，你需要**可重複、針對特定 workflow 的評估**，確認輸出符合需求、失敗時安全，而且能穩定進步。
 
-This cookbook focuses on building a practical image-eval system for four
-major categories:
+Vision eval 比文字 eval 難，因為「答案」是一張圖，裡面混了：
 
-**1) Image generation evals**
+- **硬性限制**：精確的文字、數量、屬性、局部性（「只改這個區域」）。
+- **感知品質**：清晰度、一致性、真實感、美感是否符合。
+- **隱藏的失敗模式**：細微的變形、非預期的修改、小小的文字錯誤。這些看一眼沒事，但會違反產品需求，編輯時尤其常見。
 
-- Instruction following (constraints satisfied)  
-- Text rendering (accuracy, legibility, placement)  
-- Style control (aesthetic match, brand/character consistency)  
-- Preference alignment (rubric labels + pairwise comparisons)
+好的 vision eval **不是**給「漂亮的圖」打分，而是評這個模型在**特定 workflow 裡可不可靠**。很多圖看起來很強，卻因為文字錯、風格不符品牌、或編輯超出範圍而失敗。Image eval 衡量的是真實 prompt 下的**品質、可控性、可用性**，不只是視覺吸引力。
 
-**2) Image editing evals**
+#### 這份指南涵蓋什麼
 
-- Transformation correctness (the requested change is done exactly)  
-- Locality (edits happen only where intended)  
-- Preservation (unrequested regions remain unchanged)  
-- Spatial control (edits applied to the correct instance / region)
+這份 cookbook 專注在四大類的實用 image-eval 系統：
 
-**3) Human feedback alignment**
+**1) 圖像生成 evals**
 
-- Rubric-based labels and pairwise preferences to capture subjective
-  quality and “vibe”  
-- Calibration techniques to keep human judgments consistent over time
+- 指令遵循（限制有沒有滿足）
+- 文字渲染（正確、可讀、位置對）
+- 風格控制（美感是否符合、品牌/角色一致性）
+- 偏好對齊（rubric 標註加 pairwise 比較）
 
-**4) Strategy for building evals**
+**2) 圖像編輯 evals**
 
-- Start with non-negotiable correctness gates  
-- Add graded quality metrics once failures are controlled  
-- Tag failure modes to drive targeted iteration
+- 轉換正確性（要求的修改有精確完成）
+- 局部性（只改該改的地方）
+- 保留性（沒要求改的區域維持不變）
+- 空間控制（修改套在正確的物件/區域）
 
-## Building a Vision Eval Harness
+**3) 人類回饋對齊**
 
-A vision eval harness is a small, repeatable system that turns “did this
-image work?” into **structured, comparable results** across prompts,
-models, and settings.
+- 用 rubric 標註和 pairwise 偏好抓主觀品質和「感覺」
+- 用校準技巧讓人的判斷長期保持一致
 
-At a high level, vision evals follow the same loop as any LLM eval
-system:
+**4) 建 eval 的策略**
+
+- 先從不能妥協的正確性 gate 開始
+- 失敗控制住之後，再加分級的品質指標
+- 幫失敗模式打標籤，帶動有針對性的迭代
+
+## 建一套 Vision Eval Harness
+
+Vision eval harness 是一個小而可重複的系統，把「這張圖行不行？」變成跨 prompt、模型、設定都能比較的**結構化結果**。
+
+大方向跟任何 LLM eval 系統的迴圈一樣：
 
 **Inputs → Model → Outputs → Graders → Scores → Feedback → Improvement**
 
-To make this reusable across the rest of the cookbook (generation +
-editing), build the harness around **three plug-ins**:
+為了讓它在後面的生成和編輯章節都能重複使用，harness 圍繞**三個插件**來建：
 
-1.  **Test cases:** what to run (prompt + criteria + optional input
-    images/mask)  
-2.  **Runners:** how to call a model and save output images  
-3.  **Graders:** how to score an output (rubrics, LLM-as-judge, human
-    labels later)
+1.  **Test cases：**要跑什麼（prompt、評分標準，以及選用的輸入圖片/mask）
+2.  **Runners：**怎麼呼叫模型並存下輸出圖片
+3.  **Graders：**怎麼替輸出打分（rubric、LLM-as-judge，之後再加人工標註）
 
 **Setup**
 
-Run this once. It:
-- creates the API client
-- creates `images/` in the folder. 
+只要跑一次。它會：
+- 建立 API client
+- 在資料夾裡建立 `images/`
 
 ```python
 import os
@@ -105,15 +93,14 @@ client = OpenAI()
 os.makedirs("../../images", exist_ok=True)
 ```
 
-Below is a minimal `vision_harness/` package you can drop into your repo.
+下面是一個最小的 `vision_harness/` 套件，可以直接放進你的 repo。
 
-For a full, runnable harness you can extend (edit, reproduce, and add your own cases), see [examples/evals/imagegen_evals](https://github.com/openai/openai-cookbook/tree/main/examples/evals/imagegen_evals).
+想看完整、可執行、可延伸的 harness（可編輯、重現、加自己的 case），見 [examples/evals/imagegen_evals](https://github.com/openai/openai-cookbook/tree/main/examples/evals/imagegen_evals)。
 
 
 ### vision_harness/types.py
 
-Keep the core types generic so you can reuse them for *both* image
-generation and image editing.
+核心型別保持通用，這樣圖像生成和圖像編輯都能共用。
 
 ```python
 from __future__ import annotations
@@ -176,7 +163,7 @@ class Score:
 
 ### vision_harness/io.py
 
-You’ll use this in graders (LLM-as-judge) and sometimes in model calls.
+graders（LLM-as-judge）會用到它，有時模型呼叫也會用。
 
 
 ```python
@@ -265,8 +252,7 @@ def grid_sweep(
 
 ### vision_harness/runners.py
 
-Two runners: one for **generation**, one for **editing**. Both return a
-normalized `ModelResponse` containing saved output images.
+兩個 runner：一個做**生成**，一個做**編輯**。兩個都回傳標準化的 `ModelResponse`，裡面是存好的輸出圖片。
 
 
 ```python
@@ -384,9 +370,7 @@ class ImageEditRunner:
 
 ### vision_harness/graders.py
 
-A clean grader interface + a reusable **LLM-as-judge** grader that can
-be used for both generation and editing by changing how you build the
-judge inputs.
+一個乾淨的 grader 介面，加上可重複使用的 **LLM-as-judge** grader。只要改變 judge 輸入的組法，生成和編輯都能用。
 
 
 ```python
@@ -527,9 +511,7 @@ class LLMajRubricGrader:
 
 ### vision_harness/evaluate.py
 
-A simple evaluation loop that returns plain Python data (no “eval row”
-class). Later sections can write their own reporting/CSV utilities on
-top.
+一個簡單的評估迴圈，回傳純 Python 資料（沒有「eval row」class）。後面的章節可以在上面自己寫報表或 CSV 工具。
 
 
 ```python
@@ -592,7 +574,7 @@ def evaluate(
     return results
 ```
 
-### Result Table Rendering Helpers
+### 結果表格的渲染輔助函式
 
 ```python
 import os
@@ -657,157 +639,115 @@ def render_result_table(
     display(HTML(table_html))
 ```
 
-Later cookbook sections will only need to provide:
+後面的章節只需要提供：
 
-1.  A list of `TestCase` objects for the use case (UI mockups, marketing
-    graphics, virtual try-on, logo edits, etc.)  
-2.  A set of `ModelRun`s (single run or a sweep with `grid_sweep`)  
-3.  A set of graders, typically:
-    - **Gating graders** (pass/fail): non-negotiables ex: instruction
-      following, text correctness, locality/preservation  
-    - **Graded metrics** (0–5): quality dimensions ex:
-      realism/usability, layout/hierarchy, artifact severity  
-    - Optional: human rubric labels and pairwise prefs (stored outside
-      the harness)
+1.  該場景的 `TestCase` 清單（UI mockup、行銷圖、虛擬試穿、logo 編輯等）
+2.  一組 `ModelRun`（單次執行，或用 `grid_sweep` 掃參數）
+3.  一組 graders，通常是：
+    - **Gating graders**（pass/fail）：不能妥協的項目，例如指令遵循、文字正確性、局部性/保留性
+    - **Graded metrics**（0–5）：品質面向，例如真實感/可用性、版面/層次、artifact 嚴重程度
+    - 選用：人工 rubric 標註和 pairwise 偏好（存在 harness 之外）
 
-This keeps the rest of the cookbook focused on **what to measure** per
-use case—without rewriting harness plumbing each time.
+這樣後面的內容可以專心講每個場景**要量什麼**，不用每次重寫 harness 的底層。
 
-## Image Generation Evals
+## 圖像生成 Evals
 
-**Use Case Ideas: UI mockups, marketing graphics/posters**
+**場景點子：UI mockup、行銷圖/海報**
 
-**Goal: evaluate text-to-image quality, controllability, and usefulness
-for real prompts**  
-Covers:
+**目標：評估 text-to-image 在真實 prompt 下的品質、可控性和實用性**  
+涵蓋：
 
-- **instruction following** (constraints satisfied),  
-- **Text rendering** (generated text is accurate, legible, and placed
-  correctly),  
-- **Styling** (requested aesthetic + visual quality, may include brand,
-  character, and product consistency)  
-- **Human feedback alignment** (rubric-based labels + pairwise prefs).
+- **指令遵循**（限制有滿足），
+- **文字渲染**（生成的文字正確、可讀、位置對），
+- **風格**（要求的美感加視覺品質，可能包含品牌、角色、產品一致性）
+- **人類回饋對齊**（rubric 標註加 pairwise 偏好）。
 
-Image generation models are used to create artifacts that influence real
-work: UI mockups, product designs, marketing graphics, and internal
-presentations. In these contexts, images are not judged purely on visual
-appeal. They are judged on whether they communicate intent, follow
-constraints, and are usable by downstream stakeholders.
+圖像生成模型產出的東西會影響真實工作：UI mockup、產品設計、行銷圖、內部簡報。在這些情境裡，圖不只看好不好看，而是看它有沒有傳達意圖、遵守限制，以及下游的人能不能用。
 
 ### UI Mockups
 
-UI mockups generated by image models are increasingly used for early
-product exploration, design ideation, and internal reviews. In these
-workflows, mockups are not just visual inspiration. They are
-communication tools that help designers, engineers, and stakeholders
-reason about layout, hierarchy, interaction intent, and feature scope
-before anything is built. As a result, success is defined less by
-aesthetic taste and more by whether the output can plausibly function as
-a product artifact.
+圖像模型產生的 UI mockup 愈來愈常用在早期產品探索、設計發想和內部 review。在這些流程裡，mockup 不只是靈感，而是溝通工具，幫設計師、工程師和利害關係人在東西還沒做出來前討論版面、層次、互動意圖和功能範圍。所以成功的標準比較不是美感，而是輸出能不能合理地當成產品文件使用。
 
-Example:
+範例：
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/mockup_sample.png" width="400"/> 
 
-This section shows how to evaluate a generated UI mockup using a screen
-level example. The goal is to evaluate whether the generated UI consists
-of a coherent layout, uses recognizable components, and represents a
-plausible product experience.
+這一節用一個畫面層級的例子，示範怎麼評估生成的 UI mockup。目標是看生成的 UI 版面是否連貫、元件是否辨識得出來、呈現的產品體驗是否合理。
 
-**Why UI mockup evals are different**
+**為什麼 UI mockup eval 不一樣**
 
-UI mockups combine several difficult evaluation dimensions:
+UI mockup 混合了幾個難評的面向：
 
-1.  **Component Fidelity (gating)**  
-    The generated image must clearly depict the requested screen type
-    and state. Buttons should look clickable, inputs should look
-    editable, and navigation should look like navigation.  
-2.  **Layout Realization (graded)**  
-    A good UI mockup communicates instantly what the user can do and
-    what matters most. The layout should make primary actions obvious,
-    secondary actions clearly subordinate, and information grouped in a
-    way that reflects real interaction flow  
-3.  **In-Image Text Rendering (gating)**  
-    UI text encodes functionality. Labels, headings, and calls to action
-    must be legible and correctly rendered.
+1.  **元件保真度（gating）**  
+    生成的圖必須清楚呈現要求的畫面類型和狀態。按鈕要看起來能點，輸入框要看起來能編輯，導覽要看起來像導覽。
+2.  **版面呈現（graded）**  
+    好的 UI mockup 一眼就讓人知道使用者能做什麼、什麼最重要。版面要讓主要動作明顯，次要動作明確居次，資訊的分組要反映真實的互動流程。
+3.  **圖中文字渲染（gating）**  
+    UI 上的文字就是功能。標籤、標題、call to action 必須清楚可讀而且渲染正確。
 
-**Example task: mobile checkout screen generation**
+**範例任務：生成手機結帳畫面**
 
-- Scenario: a consumer ecommerce app needs a mobile checkout screen to
-  review an order and complete payment.
-- Prompt guidance: be explicit about screen type, platform, required UI
-  elements, exact button/link text, hierarchy constraints, and
-  disallowed extras.
-- Implementation: the full prompt and criteria live in the harness
-  setup code cell below (`ui_prompt` and `ui_criteria`).
+- 情境：一個消費型電商 app 需要手機結帳畫面，讓使用者檢視訂單並完成付款。
+- Prompt 建議：明確指定畫面類型、平台、必要的 UI 元素、按鈕/連結的確切文字、層次限制，以及不准出現的多餘元素。
+- 實作：完整的 prompt 和評分標準在下面的 harness setup code cell 裡（`ui_prompt` 和 `ui_criteria`）。
 
-#### What to evaluate (practical metrics):
+#### 要評什麼（實用指標）：
 
-##### 1) Instruction Following — Pass / Fail (gate)
+##### 1) 指令遵循：Pass / Fail（gate）
 
-Most UI mockup evals start with instruction fidelity. At a basic level,
-the question is simple: did the model generate the screen that was asked
-for? If the prompt specifies a mobile checkout screen, the output should
-look like a mobile checkout screen, not a generic landing page. Required
-sections, states, or constraints should be present, and the overall
-structure should match the intent of the request. This dimension is
-often the most heavily weighted, because if the model misses the core
-ask, the rest of the output does not matter. Once a UI mockup satisfies
-the basic instruction, evaluation shifts to whether the screen is usable
-and coherent as a product artifact.
+多數 UI mockup eval 都從指令保真度開始。最基本的問題很簡單：模型有沒有生出被要求的畫面？如果 prompt 指定手機結帳畫面，輸出就該像手機結帳畫面，不是一般的 landing page。必要的區塊、狀態或限制都該出現，整體結構要符合請求的意圖。這個面向通常權重最高，因為模型如果沒做到核心要求，其他部分都不重要。UI mockup 通過基本指令之後，評估才轉向畫面作為產品文件是否好用、連貫。
 
-**PASS if**
+**PASS 條件**
 
-- The correct screen type and platform context are present.  
-- All required sections, states, or constraints are included.
+- 有正確的畫面類型和平台脈絡。
+- 包含所有必要的區塊、狀態或限制。
 
-**FAIL if**
+**FAIL 條件**
 
-- Missing any required components or the output alters the UI’s purpose.
+- 缺少任何必要元件，或輸出改變了 UI 的用途。
 
-##### 2) Layout and Hierarchy — 0–5
+##### 2) 版面與層次：0–5
 
-Measures whether the screen communicates clearly at a glance.
+衡量畫面能不能一眼傳達清楚。
 
-**What to look for:**
+**看什麼：**
 
-- Clear visual hierarchy between primary and secondary actions  
-- Consistent alignment and spacing  
-- Logical grouping of related elements
+- 主要和次要動作之間有清楚的視覺層次
+- 對齊和間距一致
+- 相關元素的分組合理
 
-##### 3) Text rendering and legibility — Pass / Fail (gate)
+##### 3) 文字渲染與可讀性：Pass / Fail（gate）
 
-Labels, headings, and calls to action need to be readable and
-unambiguous.
+標籤、標題和 call to action 需要可讀且不含糊。
 
-**PASS if**
+**PASS 條件**
 
-- Text is readable, correctly spelled, and sensibly labeled.  
-- Font sizes reflect hierarchy (headings vs labels vs helper text).
+- 文字可讀、拼字正確、標示合理。
+- 字級反映層次（標題、標籤、輔助文字）。
 
-**FAIL if**
+**FAIL 條件**
 
-- Any critical text is unreadable, cut off, misspelled, or distorted.
+- 任何關鍵文字無法閱讀、被截斷、拼錯或變形。
 
-##### 4) UI Realism and Usability — *0–5*
+##### 4) UI 真實感與可用性：*0–5*
 
-Measures whether the mockup resembles a plausible product interface.
+衡量 mockup 像不像一個合理的產品介面。
 
-**What to look for:**
+**看什麼：**
 
-- Inputs look editable / Buttons look clickable  
-- Navigation looks like navigation  
-- Interactive elements are visually distinct from static content
+- 輸入框看起來能編輯、按鈕看起來能點
+- 導覽看起來像導覽
+- 互動元素在視覺上跟靜態內容有區別
 
-##### 5) Human feedback (quick and high leverage)
+##### 5) 人類回饋（快速又高效益）
 
-UI "usability clarity" is where humans add the most value. Keep it lightweight and focused on interaction intent.
+UI 的「可用性清晰度」是人類最能加值的地方。保持輕量，聚焦在互動意圖。
 
-- Rubric labels (fast):
-  - Would you use this mockup to iterate on a real product screen? (Y/N)
-  - If N, why? (missing section, action button unclear, text unreadable, layout confusing, etc.)
-  - Overall usability clarity: 1–5
-- Common failure tags (for debugging + iteration):
+- Rubric 標註（快）：
+  - 你會用這個 mockup 來迭代真實的產品畫面嗎？（Y/N）
+  - 如果 N，為什麼？（缺區塊、動作按鈕不清楚、文字看不懂、版面混亂等）
+  - 整體可用性清晰度：1–5
+- 常見失敗標籤（用來 debug 和迭代）：
   - `wrong_screen_type`
   - `missing_required_section`
   - `extra_ui_elements`
@@ -816,47 +756,33 @@ UI "usability clarity" is where humans add the most value. Keep it lightweight a
   - `affordances_unclear`
   - `layout_confusing`
 
-**Verdict rules (how to convert metrics into a single pass/fail)**
+**Verdict 規則（怎麼把指標變成單一 pass/fail）**
 
-- **Instruction Following must PASS**  
-- **Layout and Hierarchy ≥ 3**  
-- **Text Rendering must PASS**  
-- **UI Realism ≥ 3**
+- **指令遵循必須 PASS**
+- **版面與層次 ≥ 3**
+- **文字渲染必須 PASS**
+- **UI 真實感 ≥ 3**
 
-If any rule fails → overall **FAIL**.
+任何一條沒過，整體就是 **FAIL**。
 
-**Example `TestCase` set (small but high-signal)**
+**範例 `TestCase` 集合（小但訊號強）**
 
-Start with a few cases that cover common UI mockup variants and edge
-cases.
-
-1.  **Mobile** **checkout screen** (the “checkout UI mockup” prompt
-    above)  
-2.  **Minimal layout** (header + order total + primary CTA only) - tests
-    layout and hierarchy with sparse elements.  
-3.  **Dense hierarchy** (order summary + payment method + promo row +
-    taxes + two secondary actions) - tests hierarchy under information
-    load.  
-4.  **Exact CTA text** (primary button text must be exactly “Place
-    Order”) - tests in-image text rendering fidelity.  
-5.  **Secondary action presence** (include both “Edit Cart” and “Change
-    payment method”) - tests secondary actions remain visually
-    subordinate.  
-6.  **Placement constraint** (require order total directly above the
-    primary CTA)  
-7.  **Platform fidelity** (mobile vs desktop version) - tests screen
-    framing and platform cues.
+先從幾個涵蓋常見 UI mockup 變化和邊界情況的 case 開始。
+1.  **手機** **結帳畫面**（上面「結帳 UI mockup」的 prompt）
+2.  **極簡版面**（只有 header、訂單總額、主要 CTA）：測稀疏元素下的版面和層次。
+3.  **高密度層次**（訂單摘要、付款方式、優惠碼列、稅金、兩個次要動作）：測資訊量大時的層次。
+4.  **精確的 CTA 文字**（主按鈕文字必須剛好是 “Place Order”）：測圖中文字渲染的保真度。
+5.  **次要動作要存在**（同時有 “Edit Cart” 和 “Change payment method”）：測次要動作是否維持視覺上的從屬。
+6.  **位置限制**（要求訂單總額緊貼在主要 CTA 上方）
+7.  **平台保真度**（手機版 vs 桌面版）：測畫面外框和平台特徵。
 
 **LLM-as-judge rubric prompt**
 
-Below is a judge prompt aligned to your existing `LLMajRubricGrader`. It
-returns structured metric scores + an overall verdict.
+下面是對齊你現有 `LLMajRubricGrader` 的 judge prompt。它會回傳結構化的各項指標分數加整體 verdict。
 
-You can use this with your existing grader by changing the JSON schema
-to include the fields below (or create separate graders per metric if
-you prefer).
+你可以把 JSON schema 改成包含下面的欄位，沿用現有的 grader，或者想的話也可以每個指標拆成獨立的 grader。
 
-#### System Prompt (UI mockup judge)
+#### System Prompt（UI mockup judge）
 
 
 ```python
@@ -945,7 +871,7 @@ No extra text.
 """
 ```
 
-#### Recommended JSON Output
+#### 建議的 JSON 輸出
 
 
 ```python
@@ -972,9 +898,9 @@ No extra text.
 
 
 
-### UI Mockup Example: Harness Setup
+### UI Mockup 範例：Harness Setup
 
-Define a UI mockup test case, a model run, and an output store under `images/`.
+定義一個 UI mockup 的 test case、一次 model run，以及存在 `images/` 底下的輸出儲存。
 
 
 ```python
@@ -1023,9 +949,9 @@ ui_store = OutputStore(root=Path("../../images"))
 
 
 
-### UI Mockup Example: Run And Grade
+### UI Mockup 範例：執行與評分
 
-Run the harness and grade the UI mockup using the UI judge rubric.
+跑 harness，用 UI judge rubric 替 UI mockup 評分。
 
 
 ```python
@@ -1103,9 +1029,9 @@ ui_result
 
 
 
-### UI Mockup Results
+### UI Mockup 結果
 
-Show the prompt, generated image, and scores in a single pandas table.
+把 prompt、生成的圖和分數放進同一張 pandas 表格。
 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gen_ui_checkout_mockup_gpt-image-1.5-ui_1769656414221_0.png" width="400"/> 
@@ -1124,110 +1050,101 @@ render_result_table(case=ui_case, result=ui_result, title="UI Mockup: Prompt vs.
     <IPython.core.display.HTML object>
     ```
 
-### Marketing Graphics Generation
+### 行銷圖生成
 
-Marketing graphics are a “high-stakes text-to-image” workflow: the
-output is meant to ship (or at least be reviewed as if it could ship).
-A flyer can look “nice” but still fail if the copy is wrong, the offer
-is unclear, or the layout hides the key message.
+行銷圖是「高風險的 text-to-image」workflow：輸出是要上線的（或至少要當成可能上線的東西來審）。一張傳單可以看起來「很美」，但文案錯了、優惠不清楚、或版面把關鍵訊息藏起來，照樣算失敗。
 
-This section shows how to evaluate **flyer generation** with a coffee
-shop example. The goal is to make evaluation workflow-relevant: can a
-marketer or designer use this output with minimal edits?
+這一節用咖啡店的例子示範怎麼評估**傳單生成**。目標是讓評估貼近真實 workflow：行銷或設計師拿到這個輸出，只要少量修改就能用嗎？
 
-Example:
+範例：
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/sample_flyer.png" width="400"/> 
 
-**Why marketing graphics evals are different**
+**為什麼行銷圖 eval 不一樣**
 
-Marketing images combine three hard problem types:
+行銷圖結合了三種難題：
 
-1.  Exact text requirements (gating)
-2.  Layout + hierarchy (graded)
-3.  Style + brand consistency (graded + optional human prefs)
+1.  精確的文字要求（gating）
+2.  版面加層次（graded）
+3.  風格加品牌一致性（graded，另可加人工偏好）
 
-**Example task: Coffee shop flyer generation**
+**範例任務：生成咖啡店傳單**
 
-- Scenario: a local coffee shop needs a promotional flyer for a
-  limited-time drink and a weekday deal.
-- Prompt guidance: be explicit about the deliverable, required copy,
-  hierarchy, and disallowed extras.
-- Implementation: the full prompt and criteria live in the harness
-  setup code cell below (`coffee_generation_prompt` and
-  `coffee_criteria`).
+- 情境：一家在地咖啡店需要一張傳單，宣傳限時飲品和平日優惠。
+- Prompt 建議：明確指定交付物、必要文案、層次，以及不准出現的多餘內容。
+- 實作：完整的 prompt 和評分標準在下面的 harness setup code cell 裡（`coffee_generation_prompt` 和 `coffee_criteria`）。
 
-#### What to evaluate (practical metrics):
+#### 要評什麼（實用指標）：
 
-Use a mix of gates (hard constraints) and graded signals (quality).
+混用 gate（硬性限制）和分級訊號（品質）。
 
-##### 1) Instruction following — Pass / Fail (gate)
+##### 1) 指令遵循：Pass / Fail（gate）
 
-Marketing assets fail fast if they don’t match the spec.
+行銷素材只要不符合規格就很快失敗。
 
-**PASS if**
+**PASS 條件**
 
-- Correct deliverable type: clearly a flyer/poster layout (not a UI screen, not a random photo).
-- Required components exist (headline/subheadline/offer/CTA/footer + hero image).
+- 交付物類型正確：明確是傳單/海報版面（不是 UI 畫面，也不是隨便一張照片）。
+- 必要元件都在（headline、subheadline、優惠、CTA、footer，加主視覺圖）。
 
-**FAIL if**
+**FAIL 條件**
 
-- Missing any required component or the output is not recognizably a flyer.
+- 缺任何必要元件，或輸出認不出是傳單。
 
-##### 2) Text rendering accuracy — Pass / Fail (gate)
+##### 2) 文字渲染正確性：Pass / Fail（gate）
 
-This is usually the #1 production failure mode.
+這通常是 production 裡的頭號失敗模式。
 
-**PASS if**
+**PASS 條件**
 
-- All required text strings are present and exactly correct (spelling, punctuation, capitalization, symbols).
-- Text is readable (not smeared, clipped, warped, or overlapping).
+- 所有必要的文字字串都存在而且完全正確（拼字、標點、大小寫、符號）。
+- 文字可讀（沒有糊掉、被裁切、扭曲或重疊）。
 
-**FAIL if**
+**FAIL 條件**
 
-- Any required text is incorrect/missing/unreadable, or any extra text appears.
+- 任何必要文字錯誤、缺漏或不可讀，或出現任何多餘的文字。
 
-Tip: if your workflow requires “exact copy,” treat this as a hard gate. Don’t average it away.
+提醒：如果你的 workflow 要求「文案一字不差」，就把它當硬性 gate，不要用平均把它蓋掉。
 
-##### 3) Layout and hierarchy — 0–5
+##### 3) 版面與層次：0–5
 
-Measures whether the flyer communicates clearly at a glance.
+衡量傳單能不能一眼傳達清楚。
 
-**What to look for:**
+**看什麼：**
 
-- Clear priority: headline dominates, subheadline supports, offer stands out, footer is secondary.
-- Alignment and spacing feel intentional (no crowded clusters, no random floating elements).
-- Read order is unambiguous.
+- 優先順序清楚：headline 最大、subheadline 輔助、優惠突出、footer 次要。
+- 對齊和間距看起來是刻意的（沒有擠成一團，也沒有亂飄的元素）。
+- 閱讀順序明確。
 
-##### 4) Style and brand fit — 0–5
+##### 4) 風格與品牌契合度：0–5
 
-Measures whether it matches the requested “vibe” and avoids off-brand looks.
+衡量是否符合要求的「調性」，並避開不符品牌的樣子。
 
-**What to look for:**
+**看什麼：**
 
-- Warm, cozy, minimal; specialty coffee visual language.
-- Consistent palette and typography feel (not multiple conflicting styles).
-- Avoids cartoonish illustration if the prompt requested photo-real.
+- 溫暖、舒適、極簡，精品咖啡的視覺語言。
+- 配色和字體感一致（不要多種互相衝突的風格）。
+- prompt 要求寫實照片時，避免卡通插畫。
 
-##### 5) Visual quality and artifact severity — 0–5
+##### 5) 視覺品質與 artifact 嚴重程度：0–5
 
-A flyer can be “correct” but still unusable if it’s visually broken.
+傳單可以「內容正確」但視覺壞掉，照樣不能用。
 
-**What to look for:**
+**看什麼：**
 
-- No distorted objects, broken hands/cups, melted foam textures, weird artifacts around text.
-- Background texture is subtle (doesn’t compete with copy).
-- Hero image looks appetizing and coherent.
+- 沒有變形的物件、壞掉的手/杯子、融化的奶泡質感，文字周圍沒有怪異的 artifact。
+- 背景紋理要淡（不要跟文案搶）。
+- 主視覺看起來好吃而且合理。
 
-##### 6) Human feedback (quick and high leverage)
+##### 6) 人類回饋（快速又高效益）
 
-UI "usability clarity" is where humans add the most value. Keep it lightweight and focused on interaction intent.
+UI 的「可用性清晰度」是人類最能加值的地方。保持輕量，聚焦在互動意圖。
 
-- Rubric labels (fast):
-  - Would you use this mockup to iterate on a real product screen? (Y/N)
-  - If N, why? (missing section, action button unclear, text unreadable, layout confusing, etc.)
-  - Overall usability clarity: 1–5
-- Common failure tags (for debugging + iteration):
+- Rubric 標註（快）：
+  - 你會用這個 mockup 來迭代真實的產品畫面嗎？（Y/N）
+  - 如果 N，為什麼？（缺區塊、動作按鈕不清楚、文字看不懂、版面混亂等）
+  - 整體可用性清晰度：1–5
+- 常見失敗標籤（用來 debug 和迭代）：
   - `wrong_screen_type`
   - `missing_required_section`
   - `extra_ui_elements`
@@ -1236,37 +1153,37 @@ UI "usability clarity" is where humans add the most value. Keep it lightweight a
   - `affordances_unclear`
   - `layout_confusing`
 
-**Verdict rules (how to convert metrics into a single pass/fail)**
+**Verdict 規則（怎麼把指標變成單一 pass/fail）**
 
-A simple and strict set of rules works well:
+簡單而嚴格的規則通常很好用：
 
-- **Instruction following must PASS**
-- **Text rendering must PASS**
-- **Layout and hierarchy ≥ 3**
-- **Style and brand fit ≥ 3**
-- **Visual quality ≥ 3**
+- **指令遵循必須 PASS**
+- **文字渲染必須 PASS**
+- **版面與層次 ≥ 3**
+- **風格與品牌契合度 ≥ 3**
+- **視覺品質 ≥ 3**
 
-If any rule fails → overall **FAIL**.  
-(Do not average scores to override text correctness.)
+任何一條沒過，整體就是 **FAIL**。  
+（不要用平均分數去蓋過文字正確性。）
 
-**Example `TestCase` set (small but high-signal)**
+**範例 `TestCase` 集合（小但訊號強）**
 
-Start with ~8–12 cases to cover common flyer variants and edge cases.
+先從約 8 到 12 個 case 開始，涵蓋常見的傳單變化和邊界情況。
 
-1. Seasonal campaign (the “Winter Latte Week” prompt above)
-2. Minimal text (only 2 lines + logo + hours) — tests sparse layouts
-3. Dense info (menu highlights + deal + two CTAs) — tests hierarchy under load
-4. Strict no-extra-text — tests hallucinated filler copy
-5. Exact punctuation (“20% OFF • Mon–Thu”) — tests symbol fidelity
-6. Two offers (“BOGO Tuesdays” + “Happy Hour 2–4”) — tests multi-badge layout
-7. Colorway constraint (“use only cream + dark brown + muted orange”)
-8. Accessibility variant (high contrast, large text, simple background)
+1. 季節性活動（上面的 “Winter Latte Week” prompt）
+2. 極少文字（只有 2 行加 logo 加營業時間）：測稀疏版面
+3. 資訊密集（菜單亮點、優惠、兩個 CTA）：測資訊量大時的層次
+4. 嚴格禁止多餘文字：測模型會不會憑空塞填充文案
+5. 精確標點（“20% OFF • Mon–Thu”）：測符號保真度
+6. 兩個優惠（“BOGO Tuesdays” 加 “Happy Hour 2–4”）：測多徽章版面
+7. 色系限制（「只用奶油色、深棕、霧橘」）
+8. 無障礙版本（高對比、大字、簡單背景）
 
 **LLM-as-judge rubric prompt**
 
-Below is a judge prompt aligned to your existing `LLMajRubricGrader`. It returns structured metric scores + an overall verdict.
+下面是對齊你現有 `LLMajRubricGrader` 的 judge prompt。它會回傳結構化的各項指標分數加整體 verdict。
 
-You can use this with your existing grader by changing the JSON schema to include the fields below (or create separate graders per metric if you prefer).
+你可以把 JSON schema 改成包含下面的欄位，沿用現有的 grader，或者想的話也可以每個指標拆成獨立的 grader。
 
 
 ```python
@@ -1325,7 +1242,7 @@ No extra text.
 """
 ```
 
-#### Recommended JSON Output
+#### 建議的 JSON 輸出
 
 
 ```python
@@ -1354,9 +1271,9 @@ No extra text.
 
 
 
-### Coffee Example: Harness Setup
+### 咖啡範例：Harness Setup
 
-Define a single marketing flyer test case, a model run, and an output store.
+定義一個行銷傳單的 test case、一次 model run，以及輸出儲存。
 
 
 ```python
@@ -1399,9 +1316,9 @@ coffee_run = ModelRun(
 coffee_store = OutputStore(root=Path("../../images"))
 ```
 
-### Coffee Example: Run And Grade
+### 咖啡範例：執行與評分
 
-Run the harness and score the output with the marketing judge rubric.
+跑 harness，用行銷 judge rubric 替輸出評分。
 
 
 ```python
@@ -1552,9 +1469,9 @@ coffee_result
 
 
 
-### Flyer Generation Results
+### 傳單生成結果
 
-Render the generated image, prompt, and scores side by side.
+把生成的圖、prompt 和分數並排顯示。
 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gen_coffee_flyer_generation_gpt-image-1.5_1769657762450_0.png" width="400"/> 
@@ -1573,11 +1490,11 @@ render_result_table(case=coffee_case, result=coffee_result, title="Coffee Flyer:
     <IPython.core.display.HTML object>
     ```
 
-#### Additional Method: Image-to-Text + Text Comparison
+#### 另一種方法：圖轉文字加文字比對
 
-Another evaluation approach is to shift the problem into a different modality—text. In this setup, images are first converted into a verbose textual description using a vision model, and evaluations are then performed by comparing the generated text against the expected text.
+另一種評估方式是把問題換到另一個模態：文字。做法是先用 vision 模型把圖片轉成很詳細的文字描述，再拿生成出來的文字跟預期文字比對。
 
-This method works particularly well for OCR-style workflows. For example, you can extract text from a generated flyer using a vision model and then compare the resulting text lines directly against the required copy set to verify correctness and completeness.
+這個方法特別適合 OCR 類的 workflow。例如你可以用 vision 模型從生成的傳單抽出文字，再把結果的每一行直接跟必要文案比對，確認正確又完整。
 
 ```python
 import pandas as pd
@@ -1617,27 +1534,23 @@ text_rendering_df
     0  SUNRISE COFFEE\nWINTER LATTE WEEK\nTry our Cin...
     ```
 
-## Image Editing Evals
+## 圖像編輯 Evals
 
 
-### Virtual Try-On
+### 虛擬試穿（Virtual Try-On）
 
-Virtual try-on (VTO) is an **image editing** workflow: given a **person
-photo** (selfie or model) and a **garment reference** (product photo
-and/or description), generate an output where the garment looks
-**naturally worn**—while keeping the person’s identity, pose, and scene
-intact.
+虛擬試穿（VTO）是一種**圖像編輯** workflow：給一張**人物照片**（自拍或模特兒）和一個**服飾參考**（商品照和/或描述），生成一張衣服看起來**自然穿在身上**的輸出，同時保持人物的身份、姿勢和場景不變。
 
-**Why VTO evals are different**
+**為什麼 VTO eval 不一樣**
 
-Unlike “creative” edits, VTO is judged on **fidelity + preservation**:
+跟「創意」類的編輯不同，VTO 看的是**保真度加保留性**：
 
-- **Preserve the wearer** (face identity, body shape, pose)  
-- **Preserve the product** (color, pattern, logos, material cues)  
-- **Edit only what’s needed** (locality/preservation)  
-- **Look physically plausible** (occlusions, lighting, drape, wrinkles)
+- **保留穿著者**（臉部身份、體型、姿勢）
+- **保留商品**（顏色、圖案、logo、材質線索）
+- **只改必要的部分**（局部性/保留性）
+- **看起來物理上合理**（遮擋、光線、垂墜、皺褶）
 
-Example Inputs:
+範例輸入：
 
 | Full Body | Item 1 |
 |:------------:|:--------------:|
@@ -1645,138 +1558,107 @@ Example Inputs:
 | Item 2 | Item 3 |
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/tank_top.png) | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/boots.png) |
 
-Output Image: 
+輸出圖片： 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/outfit.png" width="400"/> 
 
-#### What to evaluate (practical metrics):
+#### 要評什麼（實用指標）：
 
-##### 1) Treat VTO as a multi-reference editing task
+##### 1) 把 VTO 當成多參考圖的編輯任務
 
-For each test case, store:
+每個 test case 都要存：
 
-- **Input person image** (selfie/model)  
-- **Product reference** (catalog image(s), flat-lay, mannequin, or a
-  “worn” reference when available)  
-- Optional but high-leverage:
-  - **Mask(s)**: editable region, clothing region, hair/hand occluders  
-  - **Metadata**: category (top/bottom/outerwear), desired fit
-    (oversized/slim), colorway, length  
-  - **Edit instruction**: “Put on *this exact jacket* without changing
-    background or face.”
+- **輸入的人物圖**（自拍/模特兒）
+- **商品參考**（型錄圖、平拍、人台，或有的話「穿著」的參考圖）
+- 選用但效益很高：
+  - **Mask**：可編輯區域、衣服區域、頭髮/手的遮擋物
+  - **Metadata**：類別（上衣/下身/外套）、期望版型（oversized/修身）、色系、長度
+  - **編輯指令**：「穿上*這件一模一樣的外套*，不要改變背景或臉。」
 
-This lets graders compare **output vs. both inputs** (person + product),
-not just “does it look good?”
+這樣 graders 可以拿**輸出同時對照兩個輸入**（人物加商品），而不只是問「好不好看？」
 
-##### 2) Graded metrics (use only these three)
+##### 2) 分級指標（只用這三個）
 
-Use these as **0–5** scores to rank models and track improvement. Keep
-them **separate** (don’t average them inside the grader); use verdict
-rules outside if you want gates.
+用這些 **0–5** 分來替模型排名和追蹤進步。它們要**分開**（不要在 grader 裡平均），想要 gate 的話，在外面用 verdict 規則處理。
 
-##### A) Facial similarity (output vs selfie) — 0–5
+##### A) 臉部相似度（輸出 vs 自拍）：0–5
 
-Measures whether the output preserves the *same person* (identity), not
-just “a plausible face.”
+衡量輸出是不是保留了*同一個人*（身份），而不只是「一張合理的臉」。
 
-- **5**: Clearly the same person; key facial features unchanged; no
-  noticeable age/ethnicity/style drift; expression changes (if any) are
-  minor and realistic.  
-- **4**: Same person; tiny differences only noticeable on close
-  inspection (minor shape/texture smoothing, slight eye/mouth drift).  
-- **3**: Mostly the same person, but at least one noticeable identity
-  drift (feature proportions, jawline, eyes, nose) that would reduce
-  user trust.  
-- **2**: Significant identity drift; looks like a different person or
-  heavily altered face.  
-- **1**: Major corruption (melted/blurry face) or clearly different
-  identity.  
-- **0**: Face missing, unreadable, or replaced.
+- **5**：明顯是同一個人；關鍵五官沒變；沒有明顯的年齡/種族/風格偏移；表情若有變化也很小而且寫實。
+- **4**：同一個人；只有近看才會發現的細微差異（形狀/質感稍微平滑、眼睛/嘴巴略有偏移）。
+- **3**：大致是同一個人，但至少有一處明顯的身份偏移（五官比例、下顎線、眼睛、鼻子），會降低使用者的信任。
+- **2**：身份嚴重偏移；看起來像另一個人或臉被大幅改過。
+- **1**：嚴重損壞（臉融化/模糊）或明顯是不同的人。
+- **0**：臉不見、無法辨識或被替換。
 
-What to look for:
+看什麼：
 
-- Facial geometry consistency (eyes/nose/mouth spacing, jawline,
-  cheekbones)  
-- Skin texture realism without “beauty filter” identity loss  
-- No unintended makeup/age/style changes unless requested
+- 臉部幾何一致（眼鼻嘴間距、下顎線、顴骨）
+- 皮膚質感寫實，沒有因「美顏濾鏡」而失去身份
+- 沒被要求的話，不要出現多餘的妝容/年齡/風格變化
 
-##### B) Outfit fidelity (output vs provided items) — 0–5
+##### B) 服裝保真度（輸出 vs 提供的商品）：0–5
 
-Measures whether the output garment matches the *specific* product
-reference(s) the user selected.
+衡量輸出的衣服是否符合使用者選的*那個特定*商品參考。
 
-- **5**: Item matches reference closely: correct category, colorway,
-  pattern/print, material cues, and key details (logos, seams, collar,
-  pockets).  
-- **4**: Clearly the same item; 1–2 minor deviations (small logo blur,
-  slight hue shift, minor detail simplification).  
-- **3**: Generally correct but with a notable mismatch (pattern scale
-  wrong, material looks different, key design element missing/added).  
-- **2**: Multiple mismatches; could be a different variant or different
-  product.  
-- **1**: Wrong item category or strongly incorrect visual identity.  
-- **0**: Outfit not applied / missing / replaced with unrelated
-  clothing.
+- **5**：商品跟參考圖非常接近：類別、色系、圖案/印花、材質線索和關鍵細節（logo、接縫、領口、口袋）都對。
+- **4**：明顯是同一件；有 1 到 2 個小偏差（logo 稍糊、色相略偏、細節稍微簡化）。
+- **3**：大致正確，但有明顯的不一致（圖案比例不對、材質看起來不同、關鍵設計元素缺漏或多出來）。
+- **2**：多處不一致；可能是不同款式或不同商品。
+- **1**：商品類別錯誤，或視覺身份嚴重不符。
+- **0**：沒穿上衣服、衣服消失，或被換成不相干的衣服。
 
-What to look for:
+看什麼：
 
-- Color/pattern correctness (especially stripes, plaid, small repeats)  
-- Logo/text integrity (no hallucinated letters)  
-- Structural details (neckline, sleeves, hem, closures)
+- 顏色/圖案是否正確（尤其是條紋、格紋、小重複圖案）
+- Logo/文字完整（不能憑空冒出字母）
+- 結構細節（領口、袖子、下擺、開合方式）
 
-##### C) Body shape preservation (output vs selfie) — 0–5
+##### C) 體型保留（輸出 vs 自拍）：0–5
 
-Measures whether the model preserves the wearer’s body shape, pose, and
-proportions **outside normal garment effects** (e.g., loose clothing can
-change silhouette, but shouldn’t reshape anatomy).
+衡量模型有沒有保留穿著者的體型、姿勢和比例，**一般服裝效果以外**的部分不該變（例如寬鬆的衣服會改變輪廓，但不該重塑身體結構）。
 
-- **5**: Body proportions and pose are preserved; garment conforms
-  naturally without warping torso/limbs.  
-- **4**: Minor, plausible silhouette changes consistent with clothing;
-  no obvious anatomical distortion.  
-- **3**: Noticeable reshaping (waist/hips/shoulders/limbs) that feels
-  slightly “AI-stylized” or inconsistent with the input body.  
-- **2**: Significant warping (elongated limbs, shifted joints,
-  compressed torso) that would be unacceptable in product use.  
-- **1**: Severe anatomical distortion (extra/missing limbs, melted body
-  regions).  
-- **0**: Body is not recognizable or is fundamentally corrupted.
+- **5**：體型比例和姿勢都保留；衣服自然貼合，沒有扭曲軀幹/四肢。
+- **4**：有小幅、合理而且符合衣服的輪廓變化；沒有明顯的解剖變形。
+- **3**：有明顯的重塑（腰/臀/肩/四肢），感覺有點「AI 風格化」或跟輸入的身體不一致。
+- **2**：嚴重扭曲（四肢拉長、關節錯位、軀幹壓縮），在產品使用上無法接受。
+- **1**：嚴重的解剖變形（多出或缺少四肢、身體區域融化）。
+- **0**：身體無法辨識或根本壞掉。
 
-What to look for:
+看什麼：
 
-- Shoulder/hip width consistency relative to input  
-- Limb length/joint placement stability (elbows, knees, wrists)  
-- No “body slimming” or “body inflation” artifacts
+- 肩寬/臀寬相對輸入是否一致
+- 四肢長度和關節位置是否穩定（手肘、膝蓋、手腕）
+- 沒有「瘦身」或「膨脹」的 artifact
 
-If you want a single overall pass/fail, a common rule is:
+如果你想要單一的整體 pass/fail，常見的規則是：
 
-- **Fail** if any metric ≤ 2  
-- **Pass** if all metrics ≥ 3  
-  (and optionally require outfit fidelity ≥ 4 for commerce-critical
-  flows).
+- 任一指標 ≤ 2 就 **Fail**
+- 所有指標 ≥ 3 才 **Pass**  
+  （電商關鍵流程可以再要求服裝保真度 ≥ 4。）
 
-##### 3) Human feedback: keep it simple but consistent
+##### 3) 人類回饋：簡單但要一致
 
-Humans are best at “would I trust this in a shopping flow?”
+人最擅長判斷「我會在購物流程裡信任這個嗎？」
 
-Use two label types:
+用兩種標註：
 
-- **Rubric labels** (quick, structured):
-  - Identity preserved? (Y/N)  
-  - Garment matches reference? (Y/N + what’s wrong)  
-  - Any bad artifacts? (none/minor/major)  
-  - Overall usable for e-commerce? (Y/N)  
-- **Pairwise preference** (A vs B):
-  - Which output is more faithful to the product while keeping the person unchanged?
+- **Rubric 標註**（快、結構化）：
+  - 身份有保留嗎？（Y/N）
+  - 衣服跟參考圖一致嗎？（Y/N 加哪裡不對）
+  - 有不好的 artifact 嗎？（無/輕微/嚴重）
+  - 整體能用在電商嗎？（Y/N）
+- **Pairwise 偏好**（A vs B）：
+  - 哪一個輸出更忠於商品，同時不改變人物？
 
-Add periodic **calibration**: keep a small set of “anchor” examples that
-raters re-score to prevent drift.
+要定期做**校準**：留一小組「錨點」範例，讓標註者重新評分，防止標準飄移。
 
 
 
-### Virtual Try-On Example: Harness Setup
+### 虛擬試穿範例：Harness Setup
 
-Use existing images from `images/` as the person and garment references.
+用 `images/` 裡現有的圖片當人物和服飾的參考。
 
 
 ```python
@@ -1815,9 +1697,9 @@ vto_store = OutputStore(root=Path("../../images"))
 
 
 
-### Virtual Try-On Example: Run And Grade
+### 虛擬試穿範例：執行與評分
 
-Define a VTO judge prompt aligned to the VTO metrics and run the harness.
+定義對齊 VTO 指標的 judge prompt，然後跑 harness。
 
 
 ```python
@@ -1913,11 +1795,9 @@ vto_result
      'run_params': {'model': 'gpt-image-1.5', 'n': 1}}
     ```
 
-### Virtual Try-On: Optional Code Interpreter Crop Tool
+### 虛擬試穿：選用的 Code Interpreter 裁切工具
 
-If you want finer-grained evidence (logos, seams, fit, face details), you can run a
-secondary judge that uses the Code Interpreter `crop` tool to zoom into regions.
-This is useful for close-up checks on garment fidelity and identity preservation.
+如果你需要更細的證據（logo、接縫、合身度、臉部細節），可以再跑一個第二層的 judge，用 Code Interpreter 的 `crop` 工具放大特定區域。這適合用來近距離檢查服裝保真度和身份保留。
 
 ```python
 vto_output_path = Path(vto_result["artifact_paths"][0])
@@ -1988,16 +1868,16 @@ response_crop
 
 
 
-### Virtual Try-On Eval Results
+### 虛擬試穿 Eval 結果
 
-Show the edit result and VTO scores in a single pandas table.
+把編輯結果和 VTO 分數放進同一張 pandas 表格。
 
 
 | Full Body | Item 1 |
 |:------------:|:--------------:|
 | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/base_woman.png)  | ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/jacket.png) |
 
-Edited Image:
+編輯後的圖片：
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/edit_vto_jacket_tryon_gpt-image-1.5-vto_1769658750053_0.png" width="400"/> 
 
@@ -2016,116 +1896,87 @@ render_result_table(case=vto_case, result=vto_result, title="Virtual Try-On: Pro
     <IPython.core.display.HTML object>
     ```
 
-### Logo Editing
+### Logo 編輯
 
-Logo editing is a high-precision image editing task. Given an **existing
-logo** and a **narrowly scoped instruction**, the model must apply the
-exact requested change while preserving everything else perfectly.
-Unlike creative design tasks, logo editing typically has a single
-correct answer. Any deviation, even subtle, is a failure.
+Logo 編輯是高精度的圖像編輯任務。給一個**既有的 logo** 和一個**範圍很窄的指令**，模型必須精確套用要求的修改，同時把其他東西完美保留。跟創意設計不同，logo 編輯通常只有一個正確答案，任何偏差，即使很細微，都算失敗。
 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/logo_sample.png" width="400"/> 
 
 
-**Why Logo Editing evals are different**:
+**為什麼 Logo 編輯 eval 不一樣**：
 
-Logo editing is judged on exactness, locality, and preservation rather
-than visual appeal:
+Logo 編輯看的是精確性、局部性和保留性，不是視覺吸引力：
 
-- Preserve the original asset identity  
-- Preserve all unedited text, geometry, spacing, and styling  
-- Edit only the explicitly requested region  
-- Produce character-level correctness with zero tolerance for drift
+- 保留原始素材的身份
+- 保留所有沒要改的文字、幾何、間距和樣式
+- 只改明確指定的區域
+- 要做到字元層級的正確，對偏移零容忍
 
-Small errors carry outsized risk. A single letter distortion, number
-change, or spill outside the intended region can break brand integrity
-and create downstream rework.
+小錯誤的風險被放大。一個字母變形、一個數字改掉，或修改溢出到指定區域外，都可能破壞品牌完整性，造成下游的重工。
 
-**Example Tasks:**
+**範例任務：**
 
-- Inputs: logo image + mask or region description  
-- Tasks: “change the year from 2024 to 2026,” “replace C with S,” “add
-  TM”
+- 輸入：logo 圖片加 mask 或區域描述
+- 任務：「把年份從 2024 改成 2026」、「把 C 換成 S」、「加上 TM」
 
-#### What to evaluate (practical metrics):
+#### 要評什麼（實用指標）：
 
-##### 1) Treat logo editing as a constrained, single-reference task
+##### 1) 把 logo 編輯當成有限制的單一參考任務
 
-For each test case, store:
+每個 test case 都要存：
 
-- **Input logo image**  
-- **Edit instruction** with explicit scope  
-- Optional but high-leverage:
-  - Mask(s) or region description defining where edits are allowed  
-  - Expected target text or symbol for exact comparison  
-  - **Metadata**: font type, font size, or color
+- **輸入的 logo 圖片**
+- **編輯指令**，範圍要明確
+- 選用但效益很高：
+  - 定義哪裡可以改的 mask 或區域描述
+  - 用來精確比對的預期目標文字或符號
+  - **Metadata**：字型、字級或顏色
 
-The grader should compare the output directly against the original logo.
+Grader 應該把輸出直接跟原始 logo 比較。
 
-##### 2) Graded metrics
+##### 2) 分級指標
 
-Use these **0–5** scores to rank models and track improvement. Scores
-are applied across all requested steps, not per step, so partial
-completion is penalized in a controlled and explainable way.
+用這些 **0–5** 分來替模型排名和追蹤進步。分數是套用在所有要求的步驟上，不是逐步驟打分，所以只完成一部分會以可控、可解釋的方式被扣分。
 
-##### A) Edit intent correctness — 0–5
+##### A) 編輯意圖正確性：0–5
 
-Measures whether every requested edit step was applied correctly to the
-correct target.
+衡量每個要求的編輯步驟是否都正確套用在正確的目標上。
 
-- **5**: All edit steps are applied exactly as specified.
-  Character-level accuracy is perfect for every step.  
-- **4**: All steps applied correctly; extremely minor visual
-  imperfections only visible on close inspection.  
-- **3**: All steps applied, but at least one step shows noticeable
-  degradation in clarity or precision.  
-- **2**: Most steps applied correctly, but one or more steps contain a
-  meaningful error.  
-- **1**: One or more steps are incorrect or applied to the wrong
-  element.  
-- **0**: Most steps missing, incorrect, or misapplied.
+- **5**：所有編輯步驟都完全照規格套用。每一步的字元層級準確度都完美。
+- **4**：所有步驟都正確套用；只有近看才看得出極輕微的瑕疵。
+- **3**：所有步驟都有套用，但至少有一步在清晰度或精確度上有明顯劣化。
+- **2**：大部分步驟正確，但有一個以上的步驟含有明顯錯誤。
+- **1**：有一個以上的步驟錯誤，或套用到錯的元素。
+- **0**：大部分步驟缺漏、錯誤或誤用。
 
-##### B) Non-target invariance — 0–5
+##### B) 非目標區域不變性：0–5
 
-Measures whether content outside the requested edits remains unchanged
-across all steps.
+衡量要求修改以外的內容，在所有步驟之後是否維持不變。
 
-- **5**: No detectable changes outside the requested edits.  
-- **4**: Extremely minor drift visible only on close inspection.  
-- **3**: Noticeable but limited drift in nearby elements.  
-- **2**: Clear unrequested changes affecting adjacent text, symbols, or
-  background.  
-- **1**: Widespread unintended changes across the logo.  
-- **0**: Logo identity compromised.
+- **5**：要求修改以外沒有可偵測的變化。
+- **4**：只有近看才看得出極輕微的偏移。
+- **3**：附近的元素有明顯但有限的偏移。
+- **2**：有明確的未要求變動，影響相鄰的文字、符號或背景。
+- **1**：整個 logo 有大範圍的非預期變動。
+- **0**：Logo 的身份已經被破壞。
 
-##### C) Character and style integrity — 0–5
+##### C) 字元與風格完整性：0–5
 
-Logo editing is not creative transformation. The output must preserve
-the original asset’s identity including color, stroke, letterform, and
-icon consistency.
+Logo 編輯不是創意轉換。輸出必須保留原始素材的身份，包括顏色、筆畫、字形和圖示的一致性。
 
-- **5**: Edited characters and symbols perfectly match the original
-  style. Colors, strokes, letterforms, and icons are indistinguishable
-  from the original.  
-- **4**: Extremely minor deviation visible only on close inspection,
-  with no impact on brand perception.  
-- **3**: Noticeable but limited deviation in one or more properties that
-  does not break recognition.  
-- **2**: Clear inconsistency in color, stroke, letterform, or icon
-  geometry that affects visual cohesion.  
-- **1**: Major inconsistency that materially alters the logo’s
-  appearance.  
-- **0**: Visual system is corrupted or no longer recognizable.
+- **5**：編輯的字元和符號完全符合原始風格。顏色、筆畫、字形和圖示跟原件分不出差別。
+- **4**：只有近看才看得出極輕微的偏差，不影響品牌觀感。
+- **3**：一個以上的屬性有明顯但有限的偏差，不影響辨識。
+- **2**：顏色、筆畫、字形或圖示幾何有明確的不一致，影響視覺的整體感。
+- **1**：重大不一致，實質改變了 logo 的外觀。
+- **0**：視覺系統已損壞或無法辨識。
 
 **LLM-as-judge rubric prompt**
 
-Below is a judge prompt aligned to your existing `LLMajRubricGrader`. It
-returns structured metric scores + an overall verdict.
+下面是對齊你現有 `LLMajRubricGrader` 的 judge prompt。它會回傳結構化的各項指標分數加整體 verdict。
 
-You can use this with your existing grader by changing the JSON schema
-to include the fields below (or create separate graders per metric if
-you prefer).
+你可以把 JSON schema 改成包含下面的欄位，沿用現有的 grader，或者想的話也可以每個指標拆成獨立的 grader。
 
 
 ```python
@@ -2243,7 +2094,7 @@ No additional text.
 """
 ```
 
-#### Recommended JSON Output
+#### 建議的 JSON 輸出
 
 
 ```python
@@ -2268,9 +2119,9 @@ No additional text.
 
 
 
-### Logo Editing Example: Harness Setup
+### Logo 編輯範例：Harness Setup
 
-Use an existing logo image and a narrowly scoped edit instruction.
+用現有的 logo 圖片和一個範圍很窄的編輯指令。
 
 
 ```python
@@ -2308,9 +2159,9 @@ logo_store = OutputStore(root=Path("../../images"))
 
 
 
-### Logo Editing Example: Run And Grade
+### Logo 編輯範例：執行與評分
 
-Run the harness and score the logo edit using the logo judge rubric.
+跑 harness，用 logo judge rubric 替 logo 編輯評分。
 
 
 ```python
@@ -2383,9 +2234,9 @@ logo_result
 
 
 
-### Logo Editing Eval Results
+### Logo 編輯 Eval 結果
 
-Show the edited logo and logo edit scores in a single pandas table.
+把編輯後的 logo 和 logo 編輯分數放進同一張 pandas 表格。
 
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/edit_logo_year_edit_gpt-image-1.5-logo_1769659071403_0.png" width="400"/> 
@@ -2404,71 +2255,50 @@ render_result_table(case=logo_case, result=logo_result, title="Logo Editing: Pro
     <IPython.core.display.HTML object>
     ```
 
-##### 3) Alternative When You Have Ground Truth Images
+##### 3) 手上有 Ground Truth 圖片時的替代做法
 
-If you already have canonical references, you can compare directly to a
-**design source-of-truth** rather than model outputs.
+如果你已經有正式的參考圖，可以直接跟**設計的 source-of-truth** 比，不用跟模型輸出比。
 
-Ground truth should come from the design system, not generated images:
+Ground truth 應該來自設計系統，不是生成的圖：
 
-- Brand library assets (vector or high-res canonical raster)
-- Figma frames or components representing the correct asset state
+- 品牌素材庫的資產（向量或高解析度的正式點陣圖）
+- 代表正確素材狀態的 Figma frame 或元件
 
-This maps cleanly to logo editing requirements like “still the same asset”
-and “unintended drift is a failure.”
+這很自然地對應 logo 編輯的要求，像是「還是同一個素材」和「非預期的偏移就是失敗」。
 
-**Example: OpenAI Logo – Lunar New Year**
+**範例：OpenAI Logo，農曆新年版**
 
-- Reference image: canonical OpenAI logo (from Figma or brand assets)
-- Generated image: model output with the requested transformation
+- 參考圖：正式的 OpenAI logo（來自 Figma 或品牌素材）
+- 生成圖：套用要求轉換後的模型輸出
 
 
 
-## Conclusion
+## 結論
 
-Image models are shifting from “cool demos” to production tools that
-generate real artifacts—screens, flyers, product visuals, and brand
-edits that influence decisions and ship to customers. The core lesson of
-this cookbook is simple: you can’t evaluate these systems with generic
-“looks good” scores. You need **workflow-specific evals** that are
-**repeatable** across model versions, prompts, and settings. Multimodal
-LLMs make this practical by acting as scalable judges—when paired with
-tight rubrics, structured outputs, and human calibration.
+圖像模型正從「炫技 demo」走向 production 工具，產出會影響決策、會交到客戶手上的真實素材：畫面、傳單、產品視覺和品牌編輯。這份 cookbook 的核心結論很簡單：你不能用籠統的「看起來不錯」分數來評這些系統，你需要**針對 workflow 的 evals**，而且在不同模型版本、prompt 和設定之間都**可重複**。多模態 LLM 讓這件事可行，它能當可擴充的 judge，前提是搭配嚴謹的 rubric、結構化輸出和人工校準。
 
-A practical vision-eval program starts small and gets sharper over time:
+實用的 vision-eval 計畫從小處開始，慢慢變銳利：
 
-- **Start with gates.** Add strict pass/fail graders for the failure
-  modes that break real work: missing required components, incorrect
-  copy, edits spilling outside the intended region, or unintended
-  changes to preserved areas. This prevents “pretty but wrong” outputs
-  from masking regressions.  
-- **Layer in graded metrics.** Once hard failures are controlled, use
-  0–5 rubrics to capture what matters for usability and quality in each
-  workflow (e.g., hierarchy in UI mockups, brand fit in marketing, or
-  fidelity/preservation in editing).  
-- **Tag failures to iterate faster.** Consistent failure tags turn a
-  pile of outputs into actionable engineering work: you can quantify
-  what’s breaking, find clustered root causes, and track progress as you
-  tune prompts, model settings, masks, or post-processing.  
-- **Use humans strategically.** Humans add the most value on subjective
-  or ambiguous dimensions (“vibe,” usability clarity, trustworthiness),
-  but only if you keep rubrics tight and use calibration anchors to
-  prevent drift.  
-- **Treat the harness as a product.** The reusable harness you
-  built—test cases, runners, graders, and stored artifacts—creates the
-  foundation for regression testing, parameter sweeps, and side-by-side
-  comparisons. Over time, your eval suite becomes your safety net: it
-  catches subtle failures early and makes improvements measurable.
-- **Evolve as needed.** You can redesign your grader prompts with the
-  complex metrics over time. One natural next step would be splitting 
-  the single-shot grader prompt into multiple calls to focus on a
-  specific metric.
+- **先從 gate 開始。**針對會毀掉真實工作的失敗模式加嚴格的 pass/fail grader：缺必要元件、文案錯誤、編輯溢出指定區域，或保留區域被非預期改動。這樣可以避免「漂亮但是錯」的輸出掩蓋 regression。
+- **再疊上分級指標。**硬性失敗控制住之後，用 0–5 的 rubric 抓每個 workflow 在可用性和品質上重要的東西（例如 UI mockup 的層次、行銷的品牌契合度、編輯的保真度/保留性）。
+- **標記失敗，迭代更快。**一致的失敗標籤能把一堆輸出變成可執行的工程工作：你可以量化哪裡壞了、找出聚集的根本原因，並在調整 prompt、模型設定、mask 或後處理時追蹤進度。
+- **策略性地用人。**人在主觀或模糊的面向（「感覺」、可用性清晰度、可信度）最有價值，但前提是 rubric 要嚴謹，並用校準錨點防止飄移。
+- **把 harness 當成產品。**你建好的可重用 harness（test case、runner、grader、儲存的產物）是 regression 測試、參數掃描和並排比較的基礎。久了之後，你的 eval suite 就是安全網：及早抓到細微的失敗，讓改進可以被量測。
+- **視需要演進。**你可以隨時間用更複雜的指標重新設計 grader prompt。很自然的下一步是把單次的 grader prompt 拆成多次呼叫，每次專注一個指標。
 
-Build evals that reflect how images are actually used, enforce
-correctness before aesthetics, and make iteration data-driven. When your
-evals are aligned with real workflow requirements, image generation and
-editing stop being unpredictable art projects and become tools teams can
-trust.
+建出反映圖片實際使用方式的 evals，先確保正確性再談美感，讓迭代由資料驅動。當你的 evals 對齊真實 workflow 的需求，圖像生成和編輯就不再是不可預測的藝術專案，而是團隊能信任的工具。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Vision eval 要針對特定 workflow 設計，評的是「這個模型在這個用途上可不可靠」，不是畫面好不好看。
+- Harness 拆成 test case、runner、grader 三個插件，換場景只要換 test case 和 judge prompt。
+- 先設 gate（指令遵循、文字正確、局部性/保留性），gate 過了才看 0–5 的品質分，而且不能用平均分去蓋掉 gate。
+- 編輯類任務要同時對照輸入和輸出，重點是保留性：沒要求改的地方不能動。
+- 失敗標籤加人工校準錨點，能讓 eval 長期穩定、也方便找出要修的問題。
+
+## 練習
+
+1. 在 UI mockup 的 verdict 規則裡，把「版面與層次 ≥ 3」改成 ≥ 4，重跑後看有哪些 case 的 verdict 翻轉。
+2. 為咖啡店傳單加一個 test case，要求價格寫成 “$4.50” 且不准有其他數字，並在 judge prompt 裡加一條對應的文字渲染 gate。
+3. 把 VTO 的三個指標拆成三次獨立的 judge 呼叫（每次只評一個指標），比較單次呼叫和拆開呼叫的分數差異。

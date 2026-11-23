@@ -1,39 +1,49 @@
 ---
-translated: false
+translated: true
 source: examples/deep_research_api/introduction_to_deep_research_api_agents.ipynb
 ---
 
-# Deep Research API with the Agents SDK
+# 用 Agents SDK 搭配 Deep Research API
 
 > 原文：[examples/deep_research_api/introduction_to_deep_research_api_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/deep_research_api/introduction_to_deep_research_api_agents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 OpenAI Deep Research API 加上 Agents SDK，建出單 agent 和多 agent 的研究流程。多 agent 版本會先釐清使用者需求、把需求改寫成研究說明，再交給 research agent 去查。
 
+## 學完你會
+- 跑一個單 agent 的 deep research，並 stream 它的進度。
+- 組出 Triage、Clarifier、Instruction Builder、Research 四個 agent 的 pipeline。
+- 印出 agent 之間的互動流程，並從最終輸出抽出 URL citations。
 
-This cookbook demonstrates how to build Agentic research workflows using the OpenAI Deep Research API and the OpenAI [Agents SDK](https://openai.github.io/openai-agents-python/). It is a continuation of [a fundamentals cookbook](https://cookbook.openai.com/examples/deep_research_api/introduction_to_deep_research_api), if you have not already familiarized yourself with that content, please consider doing so.
+## 開跑前
+- 需要 OpenAI API key，設成環境變數 `OPENAI_API_KEY`。
+- 需要安裝 Agents SDK 和 OpenAI Python SDK。
+- Deep Research 比一般 Responses API 貴，要有對應額度。
 
-You’ll learn how to orchestrate single and multi-agent pipelines, enrich user queries to maximize output quality, stream research progress, integrate web search and [MCP for internal file search](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme), and architect a robust research application.
+這份 cookbook 示範怎麼用 OpenAI Deep Research API 和 OpenAI [Agents SDK](https://openai.github.io/openai-agents-python/) 建立 agentic 研究流程。它是[基礎篇 cookbook](https://cookbook.openai.com/examples/deep_research_api/introduction_to_deep_research_api) 的延續，沒看過的話建議先看。
 
-Consider using Deep Research Agents for tasks that require planning, synthesis, tool use, or multi-step reasoning. Do not use Deep Research for trivial fact lookups, simple Q&A, or short-form chat, a vanilla openai.responsesAPI would be faster and cheaper.
+你會學到怎麼編排單 agent 和多 agent pipeline、怎麼豐富使用者的 query 來提升輸出品質、怎麼 stream 研究進度、怎麼整合網路搜尋和[用 MCP 搜內部檔案](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme)，以及怎麼設計一個穩健的研究應用。
 
-### Prerequisites
-* OpenAI API key (set as OPENAI_API_KEY in your environment)
-* Agents SDK and OpenAI Python SDK
+Deep Research Agents 適合需要規劃、整合資料、使用 tool 或多步驟 reasoning 的任務。簡單的事實查詢、一般問答或短對話不要用，直接用 openai.responses API 會更快也更便宜。
 
-### Setup
-*Install dependencies*
+### 前置需求
+* OpenAI API key（在環境中設成 OPENAI_API_KEY）
+* Agents SDK 和 OpenAI Python SDK
+
+### 設定
+*安裝套件*
 
 ```python
 %pip install --upgrade "openai>=1.88" "openai-agents>=0.0.19"
 ```
 
-### Import libraries and configure client
+### 匯入函式庫並設定 client
 
 **Zero Data Retention**
 
-We disable Data Retention through the os.environ setting below. This allows Enterprises to operate in a Zero Data Retention environment with Deep Research. If Data Retention is _not_ an active constraint for you, then consider keeping it enabled so you can have automated traceability for your agent workflows and deep integration with other platform tools like evaluations and fine tuning.
+下面用 os.environ 設定關掉 Data Retention。這讓企業可以在 Zero Data Retention 的環境下使用 Deep Research。如果資料保留對你不是限制，建議保持開啟，這樣 agent 工作流程能自動留下追蹤紀錄，也能深度整合 evaluations 和 fine tuning 等平台工具。
 
 ```python
 import os
@@ -48,13 +58,13 @@ set_default_openai_client(client)
 os.environ["OPENAI_AGENTS_DISABLE_TRACING"] = "1" # Disable tracing for Zero Data Retention (ZDR) Organizations
 ```
 
-### Basic Deep Research Agent
+### 基本的 Deep Research Agent
 
-The Basic Research Agent performs deep research using the `gpt-5.6-terra` model, which balances intelligence and cost. It uses `WebSearchTool` to access the public internet and streams its findings directly back into the notebook.
+Basic Research Agent 用 `gpt-5.6-terra` 模型做 deep research，在智慧和成本之間取平衡。它用 `WebSearchTool` 存取公開網路，並把研究結果直接 stream 回 notebook。
 
-**Learning objective:**
+**學習目標：**
 
-After this, you can run a single-agent research task and stream its progress.
+做完這段，你就能跑一個單 agent 的研究任務並 stream 它的進度。
 
 ```python
 # Define the research agent
@@ -94,16 +104,16 @@ result = await basic_research("Research the economic impact of semaglutide on gl
 print(result)
 ```
 
-### Multi-Agent Research with Clarification
+### 帶有釐清步驟的多 Agent 研究
 
-Multi-Agent Deep Research
+多 Agent Deep Research
 
-Consider how you might further improve the Research quality "Deep Research" produces. In this case, we are leveraging a multi-agent architecture to enrich the prompt with _more information_ about the users query and what we expect to see in the final research report, before submitting it to a deep research agent.
+想想怎麼進一步提升 Deep Research 產出的品質。這裡用多 agent 架構，在把 query 交給 deep research agent 之前，先補上更多關於使用者問題、以及我們期待最終報告長什麼樣子的資訊。
 
 
-## Sub-Agent Prompt enrichment
+## 子 Agent 的 Prompt 強化
 
-The supporting Agent prompts are specifically designed to improve the quality of the final research output by providing structure and rigor to the user's initial query.
+輔助 agent 的 prompt 是特別設計的，目的是給使用者最初的 query 加上結構和嚴謹度，讓最終研究輸出品質更好。
 
 ```python
 # ─────────────────────────────────────────────────────────────
@@ -167,28 +177,28 @@ RESEARCH_INSTRUCTION_AGENT_PROMPT = """
         """
 ```
 
-# Four-Agent Deep Research Pipeline
+# 四個 Agent 的 Deep Research Pipeline
 
 1. **Triage Agent**  
-   - Inspects the user’s query  
-   - If context is missing, routes to the Clarifier Agent; otherwise routes to the Instruction Agent  
+   - 檢查使用者的 query  
+   - 如果缺少背景資訊，就轉給 Clarifier Agent，否則轉給 Instruction Agent  
 
 2. **Clarifier Agent**  
-   - Asks follow-up questions  
-   - Waits for user (or mock) answers  
+   - 問後續問題  
+   - 等使用者（或模擬的）回答  
 
 3. **Instruction Builder Agent**  
-   - Converts the enriched input into a precise research brief  
+   - 把補充過的輸入轉成精確的研究說明  
 
 4. **Research Agent** (`gpt-5.6-sol`)  
-   - Performs web-scale empirical research with `WebSearchTool`
-   - Performs a search against internal knowledge store using MCP, if there are relevant documents, the agent incorporates those relevant snippets in its reference material.   
-   - Streams intermediate events for transparency
-   - Outputs final Research Artifact (which we later parse)
+   - 用 `WebSearchTool` 做網路規模的實證研究
+   - 用 MCP 搜內部知識庫，如果有相關文件，agent 會把相關片段納入參考資料。   
+   - Stream 中間事件，讓過程透明
+   - 輸出最終的研究成果（我們之後會解析它）
 
 ![../../images/agents_dr.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent_dr.png)
 
-For more insight into _how_ the MCP server is build. [See this resource.](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme )
+想知道 MCP server 是怎麼建的，[看這份資料](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme )。
 
 ```python
 # ─────────────────────────────────────────────────────────────
@@ -280,9 +290,9 @@ result = await basic_research(
 )
 ```
 
-## Agent Interaction Flow
+## Agent 互動流程
 
-Although provided natively through Agent SDK traces you may want to print human-readable high-level agent interaction flow with tool calls. Run print_agent_interaction to get a simplified readable sequence of agent steps, including: Agent name, Type of event (handoff, tool call, message output), Brief tool call info (tool name and arguments).
+Agent SDK 本身的 trace 就能看，不過你也可能想印出人類可讀的高階 agent 互動流程，包含 tool call。執行 print_agent_interaction，就會得到簡化後的 agent 步驟序列，內容有：agent 名稱、事件類型（handoff、tool call、message output）、tool call 的簡要資訊（tool 名稱和參數）。
 
 
 ```python
@@ -353,7 +363,7 @@ parse_agent_interaction_flow(result)
 
 ## Citations
 
-Below is a Python snippet to extract and print the URL citations related to the final output:
+下面這段 Python 會抽出並印出最終輸出相關的 URL citations：
 
 ```python
 def print_final_output_citations(stream, preceding_chars=50):
@@ -398,15 +408,25 @@ print_final_output_citations(result)
 print(result.final_output)
 ```
 
-### Conclusion
+### 結論
 
-With the patterns in this notebook, you now have a foundation for building scalable, production-ready research workflows using OpenAI Deep Research Agents. The examples demonstrate not only how to orchestrate multi-agent pipelines and stream research progress, but also how to integrate web search and MCP for external knowledge access.
+有了這份 notebook 的模式，你就有基礎去建立可擴展、可上 production 的研究流程。範例不只示範怎麼編排多 agent pipeline 和 stream 研究進度，也示範怎麼整合網路搜尋和 MCP 來取得外部知識。
 
-By leveraging agentic workflows, you can move beyond simple Q&A to tackle complex, multi-step research tasks that require planning, synthesis, and tool use. The modular multi-agent design: triage, clarification, instruction, and research agents enables you to adapt these pipelines to a wide range of domains and use cases, from healthcare and finance to technical due diligence and market analysis.
+用 agentic 工作流程，你可以不只做簡單問答，而是處理需要規劃、整合和使用 tool 的複雜多步驟研究。這個模組化的多 agent 設計（triage、clarification、instruction、research 四種 agent）可以調整到各種領域，從醫療、金融到技術盡職調查和市場分析。
 
-As the Deep Research API and Agents SDK continue to evolve, these patterns will help you stay at the forefront of automated, data-backed research. Whether you’re building internal knowledge tools, automating competitive intelligence, or supporting expert analysts, these workflows provide a strong, extensible starting point.
+隨著 Deep Research API 和 Agents SDK 持續演進，這些模式能讓你站在自動化、以資料為基礎的研究最前線。不論你是在做內部知識工具、自動化競爭情報，還是支援專家分析師，這些工作流程都是個扎實又好擴充的起點。
 
 **Happy researching!**
 
 
-<!-- tutor:summary -->
+## 重點整理
+- Deep Research 適合需要規劃、整合和多步驟 reasoning 的任務，簡單問答用一般 Responses API 就好。
+- 把 query 先釐清、再改寫成研究說明，能明顯提升最終報告品質。
+- 多 agent 靠 handoff 分工：triage 判斷、clarifier 追問、instruction builder 整理、research agent 執行。
+- Stream 事件讓你能看到研究過程，也方便做 agent 互動流程的輸出。
+- Zero Data Retention 是設定選項，沒有限制的話保留資料能得到 trace 和平台整合的好處。
+
+## 練習
+1. 把 Basic Research Agent 的 query 換成你自己的主題，執行並觀察 stream 出來的事件。
+2. 修改 Triage Agent 的 instructions，讓它在 query 少於某個長度時一律先走 Clarifier。
+3. 在 citations 的程式碼中，加上去除重複 URL 並按網域分組印出的邏輯。

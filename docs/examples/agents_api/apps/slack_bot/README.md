@@ -1,84 +1,96 @@
 ---
-translated: false
+translated: true
 source: examples/agents_api/apps/slack_bot/README.md
 ---
-
-# Build a Slack bot with the Agents API
+# 用 Agents API 做一個 Slack bot
 
 > 原文：[examples/agents_api/apps/slack_bot/README.md](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/README.md)
 
-Connect Slack threads to persistent agent sessions, workplace tools, and isolated sandboxes.
+把 Slack thread 接到持久的 agent session、工作場所的 tool 和隔離的 sandbox。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+在 Slack 裡 tag 這個 bot，就能請它搜尋對話、調查專案、分析資料，或準備 GitHub pull request。每個 Slack thread 都有自己的 Agents API session 和隔離的工作空間，後續追問可以接著之前的調查繼續。
+
+## 學完你會
+
+- 把 Slack thread 對應到 Agents API session，讓追問能延續上下文
+- 建立 session、掛上 Docker sandbox，並把 agent 的進度串流回 Slack
+- 設定範圍受限的 Slack tool 和 Notion、Google Drive、GitHub 的 MCP 連線，並在對話結束時清理資源
+
+## 開跑前
+
+- Python 3.14+ 和 `uv`
+- Sandbox：自架 Docker，或第三方 provider
+- OpenAI API key，加上一組權限受限的 executor key（需要 `api.agents.environments.connect`）
+- 一個你有權限安裝 internal app 的 Slack workspace
+- 選用：Notion、Google Drive、GitHub 的憑證
 
 
-Tag your bot in Slack to search conversations, investigate projects, analyze data,
-or prepare a GitHub pull request. Each Slack thread gets its own Agents API
-session and isolated workspace.
+Tag 你的 bot，就能搜尋對話、調查專案、分析資料，或準備 GitHub pull request。每個 Slack thread 都有自己的 Agents API
+session 和隔離的工作空間。
 
-## Why use the Agents API?
+## 為什麼用 Agents API？
 
-Slack supplies the trigger and interface. The Agents API keeps the conversation
-and tool results in a session, runs the agent, and streams its progress. Your
-application controls Slack access, workplace credentials, and the sandbox
-lifecycle. A follow-up can continue the investigation without repeating the
-original context.
+Slack 提供觸發和介面。Agents API 把對話和 tool 結果保存在 session 裡、執行 agent，並串流它的進度。你的
+應用程式控制 Slack 存取、工作場所憑證和 sandbox
+生命週期。後續追問可以延續調查，不用重複原本的 context。
 
 ![Slack bot workflow: create or resume a thread session, search connected tools, work in a sandbox, and respond to follow-up requests.](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/agents_api/apps/slack_bot/assets/workflow.svg)
 
-## What you need
+## 需要準備什麼
 
-- Python 3.14+ and `uv`.
-- A sandbox: self-hosted Docker or a [third-party provider](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers).
-- An OpenAI API key and a separate restricted executor key.
-- A Slack workspace where you can install an internal application.
+- Python 3.14+ 和 `uv`。
+- 一個 sandbox：自架 Docker，或[第三方 provider](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers)。
+- 一組 OpenAI API key，和另一組權限受限的 executor key。
+- 一個你可以安裝 internal application 的 Slack workspace。
 
-## 1. Build the sandbox image
+## 1. Build sandbox image
 
-From the repository root:
+在 repository 根目錄執行：
 
 ```bash
 cp examples/agents_api/apps/slack_bot/.env.example examples/agents_api/apps/slack_bot/.env
 docker build -t agent-api-sandbox:latest examples/agents_api/sandboxes/docker/application_managed
 ```
 
-Set `OPENAI_API_KEY` and `OPENAI_EXECUTOR_API_KEY` in `examples/agents_api/apps/slack_bot/.env`. Use keys with the same owner, organization, and project. Only the executor key enters the sandbox. It needs `api.agents.environments.connect` and IP restrictions that allow the sandbox's outbound network. The application loads this file automatically.
+在 `examples/agents_api/apps/slack_bot/.env` 設定 `OPENAI_API_KEY` 和 `OPENAI_EXECUTOR_API_KEY`。兩把 key 要有相同的擁有者、組織和 project。只有 executor key 會進到 sandbox。它需要 `api.agents.environments.connect` 權限，以及允許 sandbox 對外網路的 IP 限制。應用程式會自動載入這個檔案。
 
-To create an executor key with the required permission, open [Agents > Environments > Keys](https://platform.openai.com/agents?tab=environments&environment_view=keys) and select **Create**.
+要建立有所需權限的 executor key，打開 [Agents > Environments > Keys](https://platform.openai.com/agents?tab=environments&environment_view=keys) 並選 **Create**。
 
-For production, you can replace Docker with a hosted [sandbox provider](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers).
+正式環境可以把 Docker 換成代管的 [sandbox provider](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers)。
 
-## 2. Create the Slack app
+## 2. 建立 Slack app
 
-1. Create an app using `examples/agents_api/apps/slack_bot/slack-app-manifest.yaml`.
-2. Install it in your workspace and copy the **Bot User OAuth Token**.
-3. Create an app-level token with the `connections:write` scope.
+1. 用 `examples/agents_api/apps/slack_bot/slack-app-manifest.yaml` 建立 app。
+2. 把它安裝到你的 workspace，並複製 **Bot User OAuth Token**。
+3. 建立一個有 `connections:write` scope 的 app-level token。
 
-Add both tokens to `examples/agents_api/apps/slack_bot/.env`:
+把兩個 token 都加到 `examples/agents_api/apps/slack_bot/.env`：
 
 ```bash
 SLACK_BOT_TOKEN=xoxb-...
 SLACK_APP_TOKEN=xapp-...
 ```
 
-Start the bot:
+啟動 bot：
 
 ```bash
 uv run examples/agents_api/apps/slack_bot/main.py
 ```
 
-Socket Mode receives messages without a public webhook or OAuth callback. The
-bot can read only conversations it belongs to.
+Socket Mode 不需要公開的 webhook 或 OAuth callback 就能接收訊息。
+bot 只能讀它所屬的對話。
 
-## 3. Tag the bot in Slack
+## 3. 在 Slack tag bot
 
-Invite the bot to a channel, then mention it:
+把 bot 邀請進頻道，然後 mention 它：
 
 ```text
 @Agent Teammate Summarize this week's launch decisions and find the owner.
 ```
 
-Follow up in the same Slack thread:
+在同一個 Slack thread 追問：
 
 ```text
 Find the related GitHub issue and explain the likely cause.
@@ -88,20 +100,19 @@ Reproduce the problem, prepare a fix, and open a pull request.
 Only include customer-facing changes.
 ```
 
-The first message creates a `self_hosted` Agents API session and starts a Docker
-container running `codex exec-server`. Replies reuse the same session and
-workspace. Send `stop` to cancel an active request.
+第一則訊息會建立一個 `self_hosted` Agents API session，並啟動一個執行 `codex exec-server` 的 Docker
+container。後續回覆會沿用同一個 session 和工作空間。送出 `stop` 可以取消進行中的 request。
 
-## Follow the implementation
+## 跟著看實作
 
-The snippets below show the main steps in [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/main.py), [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py),
-and [connections.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/connections.py). Run the application above for the complete
-event handling and cleanup; the snippets are not a second application.
+下面的片段展示 [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/main.py)、[agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py)
+和 [connections.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/connections.py) 的主要步驟。完整的
+事件處理和清理邏輯請執行上面的應用程式，這些片段不是另一個應用。
 
-### 1. Map each Slack thread to a session
+### 1. 把每個 Slack thread 對應到一個 session
 
-Use the workspace, channel, and original message timestamp as the conversation
-key. Follow-up mentions in the same thread reuse that key.
+用 workspace、channel 和原始訊息的 timestamp 當作對話的
+key。同一個 thread 裡的後續 mention 會沿用這個 key。
 
 ```python
 @app.event("app_mention")
@@ -117,18 +128,17 @@ async def on_mention(event, context, say):
     await say(text=answer, thread_ts=thread_ts)
 ```
 
-The runnable handler also removes the bot's own mention, ignores duplicate
-deliveries, and routes messages received during an active request to steering
-or cancellation.
+可執行的 handler 還會移除 bot 自己的 mention、忽略重複送達的事件，並把進行中 request 期間收到的訊息，
+導向 steering 或取消。
 
-### 2. Give the agent scoped tools
+### 2. 給 agent 範圍受限的 tool
 
-Slack tools run in your application with the bot token. [tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/tools.py)
-provides four functions: `search_slack_messages`, `read_slack_channel`,
-`find_teammate`, and `list_slack_files`. Message and file access is bound to the
-channel that triggered the request, not a model-selected channel.
+Slack tool 在你的應用程式裡用 bot token 執行。[tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/tools.py)
+提供四個函式：`search_slack_messages`、`read_slack_channel`、
+`find_teammate` 和 `list_slack_files`。訊息和檔案的存取綁定在
+觸發 request 的 channel，不是由模型選的 channel。
 
-For example, the search tool filters recent channel messages:
+例如搜尋 tool 會過濾 channel 最近的訊息：
 
 ```python
 async def search_slack_messages(arguments):
@@ -142,14 +152,14 @@ async def search_slack_messages(arguments):
     }
 ```
 
-This searches recent history, not the entire Slack workspace. Optional Notion,
-Google Drive, and GitHub connections use service-connected MCP tools instead.
-See [Connect shared workplace tools](#connect-shared-workplace-tools) for setup.
+這是搜尋最近的歷史紀錄，不是整個 Slack workspace。選用的 Notion、
+Google Drive 和 GitHub 連線改用服務連接的 MCP tool。
+設定方式請看[連接共用的工作場所工具](#connect-shared-workplace-tools)。
 
-### 3. Create the session and attach its sandbox
+### 3. 建立 session 並掛上它的 sandbox
 
-`Connections.get()` returns the tool definitions and optional vault for the
-workspace. Create the session once, then save its ID under the thread key.
+`Connections.get()` 會回傳 workspace 的 tool 定義和選用的 vault。
+建立 session 一次，然後把它的 ID 存在 thread key 底下。
 
 ```python
 from openai import AsyncOpenAI
@@ -180,8 +190,8 @@ session = await client.beta.agents.sessions.create(
 sessions[thread_id] = session.id
 ```
 
-Start `codex exec-server` using the returned connection URL and environment ID.
-Only the restricted executor key enters the container.
+用回傳的連線 URL 和 environment ID 啟動 `codex exec-server`。
+只有權限受限的 executor key 會進到 container。
 
 ```python
 import asyncio
@@ -205,10 +215,10 @@ container = await asyncio.to_thread(
 )
 ```
 
-### 4. Stream the investigation into Slack
+### 4. 把調查過程串流到 Slack
 
-Pass the application handlers when starting a turn. The SDK runs those handlers
-for function calls; Agents API handles the service-connected MCP tools.
+啟動 turn 時傳入應用程式的 handler。SDK 會對 function call 執行這些 handler，
+Agents API 則處理服務連接的 MCP tool。
 
 ```python
 from examples.agents_api.apps.slack_bot.tools import slack_handlers
@@ -230,14 +240,14 @@ await slack.chat_postMessage(
 )
 ```
 
-The app also uses `agent.session.turn.item.added` and
-`agent.session.subagent.created` to update one progress message while tools and
-specialists work. It does not post every text delta as a new Slack message.
+應用程式也用 `agent.session.turn.item.added` 和
+`agent.session.subagent.created`，在 tool 和 specialist 工作時更新同一則進度訊息。
+它不會把每個 text delta 都當成新的 Slack 訊息發出去。
 
-### 5. Continue, steer, or cancel
+### 5. 繼續、steer 或取消
 
-When the thread is idle, start another stream with the saved session ID. During
-an active turn, send a message event to steer the existing work:
+thread 閒置時，用存好的 session ID 啟動另一個 stream。進行中的 turn 期間，
+送一個 message event 來 steer 現有的工作：
 
 ```python
 await client.beta.agents.sessions.events.create(
@@ -252,15 +262,15 @@ await client.beta.agents.sessions.events.create(
 )
 ```
 
-For `stop`, send `{"type": "agent.session.input.cancel"}` instead. Cancellation
-ends the active turn, not the conversation; later requests reuse the session
-and workspace.
+如果是 `stop`，改送 `{"type": "agent.session.input.cancel"}`。取消
+結束的是進行中的 turn，不是整段對話，之後的 request 還是會沿用 session
+和工作空間。
 
-### 6. Release the conversation's resources
+### 6. 釋放對話佔用的資源
 
-Keep the sandbox for follow-ups, then delete the session and remove the
-container when the conversation expires. [SlackBot.close()](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py) does this
-on application shutdown. Add an expiry policy when deploying a long-running bot.
+sandbox 留著給後續追問用，等對話過期，再刪除 session 並移除
+container。[SlackBot.close()](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py) 會在應用程式關閉時做這件事。
+部署長時間執行的 bot 時，要加上過期政策。
 
 ```python
 try:
@@ -269,15 +279,15 @@ finally:
     await asyncio.to_thread(container.remove, force=True)
 ```
 
-Close the OpenAI client after cleaning up all conversations. Session IDs,
-sandbox handles, and thread mappings are kept in memory in this example. Persist
-them if conversations must survive application restarts.
+清理完所有對話後，再關閉 OpenAI client。這個範例把 session ID、
+sandbox handle 和 thread 對應都放在記憶體裡。如果對話需要撐過應用程式重啟，
+就要把它們持久化。
 
-## Connect shared workplace tools
+## 連接共用的工作場所工具
 
-The bot already has tools for searching the current Slack channel, reading recent
-messages, finding teammates, and listing shared files. Add any optional shared
-workplace credentials to `.env`:
+bot 已經有搜尋目前 Slack channel、讀取最近
+訊息、找同事和列出共用檔案的 tool。把任何選用的共用
+工作場所憑證加到 `.env`：
 
 ```bash
 NOTION_TOKEN=...
@@ -285,15 +295,15 @@ GOOGLE_DRIVE_TOKEN=...
 GITHUB_TOKEN=...
 ```
 
-The application stores configured credentials in one shared vault for the Slack
-workspace and connects the corresponding MCP servers:
+應用程式會把設定好的憑證存在 Slack
+workspace 共用的一個 vault 裡，並連接對應的 MCP server：
 
 - Notion: `https://mcp.notion.com/mcp`
 - Google Drive: `https://drivemcp.googleapis.com/mcp/v1`
 - GitHub: `https://api.githubcopilot.com/mcp/`
 
-For example, the vault holds a GitHub token while the tool definition contains
-only the server URL. Attach the vault ID to the session's `vault_ids`:
+例如 vault 存 GitHub token，tool 定義裡只放
+server URL。把 vault ID 加到 session 的 `vault_ids`：
 
 ```python
 vault = await client.beta.agents.vaults.create(
@@ -317,19 +327,19 @@ github_tool = {
 }
 ```
 
-Add `github_tool` to the agent's tools. The runnable app finds and reuses its
-workspace vault rather than creating one for every thread.
+把 `github_tool` 加到 agent 的 tools。可執行的應用程式會找到並重複使用它的
+workspace vault，不會為每個 thread 都建一個。
 
-Notion and Google Drive require OAuth access tokens for the shared account;
-Notion's hosted MCP server does not accept internal integration secrets. GitHub
-accepts an appropriately scoped personal access token. Everyone who can use the
-bot shares these connections, so grant the account access only to documents and
-repositories intended for that audience. Opening a pull request also requires a
-GitHub credential with the necessary repository permissions.
+Notion 和 Google Drive 需要共用帳號的 OAuth access token，
+Notion 的代管 MCP server 不接受 internal integration secret。GitHub
+接受範圍適當的 personal access token。所有能用這個 bot 的人
+都共用這些連線，所以只讓這個帳號存取預定給該群人的文件和
+repository。開 pull request 也需要有必要 repository 權限的
+GitHub 憑證。
 
-### Let Agents API refresh Google Drive access
+### 讓 Agents API 更新 Google Drive 存取權
 
-Obtain a grant through your [Google OAuth app](https://developers.google.com/identity/protocols/oauth2/web-server#offline), requesting offline access and only the Drive scopes your bot needs. Add the grant to `.env`:
+透過你的 [Google OAuth app](https://developers.google.com/identity/protocols/oauth2/web-server#offline) 取得授權，要求 offline access，且只要求 bot 需要的 Drive scope。把授權加到 `.env`：
 
 ```bash
 GOOGLE_DRIVE_TOKEN=...
@@ -339,15 +349,27 @@ GOOGLE_DRIVE_CLIENT_SECRET=...
 GOOGLE_DRIVE_TOKEN_EXPIRES_AT=2026-09-01T12:00:00Z
 ```
 
-Use the access token's actual expiration, or leave that field empty if unknown. The bot creates a `mcp_oauth` vault credential with Google's token endpoint and refresh configuration. Agents API refreshes the access token when needed; your application owns the initial consent flow.
+填入 access token 實際的到期時間，不知道的話就留空。bot 會建立一個 `mcp_oauth` vault 憑證，帶有 Google 的 token endpoint 和 refresh 設定。Agents API 會在需要時更新 access token，初始的同意流程由你的應用程式負責。
 
-Restarting the bot reuses the stored OAuth credential instead of replacing refreshed tokens with old `.env` values. If this workspace already has a static Google Drive credential, archive it once before switching to OAuth refresh. Renew or revoke an existing grant through the vault credential APIs; editing `.env` does not replace it.
+重啟 bot 時會重複使用已存的 OAuth 憑證，不會用 `.env` 裡的舊值覆蓋已更新的 token。如果這個 workspace 已經有靜態的 Google Drive 憑證，改用 OAuth refresh 之前要先封存它一次。要更新或撤銷既有的授權，請透過 vault 憑證 API，改 `.env` 不會取代它。
 
-## Files
+## 檔案
 
-- [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/main.py): Slack events and application startup.
-- [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py): Agent sessions, sandboxes, streaming, and cleanup.
-- [tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/tools.py): Slack search, channel, teammate, and file tools.
-- [connections.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/connections.py): MCP connections and vault credentials.
+- [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/main.py)：Slack 事件和應用程式啟動。
+- [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/agent.py)：Agent session、sandbox、串流和清理。
+- [tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/tools.py)：Slack 搜尋、channel、同事和檔案 tool。
+- [connections.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/slack_bot/connections.py)：MCP 連線和 vault 憑證。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 一個 Slack thread 對應一個 Agents API session，用 workspace、channel 和原始訊息 timestamp 當 key，追問就能延續上下文。
+- Slack 只是觸發和介面，session、agent 執行和串流由 Agents API 負責，憑證和 sandbox 生命週期由你的應用程式控制。
+- 只有權限受限的 executor key 進 sandbox，Slack tool 的存取範圍綁在觸發的 channel，而不是讓模型自己選。
+- 進行中的 turn 可以 steer 或取消，取消只結束該 turn，session 和工作空間還在。
+- 對話結束要刪 session、移除 container。範例的狀態都在記憶體裡，需要撐過重啟就得自己持久化。
+
+## 練習
+
+1. 照 README 設好 `.env` 並啟動 bot，在頻道 tag 它問一個問題，再在同一個 thread 追問，確認它有接續上下文。
+2. 在 `tools.py` 的搜尋 tool 裡，調整它過濾的最近訊息數量，看搜尋結果怎麼變。
+3. 設定 `GitHub` 憑證，把 `github_tool` 加進 agent 的 tools，請 bot 讀一個 repository 的內容。

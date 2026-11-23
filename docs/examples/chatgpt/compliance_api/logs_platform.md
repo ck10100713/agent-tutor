@@ -1,46 +1,47 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/compliance_api/logs_platform.ipynb
 ---
 
-# OpenAI Compliance Logs Platform quickstart
+# OpenAI Compliance Logs Platform 快速上手
 
 > 原文：[examples/chatgpt/compliance_api/logs_platform.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/compliance_api/logs_platform.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇帶你開始使用 OpenAI Compliance Logs Platform，重點是下載 log 檔，方便匯入你的 SIEM 或 data lake。
+提供 Unix 和 Windows 兩個功能相同的 script，會列出可用的 log 檔、翻頁、下載，並把內容輸出到 stdout。
 
-
-Use this notebook to get started using the OpenAI Compliance Logs Platform. The examples focus on downloading log files so you can ingest them into your SIEM or data lake.
-
-- [Help Center Overview](https://help.openai.com/en/articles/9261474-compliance-api-for-chatgpt-enterprise-edu-and-chatgpt-for-teachers)
+- [Help Center 說明](https://help.openai.com/en/articles/9261474-compliance-api-for-chatgpt-enterprise-edu-and-chatgpt-for-teachers)
 - [API Reference](https://chatgpt.com/admin/api-reference#tag/Compliance-API-Logs-Platform)
 
+## 學完你會
+- 知道用哪些參數（workspace 或 org ID、event type、limit、after）向 Compliance API 取得指定事件和時間範圍的 log。
+- 在 Unix 或 Windows 上跑下載 script，把 log 輸出給後續處理。
+- 看懂 script 怎麼列出 log 檔並分頁下載，之後能改寫成自己的整合。
 
-## Prerequisites
-
-- An Enterprise Compliance API key exported as `COMPLIANCE_API_KEY`.
-- The ChatGPT account ID or the API Platform Org ID for the principal in question.
-- Specific requirements for your environment
+## 開跑前
+- 需要 Enterprise Compliance API key，並匯出成環境變數 `COMPLIANCE_API_KEY`。
+- 需要要查的 principal 的 ChatGPT account ID 或 API Platform Org ID。
+- 依你的環境另有其他需求。
 
 ## Quickstart Scripts
 
-Provided below are functionally identical scripts - one for Unix-based and one for Windows-based environments.
-These scripts give an example of how one could build an integration with the Compliance API to retrieve and process
-log data for given event types and time ranges.
-These scripts handle listing and paging through the available log files and downloading them - writing the output to stdout.
+下面有兩個功能相同的 script，一個給 Unix 系統，一個給 Windows。
+它們示範怎麼用 Compliance API 取得指定事件類型和時間範圍的 log 資料並處理。
+script 會列出可用的 log 檔、翻頁並下載，輸出到 stdout。
 
-Example invocations of these scripts are embedded in their help blocks - execute them with no arguments to see them.
+範例用法寫在 script 的說明區塊裡，不帶參數執行就能看到。
 
-## Option 1: Unix-based
+## 方案一：Unix 系統
 
-Prerequisites:
-- Save the script locally as `download_compliance_files.sh` and mark it executable
-- Make sure you have up-to-date `bash`, `curl`, `sed`, and `date` installed.
-- Format the date you want to get every log `after` as an ISO 8601 string including timezone.
+事前準備：
+- 把 script 存成 `download_compliance_files.sh`，並設成可執行
+- 確認 `bash`、`curl`、`sed`、`date` 都是新版
+- 把你要取得「`after` 之後」所有 log 的時間，寫成含時區的 ISO 8601 字串
 
-Run the script akin to `./download_compliance_files.sh <workspace_or_org_id> <event_type> <limit> <after>`
+執行方式類似 `./download_compliance_files.sh <workspace_or_org_id> <event_type> <limit> <after>`
 
 ```bash
 #!/usr/bin/env bash
@@ -186,13 +187,13 @@ else
 fi
 ```
 
-## Option 2: Windows-based
+## 方案二：Windows
 
-Prerequisites:
-- Save the script locally as `download_compliance_files.ps1`
-- Open PowerShell (Version 5.1+) and navigate to the directory where the script is saved.
+事前準備：
+- 把 script 存成 `download_compliance_files.ps1`
+- 開啟 PowerShell（5.1 版以上），切到 script 所在的目錄
 
-Run the script akin to `.\download_compliance_files.ps1 <workspace_or_org_id> <event_type> <limit> <after>`
+執行方式類似 `.\download_compliance_files.ps1 <workspace_or_org_id> <event_type> <limit> <after>`
 
 ```ps
 #!/usr/bin/env pwsh
@@ -361,4 +362,13 @@ $client.Dispose()
 $handler.Dispose()
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Compliance Logs Platform 提供 log 檔下載，適合接到 SIEM 或 data lake 做稽核和分析。
+- 查詢由 principal ID、event type、數量上限和起始時間決定。
+- log 檔要先列出再分頁下載，所以 script 的重點是處理翻頁。
+- 兩個平台的 script 邏輯一致，只是 shell 不同，挑環境對應的那份即可。
+
+## 練習
+1. 不帶參數執行 script，讀說明區塊，列出它支援的 event type。
+2. 把 `<after>` 改成不同的 ISO 8601 時間，比較下載到的 log 檔數量。
+3. 把 `<limit>` 調小，觀察 script 翻頁的次數怎麼變，並把輸出導向檔案存起來。

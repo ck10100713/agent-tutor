@@ -1,28 +1,31 @@
 ---
-translated: false
+translated: true
 source: examples/codex/iterating-development-workflows-with-codex.md
 ---
-
-# Iterating Development Workflows with Codex
+# 用 Codex 迭代開發 workflow
 
 > 原文：[examples/codex/iterating-development-workflows-with-codex.md](https://github.com/openai/openai-cookbook/blob/main/examples/codex/iterating-development-workflows-with-codex.md)
 
-Build and improve Codex development workflows using repository harnesses, phased implementation plans, approval gates, reusable skills, and evidence-backed retrospectives.
+## 這篇在做什麼
 
-<!-- tutor:goals -->
+教你用 repository harness、分階段的實作計畫、人工審核關卡、可重用的 skill，以及有證據的回顧，來建立並持續改善 Codex 的開發 workflow。範例以一個簡單的待辦清單應用程式為主軸。
 
+## 學完你會
 
+- 用 `AGENTS.md`、`PLANS.md`、`GOALS.md`、`PROMPTS.md` 搭出一套讓 Codex 照著做的 harness
+- 把專案拆成 `harness/build/` 裡的階段檔，並用 context 檔和 `build-log.md` 記錄每個階段的決定與進度
+- 用 Skill Creator 做出可重用的 `$harness-author` skill，並在專案結束後請 Codex 產生回顧
 
-## Introduction
+## 簡介
 
-While the vast capabilities Codex offers can be empowering, it can be difficult to know where to start integrating it into your workflows. This recipe shows a practical approach to incorporating Codex while making iterative improvements to continuously leverage its abilities more effectively.
+Codex 的能力很強，但要知道從哪裡開始把它放進你的工作流程並不容易。這份 recipe 示範一個實用的做法：先把 Codex 用起來，再一路迭代改善，持續更有效地發揮它的能力。
 
-The `AGENTS.md` file is optional but recognized by Codex. The other files in this recipe are recommended workflow conventions, not files Codex requires. Adapt the structure to fit your project.
+`AGENTS.md` 是選用的，但 Codex 會認得它。這份 recipe 裡的其他檔案是建議的 workflow 慣例，不是 Codex 必須的檔案。請依你的專案調整結構。
 
-Below is the completed structure based on the design of a simple to-do list application. Files in the `context/` directory are generated during each phase of development and contain phase-specific context records.
+下面是以一個簡單的待辦清單應用程式設計出來的完整結構。`context/` 目錄裡的檔案是在開發的每個階段產生的，記錄該階段專屬的 context。
 
 <details>
-<summary><strong>Example Directory Structure</strong></summary>
+<summary><strong>目錄結構範例</strong></summary>
 
 ``` text
 .
@@ -48,41 +51,41 @@ Below is the completed structure based on the design of a simple to-do list appl
 ```
 </details>
 
-## Create harness and build phase files
+## 建立 harness 和 build 階段檔
 
-### Agents and plans
+### Agents 和 plans
 
-For new projects, the best place to start is by populating the [`AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md) file. When present, Codex reads this file as persistent repository guidance before performing work. It is an optional convention for work that benefits from durable execution. In general, agents files should contain items like:
+新專案最好從填寫 [`AGENTS.md`](https://learn.chatgpt.com/docs/agent-configuration/agents-md) 開始。有這個檔案時，Codex 會在動工前把它當成持續有效的 repository 指引來讀。對需要長時間穩定執行的工作，這是一個選用的慣例。一般來說，agents 檔應該包含這些項目：
 
-- The goal of the repository and a high-level summary
-- Coding conventions
-- Testing standards
-- Relevant context files
-- Project-specific behaviors
-- Scopes and boundaries
+- repository 的目標和高層摘要
+- 程式碼慣例
+- 測試標準
+- 相關的 context 檔
+- 專案專屬的行為
+- 範圍與邊界
 
-The `/init` command in Codex can generate the file and will attempt to populate it based on the context it gathers from the directory contents.
+Codex 的 `/init` 指令可以產生這個檔案，並根據它從目錄內容蒐集到的 context 嘗試填寫。
 
-> **💡 Tip: Tracking Institutional Knowledge**
+> **💡 提示：記錄團隊累積的知識**
 >
-> The agents file is a great place to store institutional knowledge from your team.
+> agents 檔很適合用來存放團隊累積的知識。
 
-For plan execution, creating a [`PLANS.md`](https://developers.openai.com/cookbook/articles/codex_exec_plans#plansmd) file as a source of truth is considered a useful, optional convention. In addition to the purpose of the plan, this file should also contain a project roadmap. While these are not properties required by Codex, they can then be used to generate files for each individual build phase.
+對於計畫的執行，建立 [`PLANS.md`](https://developers.openai.com/cookbook/articles/codex_exec_plans#plansmd) 當作單一事實來源，是一個有用的選用慣例。這個檔案除了計畫的目的，也應該包含專案路線圖。這些雖然不是 Codex 要求的屬性，但之後可以用來產生每個建置階段各自的檔案。
 
-> **💡 Tip: Build File Sizes**
+> **💡 提示：build 檔案的大小**
 >
-> For teams that prefer longer running tasks, the `PLANS.md` file can be larger
-> and contain extensive details on material decisions and acceptance criteria.
+> 偏好長時間執行任務的團隊，`PLANS.md` 可以寫得比較大，
+> 詳細記錄重要決定和驗收標準。
 >
-> Creating smaller build files not only improves readability but supports
-> human gating to manually review code quality and other outputs.
+> 把 build 檔案拆小，除了比較好讀，
+> 也方便由人工關卡手動檢查程式碼品質和其他產出。
 
-### Harness files
+### Harness 檔案
 
-In addition to the agents and plans files, it is also possible to create individual files to specify the desired outcomes, success conditions and boundaries (`GOALS.md`) and for the instructions to initiate planned work (`PROMPTS.md`). These can be either manually written or derived from the agents and plans file using a prompt like the one below:
+除了 agents 和 plans 檔，也可以另外建立個別的檔案：一個寫明期望的成果、成功條件和邊界（`GOALS.md`），一個寫啟動計畫中工作的指令（`PROMPTS.md`）。這些可以手寫，也可以用像下面這樣的 prompt 從 agents 和 plans 檔衍生出來：
 
 <details>
-<summary><strong>Generate <code>GOALS.md</code> and <code>PROMPTS.md</code></strong></summary>
+<summary><strong>產生 <code>GOALS.md</code> 和 <code>PROMPTS.md</code></strong></summary>
 
 
 ```text
@@ -169,19 +172,19 @@ After writing:
 ```
 </details>
 
-### Build phase files
+### Build 階段檔
 
-Once the files the harness will use for context have been generated, the next step is to break down the stages of each build into individual files to identify:
+harness 要用的 context 檔產生好之後，下一步是把每次 build 的各個階段拆成獨立的檔案，標明：
 
-- The purpose of each step
-- Any files needed for additional context
-- Acceptance criteria
-- Boundaries
+- 每個步驟的目的
+- 需要的額外 context 檔
+- 驗收標準
+- 邊界
 
-For discoverability, it is recommended to keep these files in a manually created `harness/build/` folder in the root project directory, typically in the format `<phase-number>-<phase-title>.md`. The corresponding file, along with the prompt and goal from the harness context files can then be provided to Codex at the beginning of each phase. This helps prevent agent drift and creates a clear, human-gated development history that, when combined with version control, creates an easy-to-read audit trail for future use including debugging.
+為了好找，建議把這些檔案放在專案根目錄下手動建立的 `harness/build/` 資料夾，檔名通常用 `<phase-number>-<phase-title>.md` 的格式。每個階段開始時，把對應的檔案，加上 harness context 檔裡的 prompt 和 goal，一起交給 Codex。這能避免 agent 偏離方向，並建立清楚、經過人工把關的開發歷程，搭配版本控制，就成了好讀的稽核紀錄，之後包括除錯都用得上。
 
 <details>
-<summary><strong>Generate Build Phase Files</strong></summary>
+<summary><strong>產生 Build 階段檔</strong></summary>
 
 ```
 Perform a read-only discovery pass of this repository.
@@ -314,14 +317,14 @@ overwrite recorded decisions or evidence.
 ```
 </details>
 
-## Context files
+## Context 檔案
 
-In addition to development framework files, capture the session-specific decisions made during each phase that materially affect the project.
+除了開發框架的檔案，也要記錄每個階段中，對專案有實質影響的、該 session 專屬的決定。
 
-Adding a prompt like the one below to `AGENTS.md` instructs Codex to capture relevant context for later reuse. Store phase context as `harness/context/phase-<NN>-<phase-slug>-context.md`.
+在 `AGENTS.md` 加上像下面這樣的 prompt，就能指示 Codex 擷取相關的 context 供之後重用。把階段 context 存成 `harness/context/phase-<NN>-<phase-slug>-context.md`。
 
 <details>
-<summary><strong>Capture Build Phase Context using <code>AGENTS.md</code></strong></summary>
+<summary><strong>用 <code>AGENTS.md</code> 擷取 Build 階段 Context</strong></summary>
 
 ``` text
 
@@ -415,12 +418,12 @@ it before closing the phase. Before handoff:
 
 ## Build log
 
-A file named `harness/build-log.md` acts as the source of truth for project progress. While human-readable, it is primarily intended for Codex consumption and can also be used to generate user-facing changelogs and other documentation.
+名為 `harness/build-log.md` 的檔案是專案進度的單一事實來源。它雖然人也看得懂，但主要是給 Codex 用的，也可以拿來產生給使用者看的 changelog 和其他文件。
 
-A prompt like the following can be added to the agents file to ensure the build log is updated consistently after each phase is completed.
+可以把像下面這樣的 prompt 加進 agents 檔，確保每個階段完成後，build log 都有一致地更新。
 
 <details>
-<summary><strong>Tracking Progress using <code>build-log.md</code></strong></summary>
+<summary><strong>用 <code>build-log.md</code> 追蹤進度</strong></summary>
 
 ``` text
 
@@ -608,14 +611,14 @@ follow-up rather than modifying it.
 ```
 </details>
 
-## Automate with skills
+## 用 skill 自動化
 
-Given the size of each prompt and the number of files involved, it should seem obvious that such a manual process would become unwieldy, error-prone and unpredictable. To make such work reusable and more consistent, Codex provides [skills](https://learn.chatgpt.com/docs/build-skills) as a way of creating workflows that can be reused for projects of any scale.
+每個 prompt 這麼長、牽涉的檔案又這麼多，很明顯這樣手動做會變得難以管理、容易出錯又不可預測。為了讓這類工作可以重複使用、更一致，Codex 提供 [skills](https://learn.chatgpt.com/docs/build-skills)，讓你建立能用在任何規模專案的 workflow。
 
-Use the [Skill Creator skill](https://github.com/openai/skills/blob/main/skills/.system/skill-creator/SKILL.md) with the prompt below to create a reusable harness-authoring skill.
+用 [Skill Creator skill](https://github.com/openai/skills/blob/main/skills/.system/skill-creator/SKILL.md) 搭配下面的 prompt，建立一個可重用的 harness 撰寫 skill。
 
 <details>
-<summary><strong>Create the <code>$harness-author</code> Skill</strong></summary>
+<summary><strong>建立 <code>$harness-author</code> Skill</strong></summary>
 
 ``` text
 Use `$skill-creator` to create a reusable Codex skill named `harness-author`.
@@ -888,17 +891,17 @@ Finish by reporting:
 ```
 </details>
 
-> **💡 Tip: Identifying Repeatable Work**
+> **💡 提示：找出重複性的工作**
 >
-> A skill can be created for almost anything, but good skills are generally intended for frequent use. Some examples of potential skills you might run into in your day-to-day workflows might include:
+> 幾乎任何事都能做成 skill，但好的 skill 通常是給常用的工作。你日常 workflow 裡可能遇到的 skill 例子有：
 >
-> - Committing code changes, pushing to remote and creating a pull request
-> - Watching for the latest change to merge in remote, then preparing the next feature branch
-> - Identifying the current phase from the build log, loading the goal and prompt for the phase, summarizing purpose and acceptance criteria, then waiting for a human gate.
+> - 提交程式碼變更、推到遠端並建立 pull request
+> - 監看遠端最新的變更合併，然後準備下一個功能分支
+> - 從 build log 找出目前的階段，載入該階段的 goal 和 prompt，摘要目的和驗收標準，然後等待人工關卡。
 
-### Skill tuning
+### 調整 skill
 
-Skills may not behave exactly as expected upon creation. For example, when asked to create harness context and build-phase files, the `$harness-author` skill proposed the following, omitting `PLANS.md` and `harness/build-log.md`:
+skill 建好之後，行為可能不完全如預期。例如，要求建立 harness context 和 build 階段檔時，`$harness-author` skill 提出了下面的內容，漏掉了 `PLANS.md` 和 `harness/build-log.md`：
 
 ``` text
 ...
@@ -915,7 +918,7 @@ Skills may not behave exactly as expected upon creation. For example, when asked
   ...
   ```
 
-  In cases like this, correct the proposed scope before approving any changes:
+  遇到這種情況，在核准任何變更之前，先修正提案的範圍：
 
   ``` text
   Revise the proposed harness-only scope before writing.
@@ -934,7 +937,7 @@ unapproved additional files. Present the revised exact file list, explain
 the ownership of each artifact, and wait for approval before writing.
 ```
 
-After applying the correction, Codex proposes the expected harness files.
+套用修正後，Codex 提出了符合預期的 harness 檔案。
 
 ``` text
  I propose creating the following files:
@@ -950,14 +953,14 @@ After applying the correction, Codex proposes the expected harness files.
   ...
   ```
 
-## Retrospective
+## 回顧
 
-Now that the entire structure has been created to start development, it's important to remember that this is only a starting point. Once the project has been completed according to the criteria specified in the agents file and the changes checked into version control, it's time to look back, using Codex, to understand what was learned during the process and optimize for future improvement.
+現在開始開發需要的整套結構都建好了，但要記得這只是個起點。專案依 agents 檔指定的標準完成、變更也提交進版本控制之後，就是用 Codex 回頭看的時候，了解過程中學到什麼，並為未來的改善做最佳化。
 
-Here's a prompt that can be used with Codex to produce a retrospective.
+下面是可以搭配 Codex 產生回顧的 prompt。
 
 <details>
-<summary><strong>Generate a Retrospective</strong></summary>
+<summary><strong>產生回顧</strong></summary>
 
 ``` text
 Use `$skill-creator` to conduct an evidence-backed postmortem of the completed
@@ -1333,8 +1336,20 @@ The postmortem cycle is complete only when:
 ```
 </details>
 
-## Conclusion
+## 結論
 
-An improved directory structure is omitted here because it is impossible to predict the outcome of each phase or project. The initial setup should capture only the context that materially affects decisions, verification, and future work. As you become more comfortable with the process, you can create longer-running tasks that benefit from previous development cycles and produce more consistent, reliable results within approved boundaries.
+這裡省略改進後的目錄結構，因為每個階段或專案的結果都沒辦法預測。初始設定應該只記錄對決策、驗證和未來工作有實質影響的 context。等你越來越熟悉這個流程，就可以建立更長時間執行的任務，從先前的開發週期獲益，在核准的邊界內產出更一致、更可靠的結果。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- `AGENTS.md` 是持續有效的 repository 指引，`PLANS.md`、`GOALS.md`、`PROMPTS.md` 是建議的慣例，不是 Codex 必須的。
+- 把大計畫拆成小的階段檔，既能防止 agent 偏離，也方便人工在每個階段把關。
+- context 檔和 build log 把決定與進度留在檔案裡，讓之後的階段和稽核有據可查。
+- 重複做的工作值得做成 skill，但 skill 建好後要檢查提案範圍，必要時先修正再核准。
+- 專案結束後用 Codex 做回顧，讓下一輪 workflow 越改越好。
+
+## 練習
+
+1. 為你自己的一個小專案寫一份 `AGENTS.md`，包含目標、程式碼慣例和測試標準。
+2. 照 `harness/build/<phase-number>-<phase-title>.md` 的格式，拆出兩個階段檔，各自寫明目的、驗收標準和邊界。
+3. 挑一個你常做的重複工作（例如提交、推送並開 PR），寫一段 prompt 用 Skill Creator 做成 skill，執行後檢查它提的範圍有沒有漏掉東西。

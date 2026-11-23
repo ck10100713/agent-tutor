@@ -1,26 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/Generate_Images_With_GPT_Image.ipynb
 ---
-
-# Generate images with GPT Image
+# 用 GPT Image 產生圖片
 
 > 原文：[examples/Generate_Images_With_GPT_Image.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Generate_Images_With_GPT_Image.ipynb)
 
-Cookbook to generate and edit images with GPT Image capabilities.
+用 GPT Image 的能力產生和編輯圖片的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範怎麼用 GPT Image 從文字 prompt 產生圖片、調整輸出設定，以及拿現有圖片當輸入來編輯，包含用 mask 只改圖片的一部分。
 
+## 學完你會
 
-In this cookbook, you'll learn how to use GPT Image, our new large language model with image generation capabilities.
+- 用 prompt 產生圖片，並調整 quality、size、壓縮率和透明背景。
+- 用最多 10 張輸入圖片做出新圖片。
+- 產生帶 alpha channel 的 mask，只編輯圖片中指定的區域。
 
-This model has world knowledge and can generate images leveraging this broad understanding of the world.
-It is also much better at instruction following and producing photorealistic images compared to our previous-generation image models, DallE 2 and 3. 
+## 開跑前
 
-To learn more about image generation, refer to our [guide](https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1).
+- 需要 `OPENAI_API_KEY`，並有 GPT Image 模型的使用權限。
+- 產生和編輯圖片會產生 API 費用。
 
-## Set up
+這份 cookbook 會教你怎麼使用 GPT Image，這是我們具備圖片生成能力的新大型語言模型。
+
+這個模型有世界知識，能運用這種廣泛的理解來產生圖片。它在遵循指令和產生擬真圖片上，也比我們前一代的圖片模型 DallE 2 和 3 好很多。
+
+想進一步了解圖片生成，請看我們的[指南](https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1)。
+
+## 環境設定
 
 ```python
 %pip install pillow openai -U
@@ -47,9 +56,9 @@ folder_path = "imgs"
 os.makedirs(folder_path, exist_ok=True)
 ```
 
-## Generate an image
+## 產生圖片
 
-GPT Image 1 is great at instruction-following, meaning you can prompt the model to generate images with very detailed instructions.
+GPT Image 1 很擅長遵循指令，所以你可以用非常詳細的指示來 prompt 模型產生圖片。
 
 ```python
 prompt1 = """
@@ -103,13 +112,13 @@ image.save(img_path1, format="JPEG", quality=80, optimize=True)
 display(IPImage(img_path1))
 ```
 
-### Customize the output
+### 自訂輸出
 
-You can customize the following output properties:
-- Quality can be `low`, `medium`, `high` or `auto` (default value)
-- Size can be `1024x1024` (square), `1536x1024` (portrait), `1024x1536` (landscape) or `auto` (default)
-- You can adjust the compression level (from 0-100%) for JPEG and WEBP formats
-- You can choose to generate an image with a transparent background (only available for PNG or WEBP)
+你可以自訂下列輸出屬性：
+- Quality 可以是 `low`、`medium`、`high` 或 `auto`（預設值）
+- Size 可以是 `1024x1024`（正方形）、`1536x1024`（橫向）、`1024x1536`（直向）或 `auto`（預設值）
+- JPEG 和 WEBP 格式可以調整壓縮程度（0 到 100%）
+- 你可以選擇產生透明背景的圖片（只有 PNG 或 WEBP 可用）
 
 ```python
 prompt2 = "generate a portrait, pixel-art style, of a grey tabby cat dressed as a blond woman on a dark background."
@@ -149,9 +158,9 @@ display(IPImage(img_path2))
     <IPython.core.display.Image object>
     ```
 
-### Transparent background
+### 透明背景
 
-You can use the `background` property to request a transparent background, but if you include in your prompt that you want a transparent background, it will be set to `transparent` by default. 
+你可以用 `background` 屬性要求透明背景，不過如果你在 prompt 裡寫了想要透明背景，它預設就會設成 `transparent`。
 
 ```python
 prompt3 = "generate a pixel-art style picture of a green bucket hat with a pink quill on a transparent background."
@@ -185,11 +194,11 @@ image.save(img_path3, format="PNG")
 display(IPImage(img_path3))
 ```
 
-## Edit images
+## 編輯圖片
 
-GPT Image can also accept image inputs, and use them to create new images. You can also provide a mask if you don't want the model to change a specific part of the input image.
+GPT Image 也能接受圖片輸入，用它們來產生新圖片。如果你不想讓模型改動輸入圖片的特定部分，也可以提供 mask。
 
-You can use a maximum of 10 input images, and if you use a mask, it will be applied to the first image provided in the `image` array.
+輸入圖片最多可以用 10 張，如果用了 mask，它會套用在 `image` 陣列中的第一張圖片上。
 
 ```python
 prompt_edit = """
@@ -234,16 +243,16 @@ display(IPImage(img_path_edit))
     <IPython.core.display.Image object>
     ```
 
-## Edit an image with a mask
+## 用 mask 編輯圖片
 
-You can also provide a mask along with your input images (if there are several, the mask will be applied on the first one) to edit only the part of the input image that is not covered by the mask. Please note that the model might still edit some parts of the image inside the mask, but it will avoid it. 
+你也可以在輸入圖片之外提供 mask（如果有好幾張，mask 會套用在第一張上），這樣只會編輯輸入圖片中沒被 mask 蓋住的部分。請注意，模型有可能還是會改到 mask 裡面的某些部分，但它會盡量避免。
 
-Important note: the mask should contain an alpha channel. If you're generating it manually, for example using an image editing software, make sure you include this alpha channel. 
+重要提醒：mask 必須包含 alpha channel。如果你是手動產生的，例如用影像編輯軟體，要確定有加上這個 alpha channel。
 
-#### Generating the mask
+#### 產生 mask
 
-For this example, we'll use our model to generate the mask automatically for us. The mask might not be exact, but it will be enough for our purposes. 
-If you need to have an exact mask, feel free to use an image segmentation model.
+這個範例我們用模型自動幫我們產生 mask。mask 可能不精確，但對我們的目的已經夠用。
+如果你需要精確的 mask，可以改用影像分割（image segmentation）模型。
 
 ```python
 img_path_mask = "imgs/mask.png"
@@ -280,8 +289,8 @@ display(IPImage(img_path_mask))
 
     ![](Generate_Images_With_GPT_Image_files/out_35_0.png)
 
-#### Creating an alpha channel
-This step is optional, if you want to turn a black & white image into a mask with an alpha channel that can be used in the Image Edit API.
+#### 建立 alpha channel
+這一步是選用的，用在你想把黑白圖片變成帶 alpha channel 的 mask，讓它能用在 Image Edit API 的時候。
 
 ```python
 # 1. Load your black & white mask as a grayscale image
@@ -306,8 +315,8 @@ with open(img_path_mask_alpha, "wb") as f:
     f.write(mask_bytes)
 ```
 
-#### Editing with the mask
-When using a mask, the prompt must describe the entire resulting image, not only the edited area. 
+#### 用 mask 編輯
+使用 mask 的時候，prompt 要描述整張結果圖片，不只是被編輯的區域。
 
 ```python
 prompt_mask_edit = "A strange character on a colorful galaxy background, with lots of stars and planets."
@@ -339,12 +348,24 @@ image.save(img_path_mask_edit, format="JPEG", quality=80, optimize=True)
 display(IPImage(img_path_mask_edit))
 ```
 
-## Wrapping up
+## 總結
 
-In this cookbook, we've seen how to use our new image generation model, GPT Image, to either generate new images from scratch, or use reference images. We've also covered how to create a mask with an alpha channel to apply it to an input image, to guide the image edition even further. 
+這份 cookbook 看了怎麼用我們新的圖片生成模型 GPT Image，從零產生新圖片，或是用參考圖片來產生。我們也介紹了怎麼建立帶 alpha channel 的 mask，套用在輸入圖片上，進一步引導圖片編輯。
 
-Feel free to use this as a starting point to explore other use cases, and if you're looking for some inspiration, check out the [image gallery](https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1&gallery=open#generate-images) in our docs. 
+你可以把這份當成起點，去探索其他用法。如果想找靈感，可以看看我們文件裡的[圖片範例庫](https://platform.openai.com/docs/guides/image-generation?image-generation-model=gpt-image-1&gallery=open#generate-images)。
 
 Happy building!
 
-<!-- tutor:summary -->
+## 重點整理
+
+- GPT Image 有世界知識，遵循指令和擬真度都比 DallE 2 和 3 好，prompt 可以寫得很詳細。
+- quality、size、壓縮率和背景都是輸出參數，透明背景只支援 PNG 或 WEBP。
+- 編輯圖片最多可傳 10 張輸入圖，mask 只會套用在 `image` 陣列的第一張。
+- mask 必須有 alpha channel，被 mask 蓋住的部分模型會盡量不改，但不保證。
+- 用 mask 編輯時，prompt 要描述整張結果圖，不只是被改的區域。
+
+## 練習
+
+1. 把 `quality` 改成 `low` 和 `high` 各產生一次，比較畫質和等待時間。
+2. 在 prompt 裡加上「透明背景」，輸出改成 PNG，確認結果是否有 alpha channel。
+3. 換一張自己的圖片當輸入，自己做一個黑白 mask 並補上 alpha channel，只改圖中的某個物件，prompt 要描述整張結果。

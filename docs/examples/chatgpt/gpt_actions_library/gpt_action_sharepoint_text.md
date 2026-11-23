@@ -1,107 +1,119 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.ipynb
 ---
-
-# GPT Actions library - Sharepoint (Return Text)
+# GPT Actions library - Sharepoint（回傳文字）
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇教你做一個 GPT Action，讓 ChatGPT 能根據使用者在 SharePoint / Office365 有權限看的檔案來回答問題。中間用 Azure Function 呼叫 Microsoft Graph API 搜尋檔案、把檔案轉成純文字，再用 gpt-4o-mini 抽出跟問題相關的段落，最後把文字丟回給 ChatGPT。
 
+## 學完你會
 
-## Introduction
+- 了解為什麼 Graph Search API 要搭配 middleware，以及 Azure Function 在中間做哪幾件事
+- 用 On-Behalf-Of (OBO) token 讓搜尋只回傳登入使用者有權限的檔案
+- 寫出 Custom GPT 的 instructions 和 OpenAPI schema，把這個 Function 接進 ChatGPT
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+## 開跑前
 
-This solution enables a GPT action to answer a user’s question with the context of files the user can access in SharePoint or Office365, using Microsoft’s Graph API [search capabilities](https://learn.microsoft.com/en-us/graph/api/resources/search-api-overview?view=graph-rest-1.0) and the ability to [retrieve files](https://learn.microsoft.com/en-us/graph/api/driveitem-get?view=graph-rest-1.0\&tabs=http). It uses Azure Functions to process the Graph API response and convert it to a human readable format or structure it in a way ChatGPT understands. This code is meant to be directional, and you should modify it to your requirements.
+- 一個可用的 SharePoint 環境
+- Postman（要懂 API 和 OAuth）
+- 從 platform.openai.com 申請的 OpenAI API Key
+- 一個已設定好驗證的 Azure Function（見文中連結的 Azure Function cookbook）
 
-This solution pre-processes the file within the Azure Function. The Azure Function returns text, instead of the base64 encoded file. Due to the pre-processing and the conversion to text, this solution is best used for large, unstructured documents, and for when you want to analyze more than the amount of files supported in the first solution (see documentation [here](https://platform.openai.com/docs/actions/sending-files)).
+## 簡介
 
-### Value + Example Business Use Cases
+這頁是給開發者的指南，教你為特定應用程式做一個 GPT Action。開始之前，先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions Library 簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零打造 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
-**Value**: Users can now leverage ChatGPT's natural language capability to connect directly to files in Sharpeoint
+這個方案讓 GPT action 能根據使用者在 SharePoint 或 Office365 可存取的檔案來回答問題，用的是 Microsoft Graph API 的[搜尋功能](https://learn.microsoft.com/en-us/graph/api/resources/search-api-overview?view=graph-rest-1.0)和[取得檔案](https://learn.microsoft.com/en-us/graph/api/driveitem-get?view=graph-rest-1.0\&tabs=http)的能力。Azure Functions 負責處理 Graph API 的回應，轉成人看得懂的格式，或整理成 ChatGPT 能理解的結構。這份程式碼只是示範方向，請依你的需求修改。
 
-**Example Use Cases**: 
-- A user needs to look up which files relate to a certain topic
-- A user needs an answer to a critical question, buried deep in documents
+這個方案在 Azure Function 內就先把檔案處理好，Function 回傳的是文字，不是 base64 編碼的檔案。因為有先處理、轉成文字，所以最適合大型的非結構化文件，也適合你想分析的檔案數量超過第一個方案所支援的上限的情況（見[這份文件](https://platform.openai.com/docs/actions/sending-files)）。
 
-## Architecture / Example
+### 價值與範例使用情境
+
+**價值**：使用者可以用 ChatGPT 的自然語言能力，直接連到 SharePoint 裡的檔案。
+
+**範例使用情境**：
+- 使用者想找出跟某個主題有關的檔案
+- 使用者需要一個藏在文件深處的關鍵答案
+
+## 架構 / 範例
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/solution_2.gif)
 
-This solution uses a Node.js Azure Function to, based on the logged in user:
+這個方案用一個 Node.js Azure Function，依登入的使用者做下面的事：
 
-1. Search for a relevant file that the user has access to, based on the user’s initial question.
+1. 根據使用者最初的問題，搜尋他有權限存取的相關檔案。
 
-2. For each file that is found, convert it to a consistent readable format and retrieve all the text.
+2. 對找到的每個檔案，轉成一致的可讀格式並取出所有文字。
 
-3. Use GPT 4o mini (gpt-4o-mini) to extract the relevant text from the files based on the initial user’s question. Note the pricing of GPT 4o mini [here](https://openai.com/pricing#language-models) - since we are dealing with small token chunks, the cost of this step is nominal.  
+3. 用 GPT 4o mini (gpt-4o-mini) 根據使用者最初的問題，從檔案中抽出相關文字。GPT 4o mini 的價格看[這裡](https://openai.com/pricing#language-models)，因為處理的是小段 token，這一步的成本很低。
 
-4. Returns that data to ChatGPT. The GPT then uses that information to respond to the user's initial question.
+4. 把資料回傳給 ChatGPT，GPT 再用這些資訊回答使用者最初的問題。
 
-As you can see from the below architecture diagram, the first three steps are the same as Solution 1. The main difference is that this solution converts the file to text instead of a base64 string, and then summarizes that text using GPT 4o mini.
+從下面的架構圖可以看到，前三步跟方案 1 一樣。主要差別是這個方案把檔案轉成文字，而不是 base64 字串，然後再用 GPT 4o mini 摘要那段文字。
 
 ![](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/solution_2_architecture.png)
 
-## Application Information
+## 應用程式資訊
 
-### Application Key Links
+### 應用程式重要連結
 
-Check out these links from the application before you get started:
+開始前先看看這些連結：
 - Application Website: https://www.microsoft.com/en-us/microsoft-365/sharepoint/collaboration
 - Application API Documentation: https://learn.microsoft.com/en-us/previous-versions/office/developer/sharepoint-rest-reference/
 
-### Application Prerequisites
+### 應用程式前置需求
 
-Before you get started, make sure you go through the following steps in your application environment:
-- Access to a Sharepoint environment 
-- Postman (and knowledge of APIs and OAuth)
-- An OpenAI API Key from platform.openai.com
+開始前，先在你的應用程式環境完成下面幾項：
+- 有 SharePoint 環境的存取權
+- Postman（以及 API 和 OAuth 的知識）
+- 從 platform.openai.com 取得的 OpenAI API Key
 
-## Middleware Information
+## Middleware 資訊
 
-If you follow the [search concept files guide](https://learn.microsoft.com/en-us/graph/search-concept-files), the [Microsoft Graph Search API](https://learn.microsoft.com/en-us/graph/search-concept-files) returns references to files that fit the criteria, but not the file contents themselves. Therefore, middleware is required, rather than hitting the MSFT endpoints directly.
+照著[搜尋概念檔案指南](https://learn.microsoft.com/en-us/graph/search-concept-files)做，[Microsoft Graph Search API](https://learn.microsoft.com/en-us/graph/search-concept-files) 回傳的是符合條件的檔案參考，不是檔案內容本身。所以需要 middleware，不能直接打 MSFT 的 endpoint。
 
-Steps: 
+步驟：
 
-1. loop through the returned files and download the files using the [Download File endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0\&tabs=http) or [Convert File endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http)
+1. 迴圈跑過回傳的檔案，用 [Download File endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0\&tabs=http) 或 [Convert File endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http) 下載檔案
 
-2. convert that Binary stream to human readable text using [pdf-parse](https://www.npmjs.com/package/pdf-parse)
+2. 用 [pdf-parse](https://www.npmjs.com/package/pdf-parse) 把二進位串流轉成人看得懂的文字
 
-3. Then, we can optimize further by summarizing using gpt-4o-mini in the function to help with the 100,000 character limit we impose on Actions today. 
+3. 接著可以在 function 裡用 gpt-4o-mini 做摘要，進一步最佳化，幫忙應付目前 Actions 加諸的 100,000 字元上限
 
-### Additional Steps
+### 額外步驟
 
-#### Set up Azure Function
+#### 設定 Azure Function
 
-1. Set up an Azure Function using the steps in the [Azure Function cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function)
+1. 照 [Azure Function cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function) 的步驟設定好 Azure Function
 
-#### Add in Function Code
+#### 加入 Function 程式碼
 
-Now that you have an authenticated Azure Function, we can update the function to search SharePoint / O365
+現在你有一個已驗證的 Azure Function 了，接下來更新它，讓它能搜尋 SharePoint / O365
 
-2. Go to your test function and paste in the code from [this file](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/sharepoint_azure_function/solution_two_preprocessing.js). Save the function.
+2. 到你的測試 function，貼上[這個檔案](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/sharepoint_azure_function/solution_two_preprocessing.js)的程式碼，然後儲存。
 
-> **This code is meant to be directional** - while it should work out of the box, it is designed to be customized to your needs (see examples towards the end of this document).
+> **這份程式碼只是示範方向**：雖然應該可以直接跑，但設計上是讓你依需求客製化（見文件後段的範例）。
 
-3. Set up the following env variables by going to the **Configuration** tab on the left under **Settings.** Note that this may be listed directly in **Environment Variables** depending on your Azure UI.
+3. 到左邊 **Settings** 底下的 **Configuration** 分頁設定下列環境變數。依你的 Azure UI 版本，這些可能直接列在 **Environment Variables** 裡。
 
-    1. `TENANT_ID`: copied from previous section
+    1. `TENANT_ID`：從前面的章節複製
 
-    2. `CLIENT_ID`: copied from previous section 
+    2. `CLIENT_ID`：從前面的章節複製
 
-    3. `OPENAI_API_KEY:` spin up an OpenAI API key on platform.openai.com.
+    3. `OPENAI_API_KEY:` 到 platform.openai.com 建一個 OpenAI API key。
 
-4. Go to the **Console** tab under the **Development Tools**
+4. 到 **Development Tools** 底下的 **Console** 分頁
 
-    1. Install the following packages in console
+    1. 在 console 安裝下面這些套件
 
        1. `npm install @microsoft/microsoft-graph-client`
 
@@ -111,7 +123,7 @@ Now that you have an authenticated Azure Function, we can update the function to
 
        4. `npm install openai`
 
-5. Once this is complete, try calling the function (POST call) from Postman again, putting the below into body (using a query and search term you think will generate responses).
+5. 完成後，再用 Postman 呼叫一次這個 function（POST），body 放下面的內容（用你覺得會有結果的 query 和搜尋詞）。
 
     ```json
     {
@@ -120,21 +132,21 @@ Now that you have an authenticated Azure Function, we can update the function to
     }
     ```
 
-6. If you get a response, you are ready to set this up with a Custom GPT!
+6. 如果有拿到回應，就可以接到 Custom GPT 了！
 
 
-## Detailed Walkthrough
+## 詳細說明
 
-The below walks through setup instructions and walkthrough unique to this solution of pre-processing the files and extracting summaries in the Azure Function. You can find the entire code [here](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/sharepoint_azure_function/solution_two_preprocessing.js).
+下面是這個方案獨有的設定與說明：在 Azure Function 裡預先處理檔案並抽出摘要。完整程式碼在[這裡](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/sharepoint_azure_function/solution_two_preprocessing.js)。
 
-### Code Walkthrough
+### 程式碼說明
 
-#### Implementing the Authentication 
+#### 實作驗證
 
-Below we have a few helper functions that we’ll use in the function.
+下面是幾個 function 會用到的 helper function。
 
-#### Initializing the Microsoft Graph Client
-Create a function to initialize the Graph client with an access token. This will be used to search through Office 365 and SharePoint.
+#### 初始化 Microsoft Graph Client
+建立一個用 access token 初始化 Graph client 的 function，後面用它來搜尋 Office 365 和 SharePoint。
 
 ```javascript
 const { Client } = require('@microsoft/microsoft-graph-client');
@@ -148,8 +160,8 @@ function initGraphClient(accessToken) {
 }
 ```
 
-#### Obtaining an On-Behalf-Of (OBO) Token
-This function uses an existing bearer token to request an OBO token from Microsoft's identity platform. This enables passing through the credentials to ensure the search only returns files the logged-in user can access.
+#### 取得 On-Behalf-Of (OBO) Token
+這個 function 用現有的 bearer token 向 Microsoft 的 identity platform 換一個 OBO token。這樣就能把使用者的身分帶下去，確保搜尋只回傳登入使用者有權限看的檔案。
 
 ```javascript
 const axios = require('axios');
@@ -179,9 +191,9 @@ async function getOboToken(userAccessToken) {
 }
 ```
 
-#### Retrieving Content from O365 / SharePoint Items
+#### 取得 O365 / SharePoint 項目的內容
 
-This function fetches the content of drive items, handling different file types and converting files to PDF when necessary for text extraction. This uses the [download endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0\&tabs=http) for PDFs and the [convert endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http) for other supported file types.
+這個 function 抓取 drive item 的內容，處理不同檔案類型，必要時先把檔案轉成 PDF 才能抽文字。PDF 用 [download endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content?view=graph-rest-1.0\&tabs=http)，其他支援的檔案類型用 [convert endpoint](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http)。
 ```javascript
 const getDriveItemContent = async (client, driveId, itemId, name) => {
     try {
@@ -226,9 +238,9 @@ const getDriveItemContent = async (client, driveId, itemId, name) => {
 };
 ```
 
-#### Integrating GPT 4o mini for Text Analysis
+#### 整合 GPT 4o mini 做文字分析
 
-This function utilizes the OpenAI SDK to analyze text extracted from documents and find relevant information based on a user query. This helps to ensure only relevant text to the user’s question is returned to the GPT. 
+這個 function 用 OpenAI SDK 分析從文件抽出的文字，根據使用者的 query 找出相關資訊。這樣能確保回給 GPT 的只有跟使用者問題有關的文字。
 
 ```javascript
 const getRelevantParts = async (text, query) => {
@@ -258,27 +270,27 @@ const getRelevantParts = async (text, query) => {
 };
 ```
 
-#### Creating the Azure Function to Handle Requests
+#### 建立處理請求的 Azure Function
 
-Now that we have all these helper functions, the Azure Function will orchestrate the flow, by authenticating the user, performing the search, and iterating through the search results to extract the text and retrieve the relevant parts of the text to the GPT.
+有了這些 helper function，Azure Function 就負責串起整個流程：驗證使用者、執行搜尋、逐一處理搜尋結果抽出文字，再把相關片段回給 GPT。
 
-**Handling HTTP Requests:** The function starts by extracting the query and searchTerm from the HTTP request. It checks if the Authorization header is present and extracts the bearer token.
+**處理 HTTP 請求：** Function 一開始從 HTTP 請求取出 query 和 searchTerm，檢查有沒有 Authorization header，並取出 bearer token。
 
-**Authentication:** Using the bearer token, it obtains an OBO token from Microsoft's identity platform using getOboToken defined above.
+**驗證：** 用 bearer token 呼叫上面定義的 getOboToken，向 Microsoft 的 identity platform 取得 OBO token。
 
-**Initializing the Graph Client:** With the OBO token, it initializes the Microsoft Graph client using initGraphClient defined above.
+**初始化 Graph Client：** 拿 OBO token，用上面定義的 initGraphClient 初始化 Microsoft Graph client。
 
-**Document Search:** It constructs a search query and sends it to the Microsoft Graph API to find documents based on the searchTerm.
+**文件搜尋：** 組出搜尋 query，送給 Microsoft Graph API，根據 searchTerm 找文件。
 
-**Document Processing**: For each document returned by the search:
+**文件處理**：對搜尋回傳的每份文件：
 
-- It retrieves the document content using getDriveItemContent.
+- 用 getDriveItemContent 取得文件內容。
 
-- If the file type is supported, it analyzes the content using getRelevantParts, which sends the text to OpenAI's model for extracting relevant information based on the query.
+- 如果檔案類型有支援，就用 getRelevantParts 分析內容，它會把文字送給 OpenAI 的模型，根據 query 抽出相關資訊。
 
-- It collects the analysis results and includes metadata like the document name and URL.
+- 收集分析結果，並附上文件名稱和 URL 等 metadata。
 
-**Response**: The function sorts the results by relevance and sends them back in the HTTP response.
+**回應**：Function 依相關度排序結果，放進 HTTP 回應送回去。
 
 ```javascript
 module.exports = async function (context, req) {
@@ -403,33 +415,33 @@ module.exports = async function (context, req) {
 };
 ```
 
-### Customizations
+### 客製化
 
-Below are some potential areas to customize. 
+下面是幾個可以客製的地方。
 
-- You can customize the GPT prompt to search again a certain amount of times if nothing is found.
+- 可以調整 GPT 的 prompt，讓它在找不到東西時再搜尋幾次。
 
-- You can customize the code to only search through specific SharePoint sites or O365 Drives by customizing the search query. This will help focus the search and improve the retrieval. The function as setup now looks through all files the logged-in user can access.
+- 可以修改搜尋 query，只搜尋特定的 SharePoint 網站或 O365 Drive，這樣搜尋更聚焦、檢索更準。目前的設定會搜尋登入使用者能存取的所有檔案。
 
-- You could use gpt-4o instead of gpt-4o-mini. This would slightly increase the cost and latency, but you may get higher quality summarizations.
+- 可以用 gpt-4o 取代 gpt-4o-mini。成本和延遲會稍微增加，但摘要品質可能更好。
 
-- You can customize the amount of files it searches through within the call to Microsoft Graph.
-
-
-### Considerations
-
-Note that all the same limitations of Actions apply here, with regards to returning 100K characters or less and the [45 second timeout](https://platform.openai.com/docs/actions/production/timeouts).
+- 可以調整呼叫 Microsoft Graph 時要搜尋的檔案數量。
 
 
-- This only works for text, not for images. With some additional code in the Azure Function, you could customize this by using GPT-4o to extract summarizations of images.
+### 注意事項
 
-- This does not work for structured data. We recommend Solution 1 if structured data is a major part of your use case.
+Actions 的限制在這裡全部適用，包括回傳 100K 字元以內，以及 [45 秒 timeout](https://platform.openai.com/docs/actions/production/timeouts)。
 
-## ChatGPT Steps
 
-### Custom GPT Instructions 
+- 這個方案只適用於文字，不適用於圖片。在 Azure Function 多寫一些程式，可以改用 GPT-4o 來摘要圖片內容。
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+- 不適用結構化資料。如果結構化資料是你使用情境的重點，建議用方案 1。
+
+## ChatGPT 步驟
+
+### Custom GPT Instructions
+
+建好 Custom GPT 後，把下面的文字複製到 Instructions 面板。有問題的話，看[入門範例](https://platform.openai.com/docs/actions/getting-started)了解這一步的細節。
 
 ```python
 You are a Q&A helper that helps answer users questions. You have access to a documents repository through your API action. When a user asks a question, you pass in that question exactly as stated to the "query" parameter, and for the "searchTerm" you use a single keyword or term you think you should use for the search.
@@ -463,12 +475,12 @@ Try this three times. After the third time, then let the user know you did not f
 In either scenario, try to answer the user's question. If you cannot answer the user's question based on the knowledge you find, let the user know and ask them to go check the HR Docs in SharePoint. If the file is a CSV, XLSX, or XLS, you can tell the user to download the file using the link and re-upload to use Advanced Data Analysis.
 ```
 
-### OpenAPI Schema 
+### OpenAPI Schema
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建好 Custom GPT 後，把下面的文字複製到 Actions 面板。有問題的話，看[入門範例](https://platform.openai.com/docs/actions/getting-started)了解這一步的細節。
 
-The below spec passes in the `query` parameter to inform the pre-processing and a `searchTerm` to find the right files in Microsoft Graph.
->Make sure to switch the function app name, function name and code based on link copied in screenshot above
+下面的 spec 會傳入 `query` 參數來引導預先處理，並傳入 `searchTerm` 在 Microsoft Graph 找對應的檔案。
+>記得依照上面截圖中複製的連結，換成你自己的 function app 名稱、function 名稱和 code
 
 ```python
 openapi: 3.1.0
@@ -518,32 +530,43 @@ paths:
                       description: The URL to access the document.
 ```
 
-## Authentication Instructions
+## 驗證說明
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面是設定這個第三方應用程式驗證的說明。有問題的話，看[入門範例](https://platform.openai.com/docs/actions/getting-started)了解這一步的細節。
 
-*See above and on the [Azure Function cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function) for more detailed instructions on authentication.*
+*驗證的詳細說明請看上面，以及 [Azure Function cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function)。*
 
-## FAQ & Troubleshooting
+## FAQ 與疑難排解
 
-- Why are you using the Microsoft Graph API in your code instead of the [SharePoint API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service?tabs=csom)?
+- 為什麼程式碼用 Microsoft Graph API，不用 [SharePoint API](https://learn.microsoft.com/en-us/sharepoint/dev/sp-add-ins/get-to-know-the-sharepoint-rest-service?tabs=csom)？
 
-  - The SharePoint API is legacy - per the Microsoft documentation [here](https://learn.microsoft.com/en-us/sharepoint/dev/apis/sharepoint-rest-graph), “For SharePoint Online, innovation using a REST API against SharePoint is driven via the Microsoft Graph REST API's.” The Graph API gives us more flexibility, and the SharePoint API still runs into the same file issues listed in the [Why is this necessary instead of interacting with the Microsoft Graph API directly?](#why-is-this-necessary-instead-of-interacting-with-the-microsoft-api-directly) section.
+  - SharePoint API 是舊的。依 Microsoft 的[文件](https://learn.microsoft.com/en-us/sharepoint/dev/apis/sharepoint-rest-graph)，“For SharePoint Online, innovation using a REST API against SharePoint is driven via the Microsoft Graph REST API's.” Graph API 比較有彈性，而 SharePoint API 一樣會碰到[為什麼不直接跟 Microsoft Graph API 互動？](#why-is-this-necessary-instead-of-interacting-with-the-microsoft-api-directly)那段列出的檔案問題。
 
-- What types of files does this support?
-    1. This supports all files listed in the documentation for the Convert File endpoint [_here_](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http). Specifically, it supports _pdf, doc, docx, odp, ods, odt, pot, potm, potx, pps, ppsx, ppsxm, ppt, pptm, pptx, rtf_.
+- 支援哪些檔案類型？
+    1. 支援 Convert File endpoint 文件[_這裡_](https://learn.microsoft.com/en-us/graph/api/driveitem-get-content-format?view=graph-rest-1.0\&tabs=http)列出的所有檔案。具體來說，支援 _pdf, doc, docx, odp, ods, odt, pot, potm, potx, pps, ppsx, ppsxm, ppt, pptm, pptx, rtf_。
 
-    2. When a search result returns XLS, XLSX, or CSV, this prompts the user to download the file and re-upload to ask questions using Advanced Data Analysis. As stated above, we recommend solution 1 if structured data is part of your use case.
+    2. 搜尋結果如果是 XLS、XLSX 或 CSV，會提示使用者下載檔案，再重新上傳，用 Advanced Data Analysis 來提問。如上所述，如果你的使用情境包含結構化資料，建議用方案 1。
 
-- Why do I need to request an OBO token?
+- 為什麼要申請 OBO token？
 
-  - When you try to use the same token to authenticate to the Graph API as the one you use to authenticate into the Azure Function, you get an “invalid audience” token. This is because the audience for the token can only be user\_impersonation.
+  - 如果用登入 Azure Function 的同一個 token 去驗證 Graph API，會得到 “invalid audience” token 錯誤。因為這個 token 的 audience 只能是 user\_impersonation。
 
-  - To address this, the function requests a new token scoped to Files.Read.All within the app using the [On Behalf Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow). This will inherit the permissions of the logged in user, meaning this function will only search through files the logged-in user has access to. 
+  - 為了解決這個問題，function 會在 app 內申請一個 scope 為 Files.Read.All 的新 token，用的是 [On Behalf Of flow](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-on-behalf-of-flow)。它會繼承登入使用者的權限，所以這個 function 只會搜尋登入使用者有權限存取的檔案。
 
-  - We are purposefully requesting a new On Behalf Of token with each request, because Azure Function Apps are meant to be stateless. You could potentially integrate this with Azure Key Vault to store the secret and retrieve programmatically. 
+  - 我們刻意每次請求都重新申請一個 On Behalf Of token，因為 Azure Function App 本來就設計成無狀態。你也可以整合 Azure Key Vault 來儲存 secret，再用程式取出。
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想優先支援的整合嗎？我們的整合有錯誤嗎？歡迎到 GitHub 開 PR 或 issue，我們會去看。*
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Graph Search API 只回傳檔案的參考，不含內容，所以需要 Azure Function 這類 middleware 去下載並轉成文字。
+- OBO token 讓 function 繼承登入使用者的權限，搜尋結果自然只包含他看得到的檔案。
+- 先在 function 內用 gpt-4o-mini 抽出相關片段，才能把回傳量壓在 Actions 100K 字元和 45 秒 timeout 的限制內。
+- 這個方案只處理文字類檔案；Excel、CSV 這類結構化資料建議改用方案 1。
+
+## 練習
+
+1. 把 Postman 請求 body 的 `query` 和 `searchTerm` 換成你自己 SharePoint 裡真的有的主題，看回傳的文字片段是否跟問題相關。
+2. 把 `getRelevantParts` 裡用的模型從 gpt-4o-mini 改成 gpt-4o，比較摘要品質、延遲和成本的差異。
+3. 修改 Graph 搜尋的 query，讓它只搜尋某一個 SharePoint 網站，或調整一次搜尋的檔案數量，觀察結果和 45 秒 timeout 的關係。

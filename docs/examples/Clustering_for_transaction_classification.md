@@ -1,22 +1,34 @@
 ---
-translated: false
+translated: true
 source: examples/Clustering_for_transaction_classification.ipynb
 ---
 
-# Clustering for transaction classification
+# 用分群做交易分類
 
 > 原文：[examples/Clustering_for_transaction_classification.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Clustering_for_transaction_classification.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+資料沒有標籤，但有可以拿來分群的特徵時怎麼辦？這篇用 K-Means 把交易的 embedding 分成幾群，再用 GPT 為每個 cluster 產生好懂的描述，最後拿這些描述替原本沒標籤的資料貼標籤。
 
-This notebook covers use cases where your data is unlabelled but has features that can be used to cluster them into meaningful categories. The challenge with clustering is making the features that make those clusters stand out human-readable, and that is where we'll look to use GPT-3 to generate meaningful cluster descriptions for us. We can then use these to apply labels to a previously unlabelled dataset.
+## 學完你會
 
-To feed the model we use embeddings created using the approach displayed in the notebook [Multiclass classification for transactions Notebook](https://github.com/openai/openai-cookbook/blob/main/examples/Multiclass_classification_for_transactions.ipynb), applied to the full 359 transactions in the dataset to give us a bigger pool for learning
+- 用交易的 embedding 做 K-Means 分群
+- 用 Completions endpoint 為每個 cluster 產生有意義的描述
+- 檢視分群視覺化，判斷哪些 cluster 重疊、需要再調整
 
-## Setup
+## 開跑前
+
+- OpenAI API key
+- 交易 embedding 資料（延續 Multiclass classification for transactions 的做法，涵蓋資料集中全部 359 筆交易）
+
+這份 notebook 處理的情境是：你的資料沒有標籤，但有可以把它們分成有意義類別的特徵。分群的難處在於讓這些凸顯 cluster 的特徵變得人類看得懂，這正是我們要用 GPT-3 為我們產生有意義的 cluster 描述的地方。接著就能用這些描述，替原本沒有標籤的資料集貼上標籤。
+
+餵給模型的是 embedding，產生方式採用 [Multiclass classification for transactions Notebook](https://github.com/openai/openai-cookbook/blob/main/examples/Multiclass_classification_for_transactions.ipynb) 裡展示的做法，並套用到資料集全部 359 筆交易上，讓我們有更大的學習樣本。
+
+## 設定
 
 ```python
 # optional env import
@@ -50,9 +62,9 @@ COMPLETIONS_MODEL = "gpt-3.5-turbo"
 embedding_path = "data/library_transactions_with_embeddings_359.csv"
 ```
 
-## Clustering
+## 分群
 
-We'll reuse the approach from the [Clustering Notebook](Clustering.md), using K-Means to cluster our dataset using the feature embeddings we created previously. We'll then use the Completions endpoint to generate cluster descriptions for us and judge their effectiveness
+我們會沿用 [Clustering Notebook](Clustering.md) 的做法，用 K-Means 搭配先前建立的特徵 embedding 對資料集分群。接著用 Completions endpoint 為我們產生 cluster 描述，並評估它們的效果。
 
 ```python
 df = pd.read_csv(embedding_path)
@@ -220,8 +232,19 @@ for i in range(n_clusters):
     ... (省略 48 行)
     ```
 
-### Conclusion
+### 結論
 
-We now have five new clusters that we can use to describe our data. Looking at the visualisation some of our clusters have some overlap and we'll need some tuning to get to the right place, but already we can see that GPT-3 has made some effective inferences. In particular, it picked up that items including legal deposits were related to literature archival, which is true but the model was given no clues on. Very cool, and with some tuning we can create a base set of clusters that we can then use with a multiclass classifier to generalise to other transactional datasets we might use.
+我們現在有五個新的 cluster 可以用來描述資料。從視覺化來看，有些 cluster 有重疊，還需要一些調整才能到位，不過已經能看出 GPT-3 做了一些有效的推論。特別是，它發現包含法定送存（legal deposit）的項目跟文獻典藏有關，這是對的，而模型事先沒有被給任何線索。很酷，而且稍加調整，我們就能建立一組基礎 cluster，再搭配多類別分類器，推廣到我們可能用到的其他交易資料集。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 沒標籤的資料可以先用 embedding 加分群找出結構，再靠 LLM 把 cluster 翻成人看得懂的描述。
+- cluster 描述可以當作標籤，用來替原本沒標籤的資料貼標。
+- 分群結果不一定乾淨，視覺化能幫你發現重疊，需要調整。
+- 之後可以用這些標籤訓練多類別分類器，推廣到其他資料集。
+
+## 練習
+
+1. 改 K-Means 的 cluster 數量（目前是五個），看描述和視覺化怎麼變。
+2. 調整產生 cluster 描述的 prompt，要求更簡短的標籤，比較結果。
+3. 挑一個重疊的 cluster，檢查裡面的交易樣本，改 prompt 或 cluster 數量，讓描述更能區分彼此。

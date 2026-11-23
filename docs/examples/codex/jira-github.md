@@ -1,61 +1,71 @@
 ---
-translated: false
+translated: true
 source: examples/codex/jira-github.ipynb
 ---
 
-# Automate Jira ↔ GitHub with Codex
+# 用 Codex 自動化 Jira ↔ GitHub
 
 > 原文：[examples/codex/jira-github.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/codex/jira-github.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+在 Jira issue 上貼一個標籤，就會自動觸發 GitHub Action，由 `codex-cli` 實作需求、開出 pull request，再把 Jira 的狀態和留言更新回去。整個流程不用人手介入。
 
+## 學完你會
+- 建一條 Jira Automation rule，在標籤出現時呼叫 GitHub 的 `workflow_dispatch`。
+- 寫一個在 GitHub Action 裡非互動式跑 `codex-cli` 的 workflow，並自動開 PR。
+- 讓 workflow 用 Jira REST API 把 ticket 轉到 In Review 並留下 PR 連結。
 
-## Purpose of this cookbook
+## 開跑前
+- Jira 專案管理員權限，且能建立 automation rule。
+- GitHub 要有寫入權限、能新增 repository secrets，而且 `main` 是受保護分支。
+- 需要 OpenAI API key 和 Jira API token（見下方 Prerequisites 的 secrets）。
 
-This cookbook provides a practical, step-by-step approach to automating the workflow between Jira and GitHub. By labeling a Jira issue, you trigger an end-to-end process that creates a **GitHub pull request**, keeps both systems updated, and streamlines code review, all with minimal manual effort. The automation is powered by the [`codex-cli`](https://github.com/openai/openai-codex) agent running inside a GitHub Action.
+## 這份教學的目的
+
+這份教學一步一步帶你把 Jira 和 GitHub 之間的流程自動化。你在 Jira issue 上貼標籤，就會觸發一整套流程：建立 **GitHub pull request**、同步更新兩邊的系統、讓 code review 更順，全程幾乎不用人工操作。自動化的核心是跑在 GitHub Action 裡的 [`codex-cli`](https://github.com/openai/openai-codex) agent。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/codex_action.png" alt="Full data-flow diagram" width="500"/>
 
 
-The flow is:
+流程如下：
 
-1. Label a Jira issue 
-2. Jira Automation calls the GitHub Action 
-3. The action spins up `codex-cli` to implement the change 
-4. A PR is opened
-5. Jira is transitioned & annotated - creating a neat, zero-click loop. This includes changing the status of the ticket, adding the PR link and commenting in the ticket with updates.
+1. 在 Jira issue 上貼標籤
+2. Jira Automation 呼叫 GitHub Action
+3. Action 啟動 `codex-cli` 去實作修改
+4. 開出 PR
+5. Jira 狀態轉換並加註，形成零點擊的循環。包括改 ticket 狀態、貼上 PR 連結，以及在 ticket 留言回報進度。
 
-## Prerequisites
+## 前置條件
 
-* Jira: project admin rights + ability to create automation rules  
-* GitHub: write access, permission to add repository secrets, and a protected `main` branch  
-* API keys & secrets placed as repository secrets:
-  * `OPENAI_API_KEY` – your OpenAI key for `codex-cli`  
-  * `JIRA_BASE_URL`, `JIRA_EMAIL`, `JIRA_API_TOKEN` – for REST calls from the action  
-* `codex-cli` installed locally (`pnpm add -g @openai/codex`) for ad-hoc testing  
-* A repository that contains a `.github/workflows/` folder
+* Jira：專案管理員權限，且能建立 automation rule  
+* GitHub：寫入權限、能新增 repository secrets，而且 `main` 是受保護分支  
+* API key 和 secrets 要放在 repository secrets：
+  * `OPENAI_API_KEY`：給 `codex-cli` 用的 OpenAI key  
+  * `JIRA_BASE_URL`、`JIRA_EMAIL`、`JIRA_API_TOKEN`：給 action 呼叫 REST API 用  
+* 本機要裝 `codex-cli`（`pnpm add -g @openai/codex`），方便臨時測試  
+* 有一個含 `.github/workflows/` 資料夾的 repository
 
 
-## Create the Jira Automation Rule
+## 建立 Jira Automation Rule
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/jira_rule.png" alt="Automation Rule" width="500"/>
 
-The first step in this rule listens for changes to an issue’s labels. This ensures we only trigger the automation when a label is added or modified—no need to process every update to the issue.
+這條 rule 的第一步是監聽 issue 標籤的變動，這樣只有標籤被新增或修改時才會觸發，不用處理 issue 的每一次更新。
 
-Next, we check whether the updated labels include a specific keyword, in our example we are using `aswe`. This acts as a filter so that only issues explicitly tagged for automation proceed, avoiding unnecessary noise from unrelated updates.
+接著檢查更新後的標籤是否包含特定關鍵字，我們的例子用 `aswe`。它是一個過濾條件，只有明確貼了標籤的 issue 才會繼續，避免不相關的更新造成雜訊。
 
-If the condition is met, we send a `POST` request to GitHub’s `workflow_dispatch` endpoint. This kicks off a GitHub Actions workflow with the relevant issue context. We pass in the issue key, summary, and a cleaned-up version of the description—escaping quotes and newlines so the payload parses correctly in YAML/JSON. There are [additional fields](https://support.atlassian.com/cloud-automation/docs/jira-smart-values-issues/) available as variables in JIRA to give the codex agent more context during its execution.
+條件成立後，我們對 GitHub 的 `workflow_dispatch` 端點送一個 `POST` request，帶著 issue 的相關資訊啟動 GitHub Actions workflow。傳進去的有 issue key、summary，以及整理過的 description（把引號和換行跳脫掉，這樣 payload 在 YAML/JSON 裡才解析得動）。Jira 還有[更多欄位](https://support.atlassian.com/cloud-automation/docs/jira-smart-values-issues/)可以當變數用，讓 codex agent 執行時拿到更多脈絡。
 
-This setup allows teams to tightly control which Jira issues trigger automation, and ensures GitHub receives structured, clean metadata to act on. We can also set up multiple labels, each triggering a different GitHub Action. For example, one label could kick off a quick bug fix workflow, while another might start work on refactoring code or generating API stubs.
+這樣的設計讓團隊能精準控制哪些 Jira issue 會觸發自動化，也讓 GitHub 收到結構乾淨的 metadata。你也可以設多個標籤，各自觸發不同的 GitHub Action，例如一個標籤跑快速修 bug 的流程，另一個標籤開始做重構或產生 API stub。
 
 
-## Add the GitHub Action
+## 加入 GitHub Action
 
-GitHub Actions enable you to automate workflows within your GitHub repository by defining them in YAML files. These workflows specify a series of jobs and steps to execute. When triggered either manually or via a POST request, GitHub automatically provisions the necessary environment and runs the defined workflow steps.
+GitHub Actions 讓你用 YAML 檔定義 repository 裡的 workflow，裡面描述一連串 job 和 step。不管是手動觸發還是透過 POST request 觸發，GitHub 都會自動準備環境並執行 workflow。
 
-To process the `POST` request from JIRA we will create a Github action with a YAML like below in the `.github/workflows/` directory of the repository:
+要處理 Jira 送來的 `POST` request，我們在 repository 的 `.github/workflows/` 目錄建一個 GitHub Action，YAML 如下：
 
 
 ```yaml
@@ -174,60 +184,71 @@ jobs:
 ```
 
 
-## Key Steps in the Workflow
+## Workflow 的關鍵步驟
 
-1. **Codex Implementation & Commit** (Step 5)
-   - Uses OpenAI API to implement the JIRA ticket requirements
-   - Runs the Codex CLI non-interactively with workspace write access
-   - Commits all changes with standardized commit message
+1. **Codex 實作與 commit**（Step 5）
+   - 用 OpenAI API 實作 JIRA ticket 的需求
+   - 以非互動模式執行 Codex CLI，並給予 workspace 寫入權限
+   - 用統一格式的 commit message 提交所有修改
 
-2. **Create Pull Request** (Step 6) 
-   - Uses peter-evans/create-pull-request action
-   - Creates PR against main branch
-   - Sets PR title and description from JIRA ticket info
-   - Returns PR URL for later use
+2. **建立 Pull Request**（Step 6） 
+   - 使用 peter-evans/create-pull-request action
+   - 對 main 分支建立 PR
+   - 用 JIRA ticket 的資訊設定 PR 標題和說明
+   - 回傳 PR URL 供後面使用
 
-3. **JIRA Updates** (Step 7)
-   - Transitions ticket to "In Review" status via JIRA API
-   - Posts comment with PR URL on the JIRA ticket
-   - Uses curl commands to interact with JIRA REST API
+3. **更新 JIRA**（Step 7）
+   - 透過 JIRA API 把 ticket 轉到 "In Review" 狀態
+   - 在 JIRA ticket 上留言貼 PR URL
+   - 用 curl 指令呼叫 JIRA REST API
 
 
-## Label an Issue
+## 幫 Issue 貼標籤
 
-Attach the special `aswe` label to any bug/feature ticket:
+在任何 bug 或 feature ticket 上貼特殊的 `aswe` 標籤：
 
-1. **During creation** – add it in the "Labels" field before hitting *Create*  
-2. **Existing issue** – hover the label area → click the pencil icon → type `aswe`
+1. **建立時**：在按 *Create* 之前，先在 "Labels" 欄位加上  
+2. **已存在的 issue**：滑到標籤區 → 點鉛筆圖示 → 輸入 `aswe`
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/add_label.png" alt="Adding a label" width="500"/>
 
 
-## End-to-end Flow
+## 端到端流程
 
-1. Jira label added → Automation triggers
-2. `workflow_dispatch` fires; action spins up on GitHub
-3. `codex-cli` edits the codebase & commits
-4. PR is opened on the generated branch
-5. Jira is moved to **In Review** and a comment with the PR URL is posted
-6. Reviewers are notified per your normal branch protection settings
+1. Jira 加上標籤 → Automation 觸發
+2. `workflow_dispatch` 送出，action 在 GitHub 上啟動
+3. `codex-cli` 修改程式碼並 commit
+4. 在產生的分支上開 PR
+5. Jira 移到 **In Review**，並留言貼上 PR URL
+6. Reviewer 依你原本的 branch protection 設定收到通知
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/jira_comment.png" alt="Jira comment with PR link" width="300"/>
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/jira_status_change.png" alt="Jira status transition to In Review" width="300"/>
 
 
-## Review & Merge the PR
+## Review 並 Merge PR
 
-You can open the PR link posted in the JIRA ticket and check to see if everything looks good and then merge it. If you have branch protection and Smart Commits integration enabled, the Jira ticket will be automatically closed when the pull request is merged.
+打開 JIRA ticket 上的 PR 連結，確認沒問題就可以 merge。如果有開 branch protection 和 Smart Commits 整合，PR merge 後 Jira ticket 會自動關閉。
 
-## Conclusion
+## 結論
 
-This automation streamlines your development workflow by creating a seamless integration between Jira and GitHub:
+這套自動化把 Jira 和 GitHub 無縫串起來，讓開發流程更順：
 
-* **Automatic status tracking** - Tickets progress through your workflow without manual updates
-* **Improved developer experience** - Focus on reviewing code quality instead of writing boilerplate code
-* **Reduced handoff friction** - The PR is ready for review as soon as the ticket is labeled
+* **自動追蹤狀態**：ticket 不用手動更新就會依流程前進
+* **更好的開發體驗**：把心力放在 review 程式品質，不用寫樣板程式碼
+* **減少交接摩擦**：ticket 一貼標籤，PR 就準備好等 review
 
-The `codex-cli` tool is a powerful AI coding assistant that automates repetitive programming tasks. You can explore more about it [here](https://github.com/openai/codex/)
+`codex-cli` 是一個能自動處理重複性程式工作的 AI coding 助手，更多資訊可以看[這裡](https://github.com/openai/codex/)
 
-<!-- tutor:summary -->
+
+## 重點整理
+- 整個自動化是一條鏈：Jira 標籤 → Jira Automation → `workflow_dispatch` → `codex-cli` → PR → 回寫 Jira。
+- 用特定標籤（如 `aswe`）當過濾條件，可以精準控制哪些 issue 會被自動處理，也能用不同標籤對應不同 workflow。
+- 傳給 workflow 的 description 要先跳脫引號和換行，不然 YAML/JSON 會解析失敗。
+- Secrets 都放 repository secrets，不要寫進 workflow 檔。
+- 最終還是由人 review PR 再 merge，自動化只負責產出初版。
+
+## 練習
+1. 在 Jira rule 裡多傳一個欄位（例如 issue 的 priority）給 workflow，並在 workflow 的 prompt 裡用到它。
+2. 新增第二個標籤（例如 `refactor`），對應一份只做重構、prompt 不同的 workflow 檔。
+3. 修改 Step 7，讓 Jira 留言除了 PR URL 外，再附上 Codex 這次修改的檔案清單。

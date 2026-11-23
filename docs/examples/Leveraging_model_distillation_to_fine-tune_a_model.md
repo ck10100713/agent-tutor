@@ -1,27 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/Leveraging_model_distillation_to_fine-tune_a_model.ipynb
 ---
 
-# Leveraging model distillation to fine-tune a model
+# 用 model distillation 微調出一個小模型
 
 > 原文：[examples/Leveraging_model_distillation_to_fine-tune_a_model.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Leveraging_model_distillation_to_fine-tune_a_model.ipynb)
 
-Cookbook to distill a larger model into a smaller fine-tuned model.
+把大模型蒸餾（distill）成一個微調過的小模型。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用大模型的輸出去 fine-tune 小模型，這就是 OpenAI 的 Distillation。這篇把 `gpt-4o` 的輸出蒸餾到 `gpt-4o-mini`，再跟沒蒸餾的 `gpt-4o-mini` 比準確率。任務是看法國葡萄酒的評論，預測葡萄品種。
 
-OpenAI **Distillation** uses the outputs of a larger model to fine-tune a smaller one. Moving to the smaller model can reduce latency and cost for specific tasks. In this cookbook, we'll distill `gpt-4o` outputs into `gpt-4o-mini` and compare the result with a generic, non-distilled `gpt-4o-mini` model.
+## 學完你會
 
-We'll also use **Structured Outputs** for classification with an enum. We'll measure how structured outputs affect the fine-tuned model and show that they work with each model, including the distilled one.
+- 用 Structured Outputs 加 enum 把分類答案限制在固定清單內
+- 用 `store=True` 加 metadata 存下 gpt-4o 的 completion，並在平台上篩選出來做 distillation
+- 用同一組驗證資料比較 gpt-4o、gpt-4o-mini 和蒸餾後模型的準確率
 
-We'll first analyze the dataset, get the output of both 4o and 4o mini, highlighting the difference in performance of both models, then proceed to the distillation and analyze the performance of this distilled model.
+## 開跑前
 
-## Prerequisites
+- 環境變數 `OPENAI_API_KEY`
+- 需要從 Kaggle 下載 wine-reviews 資料集
+- Fine-tuning 和呼叫模型都會花錢
 
-Let's install and load dependencies.
-Make sure your OpenAI API key is defined in your environment as "OPENAI_API_KEY" and it'll be loaded by the client directly.
+OpenAI **Distillation** 是拿大模型的輸出去 fine-tune 小模型。換成小模型之後，特定任務的延遲和成本可以降下來。這篇把 `gpt-4o` 的輸出蒸餾到 `gpt-4o-mini`，再跟一般沒蒸餾的 `gpt-4o-mini` 比較。
+
+分類的部分會用 **Structured Outputs** 搭配 enum。我們會量測 structured outputs 對 fine-tuned 模型的影響，也會證明它對每個模型都能用，包括蒸餾後的模型。
+
+流程是先分析資料集，拿到 4o 和 4o mini 的輸出，看兩者的表現差異，接著做 distillation，再分析蒸餾後模型的表現。
+
+## 前置作業
+
+先安裝並載入套件。
+確認你的 OpenAI API key 已經設成環境變數 "OPENAI_API_KEY"，client 會直接讀取。
 
 ```python
 ! pip install openai tiktoken numpy pandas tqdm --quiet
@@ -40,17 +53,17 @@ import pandas as pd
 client = OpenAI()
 ```
 
-## Loading and understanding the dataset
+## 載入並了解資料集
 
-For this cookbook, we'll load the data from the following Kaggle challenge: [https://www.kaggle.com/datasets/zynicide/wine-reviews](https://www.kaggle.com/datasets/zynicide/wine-reviews).
+這篇用的資料來自這個 Kaggle 競賽：[https://www.kaggle.com/datasets/zynicide/wine-reviews](https://www.kaggle.com/datasets/zynicide/wine-reviews)。
 
-This dataset has many rows, and you can run this cookbook on the full dataset. As a biased French wine lover, I'll narrow the dataset to French wines so that we can focus on fewer rows and grape varieties.
+資料集有很多列，你可以拿整份跑。我自己偏愛法國酒，所以只留下法國葡萄酒，這樣列數和葡萄品種都比較少，方便聚焦。
 
-We're looking at a classification problem where we'd like to predict the grape variety from the available criteria, including the description, subregion, and province, which we'll include in the prompt. This gives the model a lot of information. You can remove information that would make the task significantly easier, such as the region where the grape was produced, to see how well the model predicts the variety.
+這是個分類問題，要根據描述、子產區和省份來預測葡萄品種，這些資訊都會放進 prompt。這給了模型很多線索。你可以拿掉會讓任務變簡單很多的資訊，例如葡萄的產地，看看模型單靠其他資訊能猜得多準。
 
-Let's filter the grape varieties that have fewer than five occurrences in reviews.
+先把評論中出現次數少於五次的葡萄品種濾掉。
 
-Let's proceed with a subset of 500 random rows from this dataset.
+接著從資料集隨機取 500 列來做。
 
 ```python
 df = pd.read_csv('data/winemag/winemag-data-130k-v2.csv')
@@ -106,7 +119,7 @@ df_france_subset.head()
     124917  Domaine Vincent Stoeffler
     ```
 
-Let's retrieve all grape varieties to include them in the prompt and in our structured outputs enum list.
+把所有葡萄品種撈出來，放進 prompt，也放進 structured outputs 的 enum 清單。
 
 ```python
 varieties = np.array(df_france['variety'].unique()).astype('str')
@@ -140,9 +153,9 @@ varieties
            'Merlot-Cabernet Sauvignon'], dtype='<U33')
     ```
 
-## Generating the prompt
+## 產生 prompt
 
-Let's build out a function to generate our prompt and try it for the first wine of our list.
+寫一個產生 prompt 的函式，先拿清單裡第一支酒試試看。
 
 ```python
 def generate_prompt(row, varieties):
@@ -173,7 +186,7 @@ prompt
     '\n    Based on this wine review, guess the grape variety:\n    This wine is produced by Trimbach in the Alsace region of France.\n    It was grown in Alsace. It is described as: "This dry and restrained wine offers spice in profusion. Balanced with acidity and a firm texture, it\'s very much for food.".\n    The wine has been reviewed by Roger Voss and received 87 points.\n    The price is 24.0.\n\n    Here is a list of possible grape varieties to choose from: Gewürztraminer, Pinot Gris, Gamay, Bordeaux-style White Blend, Champagne Blend, Chardonnay, Petit Manseng, Riesling, White Blend, Pinot Blanc, Alsace white blend, Bordeaux-style Red Blend, Malbec, Tannat-Cabernet, Rhône-style Red Blend, Ugni Blanc-Colombard, Savagnin, Pinot Noir, Rosé, Melon, Rhône-style White Blend, Pinot Noir-Gamay, Colombard, Chenin Blanc, Sylvaner, Sauvignon Blanc, Red Blend, Chenin Blanc-Chardonnay, Cabernet Sauvignon, Cabernet Franc, Syrah, Sparkling Blend, Duras, Provence red blend, Tannat, Merlot, Malbec-Merlot, Chardonnay-Viognier, Cabernet Franc-Cabernet Sauvignon, Muscat, Viognier, Picpoul, Altesse, Provence white blend, Mondeuse, Grenache-Syrah, G-S-M, Pinot Meunier, Cabernet-Syrah, Vermentino, Marsanne, Colombard-Sauvignon Blanc, Gros and Petit Manseng, Jacquère, Negrette, Mauzac, Pinot Auxerrois, Grenache, Roussanne, Gros Manseng, Tannat-Merlot, Aligoté, Chasselas, Loin de l\'Oeil, Malbec-Tannat, Carignan, Colombard-Ugni Blanc, Sémillon, Syrah-Grenache, Sciaccerellu, Auxerrois, Mourvèdre, Tannat-Cabernet Franc, Braucol, Trousseau, Merlot-Cabernet Sauvignon.\n    \n    What is the likely grape variety? Answer only with the grape variety name or blend from the list.\n    '
     ```
 
-Before running the queries, use tiktoken to estimate the token count and completion cost. This estimate does not include fine-tuning, whose cost also depends on factors such as the training-set size and number of epochs.
+在送出查詢之前，先用 tiktoken 估算 token 數和 completion 成本。這個估算不含 fine-tuning，fine-tuning 的成本還取決於訓練集大小和 epoch 數等因素。
 
 ```python
 # Load encoding for the GPT-4 model
@@ -223,11 +236,11 @@ print(total_gpt4o_mini_cost)
     0.03681585
     ```
 
-## Preparing functions to Store Completions
+## 準備儲存 completion 的函式
 
-Because the response must be one of a fixed set of grape varieties, we'll use structured outputs to constrain the model to that set. This gives us a deterministic value to compare with the expected variety and prevents answers outside the dataset.
+回答必須是固定葡萄品種清單中的一個，所以用 structured outputs 把模型限制在這個清單內。這樣會得到一個確定的值，可以直接跟正確品種比對，也不會出現資料集以外的答案。
 
-If you want to know more on Structured Outputs you can read this [cookbook](https://cookbook.openai.com/examples/structured_outputs_intro) and this [documentation guide](https://platform.openai.com/docs/guides/structured-outputs/introduction).
+想多了解 Structured Outputs，可以看這份 [cookbook](https://cookbook.openai.com/examples/structured_outputs_intro) 和這份 [文件](https://platform.openai.com/docs/guides/structured-outputs/introduction)。
 
 ```python
 response_format = {
@@ -250,11 +263,11 @@ response_format = {
 }
 ```
 
-To distill a model, you need to store all completions from a model, allowing you to give it as a reference to the smaller model to fine-tune it. We're therefore adding a `store=True` parameter to our `client.chat.completions.create` method so we can store those completions from gpt-4o.
+要做 distillation，必須先存下大模型的所有 completion，之後才能拿給小模型當參考去 fine-tune。所以我們在 `client.chat.completions.create` 加上 `store=True`，把 gpt-4o 的 completion 存起來。
 
-We're going to store all completions (even 4o-mini and our future fine-tuned model) so we are able to run [Evals](https://platform.openai.com/docs/guides/evals) from OpenAI platform directly.
+我們會把所有 completion 都存起來（包括 4o-mini 和之後的 fine-tuned 模型），這樣就能直接在 OpenAI 平台上跑 [Evals](https://platform.openai.com/docs/guides/evals)。
 
-When storing those completions, it's useful to store them with a metadata tag, that will allow filtering from the OpenAI platform to run distillation & evals on the specific set of completions you'd like to run those.
+存的時候最好加上 metadata 標籤，之後在 OpenAI 平台上就能篩選出特定的一批 completion 來做 distillation 和 eval。
 
 ```python
 # Initialize the progress index
@@ -283,9 +296,9 @@ def call_model(model, prompt):
     return json.loads(response.choices[0].message.content.strip())['variety']
 ```
 
-## Parallel processing
+## 平行處理
 
-As we'll run this on a large number of rows, let's make sure we run those completions in parallel and use concurrent futures for this. We'll iterate on our dataframe and output progress every 20 rows. We'll store the completion from the model we run the completion for in the same dataframe using the column name `{model}-variety`.
+資料量大，所以用 concurrent futures 讓 completion 平行執行。我們會遍歷 dataframe，每 20 列印一次進度，並把各模型的結果存回同一個 dataframe，欄位名稱是 `{model}-variety`。
 
 ```python
 def process_example(index, row, model, df, progress_bar):
@@ -323,7 +336,7 @@ def process_dataframe(df, model):
     return df
 ```
 
-Let's try out our call model function before processing the whole dataframe and check the output.
+整個 dataframe 跑之前，先試一下呼叫模型的函式，看輸出對不對。
 
 ```python
 answer = call_model('gpt-4o', generate_prompt(df_france_subset.iloc[0], varieties))
@@ -336,7 +349,7 @@ answer
     'Pinot Noir'
     ```
 
-Great! We confirmed we can get a grape variety as an output, let's now process the dataset with both `gpt-4o` and `gpt-4o-mini` and compare the results. 
+很好，確認可以拿到葡萄品種。現在用 `gpt-4o` 和 `gpt-4o-mini` 處理整個資料集，比較結果。
 
 ```python
 df_france_subset = process_dataframe(df_france_subset, "gpt-4o")
@@ -358,9 +371,9 @@ df_france_subset = process_dataframe(df_france_subset, "gpt-4o-mini")
     Processing rows: 100%|███████████████████████████████████████████████| 500/500 [01:31<00:00,  5.45it/s]
     ```
 
-## Comparing gpt-4o and gpt-4o-mini
+## 比較 gpt-4o 和 gpt-4o-mini
 
-Now that we've got all chat completions for those two models ; let's compare them against the expected grape variety and assess their accuracy at finding it. We'll do this directly in python here as we've got a simple string check to run, but if your task involves more complex evals you can leverage OpenAI Evals or our open-source eval framework.
+兩個模型的 chat completion 都拿到了，現在拿它們跟正確的葡萄品種比對，看猜中的準確率。這裡直接用 Python 做，因為只是簡單的字串比對。如果你的任務需要更複雜的 eval，可以用 OpenAI Evals 或我們的開源 eval 框架。
 
 ```python
 models = ['gpt-4o', 'gpt-4o-mini']
@@ -379,23 +392,23 @@ for model in models:
     gpt-4o-mini accuracy: 69.00%
     ```
 
-We can see that gpt-4o is better a finding grape variety than 4o-mini (12.80% higher or almost 20% relatively to 4o-mini!). Now I'm wondering if we're making gpt-4o drink wine during training!
+可以看到 gpt-4o 找葡萄品種比 4o-mini 強（高 12.80%，相對 4o-mini 差不多高了 20%）。不禁讓人懷疑，是不是訓練 gpt-4o 的時候有讓它喝酒！
 
-## Distilling gpt-4o outputs to gpt-4o-mini
+## 把 gpt-4o 的輸出蒸餾到 gpt-4o-mini
 
-Let's assume we'd like to run this prediction often, we want completions to be faster and cheaper, but keep that level of accuracy. That'd be great to be able to distill 4o accuracy to 4o-mini, wouldn't it? Let's do it!
+假設這個預測會常常跑，我們希望 completion 更快更便宜，但準確率不要掉。如果能把 4o 的準確率蒸餾到 4o-mini，那就太好了，對吧？來做吧！
 
-We'll now go to OpenAI Stored completions page: [https://platform.openai.com/chat-completions](https://platform.openai.com/chat-completions).
+到 OpenAI 的 Stored completions 頁面：[https://platform.openai.com/chat-completions](https://platform.openai.com/chat-completions)。
 
-Let's select the model gpt-4o (make sure to do this, you don't want to distill the outputs of 4o-mini that we ran). Let's also select the metadata `distillation: wine-distillation` to get only stored completions ran from this cookbook.
+選擇 gpt-4o 這個模型（一定要選對，你不會想蒸餾剛才跑的 4o-mini 的輸出）。再選 metadata `distillation: wine-distillation`，這樣只會篩出這篇 cookbook 跑出來的 stored completion。
 
 ![Filtering out completions](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/filtering-out-completions.png)
 
-Once you've selected completions, you can click on "Distill" on the top right corner to fine-tune a model based on those completions. Once we've done that, a file to run the fine-tuning process will automatically be created. Let's then select `gpt-4o-mini` as the base model, keep the default parameters (but you're free to change them or iterate with it to improve performance).
+選好 completion 之後，點右上角的「Distill」，就能用這些 completion 去 fine-tune 模型。點下去之後會自動建立跑 fine-tuning 所需的檔案。接著選 `gpt-4o-mini` 當 base model，參數保留預設（你也可以自己改，或反覆調整來提升表現）。
 
 ![Distilling modal](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/distilling.png)
 
-Once the fine-tuning job is starting, you can retrieve the fine tuning job ID from the fine-tuning page, we'll use it to monitor status of the fine-tuned job as well as retrieving the fine-tuned model id once done.
+fine-tuning job 開始之後，可以在 fine-tuning 頁面拿到 job ID。我們會用它來監控 job 狀態，完成後也用它取得 fine-tuned 模型的 id。
 
 ![Fine tuning job](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/fine-tuning-job.png)
 
@@ -416,10 +429,10 @@ else:
     finetuned model: ft:gpt-4o-mini-2024-07-18:distillation-test:wine-distillation:AIZntSyE
     ```
 
-## Running completions for the distilled model
+## 用蒸餾後的模型跑 completion
 
-Now that we've got our model fine-tuned, we can use this model to run completions and compare accuracy with both gpt4o and gpt4o-mini.
-Let's grab a different subset of french wines (as we restricted the outputs to french grape varieties, without outliers, we'll need to focus our validation dataset to this too). Let's run this on 300 entries for each models.
+模型 fine-tune 好了，現在用它跑 completion，跟 gpt4o 和 gpt4o-mini 比準確率。
+我們另外取一批不同的法國酒（因為輸出被限制在法國葡萄品種、沒有離群值，驗證資料集也要限定在這個範圍）。每個模型各跑 300 筆。
 
 ```python
 validation_dataset = df_france.sample(n=300)
@@ -438,7 +451,7 @@ for model in models:
     Processing rows: 100%|███████████████████████████████████████████████| 300/300 [00:37<00:00,  8.08it/s]
     ```
 
-Let's compare accuracy of models
+比較各模型的準確率
 
 ```python
 for model in models:
@@ -453,8 +466,20 @@ for model in models:
     ft:gpt-4o-mini-2024-07-18:distillation-test:wine-distillation:AIZntSyE accuracy: 79.33%
     ```
 
-That's almost a **22% relative improvement over the non-distilled gpt-4o-mini! 🎉**
+比沒蒸餾的 gpt-4o-mini 相對提升了將近 **22%！🎉**
 
-Our fine-tuned model performs way better than gpt-4o-mini, while having the same base model. We'll be able to use this model to run inferences at a lower cost and lower latency for future grape variety prediction.
+我們的 fine-tuned 模型表現比 gpt-4o-mini 好很多，而且 base model 是同一個。之後預測葡萄品種，就可以用這個模型，成本和延遲都更低。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Distillation 是用大模型的輸出當訓練資料，讓小模型在特定任務上逼近大模型的表現，省成本也省延遲。
+- 蒸餾的原料是 stored completions，所以呼叫時要加 `store=True`，再用 metadata 標籤方便之後篩選。
+- 分類任務用 Structured Outputs 加 enum，可以把答案鎖在固定清單，比對準確率時不用處理奇怪的輸出。
+- 蒸餾時要選對來源模型，只拿大模型（gpt-4o）的 completion，不能混進小模型的。
+- 評估要用沒參與訓練的另一批資料，才能公平比較三個模型。
+
+## 練習
+
+1. 把 enum 清單換成不限制的字串輸出（拿掉 structured outputs），看 gpt-4o-mini 的準確率會怎麼變。
+2. 在產生 prompt 的函式裡拿掉產地相關欄位，重新跑 gpt-4o 和 gpt-4o-mini，看兩者差距有沒有拉大。
+3. 把驗證資料從 300 筆改成別的數量，並換一個 metadata 標籤存 completion，在平台上只篩出新標籤的資料重做一次 distillation，比較結果。

@@ -1,15 +1,25 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/Openai_monitoring_with_wandb_weave.ipynb
 ---
 
-# OpenAI API Monitoring with Weights & Biases Weave
+# 用 Weights & Biases Weave 監控 OpenAI API
 
 > 原文：[examples/third_party/Openai_monitoring_with_wandb_weave.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/Openai_monitoring_with_wandb_weave.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 W&B 的 OpenAI integration 記錄每一次 OpenAI API 呼叫，並產生 Weave Board 這種 LLM 用量監控 dashboard，讓你看成本、延遲、吞吐量等指標。
+
+## 學完你會
+- 呼叫 `init_monitor()` 開始記錄 OpenAI API 呼叫，並打開 Weave Board
+- 把 system prompt、template 等參數當作 attribute 記錄下來，方便分組分析
+- 記錄 streaming 訊息，以及用不同 prompt 設定做實驗後在 Board 上比較
+
+## 開跑前
+- OpenAI API key
+- Weights & Biases 帳號（需要登入，並設定 wandb 的使用者或團隊名稱）
 
 
 <img src="http://wandb.me/logo-im-png" width="400" alt="Weights & Biases" />
@@ -20,24 +30,24 @@ source: examples/third_party/Openai_monitoring_with_wandb_weave.ipynb
   <img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open In Colab"/>
 </a>
 
-**Note:** you will need an [OpenAI API key](https://platform.openai.com/account/api-keys) to run this colab.
+**注意：** 跑這份 colab 需要 [OpenAI API key](https://platform.openai.com/account/api-keys)。
 
-Use the W&B OpenAI integration to monitor OpenAI API calls and understand how your projects and teams are leveraging LLMs.
-In this example, we'll generate templated Weave Boards: LLM usage monitoring dashboards which you can explore and customize from the UI.
+用 W&B 的 OpenAI integration 來監控 OpenAI API 呼叫，了解你的專案和團隊怎麼使用 LLM。
+這個範例會產生 template 化的 Weave Board，也就是 LLM 用量監控 dashboard，你可以在 UI 裡探索和客製化。
 
-* automatically track LLM usage and aggregate useful metrics like  cost, latency and throughput across your projects/teams
-* dynamically query and derive insights from the logs of all your OpenAI API calls
-* iterate visually to slice, aggregate, and explore your data; customize panels to focus on interesting patterns; share progress more easily with your team through an interactive dashboard
+* 自動追蹤 LLM 用量，並彙總各專案、各團隊的成本、延遲和吞吐量等有用指標
+* 動態查詢所有 OpenAI API 呼叫的 log，並從中得出洞察
+* 用視覺化方式反覆操作：切分、彙總、探索資料，客製化 panel 來聚焦有趣的模式，並透過互動式 dashboard 更輕鬆地跟團隊分享進度
 
 <img src="https://raw.githubusercontent.com/wandb/weave/master/docs/assets/full_board_view.png">
 
-[Play with a live version of this Weave Board →](http://wandb.me/llm-monitoring-board)
+[試玩這個 Weave Board 的線上版本 →](http://wandb.me/llm-monitoring-board)
 
-#### New to Weights & Biases? [-> Sign up for an account here <-](https://wandb.ai/site)
+#### 第一次用 Weights & Biases？[-> 在這裡註冊帳號 <-](https://wandb.ai/site)
 
-# Step 0: Setup
+# 步驟 0：Setup
 
-Install dependencies, login to W&B so you can save and share your work, and authenticate with OpenAI.
+安裝相依套件，登入 W&B 以便儲存和分享你的成果，並驗證 OpenAI。
 
 ```python
 # if not already installed
@@ -66,9 +76,9 @@ assert os.getenv("OPENAI_API_KEY", "").startswith("sk-"), "This doesn't look lik
 print("OpenAI API key configured")
 ```
 
-# Step 1: Configure data streaming and storage in W&B
+# 步驟 1：設定 W&B 的資料串流與儲存
 
-Set WB_ENTITY to your wandb username or team name. Log in to W&B and navigate to Home Page at [wandb.ai/home](https://wandb.ai/home) to see valid options under your "Profile" and "Teams" in the left sidebar.
+把 WB_ENTITY 設成你的 wandb 使用者名稱或團隊名稱。登入 W&B 並前往首頁 [wandb.ai/home](https://wandb.ai/home)，在左側欄的「Profile」和「Teams」下可以看到有效的選項。
 
 ```python
 WB_ENTITY = "" # set to your wandb username or team name
@@ -76,11 +86,11 @@ WB_PROJECT = "weave" # top-level directory for this work
 STREAM_NAME = "openai_logs" # record table which stores the logs of OpenAI API calls as they stream in
 ```
 
-# Step 2: Call init_monitor()
+# 步驟 2：呼叫 init_monitor()
 
-To start monitoring OpenAI API usage, call `init_monitor(<stream>)`, where `<stream>` has the form `<wandb_team_or_user>/<wandb_project>/<stream_name>`. The stream records and stores all the OpenAI API calls.
+要開始監控 OpenAI API 用量，呼叫 `init_monitor(<stream>)`，其中 `<stream>` 的格式是 `<wandb_team_or_user>/<wandb_project>/<stream_name>`。這個 stream 會記錄並儲存所有 OpenAI API 呼叫。
 
-Running this cell will print out a link to view the current project in the Weave UI.
+執行這個 cell 會印出一個連結，可在 Weave UI 查看目前的專案。
 
 ```python
 from weave.monitoring import openai, init_monitor
@@ -94,32 +104,32 @@ r = openai.ChatCompletion.create(model=OPENAI_MODEL, messages=[{"role": "user", 
 r = openai.ChatCompletion.create(model=OPENAI_MODEL, messages=[{"role": "user", "content": "what is 2+2?"}])
 ```
 
-# Step 3: Preview monitoring dashboard
+# 步驟 3：預覽監控 dashboard
 
-Click on the link above to preview the data stream, then click "OpenAI Monitor Board" in the right sidebar to create a Weave Board for this data stream.
+點上面的連結預覽資料串流，然後點右側欄的「OpenAI Monitor Board」，為這個資料串流建立 Weave Board。
 
 <img src="https://raw.githubusercontent.com/wandb/weave/master/docs/assets/short_board_attempt.gif" width=75%>
 
-# Step 4: Explore & understand your LLM usage
+# 步驟 4：探索並了解你的 LLM 用量
 
-To save your work, rename the board by clicking on the autogenerated name at the top of the page. To share your board, click \"Publish\" in the top right.
+要儲存你的成果，點頁面上方自動產生的名稱來重新命名 Board。要分享 Board，點右上角的 \"Publish\"。
 
 <img src="https://raw.githubusercontent.com/wandb/weave/master/docs/assets/publish_board_short.gif" width=75%>
 
-To visualize your work in real-time as you iterate, you can:
-* keep the Board open in a separate tab and refresh to view the latest data
-* rename the Board for easier reference at any point and \"Publish\" that version to share a link with others
-* find previously saved Boards by navigating to the relevant W&B entity and W&B project name from weave.wandb.ai
-* or open a new instance of a Board template to start fresh with all the data accumulated so far
+想在迭代時即時看到成果，可以：
+* 把 Board 開在另一個分頁，重新整理就能看到最新資料
+* 隨時重新命名 Board 方便參考，並 \"Publish\" 那個版本，把連結分享給別人
+* 到 weave.wandb.ai 找到對應的 W&B entity 和 W&B project 名稱，就能找到之前儲存的 Board
+* 或用 Board template 開一個新的 instance，帶著目前累積的所有資料重新開始
 
 
-Next we'll illustrate a few ways you could track OpenAI API calls. There are many more possibilities depending on your use case, and we can't wait to see what you create from these starter templates.
+接下來我們會示範幾種追蹤 OpenAI API 呼叫的方式。依你的使用情境還有更多可能，我們很期待看到你用這些起手式 template 做出什麼。
 
-# Examples
+# 範例
 
-## Example 0: Log a prompt and its completion
+## 範例 0：記錄 prompt 和它的 completion
 
-Monitor a ChatCompletion request and print the corresponding response, extracting only the text of the completion.
+監控一個 ChatCompletion 請求，並印出對應的回應，只取出 completion 的文字。
 
 ```python
 response = openai.ChatCompletion.create(model=OPENAI_MODEL, messages=[
@@ -128,10 +138,10 @@ response = openai.ChatCompletion.create(model=OPENAI_MODEL, messages=[
 print(response['choices'][0]['message']['content'])
 ```
 
-## Example 1: Track relevant parameters as attributes
+## 範例 1：把相關參數當作 attribute 追蹤
 
-Factor out parameters of interest and track them as attributes on the logged record.
-Here we track the "system prompt" separately from the "prompt template" and the "equation" parameter. This time we'll print the full structured response from the ChatCompletion call.
+把感興趣的參數獨立出來，當作 attribute 記錄在 log 紀錄上。
+這裡我們把「system prompt」跟「prompt template」和「equation」參數分開追蹤。這次我們會印出 ChatCompletion 呼叫完整的結構化回應。
 
 ```python
 system_prompt = "you always write in bullet points"
@@ -151,9 +161,9 @@ openai.ChatCompletion.create(model=OPENAI_MODEL,
                              })
 ```
 
-## Example 2: Log an ongoing stream of messages
+## 範例 2：記錄持續進行的訊息串流
 
-Monitor a stream of messages and log the result as a single record. Note: tokens are not counted in this format.
+監控一串訊息，並把結果記成一筆紀錄。注意：這種格式不會計算 token。
 
 ```python
 from weave.monitoring.openai import message_from_stream
@@ -165,9 +175,9 @@ for s in message_from_stream(r):
     print(s, end='')
 ```
 
-## Example 3: Structure prompt engineering experiments
+## 範例 3：把 prompt engineering 實驗結構化
 
-Here we compare a few toy options for the system prompt, user question, and intended audience. Try your own experiments and see if any interesting insights emerge as you explore in the Board and group by different parameters.
+這裡比較幾個簡單的選項：system prompt、使用者問題和目標讀者。你可以自己做實驗，在 Board 裡探索並依不同參數分組，看看有沒有有趣的洞察。
 
 ```python
 def explain_math(system_prompt, prompt_template, params):
@@ -199,4 +209,14 @@ for system_prompt in system_prompts:
             explain_math(system_prompt, prompt_template, params)
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 監控的核心是 `init_monitor(<stream>)`，之後的 OpenAI API 呼叫都會被記錄到指定的 stream。
+- Weave Board 把 log 變成 dashboard，能看成本、延遲、吞吐量，並自己切分資料。
+- 把 system prompt、template 等參數記成 attribute，之後才能依這些參數分組比較。
+- streaming 訊息可以記成單筆紀錄，但不會計算 token。
+- prompt 實驗結構化記錄後，就能在 Board 上直接比較不同設定的效果。
+
+## 練習
+1. 在範例 0 換一個 prompt 再呼叫一次，到 Board 上確認新紀錄出現。
+2. 在範例 1 多加一個自己的參數（例如 `audience`），並在 Board 上依它分組。
+3. 在範例 3 新增一組 system prompt 選項，比較它和原本選項的 token 用量與回應差異。

@@ -1,5 +1,5 @@
 ---
-translated: false
+translated: true
 source: examples/Prompt_Caching101.ipynb
 ---
 
@@ -7,30 +7,42 @@ source: examples/Prompt_Caching101.ipynb
 
 > 原文：[examples/Prompt_Caching101.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Prompt_Caching101.ipynb)
 
-Cookbook to reduce latency and cost using OpenAI prompt caching.
+用 OpenAI 的 prompt caching 降低延遲和成本。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+說明 OpenAI 的 prompt caching 怎麼運作，並用兩個例子實測：快取 tools 加多輪對話，以及快取圖片。重點是看 `cached_tokens` 欄位，確認哪些請求有命中快取、哪些沒有。
+
+## 學完你會
+
+- 知道 prompt caching 的觸發條件（超過 1024 token 的 prefix）和作用範圍
+- 把 prompt 排成靜態內容在前、動態內容在後，讓 tools 和多輪對話命中快取
+- 從 `usage.prompt_tokens_details.cached_tokens` 判斷快取有沒有生效，並理解圖片的 URL 順序為什麼會影響命中
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`
+- 範例會多次呼叫模型（含延遲等待），會產生少量費用
 
 
+OpenAI 對超過 1024 token 的 prompt 提供折扣的 prompt caching，對超過 10,000 token 的長 prompt，延遲最多可降低 80%。把 LLM API 請求之間重複的資訊快取起來，可以大幅降低延遲和成本。Prompt caching 的範圍在組織層級，也就是只有同一組織的成員能存取共用的快取。此外，caching 符合 zero data retention，因為過程中不會儲存任何資料。
 
-OpenAI offers discounted prompt caching for prompts exceeding 1024 tokens, resulting in up to an 80% reduction in latency for longer prompts over 10,000 tokens. By caching repetitive information across LLM API requests, you can greatly reduce both latency and costs. Prompt caching is scoped at the organization level, meaning only members of the same organization can access shared caches. Additionally, caching is eligible for zero data retention, as no data is stored during the process.
+Prompt caching 會對超過 1024 token 的 prompt 自動啟用，你的 completions 請求不用做任何改動。發出 API 請求時，系統會先檢查 prompt 開頭的部分（prefix）是否已經被快取。如果有符合（cache hit），就使用快取的 prompt，延遲和成本都會降低。如果沒有符合，系統會從頭處理整個 prompt，並把 prefix 快取起來供之後使用。
 
-Prompt caching automatically activates for prompts longer than 1024 tokens-- you don't have to change anything in your completions request. When an API request is made, the system first checks if the beginning portion (prefix) of the prompt has already been cached. If a match is found (cache hit), the cached prompt is used, leading to reduced latency and costs. If there's no match, the system processes the full prompt from scratch and caches the prefix for future use.
-
-With these benefits in mind, some of the key use cases where prompt caching can be especially advantageous are:
+了解這些好處後，prompt caching 特別有利的幾個主要使用情境是：
 
 
-- **Agents using tools and structured outputs**: Cache the extended list of tools and schemas.  
-- **Coding and writing assistants**: Insert large sections or summaries of codebases and workspaces directly in prompts. 
-- **Chatbots**: Cache static portions of multi-turn conversations to maintain context efficiently over extended dialogues.
+- **使用 tools 和 structured outputs 的 agent**：快取很長的 tools 清單和 schema。
+- **程式與寫作助手**：把大段程式碼或工作區的摘要直接放進 prompt。
+- **聊天機器人**：快取多輪對話中固定的部分，在長時間對話中有效維持 context。
 
-In this cookbook, we'll go through a couple examples of caching tools and images. Recall that in general, you'll want to put static content like instructions and examples at the beginning of your prompt, and variable content, such as user-specific information, at the end. This also applies to images and tools, which must be identical even in their ordering between requests. All requests, including those with fewer than 1024 tokens, will display a cached_tokens field of the `usage.prompt_tokens_details` chat completions object indicating how many of the prompt tokens were a cache hit. For requests under 1024 tokens, cached_tokens will be zero. Caching discounts are based on the actual number of tokens processed, including those used for images, which also count toward your rate limits.
+這份 cookbook 會用幾個例子示範快取 tools 和圖片。一般來說，要把指令、範例這類靜態內容放在 prompt 開頭，把使用者專屬資訊這類會變的內容放在結尾。這個原則也適用於圖片和 tools，它們在請求之間必須完全相同，連順序都要一致。所有請求，包括少於 1024 token 的，都會在 chat completions 物件的 `usage.prompt_tokens_details` 裡顯示 cached_tokens 欄位，表示 prompt token 中有多少命中快取。少於 1024 token 的請求，cached_tokens 會是零。快取折扣是依實際處理的 token 數計算，包括圖片用掉的 token，這些也會算進你的 rate limit。
 
-## Example 1: Caching tools and multi-turn conversations
+## 範例 1：快取 tools 與多輪對話
 
-In this example, we define tools and interactions for a customer support assistant, capable of handling tasks such as checking delivery dates, canceling orders, and updating payment methods. The assistant processes two separate messages, first responding to an initial query, followed by a delayed response to a follow-up query.
+這個例子裡，我們為客服助手定義 tools 和互動，它能處理查詢送達日期、取消訂單、更新付款方式等任務。助手處理兩則獨立的訊息，先回應第一個查詢，再延遲一段時間後回應後續的查詢。
 
-When caching tools, it is important that the tool definitions and their order remain identical for them to be included in the prompt prefix. To cache message histories in a multi-turn conversation, append new elements to the end of the messages array. In the response object and the output below, for the second completion `run2`, you can see that the `cached_tokens` value is greater than zero, indicating successful caching.
+快取 tools 時，tool 定義和它們的順序必須完全相同，才會被納入 prompt prefix。要在多輪對話中快取訊息歷史，就把新元素加到 messages 陣列的結尾。在回應物件和下面的輸出裡，第二次 completion `run2` 的 `cached_tokens` 大於零，表示快取成功。
 
 ```python
 from openai import OpenAI
@@ -330,11 +342,11 @@ main(messages, tools, user_query2)
     ... (省略 51 行)
     ```
 
-## Example 2: Images 
+## 範例 2：圖片
 
-In our second example we include multiple image URLs of grocery items in the messages array, along with a user query, run three times with delays. Images—whether linked or encoded in base64 within user messages—qualify for caching. Make sure the detail parameter remains consistent, as it affects how images are tokenized. Note that GPT-4o-mini adds extra tokens to cover image processing costs, even though it uses a low-cost token model for text. Caching discounts are based on the actual number of tokens processed, including those used for images, which also count toward your rate limits.
+第二個例子，我們在 messages 陣列裡放入多個雜貨商品的圖片 URL，加上一個使用者查詢，並加上延遲跑三次。圖片不論是連結還是以 base64 編碼放在 user message 裡，都符合快取條件。要確保 detail 參數保持一致，因為它會影響圖片怎麼被 tokenize。注意 GPT-4o-mini 雖然文字用的是低成本的 token 模型，但會多加一些 token 來涵蓋圖片處理的成本。快取折扣是依實際處理的 token 數計算，包括圖片用掉的 token，這些也會算進你的 rate limit。
 
-The output for this example shows that a cache was hit for the second run, however it was not hit for the third run because of a different first url (eggs_url instead of veggie_url), even though the user query is the same. 
+這個例子的輸出顯示，第二次執行命中了快取，但第三次沒有命中，原因是第一個 URL 不同（eggs_url 而不是 veggie_url），即使使用者查詢相同。
 
 ```python
 sauce_url = "https://upload.wikimedia.org/wikipedia/commons/thumb/9/97/12-04-20-saucen-by-RalfR-15.jpg/800px-12-04-20-saucen-by-RalfR-15.jpg"
@@ -431,16 +443,28 @@ if __name__ == "__main__":
     ```
 
 
-## Overall tips 
+## 整體建議
 
-To get the most out of prompt caching, consider following these best practices:
+要充分利用 prompt caching，可以參考這些最佳做法：
 
-- Place static or frequently reused content at the beginning of prompts: This helps ensure better cache efficiency by keeping dynamic data towards the end of the prompt.
+- 把靜態或常重複使用的內容放在 prompt 開頭：把動態資料放在 prompt 結尾，快取效率會比較好。
 
--  Maintain consistent usage patterns: Prompts that aren't used regularly are automatically removed from the cache. To prevent cache evictions, maintain consistent usage of prompts.
+- 保持一致的使用模式：不常使用的 prompt 會被自動從快取移除。要避免被逐出，就要穩定地使用 prompt。
 
-- Monitor key metrics: Regularly track cache hit rates, latency, and the proportion of cached tokens. Use these insights to fine-tune your caching strategy and maximize performance.
+- 監控關鍵指標：定期追蹤快取命中率、延遲和被快取 token 的比例，用這些資訊調整快取策略，把效能發揮到最大。
 
-By implementing these practices, you can take full advantage of prompt caching, ensuring that your applications are both responsive and cost-efficient. A well-managed caching strategy will significantly reduce processing times, lower costs, and help maintain smooth user experiences.
+做到這些，就能充分利用 prompt caching，讓應用程式反應快又省成本。管理得當的快取策略能明顯縮短處理時間、降低成本，也讓使用者體驗更順暢。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- prompt caching 對超過 1024 token 的 prompt 自動啟用，不用改請求，範圍是組織層級。
+- 命中靠的是 prefix 完全相同，所以靜態內容放前面，動態內容放後面。
+- tools 和圖片的內容與順序都要一致，連 URL 順序不同都會 miss。
+- 多輪對話的做法是把新訊息只往 messages 結尾追加。
+- 用 `cached_tokens` 監控命中，並維持穩定的呼叫頻率避免快取被逐出。
+
+## 練習
+
+1. 把範例 1 的 tools 清單順序對調，重跑 `run2`，觀察 `cached_tokens` 是否變成 0。
+2. 範例 2 裡，把第三次的圖片 URL 順序改回跟前兩次一樣，確認這次有命中快取。
+3. 寫一個小函式，每次呼叫後印出 `cached_tokens / prompt_tokens` 的命中比例，並套用到前面所有請求。

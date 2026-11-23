@@ -1,68 +1,79 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/hologres/Getting_started_with_Hologres_and_OpenAI.ipynb
 ---
 
-# Using Hologres as a vector database for OpenAI embeddings
+# 用 Hologres 當 OpenAI embeddings 的 vector database
 
 > 原文：[examples/vector_databases/hologres/Getting_started_with_Hologres_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/hologres/Getting_started_with_Hologres_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範把預先算好的 Wikipedia 文章 embeddings 存進阿里雲的 Hologres，建 Proxima 向量索引，再用 OpenAI 把文字 query 轉成 embedding 做最近鄰搜尋。
+
+## 學完你會
+- 用 `psycopg2` 連上 Hologres，建立含 title 和 content 向量的資料表與 Proxima 索引。
+- 用 COPY 把預算好的 embeddings 匯入，並等索引建完。
+- 把 query 轉成 embedding，用 `text-embedding-3-small` 對 title 或 content 向量做相似搜尋。
+
+## 開跑前
+- 需要一個 Hologres 雲端實例（阿里雲）。
+- 需要 OpenAI API key，設成環境變數 `OPENAI_API_KEY`。
+- 需要安裝 `openai` 和 `psycopg2-binary`，匯入資料可能要 5 到 10 分鐘。
 
 
-This notebook guides you step by step on using Hologres as a vector database for OpenAI embeddings.
+這份 notebook 一步步帶你用 Hologres 當 OpenAI embeddings 的 vector database。
 
-This notebook presents an end-to-end process of:
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in a cloud instance of Hologres.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using Hologres to perform the nearest neighbour search in the created collection.
-5. Provide large language models with the search results as context in prompt engineering
+這份 notebook 呈現一個完整流程：
+1. 使用 OpenAI API 預先算好的 embeddings。
+2. 把 embeddings 存進 Hologres 的雲端實例。
+3. 用 OpenAI API 把原始文字 query 轉成 embedding。
+4. 用 Hologres 在建好的 collection 裡做最近鄰搜尋。
+5. 在 prompt engineering 中，把搜尋結果當作 context 提供給大型語言模型
 
-### What is Hologres
+### 什麼是 Hologres
 
-[Hologres](https://www.alibabacloud.com/help/en/hologres/latest/what-is-hologres) is a unified real-time data warehousing service developed by Alibaba Cloud. You can use Hologres to write, update, process, and analyze large amounts of data in real time. Hologres supports standard SQL syntax, is compatible with PostgreSQL, and supports most PostgreSQL functions. Hologres supports online analytical processing (OLAP) and ad hoc analysis for up to petabytes of data, and provides high-concurrency and low-latency online data services. Hologres supports fine-grained isolation of multiple workloads and enterprise-level security capabilities. Hologres is deeply integrated with MaxCompute, Realtime Compute for Apache Flink, and DataWorks, and provides full-stack online and offline data warehousing solutions for enterprises.
+[Hologres](https://www.alibabacloud.com/help/en/hologres/latest/what-is-hologres) 是阿里雲開發的統一即時資料倉儲服務。你可以用 Hologres 即時寫入、更新、處理和分析大量資料。Hologres 支援標準 SQL 語法，相容 PostgreSQL，並支援大部分 PostgreSQL 函式。Hologres 支援線上分析處理（OLAP）和最高到 PB 級資料的 ad hoc 分析，並提供高併發、低延遲的線上資料服務。Hologres 支援多工作負載的細粒度隔離和企業級安全能力。Hologres 與 MaxCompute、Realtime Compute for Apache Flink 和 DataWorks 深度整合，為企業提供全端的線上與離線資料倉儲解決方案。
 
-Hologres provides vector database functionality by adopting [Proxima](https://www.alibabacloud.com/help/en/hologres/latest/vector-processing).
+Hologres 透過採用 [Proxima](https://www.alibabacloud.com/help/en/hologres/latest/vector-processing) 來提供 vector database 功能。
 
-Proxima is a high-performance software library developed by Alibaba DAMO Academy. It allows you to search for the nearest neighbors of vectors. Proxima provides higher stability and performance than similar open source software such as Facebook AI Similarity Search (Faiss). Proxima provides basic modules that have leading performance and effects in the industry and allows you to search for similar images, videos, or human faces. Hologres is deeply integrated with Proxima to provide a high-performance vector search service.
+Proxima 是阿里巴巴達摩院開發的高效能軟體函式庫，讓你搜尋向量的最近鄰。Proxima 比類似的開源軟體，像是 Facebook AI Similarity Search (Faiss)，有更高的穩定性和效能。Proxima 提供業界領先效能與效果的基礎模組，可以用來搜尋相似的圖片、影片或人臉。Hologres 與 Proxima 深度整合，提供高效能的向量搜尋服務。
 
-### Deployment options
+### 部署選項
 
-- [Click here](https://www.alibabacloud.com/product/hologres) to fast deploy [Hologres data warehouse](https://www.alibabacloud.com/help/en/hologres/latest/getting-started).
-
-
-## Prerequisites
-
-For the purposes of this exercise we need to prepare a couple of things:
-
-1. Hologres cloud server instance.
-2. The 'psycopg2-binary' library to interact with the vector database. Any other postgresql client library is ok.
-3. An [OpenAI API key](https://beta.openai.com/account/api-keys).
+- [點這裡](https://www.alibabacloud.com/product/hologres)快速部署 [Hologres 資料倉儲](https://www.alibabacloud.com/help/en/hologres/latest/getting-started)。
 
 
+## 前置需求
 
-We might validate if the server was launched successfully by running a simple curl command:
+為了這個練習，我們需要準備幾樣東西：
+
+1. Hologres 雲端伺服器實例。
+2. 用來和 vector database 互動的 'psycopg2-binary' 函式庫。其他 postgresql client 函式庫也可以。
+3. 一把 [OpenAI API key](https://beta.openai.com/account/api-keys)。
 
 
-### Install requirements
 
-This notebook obviously requires the `openai` and `psycopg2-binary` packages, but there are also some other additional libraries we will use. The following command installs them all:
+我們可以跑一個簡單的 curl 指令來驗證伺服器是否成功啟動：
+
+
+### 安裝需求套件
+
+這份 notebook 當然需要 `openai` 和 `psycopg2-binary` 套件，另外還會用到一些其他函式庫。下面的指令會全部裝好：
 
 
 ```python
 ! pip install openai psycopg2-binary pandas wget
 ```
 
-### Prepare your OpenAI API key
+### 準備你的 OpenAI API key
 
-The OpenAI API key is used for vectorization of the documents and queries.
+OpenAI API key 用來把文件和 query 向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+如果你沒有 OpenAI API key，可以從 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY`.
+拿到 key 之後，請把它加到環境變數 `OPENAI_API_KEY`。
 
 ```python
 # Test that your OpenAI API key is correctly set as an environment variable
@@ -84,10 +95,10 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Connect to Hologres
-First add it to your environment variables. or you can just change the "psycopg2.connect" parameters below
+## 連線到 Hologres
+先把它加到環境變數，或者你也可以直接改下面 "psycopg2.connect" 的參數。
 
-Connecting to a running instance of Hologres server is easy with the official Python library:
+用官方的 Python 函式庫連到執行中的 Hologres 伺服器很簡單：
 
 ```python
 import os
@@ -113,7 +124,7 @@ connection.set_session(autocommit=True)
 cursor = connection.cursor()
 ```
 
-We can test the connection by running any available method:
+我們可以跑任何可用的方法來測試連線：
 
 ```python
 
@@ -143,7 +154,7 @@ embeddings_url = "https://cdn.openai.com/API/examples/data/vector_database_wikip
 wget.download(embeddings_url)
 ```
 
-The downloaded file has to be then extracted:
+下載的檔案接著要解壓縮：
 
 ```python
 import zipfile
@@ -177,9 +188,9 @@ else:
     The file vector_database_wikipedia_articles_embedded.csv exists in the data directory.
     ```
 
-## Load data
+## 載入資料
 
-In this section we are going to load the data prepared previous to this session, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一節我們會載入這次之前就準備好的資料，所以你不用花自己的額度重新計算 Wikipedia 文章的 embeddings。
 
 ```python
 !unzip -n vector_database_wikipedia_articles_embedded.zip
@@ -193,7 +204,7 @@ In this section we are going to load the data prepared previous to this session,
     -rw-r--r--@ 1 geng  staff   1.7G Jan 31 01:19 vector_database_wikipedia_articles_embedded.csv
     ```
 
-Take a look at the data.
+看一下資料。
 
 ```python
 import pandas, json
@@ -260,11 +271,11 @@ print(title_vector_length, content_vector_length)
     1536 1536
     ```
 
-### Create table and proxima vector index
+### 建立資料表和 proxima 向量索引
 
-Hologres stores data in __tables__ where each object is described by at least one vector. Our table will be called **articles** and each object will be described by both **title** and **content** vectors.
+Hologres 把資料存在 __tables__ 裡，每個物件至少用一個向量描述。我們的資料表叫 **articles**，每個物件由 **title** 和 **content** 向量一起描述。
 
-We will start with creating a table and create proxima indexes on both **title** and **content**, and then we will fill it with our precomputed embeddings.
+我們先建立資料表，並在 **title** 和 **content** 上都建 proxima 索引，然後填入預先算好的 embeddings。
 
 ```python
 cursor.execute('CREATE EXTENSION IF NOT EXISTS proxima;')
@@ -304,9 +315,9 @@ COMMIT;
 cursor.execute(create_proxima_table_sql)
 ```
 
-### Upload data
+### 上傳資料
 
-Now let's upload the data to the Hologres cloud instance using [COPY statement](https://www.alibabacloud.com/help/en/hologres/latest/use-the-copy-statement-to-import-or-export-data). This might take 5-10 minutes according to the network bandwidth.
+現在用 [COPY 語句](https://www.alibabacloud.com/help/en/hologres/latest/use-the-copy-statement-to-import-or-export-data)把資料上傳到 Hologres 雲端實例。依網路頻寬，這可能要 5 到 10 分鐘。
 
 ```python
 import io
@@ -335,7 +346,7 @@ FROM STDIN WITH (FORMAT CSV, HEADER true, DELIMITER ',');
 cursor.copy_expert(copy_command, modified_lines)
 ```
 
-The proxima index will be built in the background. We can do searching during this period but the query will be slow without the vector index. Use this command to wait for finish building the index.
+proxima 索引會在背景建立。這段期間可以搜尋，但沒有向量索引的話 query 會很慢。用這個指令等索引建完。
 
 ```python
 cursor.execute('vacuum articles;')
@@ -355,9 +366,9 @@ print(f"Count:{result[0]}")
     Count:25000
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is uploaded we will start querying the collection for the closest vectors. We may provide an additional parameter `vector_name` to switch from title to content based search. Since the precomputed embeddings were created with `text-embedding-3-small` OpenAI model we also have to use it during search.
+資料上傳完之後，我們就開始在 collection 裡查詢最接近的向量。可以多給一個參數 `vector_name`，在 title 和 content 搜尋之間切換。因為預先算好的 embeddings 是用 `text-embedding-3-small` 這個 OpenAI 模型建立的，搜尋時也必須用它。
 
 
 ```python
@@ -450,4 +461,14 @@ for i, result in enumerate(query_results):
     20. July 27 (Score: 0.405)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Hologres 相容 PostgreSQL，所以用一般 postgres client 就能操作，向量搜尋靠 Proxima 索引。
+- 建 embeddings 和查詢時要用同一個 embedding 模型，這裡是 `text-embedding-3-small`。
+- 每篇文章有 title 和 content 兩組向量，可以選擇對哪一組搜尋。
+- 索引在背景建，沒建完前也能查但會慢。
+- 流程是預先算好 embeddings、匯入、建索引、query 轉向量、最近鄰搜尋，其他 vector database 也一樣。
+
+## 練習
+1. 改 `vector_name` 參數，比較用 title 和 content 搜同一個 query 的結果有何不同。
+2. 換一個自己的 query 字串，並把回傳筆數改成 10。
+3. 把搜尋結果的內容組成 prompt，傳給 chat model 回答問題，做出簡單的 RAG。

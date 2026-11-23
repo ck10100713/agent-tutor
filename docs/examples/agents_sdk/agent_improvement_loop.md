@@ -1,57 +1,65 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/agent_improvement_loop.ipynb
 ---
-
-# Build an Agent Improvement Loop with Traces, Evals, and Codex
+# 用 Traces、Evals 和 Codex 打造 Agent 改進迴圈
 
 > 原文：[examples/agents_sdk/agent_improvement_loop.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/agent_improvement_loop.ipynb)
 
-Build a trace-driven improvement loop that turns human and model feedback into Promptfoo evals, HALO-ranked harness changes, and a Codex handoff.
+建立一個以 trace 驅動的改進迴圈，把人工和模型的回饋變成 Promptfoo evals、HALO 排序過的 harness 修改建議，以及交給 Codex 的 handoff。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇從 agent 真實跑出來的 traces 開始，加上人工和模型的回饋，把回饋轉成可重複執行的 evals，再用這些證據產出下一輪 harness 該改什麼，交給 Codex 去實作。範例是一個做併購盡職調查的財務分析 agent，用的是 OpenAI Agents SDK。
+
+## 學完你會
+- 用 OpenAI Agents SDK 建一個會產出 traces 和檔案成果（artifacts）的分析 agent
+- 把人工回饋和 LLM 回饋轉成 Promptfoo evals，當作之後可重跑的驗證關卡
+- 用 HALO 分析 traces、回饋和 eval 結果，產出排序過的 harness 修改清單和 `codex_handoff.md`
+
+## 開跑前
+- 需要 OpenAI API key，而且整個範例都是即時呼叫模型，預設五條 traces 大約要跑 20 分鐘。
+- Promptfoo 透過 `npx` 執行，所以要裝 Node.js。
+
+這個 notebook 在這裡建立一個 agent 的改進飛輪（flywheel）。我們從真實的 traces 開始，加上人工與模型的回饋，把回饋轉成 evals，再用得到的證據提出下一輪 harness 修改，交給 Codex 實作。
+
+你會：
+
+- 建立一個以 OpenAI Agents SDK 為底的財務分析師
+- 讓它在合成的公司資料上執行，並擷取 traces
+- 針對這些執行結果加入範例人工回饋和 LLM 產生的回饋
+- 把回饋轉成之後可以重跑的 [Promptfoo](https://www.promptfoo.dev/) evals
+- 用 [HALO](https://github.com/context-labs/halo) 排序下一批 harness 修改，並寫出 Codex 可以直接使用的 handoff
+
+在這個 notebook 裡，**harness** 指的是模型周圍的整套約定，包括 instructions、tools、routing、輸出要求和驗證檢查。
+
+這個飛輪會保留你從每次執行學到的東西。Traces 告訴你發生了什麼，回饋說明什麼重要，evals 讓這些期望可以重複使用，Codex 則可以針對得到的修改集動手。
 
 
-This notebook builds an improvement flywheel for an agent. We start with real traces, add human and model feedback, turn that feedback into evals, and use the resulting evidence to propose the next harness changes for Codex to implement.
-
-You will:
-
-- Create an OpenAI Agents SDK-backed financial analyst
-- Run it on synthetic company data and capture traces
-- Add example human feedback and LLM-generated feedback from those runs
-- Turn that feedback into [Promptfoo](https://www.promptfoo.dev/) evals that can be rerun later
-- Use [HALO](https://github.com/context-labs/halo) to rank the next harness changes and write a Codex-ready handoff
-
-In this notebook, the **harness** is the full contract around the model, including instructions, tools, routing, output requirements, and validation checks.
-
-The flywheel preserves what you learn from each run. Traces show what happened, feedback explains what mattered, evals make those expectations reusable, and Codex can act on the resulting change set.
-
-
-## What you will build
+## 你會做出什麼
 
 ![Agent improvement loop flywheel](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent-improvement-loop-flywheel.svg)
 
-By the end, you will have:
+最後你會得到：
 
-1. An OpenAI Agents SDK-backed financial analyst that reviews a fictional company's diligence materials across five traced runs
-2. Human and LLM-generated feedback over those same traces
-3. An automatically generated Promptfoo eval suite
-4. A Promptfoo validation gate over the current agent behavior
-5. A HALO optimization pass over the traces, feedback, and eval results
-6. A developer-facing handoff to Codex so it can implement the recommended harness changes
+1. 一個以 OpenAI Agents SDK 為底的財務分析師，在五次有 trace 的執行中審閱一家虛構公司的盡職調查資料
+2. 針對同一批 traces 的人工回饋和 LLM 產生的回饋
+3. 自動產生的 Promptfoo eval 套件
+4. 針對目前 agent 行為的 Promptfoo 驗證關卡
+5. 針對 traces、回饋和 eval 結果的 HALO 最佳化分析
+6. 一份給開發者的 Codex handoff，讓它實作建議的 harness 修改
 
-The agent supports acquisition diligence for a fictional company. It reviews financial exports, customer data, contracts, security notes, board materials, and management narratives, then answers diligence questions with citations and reviewable artifacts.
+這個 agent 為一家虛構公司的併購盡職調查服務。它會審閱財務匯出檔、客戶資料、合約、資安筆記、董事會資料和管理層的敘述，然後帶著引用和可供審閱的成果檔回答盡職調查的問題。
 
-The loop writes one file that carries the work forward: the generated `codex_handoff.md` file under `ARTIFACT_DIR`. It contains the full HALO diagnosis, the ranked recommendations, the evidence behind them, and the implementation guidance Codex needs for the next harness update.
+整個迴圈會寫出一個把工作延續下去的檔案：`ARTIFACT_DIR` 底下產生的 `codex_handoff.md`。裡面有完整的 HALO 診斷、排序過的建議、背後的證據，以及 Codex 做下一次 harness 更新所需的實作指引。
 
-The degree of automation is up to the developer. You can use the loop to propose a reviewed change set, or connect it to a workflow that opens, merges, and deploys pull requests automatically. A common starting point is a reviewed loop, where the system proposes the change set and a developer approves the diff before merge. As the eval gate becomes more trusted, the same handoff can support deeper automation. The core workflow is the same in either case: traces plus human and model feedback become concrete harness changes instead of remaining disconnected comments.
+自動化到什麼程度由開發者決定。你可以用這個迴圈提出一份經過審閱的修改集，也可以接上自動開 PR、合併、部署的流程。常見的起點是有人審閱的迴圈：系統提出修改集，開發者核准 diff 後才合併。隨著 eval 關卡越來越可信，同一份 handoff 可以支援更深的自動化。兩種做法的核心流程一樣：traces 加上人工與模型的回饋，變成具體的 harness 修改，而不是留下互不相干的評論。
 
-Compared with examples that stop at traces or evals, this notebook keeps traces, reviewer judgment, generated evals, optimization, and implementation handoff inside one runnable improvement loop.
+跟只做到 traces 或 evals 的範例相比，這個 notebook 把 traces、審閱者的判斷、自動產生的 evals、最佳化和實作 handoff，都放在同一個可執行的改進迴圈裡。
 
 
-## Prerequisites
+## 先決條件
 
-Run this notebook from the repository root after installing the Python dependencies used by the example:
+安裝完這個範例用的 Python 套件後，從 repo 根目錄執行這個 notebook：
 
 ```bash
 python -m venv .venv
@@ -59,17 +67,17 @@ source .venv/bin/activate
 pip install openai openai-agents halo-engine
 ```
 
-Promptfoo runs through `npx`, so you also need Node.js with `npx` available on your path.
+Promptfoo 是透過 `npx` 執行的，所以你也需要 Node.js，而且 `npx` 要在 path 裡。
 
-Set an API key before running the notebook:
+執行 notebook 之前先設定 API key：
 
 ```bash
 export OPENAI_API_KEY=...
 ```
 
-The example is intentionally live-only. The trace generation, model critique, eval generation, validation, and optimization steps all use fresh model outputs so the notebook demonstrates the actual loop rather than a scripted preview. The next cell exposes the model choices in one place so you can trade quality for cost by substituting cheaper models if desired.
+這個範例刻意只走即時路線。產生 trace、模型評論、產生 eval、驗證和最佳化這幾步，全部都用新鮮的模型輸出，所以 notebook 展示的是真正的迴圈，而不是腳本寫好的預覽。下一個 cell 把模型選擇集中在同一處，想用品質換成本的話可以改成比較便宜的模型。
 
-With the default five traces, budget about 20 minutes for a full run, though model latency and network conditions will move that up or down. The longest sections are usually Step 3, which runs the traced agent calls, and Step 7, where HALO analyzes the full loop. The feedback, eval-generation, and Promptfoo cells also make live calls, but are typically shorter. Long-running cells print progress or elapsed time as they work.
+用預設的五條 traces，完整跑一次大約要 20 分鐘，實際會依模型延遲和網路狀況上下浮動。最久的通常是 Step 3（跑有 trace 的 agent 呼叫）和 Step 7（HALO 分析整個迴圈）。回饋、產生 eval 和 Promptfoo 這幾個 cell 也會即時呼叫模型，但通常比較短。耗時較長的 cell 會在執行時印出進度或經過的時間。
 
 
 ```python
@@ -161,11 +169,11 @@ print("Models:", {
     Models: {'agent': 'gpt-5.5', 'analysis': 'gpt-5.5', 'eval_generation': 'gpt-5.5', 'judge': 'gpt-5.5', 'halo': 'gpt-5.5', 'promptfoo': '0.121.9'}
     ```
 
-## Step 1. Create synthetic company data
+## Step 1. 建立合成的公司資料
 
-The notebook creates fictional diligence materials for a company that might be reviewed during an acquisition. The data mixes structured exports with narrative markdown documents so the agent has to decide which sources deserve more weight.
+這個 notebook 會建立一家虛構公司的盡職調查資料，就像併購時會審閱的那種。資料混合了結構化的匯出檔和敘述性的 markdown 文件，agent 必須自己判斷哪些來源比較值得採信。
 
-### Narrative markdown files in the synthetic data
+### 合成資料中的敘述性 markdown 檔案
 
 | File | Why it is included |
 | --- | --- |
@@ -182,12 +190,12 @@ The notebook creates fictional diligence materials for a company that might be r
 | `sales/pipeline_notes.md` | Qualitative pipeline commentary |
 | `notes/qa_log.md` | Diligence questions and unresolved follow-ups |
 
-The example generates the synthetic company data at runtime so it stays self-contained while still giving the agent a realistic mix of structured exports and narrative documents to analyze.
+這個範例在執行時才產生合成的公司資料，所以整份範例可以自給自足，同時又給 agent 一組貼近真實的結構化匯出檔和敘述性文件去分析。
 
 
-### Define the synthetic source files
+### 定義合成的來源檔案
 
-The next collapsed cell contains the source documents used to build the fictional company data.
+下一個收合的 cell 裡有用來建立虛構公司資料的來源文件。
 
 
 ```python
@@ -389,9 +397,9 @@ WORKSPACE_FILES = {
 }
 ```
 
-### Materialize the synthetic data
+### 把合成資料寫到磁碟
 
-Write the source files to disk, add a manifest, and inspect the generated dataset.
+把來源檔寫到磁碟、加上 manifest，並檢查產生的資料集。
 
 
 ```python
@@ -426,15 +434,15 @@ print(f"Dataset created: {len(files)} files")
     Dataset created: 24 files
     ```
 
-## Step 2. Define the Agents SDK-backed analyst
+## Step 2. 定義以 Agents SDK 為底的分析師
 
-The example agent performs acquisition diligence on a fictional SaaS company being reviewed as a possible acquisition target. The case materials contain both structured exports and management narratives. Some sources agree, some conflict, and some important claims are only partially supported. That gives us a realistic reason to improve the harness over time.
+這個範例 agent 對一家虛構的 SaaS 公司做盡職調查，這家公司是可能被收購的標的。案例資料同時有結構化匯出檔和管理層的敘述。有些來源互相一致，有些互相衝突，還有一些重要說法只有部分證據支持。這就給了我們一個合理的理由，讓 harness 隨時間持續改進。
 
-The agent answers questions for an investment team using only the supplied company data. It should prefer structured financial evidence over narrative summaries when they disagree, preserve uncertainty when evidence is missing, and leave behind artifacts that another reviewer can inspect.
+這個 agent 只用提供的公司資料，回答投資團隊的問題。資料互相矛盾時，它應該優先採信結構化的財務證據，而不是敘述性摘要；證據不足時要保留不確定性；並留下別的審閱者可以檢查的成果檔。
 
-The OpenAI Agents SDK provides the managed runner, sandbox execution, model settings, and tracing hooks this workflow needs. Together, the prompt, tools, routing rules, output requirements, and validation checks form the current **agent harness**.
+OpenAI Agents SDK 提供這個流程需要的 managed runner、sandbox 執行、model settings 和 tracing hooks。prompt、tools、routing 規則、輸出要求和驗證檢查合在一起，就是目前的 **agent harness**。
 
-### Artifacts generated by the agent
+### Agent 產生的成果檔
 
 | Artifact | Why the agent writes it |
 | --- | --- |
@@ -445,22 +453,22 @@ The OpenAI Agents SDK provides the managed runner, sandbox execution, model sett
 | `citations.json` | A machine-readable link from claims to source files |
 | `evidence_table.csv` | A tabular audit trail of claims and supporting sources |
 
-These artifacts keep the work reviewable by preserving supporting evidence, unresolved questions, and required files alongside the final answer.
+這些成果檔讓工作可以被審閱，因為支持的證據、未解決的問題和必要的檔案，都跟最終答案一起保留下來。
 
-### Failure modes to watch for
+### 要留意的失敗模式
 
-This notebook is designed to surface failures such as:
+這個 notebook 的設計是要把這類失敗找出來：
 
-- Treating management narrative as an official metric when the structured exports disagree
-- Reporting an unsupported NRR estimate as if finance had validated it
-- Collapsing parent-account concentration into a weaker legal-entity view
-- Saying “SOC 2 complete” when the evidence only supports Type I
-- Producing a polished answer while leaving citations, risk files, or evidence artifacts incomplete
+- 結構化匯出檔不同意時，仍把管理層的敘述當成正式指標
+- 把沒有根據的 NRR 估計值，當成財務部門已驗證過的數字回報
+- 把母帳號層級的集中度，簡化成較弱的法律實體視角
+- 證據只支持 Type I，卻說「SOC 2 complete」
+- 答案寫得很漂亮，但引用、風險檔或證據成果檔不完整
 
 
-### Define the harness schema
+### 定義 harness schema
 
-Start with small data structures for the model settings and promoted agent configuration. These make the harness explicit so later optimization can target more than prompt wording.
+先從幾個小的資料結構開始，放 model settings 和被推上線（promoted）的 agent 設定。這樣 harness 就是明確的，之後的最佳化才能針對 prompt 措辭以外的東西下手。
 
 
 ```python
@@ -519,9 +527,9 @@ def format_policy_value(key: str, value: Any, indent: int = 0) -> list[str]:
     return [f"{prefix}- {key}: {value}"]
 ```
 
-### Configure instructions and policies
+### 設定 instructions 和 policies
 
-The system prompt states the evidence rules, the tool policy defines what the agent may read and write, and the eval metadata records which version of the harness is currently promoted.
+system prompt 寫明證據規則，tool policy 定義 agent 可以讀寫什麼，eval metadata 則記錄目前上線的是哪個版本的 harness。
 
 
 ```python
@@ -620,9 +628,9 @@ agent_config = AgentConfig(
 )
 ```
 
-### Inspect the agent config
+### 檢視 agent 設定
 
-This compact view shows the promoted config version, the selected models, the required artifacts, and the runtime tools the agent can use.
+這個精簡的檢視會顯示上線的設定版本、選用的模型、必要的成果檔，以及 agent 可用的 runtime tools。
 
 
 ```python
@@ -655,9 +663,9 @@ display(Markdown(f"""
     <IPython.core.display.Markdown object>
     ```
 
-### Add validation tools
+### 加入驗證 tools
 
-The next helpers create two local tools inside the workspace: one checks whether drafted claims cite real dataroom files, and the other verifies that the required output artifacts exist and have the expected shape. The code is hidden by default to save space, but you can expand it if you want to inspect the implementation.
+下面的 helper 會在 workspace 裡建兩個本機 tool：一個檢查草稿中的主張有沒有引用真實的 dataroom 檔案，另一個確認必要的輸出成果檔存在，而且格式符合預期。程式碼預設是隱藏的，以節省版面，想看實作的話可以展開。
 
 
 ```python
@@ -831,9 +839,9 @@ def write_runtime_tools(dataset_dir: Path) -> list[str]:
     return written
 ```
 
-### Build each user turn
+### 建立每一輪的使用者訊息
 
-The prompt builder adds task-specific guidance only when it is needed, such as memo formatting, separate risk categories, or strict handling for unsupported NRR claims.
+prompt builder 只在需要時才加入任務專屬的指引，例如 memo 格式、獨立的風險分類，或對沒有根據的 NRR 主張採取嚴格處理。
 
 
 ```python
@@ -892,14 +900,14 @@ def _asks_for_net_revenue_retention(question: str) -> bool:
     return "net revenue retention" in lower or "nrr" in lower
 ```
 
-### Export traces for later optimization
+### 匯出 traces 供之後最佳化使用
 
-The local exporter converts Agents SDK events into the OpenTelemetry-style JSONL that HALO can read later. It is implementation-heavy, so the code stays collapsed by default.
+本機 exporter 把 Agents SDK 的事件轉成 HALO 之後可以讀的 OpenTelemetry 風格 JSONL。這部分實作比較多，所以程式碼預設收合。
 
 
-#### Configure the trace exporter
+#### 設定 trace exporter
 
-Set up the exporter object that receives Agents SDK spans and writes one JSONL line per span.
+設定接收 Agents SDK spans 的 exporter 物件，每個 span 寫成一行 JSONL。
 
 
 ```python
@@ -1015,9 +1023,9 @@ class HaloJsonlTraceProcessor:
             self._handle.flush()
 ```
 
-#### Map SDK spans into HALO-readable fields
+#### 把 SDK spans 對應到 HALO 讀得懂的欄位
 
-These helpers translate each SDK span type into the attributes HALO will inspect later.
+這些 helper 把每種 SDK span 類型，翻譯成 HALO 之後會檢查的屬性。
 
 
 ```python
@@ -1226,9 +1234,9 @@ def _custom_attrs(span_type: str, data: Mapping[str, Any]) -> tuple[dict[str, An
     return _drop_none(attrs), {}
 ```
 
-#### Normalize helper values
+#### 正規化 helper 的值
 
-The final helpers keep IDs, timestamps, and serialized values consistent across exported spans.
+最後這組 helper 讓匯出的 spans 裡的 ID、時間戳和序列化的值保持一致。
 
 
 ```python
@@ -1322,9 +1330,9 @@ def _sdk_version() -> str:
         return "unknown"
 ```
 
-### Run the SDK agent
+### 執行 SDK agent
 
-`run_sdk_agent()` calls the Agents SDK runner directly while handling the repeated setup around each traced run: mounting the data, attaching tracing, executing the agent, and collecting the output artifacts.
+`run_sdk_agent()` 直接呼叫 Agents SDK 的 runner，並處理每次有 trace 的執行都會重複的設定：掛載資料、接上 tracing、執行 agent，以及收集輸出的成果檔。
 
 
 ```python
@@ -1490,11 +1498,11 @@ def write_runtime_manifest(dataset_dir: Path) -> None:
     )
 ```
 
-## Step 3. Generate traced runs
+## Step 3. 產生有 trace 的執行
 
-The questions are intentionally varied so the eval suite covers several ways the agent can go wrong. The notebook runs five traces by default to keep the live path practical while still covering several distinct behaviors. A larger question bank remains available if you want broader coverage later.
+問題刻意設計得很多樣，讓 eval 套件涵蓋 agent 可能出錯的幾種方式。這個 notebook 預設跑五條 traces，讓即時執行的路徑保持實用，同時仍涵蓋幾種不同的行為。之後想要更廣的涵蓋範圍，還有一個更大的題庫可以用。
 
-Each run uses the async Agents SDK path and writes a real trace plus the required artifacts.
+每次執行都走非同步的 Agents SDK 路徑，寫出真實的 trace 和必要的成果檔。
 
 
 ```python
@@ -1608,9 +1616,9 @@ for trace in traces:
     **Answer** Refuse to infer these unsupported or conflicted metrics from the dataroom: - `CAC payback`: explicitly `not_provided`; requested but not supplied....
     ```
 
-### Inspect the agent artifacts
+### 檢視 agent 的成果檔
 
-Each traced run writes the full artifact set required by the harness. The first run below shows the files the agent produced so you can inspect the answer, evidence, and open questions together.
+每次有 trace 的執行，都會寫出 harness 要求的完整成果檔。下面第一次執行會顯示 agent 產出的檔案，讓你可以一起檢查答案、證據和未解決的問題。
 
 
 ````python
@@ -1655,13 +1663,11 @@ show_trace_artifacts(traces[0])
     <IPython.core.display.Markdown object>
     ```
 
-## Step 4. Generate example human feedback and model insights
+## Step 4. 產生範例人工回饋和模型洞察
 
-This section simulates a human expert reviewing the traces after the agent runs. In a real diligence workflow, that might be the finance lead or another case expert who knows which details matter for the decision. In this example, the reviewer calls out that a parent-account rollup matters more than legal-entity concentration, that an unvalidated management NRR estimate should not become an official metric, and that “SOC 2 complete” is too vague when the evidence only supports Type I.
+這一節模擬人類專家在 agent 執行後審閱 traces。在真實的盡職調查流程裡，這可能是財務主管，或是其他知道哪些細節對決策重要的案件專家。在這個範例中，審閱者指出幾件事：母帳號的彙總比法律實體的集中度更重要；沒有驗證過的管理層 NRR 估計值，不該變成正式指標；證據只支持 Type I 時，說「SOC 2 complete」太含糊。
 
-The model-generated insights stay separate. In a fully automated path, an LLM reviews the same traces and proposes recurring issues or missing behaviors. That extra pass improves coverage, while subject-matter expert review adds domain judgment grounded in the work itself.
-
-
+模型產生的洞察則分開處理。在完全自動化的路徑中，會由 LLM 審閱同樣的 traces，並提出反覆出現的問題或缺少的行為。這道額外的處理增加涵蓋範圍，而領域專家的審閱則加入立基於實際工作的專業判斷。
 ````python
 def feedback_item(
     trace: TraceRecord,
@@ -1810,13 +1816,13 @@ print(json.dumps(llm_feedback[0], indent=2))
     }
     ```
 
-## Step 5. Generate Promptfoo evals from traces and feedback
+## Step 5. 從 traces 和回饋產生 Promptfoo evals
 
-The eval suite is generated dynamically by an LLM from the evidence collected so far: traced behavior, human feedback, and model-generated observations. This turns comments into tests that the next harness revision can run again later.
+eval 套件是由 LLM 根據目前收集到的證據動態產生的：有 trace 的行為、人工回饋和模型產生的觀察。這把評論變成測試，下一版 harness 修改之後可以再跑一次。
 
-Promptfoo is an open-source CLI and library for evaluating and red-teaming LLM applications. In this notebook, the generated behaviors become Promptfoo test cases: each one can combine literal assertions with an LLM rubric judge, so the same gate can check both exact requirements and semantic reviewer intent.
+Promptfoo 是用來評測和 red-teaming LLM 應用的開源 CLI 和函式庫。在這個 notebook 裡，產生出來的行為會變成 Promptfoo 的測試案例：每個案例可以結合字面比對的 assertions 和 LLM rubric judge，所以同一個關卡既能檢查精確的要求，也能檢查審閱者在語意上的意圖。
 
-Evals are a good place to invest manual effort from subject-matter experts and developers. A fully automated pass can propose useful evals quickly, but people should still check whether the evals are accurate, representative, and measuring the behavior that actually matters before they become part of the long-term test suite.
+evals 是值得讓領域專家和開發者投入人力的地方。完全自動化的流程可以很快提出有用的 evals，但在它們進入長期測試套件之前，人還是應該檢查這些 evals 準不準確、有沒有代表性，以及衡量的是不是真正重要的行為。
 
 
 ```python
@@ -1915,16 +1921,16 @@ for item in eval_suite:
      fail: The company has 122% official NRR and CAC payback appears attractive based on its revenue growth, so both can be used in underwriting.
     ```
 
-## Step 6. Validate the current harness with Promptfoo
+## Step 6. 用 Promptfoo 驗證目前的 harness
 
-Promptfoo runs the generated tests against the current trace outputs. That gives the loop a snapshot of where the harness already behaves well and which expectations still fail. Promptfoo fits this role because it can combine deterministic checks for literal requirements with `llm-rubric` judges for semantic quality.
+Promptfoo 會拿產生的測試去跑目前 trace 的輸出，讓迴圈知道 harness 現在哪些地方表現不錯、哪些期望還沒達到。Promptfoo 適合這個角色，因為它可以把針對字面要求的確定性檢查，和針對語意品質的 `llm-rubric` judge 結合起來。
 
-In this notebook, the Promptfoo gate scores existing trace outputs. To validate a future harness revision, replace the trace-output provider with a provider that runs the candidate agent. Those Promptfoo results become part of the optimization input passed into HALO below. Even when eval generation is automated, humans can still tighten weak evals before letting them steer repeated optimization.
+在這個 notebook 裡，Promptfoo 關卡是對既有的 trace 輸出打分數。要驗證未來的 harness 修改版，就把 trace 輸出的 provider 換成會執行候選 agent 的 provider。這些 Promptfoo 結果會成為下面傳給 HALO 的最佳化輸入的一部分。即使 eval 的產生是自動化的，人還是可以在讓它們反覆引導最佳化之前，先把比較弱的 evals 收緊。
 
 
-### Build the Promptfoo test harness
+### 建立 Promptfoo 測試 harness
 
-The provider serves existing trace outputs back to Promptfoo, and the test builder turns generated eval definitions into runnable Promptfoo cases.
+provider 把既有的 trace 輸出回給 Promptfoo，test builder 則把產生的 eval 定義變成可以執行的 Promptfoo 案例。
 
 
 ```python
@@ -2061,9 +2067,9 @@ def promptfoo_summary(path: Path) -> dict[str, Any]:
     }
 ```
 
-### Run the Promptfoo gate
+### 執行 Promptfoo 關卡
 
-Execute the generated suite and summarize the current harness result.
+執行產生的測試套件，並總結目前 harness 的結果。
 
 
 ```python
@@ -2125,18 +2131,18 @@ print({key: gate_result[key] for key in ["backend", "total", "passed", "failed",
     {'backend': 'promptfoo', 'total': 5, 'passed': 5, 'failed': 0, 'result_path': 'examples/agents_sdk/agent_improvement_loop_artifacts/promptfoo/promptfoo_results.json'}
     ```
 
-## Step 7. Run HALO and write the handoff
+## Step 7. 執行 HALO 並寫出 handoff
 
-HALO, short for Hierarchical Agent Loop Optimization, is a methodology and Python package for improving agent harnesses from execution traces. The [HALO repository](https://github.com/context-labs/halo) describes a loop that collects traces, analyzes recurring harness-level failures, hands the resulting report to a coding agent, and repeats after the harness changes.
+HALO 是 Hierarchical Agent Loop Optimization 的縮寫，是一套從執行 traces 改進 agent harness 的方法論，也是一個 Python 套件。[HALO repository](https://github.com/context-labs/halo) 描述的迴圈是：收集 traces、分析反覆出現的 harness 層級失敗、把報告交給 coding agent，harness 改完後再重複一次。
 
-This is the point where the loop turns the accumulated evidence into proposed harness changes. HALO reviews the current harness together with the agent traces, human feedback, model feedback, generated evals, and Promptfoo results. It then produces a ranked set of changes for the next implementation pass.
+迴圈走到這裡，就會把累積的證據變成提議的 harness 修改。HALO 會一起審閱目前的 harness、agent traces、人工回饋、模型回饋、產生的 evals 和 Promptfoo 結果，然後產出一組排好序的修改，供下一輪實作使用。
 
-The value of HALO here is that it reasons over the whole loop at once. It can use human judgment alongside runtime behavior and eval outcomes, then package the result as a handoff Codex can use to implement the code changes that improve the harness.
+HALO 在這裡的價值是，它同時對整個迴圈做推理。它能把人的判斷、執行時的行為和 eval 結果放在一起用，再把結果包成 handoff，讓 Codex 能據此實作改進 harness 的程式碼修改。
 
 
-### Collect the HALO inputs
+### 收集 HALO 的輸入
 
-Build one context object that keeps the current harness, traces, feedback, evals, and gate results together.
+建立一個 context 物件，把目前的 harness、traces、回饋、evals 和關卡結果放在一起。
 
 
 ```python
@@ -2223,9 +2229,9 @@ def halo_input_summary(context: dict[str, Any]) -> str:
     return "\n".join(lines)
 ```
 
-### Attach feedback, generated evals, and eval results to the traces
+### 把回饋、產生的 evals 和 eval 結果附到 traces 上
 
-Write the combined trace file that HALO will inspect. Human feedback, LLM feedback, generated eval definitions, and row-level Promptfoo results are attached to the matching runtime trace. The overall gate summary stays global because it describes the suite as a whole.
+寫出 HALO 要檢查的合併後 trace 檔。人工回饋、LLM 回饋、產生的 eval 定義和每一列的 Promptfoo 結果，都會附到對應的執行 trace 上。整體的關卡摘要維持全域，因為它描述的是整個套件。
 
 
 ```python
@@ -2328,9 +2334,9 @@ def write_halo_optimization_context(context: dict[str, Any]) -> Path:
     return context_path
 ```
 
-### Define the HALO output prompt
+### 定義 HALO 的輸出 prompt
 
-This prompt tells HALO what kind of report to produce, including the sections Codex should receive in the final handoff file. You can customize it to match your company's workflow, review process, or use case.
+這個 prompt 告訴 HALO 要產出什麼樣的報告，包括 Codex 在最終 handoff 檔裡應該收到的各個段落。你可以依公司的工作流程、審閱流程或使用情境來客製。
 
 
 ```python
@@ -2378,11 +2384,11 @@ Do not add extra top-level sections outside that order.
 """.strip()
 ```
 
-### Run HALO and format the report
+### 執行 HALO 並整理報告
 
-HALO receives the five SDK execution traces plus two synthetic global traces: one records the current harness config, and one records the Promptfoo gate summary. That is why its trace count is higher than the five agent runs created earlier.
+HALO 會收到五條 SDK 執行 traces，加上兩條合成的全域 traces：一條記錄目前的 harness 設定，另一條記錄 Promptfoo 關卡摘要。這就是為什麼它的 trace 數量比前面建立的五次 agent 執行還多。
 
-Generate the full optimization report, save the handoff artifact, and display the highest-priority recommendations in the notebook.
+產生完整的最佳化報告、儲存 handoff 檔，並在 notebook 裡顯示優先度最高的建議。
 
 
 ```python
@@ -2549,11 +2555,11 @@ print("-", handoff_path.relative_to(PROJECT_ROOT))
     - examples/agents_sdk/agent_improvement_loop_artifacts/codex_handoff.md
     ```
 
-## Step 8. Hand the full report to Codex
+## Step 8. 把完整報告交給 Codex
 
-HALO diagnoses and prioritizes. A coding agent or human still changes the harness.
+HALO 負責診斷和排優先順序，改 harness 的還是 coding agent 或人。
 
-Below is a snapshot of the full report Codex can act on: the top three recommendations plus a compact summary of what came from each feedback source. The complete `codex_handoff.md` file also includes the ranked changes, supporting evidence, and validation guidance for implementation.
+下面是 Codex 可以採取行動的完整報告快照：前三項建議，加上每個回饋來源貢獻內容的精簡摘要。完整的 `codex_handoff.md` 還包含排序後的修改、支持的證據，以及實作時的驗證指引。
 
 
 ```python
@@ -2579,34 +2585,44 @@ else:
     <IPython.core.display.Markdown object>
     ```
 
-## Step 9. Close the loop
+## Step 9. 把迴圈接起來
 
-Now that the full workflow is in place, we can revisit the optimization flywheel from the top of the notebook. The same architecture supports two operating modes.
+現在整個工作流程都到位了，可以回頭從 notebook 開頭的最佳化飛輪看起。同一套架構支援兩種運作模式。
 
 ![Agent improvement loop flywheel](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent-improvement-loop-flywheel.svg)
 
 ![Human review gates in the loop](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent-improvement-loop-human-gates.svg)
 
-It can run as a closed loop, where new traces, human and model feedback, generated Promptfoo evals, HALO diagnosis, Codex implementation, validation, and deployment all feed the next cycle. In that mode, the handoff artifact can be written to shared storage, and a Codex automation with a heartbeat can keep checking for new handoffs, wake up when one appears, and trigger the next implementation pass automatically.
+它可以跑成封閉迴圈：新的 traces、人工與模型回饋、產生的 Promptfoo evals、HALO 診斷、Codex 實作、驗證和部署，全部餵進下一個循環。這個模式下，handoff 檔可以寫到共用儲存空間，帶 heartbeat 的 Codex 自動化可以持續檢查有沒有新的 handoff，出現時醒來，並自動觸發下一輪實作。
 
-The developer can also add human gates wherever they want them, including trace review, eval refinement, pull request approval, merge, and deployment.
+開發者也可以在想要的地方加入人工關卡，包括 trace 審閱、eval 調整、pull request 核准、合併和部署。
 
-The design choice is how much humans participate after they give feedback. Human judgment can steer a loop where agents do the execution, or humans can remain approval gates throughout the process. In both versions, human feedback stays central because it shapes what the system learns and what it changes next.
-
-
-## Conclusion
-
-An agent improvement loop offers a path toward continual improvement without reducing the problem to prompt tuning alone. The full loop matters: traces capture behavior, human feedback adds judgment, evals preserve what the system should do, HALO turns the evidence into ranked harness changes, and Codex can implement the next pass.
-
-This area is still evolving, and some of the individual components will likely change over time. The larger idea of loop engineering is the durable part: agents can improve from real behavior when feedback, testing, and implementation are connected in one loop.
+設計上的取捨是，人在給完回饋之後還要參與多少。人的判斷可以引導一個由 agent 執行的迴圈，也可以讓人從頭到尾當核准關卡。兩種做法中，人工回饋都是核心，因為它決定了系統學到什麼、下一步改什麼。
 
 
-## Next steps
+## 結論
 
-- Choose the model for each stage of the loop by editing `AGENT_MODEL`, `ANALYSIS_MODEL`, `EVAL_GENERATION_MODEL`, `JUDGE_MODEL`, and `HALO_MODEL` near the top of the notebook.
-- Create your own traces to test the agent.
-- Decide how much of the final path should remain reviewed versus automated: you can stop at a developer-reviewed PR, or wire the handoff into a system that opens, merges, and deploys changes automatically.
-- Pass the generated `codex_handoff.md` file under `ARTIFACT_DIR` to Codex, inspect the harness changes it proposes, and rerun the same eval suite against the updated harness.
+Agent 改進迴圈提供一條持續改進的路，而不是把問題簡化成只調 prompt。整個迴圈都重要：traces 捕捉行為、人工回饋加入判斷、evals 保存系統該做的事、HALO 把證據變成排序過的 harness 修改，Codex 則可以實作下一輪。
+
+這個領域還在演進，個別元件之後很可能會改變。比較持久的是 loop engineering 這個更大的概念：當回饋、測試和實作連在同一個迴圈裡，agent 就能從真實行為中持續改進。
 
 
-<!-- tutor:summary -->
+## 下一步
+
+- 編輯 notebook 開頭附近的 `AGENT_MODEL`、`ANALYSIS_MODEL`、`EVAL_GENERATION_MODEL`、`JUDGE_MODEL` 和 `HALO_MODEL`，為迴圈的每個階段選模型。
+- 建立你自己的 traces 來測試這個 agent。
+- 決定最後的路徑要保留多少人工審閱、多少自動化：可以停在開發者審閱過的 PR，也可以把 handoff 接到會自動開 PR、合併和部署的系統。
+- 把 `ARTIFACT_DIR` 底下產生的 `codex_handoff.md` 交給 Codex，檢查它提出的 harness 修改，再用更新後的 harness 重跑同一套 eval。
+
+
+## 重點整理
+- Harness 是模型周圍的整套約定（instructions、tools、routing、輸出要求、驗證檢查），改進的對象是整個 harness，不只是 prompt。
+- Traces 記錄發生了什麼，回饋說明什麼重要，evals 把期望固定下來，三者缺一不可。
+- 自動產生的 evals 要由領域專家和開發者檢查過，才適合進入長期測試套件。
+- HALO 同時看 traces、回饋和 eval 結果，產出排序過的修改和 Codex 能直接用的 handoff。
+- 自動化程度是設計選擇，可以每一步都有人審閱，也可以交給封閉迴圈自己跑。
+
+## 練習
+1. 把 `ANALYSIS_MODEL` 和 `JUDGE_MODEL` 換成比較便宜的模型重跑，比較 Promptfoo 關卡的通過率有沒有變化。
+2. 在 Step 3 的問題清單中加一題你自己設計的盡職調查問題（例如針對客戶流失），跑完後看 trace 和成果檔是否符合要求。
+3. 在 Step 4 的人工回饋裡新增一條你認為重要的規則，重跑 Step 5 到 Step 7，檢查新的 eval 是否出現在 `codex_handoff.md` 的建議裡。

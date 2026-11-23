@@ -1,26 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/Recommendation_using_embeddings.ipynb
 ---
 
-# Recommendation using embeddings and nearest neighbor search
+# 用 embedding 和最近鄰搜尋做推薦
 
 > 原文：[examples/Recommendation_using_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Recommendation_using_embeddings.ipynb)
 
+## 這篇在做什麼
+
+用 embedding 找出相似的項目來做推薦。資料集是 AG 新聞語料，要回答的問題是：給定一篇文章，哪些文章跟它最像。內容包含建立 embedding 快取、算距離推薦，以及用 t-SNE 把 embedding 壓到 2D 視覺化。
+
+## 學完你會
+
+- 建立 `(text, model)` 對應 embedding 的快取，避免重複付費
+- 用 embedding 距離實作最近鄰推薦函式
+- 用 t-SNE 視覺化 embedding，並理解壓到低維度會損失哪些資訊
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，第一次算 embedding 會產生費用
+- 需要 AG 新聞資料集檔案
 
 
-<!-- tutor:goals -->
+推薦在網路上無所不在。
 
+- 「買了這個？試試這些類似的商品。」
+- 「喜歡那本書？試試這些類似的書。」
+- 「不是你要找的說明頁？試試這些類似的頁面。」
 
-Recommendations are widespread across the web.
+這個 notebook 示範怎麼用 embedding 找出相似的項目來推薦。我們用 [AG 新聞文章語料](http://groups.di.unipi.it/~gulli/AG_corpus_of_news_articles.html)當資料集。
 
-- 'Bought that item? Try these similar items.'
-- 'Enjoy that book? Try these similar titles.'
-- 'Not the help page you were looking for? Try these similar pages.'
-
-This notebook demonstrates how to use embeddings to find similar items to recommend. In particular, we use [AG's corpus of news articles](http://groups.di.unipi.it/~gulli/AG_corpus_of_news_articles.html) as our dataset.
-
-Our model will answer the question: given an article, what other articles are most similar to it?
+模型要回答的問題是：給定一篇文章，哪些文章跟它最相似？
 
 ```python
 import pandas as pd
@@ -37,9 +48,9 @@ from utils.embeddings_utils import (
 EMBEDDING_MODEL = "text-embedding-3-small"
 ```
 
-### 2. Load data
+### 2. 載入資料
 
-Next, let's load the AG news data and see what it looks like.
+接著載入 AG 新聞資料，看看它長什麼樣子。
 
 ```python
 # load data (full dataset available at http://groups.di.unipi.it/~gulli/AG_corpus_of_news_articles.html)
@@ -68,7 +79,7 @@ df.head(n_examples)
     4  Any product, any shape, any size -- manufactur...          4  Sci/Tech
     ```
 
-Let's take a look at those same examples, but not truncated by ellipses.
+同樣的範例，這次不要用省略號截斷來看。
 
 ```python
 # print the title, description, and label of each example
@@ -104,11 +115,11 @@ for idx, row in df.head(n_examples).iterrows():
     Label: Sci/Tech
     ```
 
-### 3. Build cache to save embeddings
+### 3. 建立快取來儲存 embedding
 
-Before getting embeddings for these articles, let's set up a cache to save the embeddings we generate. In general, it's a good idea to save your embeddings so you can reuse them later. If you don't save them, you'll pay each time you recompute them.
+在取得這些文章的 embedding 之前，先設定一個快取來存我們產生的 embedding。一般來說，把 embedding 存起來以便日後重複使用是個好習慣。不存的話，每次重算都要付一次錢。
 
-The cache is a dictionary that maps tuples of `(text, model)` to an embedding, which is a list of floats. The cache is saved as a Python pickle file.
+快取是一個 dictionary，把 `(text, model)` 這個 tuple 對應到 embedding（一串浮點數）。快取會存成 Python pickle 檔。
 
 ```python
 # establish a cache of embeddings to avoid recomputing
@@ -139,7 +150,7 @@ def embedding_from_string(
     return embedding_cache[(string, model)]
 ```
 
-Let's check that it works by getting an embedding.
+我們取一個 embedding 來確認它有用。
 
 ```python
 # as an example, take the first description from the dataset
@@ -160,12 +171,12 @@ print(f"\nExample embedding: {example_embedding[:10]}...")
     Example embedding: [0.0545826330780983, -0.00428084097802639, 0.04785159230232239, 0.01587914116680622, -0.03640881925821304, 0.0143799539655447, -0.014267769642174244, -0.015175441280007362, -0.002344391541555524, 0.011075624264776707]...
     ```
 
-### 4. Recommend similar articles based on embeddings
+### 4. 依 embedding 推薦相似文章
 
-To find similar articles, let's follow a three-step plan:
-1. Get the similarity embeddings of all the article descriptions
-2. Calculate the distance between a source title and all other articles
-3. Print out the other articles closest to the source title
+要找相似文章，我們照三步驟計畫：
+1. 取得所有文章描述的 similarity embedding
+2. 計算來源標題和其他所有文章之間的距離
+3. 印出離來源標題最近的其他文章
 
 ```python
 def print_recommendations_from_strings(
@@ -212,9 +223,9 @@ def print_recommendations_from_strings(
     return indices_of_nearest_neighbors
 ```
 
-### 5. Example recommendations
+### 5. 推薦範例
 
-Let's look for articles similar to first one, which was about Tony Blair.
+我們先找跟第一篇（關於 Tony Blair）相似的文章。
 
 ```python
 article_descriptions = df["description"].tolist()
@@ -252,9 +263,9 @@ tony_blair_articles = print_recommendations_from_strings(
             Distance: 0.579
     ```
 
-Pretty good! 4 of the 5 recommendations explicitly mention Tony Blair and the fifth is an article from London about climate change, topics that might be often associated with Tony Blair.
+不錯！5 篇推薦中有 4 篇明確提到 Tony Blair，第 5 篇是來自倫敦、關於氣候變遷的文章，這個主題也常跟 Tony Blair 連在一起。
 
-Let's see how our recommender does on the second example article about NVIDIA's new chipset with more security.
+再看看推薦器在第二篇範例文章上的表現，這篇是關於 NVIDIA 推出更安全的新晶片組。
 
 ```python
 chipset_security_articles = print_recommendations_from_strings(
@@ -290,17 +301,17 @@ chipset_security_articles = print_recommendations_from_strings(
             Distance: 0.532
     ```
 
-From the printed distances, you can see that the #1 recommendation is much closer than all the others (0.11 vs 0.14+). And the #1 recommendation looks very similar to the starting article - it's another article from PC World about increasing computer security. Pretty good! 
+從印出的距離可以看到，第 1 名的推薦比其他的近很多（0.11 對 0.14 以上）。而且第 1 名看起來跟起始文章很像，同樣是 PC World 一篇談提升電腦安全的文章。不錯！
 
-## Appendix: Using embeddings in more sophisticated recommenders
+## 附錄：在更複雜的推薦系統裡使用 embedding
 
-A more sophisticated way to build a recommender system is to train a machine learning model that takes in tens or hundreds of signals, such as item popularity or user click data. Even in this system, embeddings can be a very useful signal into the recommender, especially for items that are being 'cold started' with no user data yet (e.g., a brand new product added to the catalog without any clicks yet).
+更複雜的推薦系統做法，是訓練一個機器學習模型，輸入幾十到幾百個訊號，像是商品熱門程度或使用者點擊資料。即使在這種系統裡，embedding 仍是很有用的訊號，尤其是處理還在「冷啟動」、沒有任何使用者資料的項目（例如剛加進商品目錄、還沒有任何點擊的新商品）。
 
-## Appendix: Using embeddings to visualize similar articles
+## 附錄：用 embedding 視覺化相似文章
 
-To get a sense of what our nearest neighbor recommender is doing, let's visualize the article embeddings. Although we can't plot the 2048 dimensions of each embedding vector, we can use techniques like [t-SNE](https://en.wikipedia.org/wiki/T-distributed_stochastic_neighbor_embedding) or [PCA](https://en.wikipedia.org/wiki/Principal_component_analysis) to compress the embeddings down into 2 or 3 dimensions, which we can chart.
+為了了解最近鄰推薦器在做什麼，我們把文章 embedding 視覺化。每個 embedding 向量有 2048 維，沒辦法直接畫出來，但可以用 [t-SNE](https://en.wikipedia.org/wiki/T-distributed_stochastic_neighbor_embedding) 或 [PCA](https://en.wikipedia.org/wiki/Principal_component_analysis) 這類技術，把 embedding 壓到 2 或 3 維再畫圖。
 
-Before visualizing the nearest neighbors, let's visualize all of the article descriptions using t-SNE. Note that t-SNE is not deterministic, meaning that results may vary from run to run.
+在視覺化最近鄰之前，先用 t-SNE 視覺化所有文章描述。注意 t-SNE 不是確定性的，每次跑的結果可能不同。
 
 ```python
 # get embeddings for all article descriptions
@@ -320,11 +331,11 @@ chart_from_components(
 )
 ```
 
-As you can see in the chart above, even the highly compressed embeddings do a good job of clustering article descriptions by category. And it's worth emphasizing: this clustering is done with no knowledge of the labels themselves!
+從上面的圖可以看到，即使壓縮得這麼厲害，embedding 還是能把文章描述依類別分群得很好。值得強調的是，這個分群完全沒用到標籤本身的資訊！
 
-Also, if you look closely at the most egregious outliers, they are often due to mislabeling rather than poor embedding. For example, the majority of the blue World points in the green Sports cluster appear to be Sports stories.
+另外，仔細看最離譜的離群點，常常是標籤標錯，而不是 embedding 不好。例如落在綠色 Sports 群裡的藍色 World 點，大多看起來其實是體育新聞。
 
-Next, let's recolor the points by whether they are a source article, its nearest neighbors, or other.
+接著依「來源文章」、「它的最近鄰」和「其他」重新上色。
 
 ```python
 # create labels for the recommended articles
@@ -360,7 +371,7 @@ chart_from_components(
 )
 ```
 
-Looking at the 2D chart above, we can see that the articles about Tony Blair are somewhat close together inside of the World news cluster. Interestingly, although the 5 nearest neighbors (red) were closest in high dimensional space, they are not the closest points in this compressed 2D space. Compressing the embeddings down to 2 dimensions discards much of their information, and the nearest neighbors in the 2D space don't seem to be as relevant as those in the full embedding space.
+從上面的 2D 圖可以看到，關於 Tony Blair 的文章在 World 新聞群裡彼此有點靠近。有趣的是，雖然 5 個最近鄰（紅色）在高維空間裡最近，但在壓縮後的 2D 空間裡，它們並不是最近的點。壓到 2 維會丟掉很多資訊，2D 空間裡的最近鄰看起來沒有完整 embedding 空間裡的那麼相關。
 
 ```python
 # a 2D chart of nearest neighbors of the chipset security article
@@ -375,8 +386,20 @@ chart_from_components(
 )
 ```
 
-For the chipset security example, the 4 closest nearest neighbors in the full embedding space remain nearest neighbors in this compressed 2D visualization. The fifth is displayed as more distant, despite being closer in the full embedding space.
+在晶片組安全的例子裡，完整 embedding 空間中最近的 4 個鄰居，在壓縮後的 2D 視覺化裡仍然是最近鄰。第 5 個雖然在完整 embedding 空間裡比較近，卻被畫得比較遠。
 
-Should you want to, you can also make an interactive 3D plot of the embeddings with the function `chart_from_components_3D`. (Doing so will require recomputing the t-SNE components with `n_components=3`.)
+如果你想要，也可以用函式 `chart_from_components_3D` 畫互動式的 3D embedding 圖。（這需要用 `n_components=3` 重新計算 t-SNE 成分。）
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 推薦的核心就是算 embedding 之間的距離，離來源越近的越相似。
+- embedding 要存快取，不然每次重算都要付費。
+- 距離差距可以當信心指標，第 1 名遠比其他近時，通常推薦很準。
+- 在複雜推薦系統裡，embedding 仍是很好的訊號，尤其解決冷啟動。
+- t-SNE 把高維壓到 2D 會丟資訊，2D 圖上的鄰居不等於真實空間裡的鄰居。
+
+## 練習
+
+1. 把推薦的篇數從 5 改成 10，看看排名後段的文章還相不相關。
+2. 換一篇來源文章（改索引），觀察距離分布，找一個第 1 名距離特別近和一個特別遠的例子。
+3. 把 t-SNE 的 `n_components` 改成 3，用 `chart_from_components_3D` 畫出互動式 3D 圖，比較最近鄰在 3D 裡是否更貼近。

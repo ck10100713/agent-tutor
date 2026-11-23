@@ -1,26 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.ipynb
 ---
 
-# Using Evals API on Audio Inputs
+# 用 Evals API 評測音訊輸入
 
 > 原文：[examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.ipynb)
 
+## 這篇在做什麼
+
+示範怎麼用 OpenAI 的 Evals API 評測音訊任務。流程是用 sampling 讓模型針對音訊問題產生音訊回答，再用 model grader 拿標準答案去打分。整個過程不用先轉成文字，直接拿原始音訊進、音訊出。
+
+## 學完你會
+
+- 把 Hugging Face 上的音訊資料集轉成 base64，整理成 Evals API 能吃的資料來源
+- 設定 `score_model` grader（或 `string_check` grader），建立 eval 和 run
+- 輪詢 run 的結果，並查看單筆 output item
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，Evals 與音訊模型會產生費用
+- 資料集來自 Hugging Face，需要能連網下載
 
 
-<!-- tutor:goals -->
+之前要評測語音對話，得先把音訊轉成文字。現在可以直接用原始音訊，模型也能用音訊回答。這比較貼近客服這類使用者跟 agent 都用語音的場景。這篇用音訊模型當 grader 來評音訊回答；你也可以改用音訊的文字逐字稿，搭配現有的文字 grader，或兩種一起用。
 
+這個例子要評估模型在兩件事上的表現：
+1. 針對一段音訊訊息，對使用者的提問**產生合適的回答**
+2. 回答**符合參考答案**這種高品質回應
 
-This cookbook demonstrates how to use OpenAI's Evals framework for audio-based tasks. Leveraging the Evals API, we will grade model-generated responses to an audio message and prompt by using **sampling** to generate model responses and **model grading** to score the model responses against the output audio and reference answer. Note that grading will be on audio outputs from the sampled response.
-
-Before audio support was added, to evaluate audio conversations, they first needed to be transcribed to text. Now you can use the original audio and get samples from the model in audio as well. This more accurately represents workflows such as a customer support scenario where both the user and the agent are using audio. For grading, we will use an audio model to grade the audio response with a model grader. We could alternatively, or in combination, use the text transcript from the sampled audio and leverage the existing suite of text graders.
-
-In this example, we will evaluate how well our model can:
-1. **Generate appropriate responses** to user prompts about an audio message
-2. **Align with reference answers** that represent high-quality responses
-
-## Installing Dependencies + Setup
+## 安裝套件與設定
 
 ```python
 # Install required packages
@@ -41,9 +50,9 @@ import numpy as np
 import pandas as pd
 ```
 
-## Dataset Preparation
+## 準備資料集
 
-We use the [big_bench_audio](https://huggingface.co/datasets/ArtificialAnalysis/big_bench_audio) dataset that is hosted on Hugging Face. Big Bench Audio is an audio version of a subset of Big Bench Hard questions. The dataset can be used for evaluating the reasoning capabilities of models that support audio input. It contains an audio clip describing a logic problem, a category, and an official answer.
+我們用 Hugging Face 上的 [big_bench_audio](https://huggingface.co/datasets/ArtificialAnalysis/big_bench_audio) 資料集。它是 Big Bench Hard 部分題目的音訊版，用來評估支援音訊輸入的模型的推理能力。每筆資料有一段描述邏輯問題的音訊、一個分類，和一個正式答案。
 
 ```python
 dataset = load_dataset("ArtificialAnalysis/big_bench_audio")
@@ -51,9 +60,9 @@ dataset = load_dataset("ArtificialAnalysis/big_bench_audio")
 dataset = dataset.cast_column("audio", Audio(decode=True))
 ```
 
-We extract the relevant fields and put them in a JSON-like format to pass in as a data source in the Evals API. Input audio data must be in the form of a base64-encoded string. We process the data in the audio file and convert it to base64.
+我們把需要的欄位取出來，整理成類似 JSON 的格式，當作 Evals API 的資料來源。輸入音訊必須是 base64 字串，所以要先讀音訊檔再轉成 base64。
 
-Note: Audio models currently support WAV, MP3, FLAC, Opus, or PCM16 formats. See [audio inputs](https://platform.openai.com/docs/api-reference/chat/create#chat_create-audio) for details.
+注意：音訊模型目前支援 WAV、MP3、FLAC、Opus 或 PCM16 格式，詳見 [audio inputs](https://platform.openai.com/docs/api-reference/chat/create#chat_create-audio)。
 
 ```python
 # Audio helpers: file/array to base64
@@ -139,7 +148,7 @@ for example in dataset["train"].select(range(3)):
     })
 ```
 
-If you print the data source list, each item should be of a similar form to:
+印出資料來源清單的話，每個項目長得類似這樣：
 
 ```python
 {
@@ -152,9 +161,9 @@ If you print the data source list, each item should be of a similar form to:
 }
 ```
 
-## Eval Configuration
+## Eval 設定
 
-Now that we have our data source and task, we will create our evals. For the OpenAI Evals API docs, visit [API docs](https://platform.openai.com/docs/guides/evals).
+資料來源和任務都有了，接著建立 eval。Evals API 的文件在 [API docs](https://platform.openai.com/docs/guides/evals)。
 
 
 ```python
@@ -163,7 +172,7 @@ client = OpenAI(
 )
 ```
 
-Since audio inputs are large, we need to save the examples to a file and upload it to the API.
+音訊輸入很大，所以要先把範例存成檔案，再上傳到 API。
 
 ```python
 # Save the examples to a file
@@ -179,11 +188,11 @@ file = client.files.create(
 )
 ```
 
-Evals have two parts: the "Eval" and the "Run". In the "Eval" we define the expected structure of the data and the testing criteria (grader).
+Evals 分成兩部分：「Eval」和「Run」。在 Eval 裡定義資料的預期結構和測試標準（grader）。
 
-### Data Source Configuration
+### 資料來源設定
 
-Based on the data that we have compiled, our data source configuration is as follows:
+依照我們整理好的資料，資料來源設定如下：
 
 ```python
 data_source_config = {
@@ -202,11 +211,11 @@ data_source_config = {
 }
 ```
 
-### Testing Criteria
+### 測試標準
 
-For our testing criteria, we set up our grader configuration. In this example, we use a score_model grader that takes in the official answer and sampled model response (in the `sample` namespace), and then outputs a score of 0 or 1 based on whether the model response matches the official answer. The response contains both audio and the text transcript of the audio. We will use the audio in the grader. For more information on graders, visit [API Grader docs](https://platform.openai.com/docs/api-reference/graders).
+測試標準就是 grader 的設定。這裡用 `score_model` grader，它會拿正式答案和取樣出來的模型回應（在 `sample` namespace 裡），依回應是否符合正式答案輸出 0 或 1。回應同時包含音訊和音訊的文字逐字稿，這裡 grader 用的是音訊。更多 grader 資訊看 [API Grader docs](https://platform.openai.com/docs/api-reference/graders)。
 
-Getting both the data and the grader right is key for an effective evaluation. You will likely want to iteratively refine the prompts for your graders.
+資料和 grader 都設對，評測才有效。grader 的 prompt 通常需要反覆調整。
 
 ```python
 grader_config = {
@@ -240,7 +249,7 @@ grader_config = {
 }
 ```
 
-Alternatively we could use a string_check grader that takes in the official answer and sampled model response (in the `sample` namespace), and then outputs a score between 0 and 1 based on if the model response contains the reference answer. The response contains both audio and the text transcript of the audio. We will use the text transcript in the grader. 
+另一種做法是用 `string_check` grader，它同樣拿正式答案和取樣的模型回應，依回應是否包含參考答案輸出 0 到 1 的分數。這時 grader 用的是文字逐字稿。
 
 ```python
 grader_config = {
@@ -252,7 +261,7 @@ grader_config = {
 }
 ```
 
-Now, we create the eval object.
+接著建立 eval 物件。
 
 ```python
 eval_object = client.evals.create(
@@ -262,11 +271,11 @@ eval_object = client.evals.create(
     )
 ```
 
-## Eval Run
+## 執行 Eval
 
-To create the run, we pass in the eval object id, the data source (i.e., the data we compiled earlier), and the chat message input we will use for sampling to generate the model response.
+建立 run 時，要傳入 eval 物件的 id、資料來源（就是前面整理好的資料），以及用來取樣產生模型回應的 chat message 輸入。
 
-Here's the sampling message input we'll use for this example.
+這個例子用的取樣訊息如下：
 
 ```python
 sampling_messages = [
@@ -295,7 +304,7 @@ sampling_messages = [
     }]
 ```
 
-We now kick off an eval run.
+現在啟動 eval run。
 
 ```python
 eval_run = client.evals.runs.create(
@@ -319,9 +328,9 @@ eval_run = client.evals.runs.create(
     )
 ```
 
-## Poll and Display the Results
+## 輪詢並顯示結果
 
-When the run finishes, we can take a look at the result. You can also check your organization's OpenAI Evals dashboard to see the progress and results.
+run 跑完就能看結果。你也可以到組織的 OpenAI Evals dashboard 看進度和結果。
 
 ```python
 while True:
@@ -346,9 +355,9 @@ while True:
     time.sleep(5)
 ```
 
-### Viewing Individual Output Items
+### 查看單筆 output item
 
-To see a full output item, we can do the following. The structure of an output item is specified in the API docs [here](https://platform.openai.com/docs/api-reference/evals/run-output-item-object).
+要看完整的 output item 可以這樣做。output item 的結構定義在 API 文件的[這裡](https://platform.openai.com/docs/api-reference/evals/run-output-item-object)。
 
 ```python
 first_item = output_items[0]
@@ -356,13 +365,25 @@ first_item = output_items[0]
 print(json.dumps(dict(first_item), indent=2, default=str))
 ```
 
-## Conclusion
+## 結論
 
-In this cookbook, we covered a workflow for evaluating native audio inputs to a model using the OpenAI Evals API. We demonstrated using a score model grader to grade the audio response.
-### Next steps
-- Convert this example to your own use case.
-- If you have large audio clips, try using the [uploads API](https://platform.openai.com/docs/api-reference/uploads/create) for support up to 8 GB.
-- Navigate to the [Evals dashboard](https://platform.openai.com/evaluations) to visualize the outputs and get insights into the performance of the eval.
+這篇走了一遍用 OpenAI Evals API 評測原生音訊輸入的流程，並示範用 score model grader 評分音訊回答。
+### 下一步
+- 把這個範例換成你自己的使用情境。
+- 音訊檔很大的話，可以用 [uploads API](https://platform.openai.com/docs/api-reference/uploads/create)，支援到 8 GB。
+- 到 [Evals dashboard](https://platform.openai.com/evaluations) 視覺化輸出並看評測表現。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 音訊 eval 可以直接用原始音訊進、音訊出，不必先轉文字，比較貼近真實語音場景。
+- 輸入音訊要轉成 base64，資料大就存檔再上傳。
+- Eval 定義資料結構和 grader，Run 才帶資料來源和取樣訊息去執行。
+- `score_model` grader 用音訊打分，`string_check` grader 則用逐字稿比對，可以擇一或搭配。
+- grader 的 prompt 要反覆調整，不然分數沒意義。
+
+## 練習
+
+1. 把資料集只取前 3 筆跑一次 run，確認整個流程通，再看 dashboard 上的結果。
+2. 把 `score_model` grader 換成 `string_check` grader，比較兩種分數有沒有差。
+3. 修改 `score_model` grader 的評分 prompt，例如改成 0 到 5 分的量表，看分數分布怎麼變。

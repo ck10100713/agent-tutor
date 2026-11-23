@@ -1,23 +1,28 @@
 ---
-translated: false
+translated: true
 source: examples/User_and_product_embeddings.ipynb
 ---
 
-# User and product embeddings
+# 使用者與產品 embedding
 
 > 原文：[examples/User_and_product_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/User_and_product_embeddings.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇用訓練集算出使用者和產品的 embedding，再拿沒看過的測試集評估。評估方式是畫出使用者與產品的相似度對評論分數的關係。資料集來自 [Get_embeddings_from_dataset](Get_embeddings_from_dataset.md) 那篇。
 
-## User and product embeddings
+## 學完你會
+- 用平均同一個使用者或同一個產品的所有評論 embedding，得到使用者與產品 embedding。
+- 用 cosine distance 算使用者與產品的相似度，並轉成百分位數正規化。
+- 畫出各評論分數的相似度分佈，判斷這種訊號能不能預測評分。
 
-We calculate user and product embeddings based on the training set, and evaluate the results on the unseen test set. We will evaluate the results by plotting the user and product similarity versus the review score. The dataset is created in the [Get_embeddings_from_dataset Notebook](Get_embeddings_from_dataset.md).
+## 開跑前
+- 需要先跑完 Get_embeddings_from_dataset，產生帶 embedding 的資料集。
 
-### 1. Calculate user and product embeddings
+## 1. 計算使用者與產品 embedding
 
-We calculate these embeddings simply by averaging all the reviews about the same product or written by the same user within the training set.
+做法很簡單：把訓練集中關於同一個產品、或由同一個使用者寫的所有評論 embedding 取平均。
 
 ```python
 import pandas as pd
@@ -68,11 +73,11 @@ len(user_embeddings), len(prod_embeddings)
     (577, 706)
     ```
 
-We can see that most of the users and products appear within the 50k examples only once.
+可以看到大部分使用者和產品在這 5 萬筆範例中只出現過一次。
 
-### 2. Evaluate the embeddings
+## 2. 評估 embedding
 
-To evaluate the recommendations, we look at the similarity of the user and product embeddings amongst the reviews in the unseen test set. We calculate the cosine distance between the user and product embeddings, which gives us a similarity score between 0 and 1. We then normalize the scores to be evenly split between 0 and 1, by calculating the percentile of the similarity score amongst all predicted scores.
+評估推薦效果時，我們在沒看過的測試集上，看評論中使用者與產品 embedding 的相似度。計算使用者和產品 embedding 之間的 cosine distance，得到一個介於 0 到 1 的相似度分數。接著算每個相似度分數在所有預測分數中的百分位數，把分數正規化成平均分佈在 0 到 1 之間。
 
 ```python
 from utils.embeddings_utils import cosine_similarity
@@ -93,9 +98,9 @@ X_test['cosine_similarity'] = X_test.apply(evaluate_single_match, axis=1)
 X_test['percentile_cosine_similarity'] = X_test.cosine_similarity.rank(pct=True)
 ```
 
-#### 2.1 Visualize cosine similarity by review score
+### 2.1 依評論分數視覺化 cosine similarity
 
-We group the cosine similarity scores by the review score, and plot the distribution of cosine similarity scores for each review score.
+我們把 cosine similarity 分數依評論分數分組，畫出每個評論分數對應的 cosine similarity 分佈。
 
 ```python
 import matplotlib.pyplot as plt
@@ -120,8 +125,17 @@ plt.close()
 
     ![](User_and_product_embeddings_files/out_10_1.png)
 
-We can observe a weak trend, showing that the higher the similarity score between the user and the product embedding, the higher the review score. Therefore, the user and product embeddings can weakly predict the review score - even before the user receives the product!
+可以看到一個微弱的趨勢：使用者與產品 embedding 的相似度越高，評論分數也越高。所以使用者和產品 embedding 能微弱地預測評論分數，甚至在使用者拿到產品之前就能預測。
 
-Because this signal works in a different way than the more commonly used collaborative filtering, it can act as an additional feature to slightly improve the performance on existing problems.
+因為這個訊號的運作方式和較常見的 collaborative filtering 不同，可以作為額外特徵，稍微改善現有問題的表現。
 
-<!-- tutor:summary -->
+## 重點整理
+- 平均 embedding 是最簡單的使用者與產品表示法，不需要額外訓練。
+- 大部分使用者和產品只出現一次，代表資料稀疏，平均出來的向量雜訊較大。
+- 相似度轉成百分位數，可以讓不同分佈的分數放在同一個尺度比較。
+- 這個訊號和 collaborative filtering 互補，適合當額外特徵而不是單獨使用。
+
+## 練習
+1. 把訓練集取樣的筆數改小，重新計算 embedding，看相似度與評分的趨勢有沒有變弱。
+2. 只保留評論數大於 1 的使用者和產品，重畫分佈圖。
+3. 把平均改成其他聚合方式（例如只取最近的幾則評論），比較趨勢。

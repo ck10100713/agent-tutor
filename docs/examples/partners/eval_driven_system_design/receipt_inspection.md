@@ -1,212 +1,151 @@
 ---
-translated: false
+translated: true
 source: examples/partners/eval_driven_system_design/receipt_inspection.ipynb
 ---
-
-# Eval Driven System Design - From Prototype to Production
+# Eval Driven System Design - 從原型到上線
 
 > 原文：[examples/partners/eval_driven_system_design/receipt_inspection.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/eval_driven_system_design/receipt_inspection.ipynb)
 
-Cookbook for eval-driven design of a receipt parsing automation workflow.
+用 eval 驅動設計，打造一個自動解析收據的工作流程。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用一個「收據審核」的例子，示範怎麼把 eval 當成核心流程，從只有一小撮資料的原型，一路做到可上線的自動化系統。過程中會串起 eval、商業指標（成本、漏審損失）和系統改進，告訴你哪些指標值得花時間改。
+
+## 學完你會
+
+- 用兩段式 LLM pipeline（抽取收據資訊、再判斷要不要稽核）做出 V0 系統
+- 設計 grader 和 eval，並用簡單的成本模型把 eval 分數換算成金額
+- 依商業影響決定先改哪個問題，再用 eval 驗證 prompt 與換模型的效果
+
+## 開跑前
+
+需要 OpenAI API key（會呼叫模型和 Evals），跑 eval 會有費用。
 
 ## Overview
 
-### Purpose of This Cookbook
+### 這本 Cookbook 的目的
 
-This cookbook provides a **practical**, end-to-end guide on how to effectively use 
-evals as the core process in creating a production-grade autonomous system to 
-replace a labor-intensive human workflow. It's a direct product of collaborative 
-experience dealing with projects where users may not have started with pristine 
-labeled data or a perfect understanding of the problem - two issues that most tutorials gloss 
-over but are in practice almost always serious challenges.
+這本 cookbook 提供一份**實務**、端到端的指南，說明怎麼把 eval 當成核心流程，打造一個能上線的自主系統，取代耗費人力的人工流程。內容來自實際專案的合作經驗，這些專案的使用者往往一開始沒有乾淨的標註資料，也沒完全搞懂問題，而大多數教學都略過這兩點，實務上卻幾乎一定會碰到。
 
-Making evals the core process prevents poke-and-hope guesswork and impressionistic
-judgments of accuracy, instead demanding engineering rigor. This means we can make
-principled decisions about cost trade-offs and investment. 
+把 eval 當核心，就不會憑感覺亂試、靠印象判斷準確度，而是用工程的標準做事。這樣我們才能針對成本取捨和投資做有根據的決定。
 
-### Target Audience
+### 目標讀者
 
-This guide is designed for ML/AI engineers and Solution Architects who are
-looking for practical guidance beyond introductory tutorials. This notebook is fully
-executable and organized to be as modular as possible to support using code
-samples directly in your own applications.
+這份指南寫給 ML/AI 工程師和 Solution Architect，適合想看入門教學之外實務做法的人。這個 notebook 可以完整執行，也盡量模組化，方便你直接把程式碼拿去用在自己的應用。
 
-### Guiding Narrative: From Tiny Seed to Production System
+### 主軸：從小種子長成上線系統
 
-We'll follow a realistic storyline: replacing a manual receipt-analysis service for validating expenses.
+我們會跟著一個很實際的故事走：取代一個人工審核費用收據的服務。
 
-* **Start Small:** Begin with a very small set of labeled data (retail receipts). Many businesses don't have good ground truth data sets. 
-* **Build Incrementally:** Develop a minimal viable system and establish initial evals. 
-* **Business Alignment:** Evaluate eval performance in the context of business KPIs and
-  dollar impact, and target efforts to avoid working on low-impact improvements.
-* **Eval-Driven Iteration:** Iteratively improve by using eval scores to power model
-  improvements, then by using better models on more data to expand evals and identify more
-  areas for improvement.
+* **從小開始：** 只用一小批標註好的資料（零售收據）起步。很多公司手上並沒有好的 ground truth 資料集。
+* **逐步建構：** 先做出最小可行系統，建立第一批 eval。
+* **對齊商業目標：** 把 eval 的表現放到商業 KPI 和金額影響下來看，避免把力氣花在影響很小的改進上。
+* **Eval 驅動迭代：** 用 eval 分數推動模型改進，再用更好的模型處理更多資料，擴充 eval 並找出更多可改進的地方。
 
-### How to Use This Cookbook
+### 怎麼使用這本 Cookbook
 
-This cookbook is structured as an eval-centric guide through the lifecycle of building
-an LLM application.
+這本 cookbook 以 eval 為主線，走過 LLM 應用的整個生命週期。
 
-1. If you're primarily interested in the ideas presented, read through the text and skim over
-   the code.
-2. If you're here because of something else you're working on, you can go ahead and jump to that
-   section and dig into the code there, copy it, and adapt it to your needs.
-3. If you want to really understand how this all works, download this notebook and run
-   the cells as you read through it; edit the code to make your own changes, test your
-   hypotheses, and make sure you actually understand how it all works together.
+1. 如果你只對概念有興趣，讀文字、快速掃過程式碼就好。
+2. 如果你是因為手上有別的專案才來，可以直接跳到相關章節，看裡面的程式碼，複製後改成自己需要的樣子。
+3. 如果你想真的搞懂整個運作，就下載這個 notebook，邊讀邊執行 cell，改程式、驗證自己的假設，確定自己真的理解各部分怎麼串在一起。
 
-> Note: If your OpenAI organization has a Zero Data Retention (ZDR) policy, Evals will still be available, but will retain data to maintain application state.
+> Note：如果你的 OpenAI organization 有 Zero Data Retention (ZDR) 政策，Evals 還是能用，但會保留資料來維持應用狀態。
 
-## Use Case: Receipt Parsing
+## 使用情境：收據解析
 
-In order to condense this guide we'll be using a small hypothetical problem that's still complex
-enough to merit detailed and multi-faceted evals. In particular, we'll be focused on how
-to solve a problem given a limited amount of data to work with, so we're working with a
-dataset that's quite small.
+為了讓篇幅精簡，我們用一個小型的假想問題，但它還是複雜到值得做多面向的 eval。重點放在資料量有限時怎麼解決問題，所以資料集很小。
 
-### Problem Definition
+### 問題定義
 
-For this guide, we assume that we are starting with a workflow for reviewing and filing 
-receipts. While in general, this is a problem that already has a lot of established 
-solutions, it's analogous to other problems that don't have nearly so much prior work; 
-further, even when good enterprise solutions exist there is often still a 
-"last mile" problem that still requires human time.
+假設我們現在有一個審核並歸檔收據的流程。這類問題已經有很多成熟的解法，但它跟其他沒什麼前人經驗的問題很像；而且就算有不錯的企業方案，通常還是有「最後一哩路」需要人來處理。
 
-In our case, we'll assume we have a pipeline where:
+我們假設現有的流程是：
 
-* People upload photos of receipts
-* An accounting team reviews each receipt to categorize and approve or audit the expense
+* 使用者上傳收據照片
+* 會計團隊逐張審核，分類並決定核准或稽核這筆費用
 
-Based on interviews with the accounting team, they make their decisions based on
+訪談會計團隊後，他們的判斷依據是
 
-1. Merchant
-2. Geographic location
-3. Expense amount
-4. Items or services purchased
-5. Handwritten notes or annotations
+1. 商家
+2. 地理位置
+3. 費用金額
+4. 購買的品項或服務
+5. 手寫的備註或標記
 
-Our system will be expected to handle most receipts without any human intervention, but
-escalate low-confidence decisions for human QA. We'll be focused on reducing the total
-cost of the accounting process, which is dependent on
+我們的系統要能在沒有人工介入下處理大部分收據，信心不足的決定則交給人工 QA。目標是降低整個會計流程的總成本，這取決於
 
-1. How much the previous / current system cost to run per-receipt
-2. How many receipts the new system sends to QA
-3. How much the system costs to run per-receipt, plus any fixed costs
-4. What the business impact is of mistakes, either receipts kicked out for review or mistakes missed
-5. The cost of engineering to develop and integrate the system
+1. 以前或現在的系統每張收據的處理成本
+2. 新系統會把多少收據送去 QA
+3. 新系統每張收據的執行成本，加上固定成本
+4. 犯錯的商業影響，不論是被退回審核的收據，還是漏掉的錯誤
+5. 開發與整合系統的工程成本
 
-### Dataset Overview
+### 資料集概覽
 
-The receipt images come from the CC by 4.0 licensed
+收據圖片來自 Roboflow 發布、CC by 4.0 授權的
 [Receipt Handwriting Detection Computer Vision Project](https://universe.roboflow.com/newreceipts/receipt-handwriting-detection)
-dataset published by Roboflow. We've added our own labels and narrative spin in order to
-tell a story with a small number of examples.
+資料集。我們加上自己的標註和故事設定，用少量範例來講一個完整的流程。
 
-## Project Lifecycle
+## 專案生命週期
 
-Not every project will proceed in the same way, but projects generally have some 
-important components in common.
+每個專案的走法不盡相同，但通常都有一些重要的共通環節。
 
 ![Project Lifecycle](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_project_lifecycle.png)
 
-The solid arrows show the primary progressions or steps, while the dotted line 
-represents the ongoing nature of problem understanding - uncovering more about
-the customer domain will influence every step of the process. We will examine 
-several of these iterative cycles of refinement in detail below. 
-Not every project will proceed in the same way, but projects generally have some common
-important components.
+實線箭頭是主要的進展步驟，虛線代表對問題的理解是持續進行的，對客戶領域了解越多，就會影響流程中的每一步。下面會詳細看其中幾個反覆精進的循環。
 
-### 1. Understand the Problem
+### 1. 理解問題
 
-Usually, the decision to start an engineering process is made by leadership who
-understand the business impact but don't need to know the process details. In our
-example, we're building a system designed to replace a non-AI workflow. In a sense this
-is ideal: we have a set of domain experts, *the people currently doing the task* who we
-can interview to understand the task details and who we can lean upon to help develop
-appropriate evals.
+通常是由理解商業影響、但不需要知道流程細節的主管決定啟動工程。在我們的例子裡，要做的系統是取代一個非 AI 的工作流程，這算是理想狀況：我們有一群領域專家，也就是*現在正在做這件事的人*，可以訪談他們了解任務細節，也能請他們協助設計合適的 eval。
 
-This step doesn't end before we start building our system; invariably, our initial
-assessments are an incomplete understanding of the problem space and we will continue to
-refine our understanding as we get closer to a solution.
+這一步不會在開始做系統之前就結束。我們最初的評估一定不完整，越接近解法，對問題的理解就會越深。
 
-### 2. Assemble Examples (Gather Data)
+### 2. 蒐集範例（收集資料）
 
-It's very rare for a real-world project to begin with all the data necessary to achieve a satisfactory solution, let alone establish confidence.
+真實專案很少一開始就有足夠的資料能做出令人滿意的解法，更別說建立信心了。
 
-In our case, we'll assume we have a decent sample of system *inputs*, in the form of but receipt images, but start without any fully annotated data. We find this is a not-unusual situation when automating an existing process. We'll walk through the process of incrementally expanding our test and training sets in collaboration with domain experts as we go along and make our evals progressively more comprehensive.
+在我們的情況，假設手上有不錯的系統*輸入*樣本，也就是收據圖片，但一開始沒有任何完整標註的資料。要自動化既有流程時，這種狀況很常見。我們會和領域專家合作，一邊做一邊逐步擴充測試集和訓練集，讓 eval 越來越完整。
 
-### 3. Build an End-to-End V0 System
+### 3. 建立端到端的 V0 系統
 
-We want to get the skeleton of a system built as quickly as possible. We don't need a
-system that performs well - we just need something that accepts the right inputs and
-provides outputs of the correct type. Usually this is almost as simple as describing the
-task in a prompt, adding the inputs, and using a single model (usually with structured
-outputs) to make an initial best-effort attempt.
+要盡快把系統骨架做出來。不需要表現好，只要能接收正確的輸入、產出正確型別的輸出就行。通常做法很簡單：在 prompt 裡描述任務、加上輸入，用單一模型（通常搭配 structured outputs）做一次盡力的初步嘗試。
 
-### 4. Label Data and Build Initial Evals
+### 4. 標註資料並建立初始 eval
 
-We've found that in the absence of an established ground truth, it's not uncommon to 
-use an early version of a system to generate 'draft' truth data which can be annotated 
-or corrected by domain experts.
+沒有既定 ground truth 時，常見的做法是用系統的早期版本產生「草稿」答案，再交給領域專家標註或修正。
 
-Once we have an end-to-end system constructed, we can start processing the inputs we
-have to generate plausible outputs. We'll send these to our domain experts to grade 
-and correct. We will use these corrections and conversations about how the experts 
-are making their decisions to design further evals and to embed expertise in the system.
+端到端系統建好後，就能拿手上的輸入跑出合理的輸出，送給領域專家評分並修正。我們會用這些修正，以及和專家討論他們怎麼做決定的內容，來設計更多 eval，並把專業知識放進系統裡。
 
-### 5. Map Evals to Business Metrics
+### 5. 把 eval 對應到商業指標
 
-Before we jump into correcting every error, we need to make sure that we're investing
-time effectively. The most critical task at this stage is to review our evals and
-gain an understanding of how they connect to our key objectives.
+在開始逐一修正錯誤之前，要先確定時間花得有效率。這個階段最重要的工作，是檢視 eval，搞清楚它們跟我們的主要目標有什麼關係。
 
-- Step back and assess the potential costs and benefits of the system
-- Identify which eval measurements speak directly to those costs and benefits
-- For example, what does "failure" on a particular eval cost? Are we measuring
-  something worthwhile?
-- Create a (non-LLM) model that uses eval metrics to provide a dollar value
-- Balance performance (accuracy, or speed) with cost to develop and run
+- 退一步評估系統可能帶來的成本和效益
+- 找出哪些 eval 量測直接對應到這些成本和效益
+- 例如：某個 eval 失敗一次要付出多少成本？我們量的東西值得量嗎？
+- 建立一個（非 LLM 的）模型，用 eval 指標算出金額
+- 在效能（準確度或速度）和開發、執行成本之間取得平衡
 
-### 6. Progressively Improve System and Evals
+### 6. 逐步改進系統和 eval
 
-Having identified which efforts are most worth making, we can begin iterating on 
-improvements to the system. The evals act as an objective guide so we know when we've
-made the system good enough, and ensure we avoid or identify regression. 
+知道哪些努力最值得之後，就可以開始迭代改進系統。eval 是客觀的指引，讓我們知道系統何時夠好，也能避免或發現退步。
 
-### 7. Integrate QA Process and Ongoing Improvements
+### 7. 整合 QA 流程與持續改進
 
-Evals aren't just for development. Instrumenting all or a portion of a production
-service will surface more useful test and training samples over time, identifying
-incorrect assumptions or finding areas with insufficient coverage. This is also the only
-way you can ensure that your models continue performing well long after your initial
-development process is complete.
+eval 不只用在開發階段。在正式服務中全部或部分埋點，會隨著時間浮現更多有用的測試和訓練樣本，找出錯誤的假設或覆蓋不足的地方。這也是確保模型在初期開發結束很久之後仍然表現良好的唯一辦法。
 
-## V0 System Construction
+## V0 系統建構
 
-In practice, we would probably be building a system that operates via a REST API,
-possibly with some web frontend that would have access to some set of components and
-resources. For the purposes of this cookbook, we'll distill that down to a pair of
-functions, `extract_receipt_details` and `evaluate_receipt_for_audit` that collectively
-decide what we should do with a given receipt.
+實務上我們可能會做一個透過 REST API 運作的系統，也許搭配一個能存取一組元件與資源的網頁前端。這本 cookbook 把它簡化成兩個函式，`extract_receipt_details` 和 `evaluate_receipt_for_audit`，合起來決定一張收據該怎麼處理。
 
-- `extract_receipt_details` will take an image as input and produce structured output
-  containing important details about the receipt.
-- `evaluate_receipt_for_audit` will take that structure as input and decide whether or
-  not the receipt should be audited.
+- `extract_receipt_details` 以圖片為輸入，產出包含收據重要資訊的 structured output。
+- `evaluate_receipt_for_audit` 以那個結構為輸入，決定這張收據該不該稽核。
 
-> Breaking up a process into steps like this has both pros and cons; it is easier to
-> examine and develop if the process is made up of small isolated steps. But you can
-> progressively lose information, effectively letting your agents play "telephone". In
-> this notebook we break up the steps and don't let the auditor see the actual receipt
-> because it's more instructive for the evals we want to discuss.
+> 把流程拆成這樣的步驟有好有壞。步驟小又獨立，比較容易檢查和開發，但資訊可能一路流失，等於讓 agent 在玩「傳話遊戲」。這個 notebook 刻意拆開步驟，也不讓稽核端看到真正的收據，因為這樣更適合講解我們要談的 eval。
 
-We'll start with the first step, the literal data extraction. This is *intermediate*
-data: it's information that people would examine implicitly, but often isn't recorded.
-And for this reason, we often don't have labeled data to work from.
+先從第一步，也就是實際的資料抽取開始。這是*中間*資料：人其實會在腦中看過這些資訊，但通常不會記錄下來，所以我們往往沒有標註資料可用。
 
 ```python
 %pip install --upgrade openai pydantic python-dotenv rich persist-cache -qqq
@@ -219,7 +158,7 @@ And for this reason, we often don't have labeled data to work from.
 
 ### Structured Output Model
 
-Capture the meaningful information in a structured output.
+用 structured output 擷取有意義的資訊。
 
 ```python
 from pydantic import BaseModel
@@ -252,17 +191,13 @@ class ReceiptDetails(BaseModel):
     handwritten_notes: list[str]
 ```
 
-> *Note*: Normally we would use `decimal.Decimal` objects for the numbers above and `datetime.datetime` objects for `time` field, but neither of those deserialize well. For the purposes of this cookbook, we'll work with strings, but in practice you'd want to have another level of translation to get the correct output validated.
+> *Note*：正常情況下，上面的數字應該用 `decimal.Decimal`，`time` 欄位應該用 `datetime.datetime`，但這兩種型別反序列化的效果都不好。這本 cookbook 先用字串處理，實務上你會需要再多一層轉換，來驗證出正確的輸出。
 
-### Basic Info Extraction
+### 基本資訊抽取
 
-Let's build our `extract_receipt_details` function.
+來建立 `extract_receipt_details` 函式。
 
-Usually, for the very first stab at something that might work, we'll simply feed ChatGPT
-the available documents we've assembled so far and ask it to generate a prompt. It's not
-worth spending too much time on prompt engineering before you have a benchmark to grade
-yourself against! This is a prompt produced by o4-mini based on the problem description
-above.
+第一次嘗試通常是把手上已有的文件直接餵給 ChatGPT，請它產生一個 prompt。在還沒有 benchmark 可以對照之前，不值得花太多時間調 prompt！下面這個 prompt 是 o4-mini 根據上面的問題描述產生的。
 
 ```python
 BASIC_PROMPT = """
@@ -341,9 +276,9 @@ async def extract_receipt_details(
     return response.output_parsed
 ```
 
-### Test on one receipt
+### 測試單張收據
 
-Let's evaluate just a single receipt and review it manually to see how well a smart model with a naive prompt can do.
+先只評估一張收據，手動檢查，看看聰明的模型搭配陽春的 prompt 能做到什麼程度。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/Supplies_20240322_220858_Raven_Scan_3_jpeg.rf.50852940734939c8838819d7795e1756.jpg" alt="Walmart_image" width="400"/>
 
@@ -359,8 +294,7 @@ example_receipt = Path(
 result = await extract_receipt_details(example_receipt)
 ```
 
-We'll get different answers if we re-run it, but it usually gets most things correct
-with a few errors. Here's a specific example:
+重跑一次會得到不同的答案，但通常大部分都對，只有少數錯誤。這是一個具體的例子：
 
 ```python
 walmart_receipt = ReceiptDetails(
@@ -412,34 +346,19 @@ walmart_receipt = ReceiptDetails(
 )
 ```
 
-The model extracted a lot of things correctly, but renamed some of the line
-items - incorrectly, in fact. More importantly, it got some of the prices wrong, and it
-decided not to categorize any of the line items.
+模型抽對了很多東西，但把部分品項改了名稱，而且改錯了。更重要的是，有些價格抽錯，也決定不替任何品項分類。
 
-That's okay, we don't expect to have perfect answers at this point! Instead, our
-objective is to build a basic system we can evaluate. Then, when we start iterating, we
-won't be 'vibing' our way to something that *looks* better -- we'll be engineering a
-reliable solution. But first, we'll add an action decision to complete our draft system.
+這沒關係，我們現在本來就不期待有完美的答案！目標是先做出一個可以評估的基本系統。這樣開始迭代時，就不是憑「感覺」把東西弄得*看起來*更好，而是在打造可靠的解法。不過在那之前，先加上稽核決策，把草稿系統補完整。
 
 ### Action Decision
 
-Next, we need to close the loop and get to an actual decision based on receipts. This
-looks pretty similar, so we'll present the code without comment.
+接著要把流程收尾，根據收據做出實際的決定。寫法跟前面很像，所以直接給程式碼，不多做說明。
 
-Ordinarily one would start with the most capable model - `o3`, at this time - for a 
-first pass, and then once correctness is established experiment with different models
-to analyze any tradeoffs for their business impact, and potentially consider whether 
-they are remediable with iteration. A client may be willing to take a certain accuracy 
-hit for lower latency or cost, or it may be more effective to change the architecture
-to hit cost, latency, and accuracy goals. We'll get into how to make these tradeoffs
-explicitly and objectively later on. 
+一般會先用最強的模型（目前是 `o3`）做第一版，確認正確性之後，再試不同的模型，分析各種取捨對業務的影響，並考慮這些落差能不能靠迭代補救。客戶可能願意為了更低的延遲或成本犧牲一點準確度，也可能改架構比較能同時達成成本、延遲和準確度目標。後面會說明怎麼明確、客觀地做這些取捨。
 
-For this cookbook, `o3` might be too good. We'll use `o4-mini` for our first pass, so 
-that we get a few reasoning errors we can use to illustrate the means of addressing
-them when they occur.
+對這本 cookbook 來說，`o3` 可能太強了。我們第一版用 `o4-mini`，這樣會出現一些 reasoning 錯誤，正好拿來示範發生時怎麼處理。
 
-Next, we need to close the loop and get to an actual decision based on receipts. This
-looks pretty similar, so we'll present the code without comment.
+接著要把流程收尾，根據收據做出實際的決定。寫法跟前面很像，所以直接給程式碼，不多做說明。
 
 ```python
 from pydantic import BaseModel, Field
@@ -511,12 +430,11 @@ async def evaluate_receipt_for_audit(
     return response.output_parsed
 ```
 
-A schematic of the overall process shows two LLM calls:
+整個流程的示意圖，包含兩次 LLM 呼叫：
 
 ![Process Flowchart](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_process_flowchart.png)
 
-If we run our above example through this model, here's what we get -- again, we'll use 
-an example result here. When you run the code you might get slightly different results.
+把上面的範例丟進這個流程，會得到下面的結果。一樣只是範例結果，你自己跑可能會有些微不同。
 
 ```python
 audit_decision = await evaluate_receipt_for_audit(result)
@@ -541,67 +459,39 @@ audit_decision = AuditDecision(
 )
 ```
 
-This example illustrates why we care about end-to-end evals and why we can't use them in
-isolation. Here, the initial extraction had OCR errors and forwarded the prices to the
-auditor that don't add up to the total, but the auditor fails to detect it and asserts
-there are no math errors. However, missing this doesn't change the audit decision
-because it did pick up on the other two reasons the receipt needs to be audited.
+這個例子說明了為什麼我們需要端到端的 eval，也說明它不能單獨使用。這裡一開始的抽取有 OCR 錯誤，把加起來跟總額對不上的價格傳給稽核端，稽核端沒發現，還說沒有計算錯誤。不過漏掉這點並不會改變稽核決定，因為它抓到了另外兩個需要稽核這張收據的理由。
 
-Thus, `AuditDecision` is factually incorrect, but the decision that we care about
-is correct. This gives us an edge to improve upon, but also guides us toward making
-sound choices for where and when we apply our engineering efforts.
+所以 `AuditDecision` 本身事實上是錯的，但我們在意的那個決定是對的。這給了我們可以改進的切入點，也引導我們判斷工程力氣該放在哪裡、什麼時候放。
 
-With that said, let's build ourselves some evals!
+接下來，來建立 eval 吧！
 
-## Initial Evals
+## 初始 Eval
 
-Once we have a minimally functional system we should process more inputs and get domain
-experts to help develop ground-truth data. Domain experts doing expert tasks may not
-have much time to devote to our project, so we want to be efficient and start small,
-aiming for breadth rather than depth at first.
+有了最基本能運作的系統之後，就該處理更多輸入，請領域專家協助建立 ground-truth 資料。做專業工作的領域專家能花在我們專案上的時間不多，所以要有效率，先求廣、不求深。
 
-> If your data *doesn't* require domain expertise, then you'd want to reach for a
-> labeling solution (such as [Label Studio](https://labelstud.io/)) and attempt to annotate
-> as much data as you can given the policy, budget, and data availability restrictions.
-> In this case, we're going to proceed as if data labeling is a scarce resource; one we
-> can rely on for small amounts each week, but these are people with other job
-> responsibilities whose time and willingness to help may be limited. Sitting with these
-> experts to help annotate examples can help make selecting future examples more
-> efficient.
+> 如果你的資料*不需要*領域專業知識，就該用標註工具（例如 [Label Studio](https://labelstud.io/)），在政策、預算和資料可用性的限制內盡量多標註資料。
+> 這裡我們假設標註資源很稀缺，每週只能仰賴一小段時間，這些人還有其他工作，時間和意願都有限。和這些專家坐下來一起標註範例，也有助於之後更有效率地挑選範例。
 
-Because we have a chain of two steps, we'll be collecting tuples of type
-`[FilePath, ReceiptDetails, AuditDecision]`. Generally, the way to do this is to take
-unlabeled samples, run them through our model, and then have experts correct the output.
-For the purposes of this notebook, we've already gone through that process for all the
-receipt images in `data/test`.
+因為我們有兩步的鏈，要收集的是型別為 `[FilePath, ReceiptDetails, AuditDecision]` 的 tuple。一般做法是拿未標註的樣本，跑過我們的模型，再讓專家修正輸出。在這個 notebook 裡，`data/test` 下所有收據圖片都已經做完這個流程。
 
-### Additional Considerations
+### 其他考量
 
-There's a little more to it than that though, because when you are evaluating a
-multistep process it's important to know both the end to end performance and the
-performance of each individual step, *conditioned on the output of the prior step*.
+事情還不只這樣，因為評估多步驟流程時，除了端到端的表現，也要知道每個步驟*在前一步輸出的條件下*各自的表現。
 
-In this case, we want to evaluate:
+這裡我們要評估：
 
-1. Given an input image, how well do we extract the information we need?
-2. Given receipt information, how good is our **judgement** for our audit decision?
-3. Given an input image, how **successful** are we about making our final audit decision?
+1. 給定輸入圖片，我們抽取所需資訊的能力有多好？
+2. 給定收據資訊，我們對稽核決定的**判斷**有多好？
+3. 給定輸入圖片，我們最終做出稽核決定的**成功率**有多高？
 
-The phrasing difference between #2 and #3 is because if we give our auditor incorrect
-data, we expect it to come to incorrect conclusions. What we *want* is to be confident
-that the auditor is making the correct decision based on the evidence available, even if
-that evidence is misleading. If we don't pay attention to that case, we can end up
-training the auditor to ignore its inputs and cause our overall performance to degrade.
+#2 和 #3 用詞不同，是因為如果給稽核端錯的資料，我們預期它會得出錯的結論。我們*想要*的是確認稽核端在手上證據的基礎上做了正確的判斷，即使證據本身有誤導性。如果忽略這種情況，可能會訓練出一個無視輸入的稽核端，讓整體表現下降。
 
 ### Graders
 
-The core component of an eval is the
-[grader](https://platform.openai.com/docs/guides/graders). Our eventual eval is going to
-use 18 of them, but we only use three kinds, and they're all quite conceptually
-straightforward.
+eval 的核心元件是
+[grader](https://platform.openai.com/docs/guides/graders)。我們最終的 eval 會用到 18 個，但只有三種類型，而且概念上都很直接。
 
-Here are examples of one of our string check graders, one of our text similarity
-graders, and finally one of our model graders.
+下面是一個 string check grader、一個 text similarity grader，和一個 model grader 的範例。
 
 ```python
 example_graders = [
@@ -653,27 +543,14 @@ example_graders.append(
 )
 ```
 
-Each grader evaluates some portion of a predicted output. This might be a very narrow
-check for a specific field in a structured output, or a more holistic check that
-judges an output in its entirety. Some graders can work without context, and evaluate an
-output in isolation (for example, an LLM judge that is evaluating if a paragraph is rude
-or inappropriate). Others can evaluate based on the input and output, while the
-ones we're using here rely on an output and a ground-truth (correct) output to compare
-against.
+每個 grader 評估預測輸出的某個部分。可能是對 structured output 中特定欄位的很窄的檢查，也可能是整體評判輸出的比較全面的檢查。有些 grader 不需要上下文，單獨評估輸出就行（例如用 LLM 判斷一段文字是否無禮或不當）。有些則會根據輸入和輸出來評估，而我們這裡用的，是拿輸出去跟 ground-truth（正確）輸出比對。
 
-The most direct way of using Evals provides a prompt and a model, and lets the eval run
-on an input to generate output itself. Another useful method uses previously logged
-responses or completions as the source of the outputs. It's not quite as simple, but the
-most flexible thing we can do is to supply an item containing everything we want it to
-use—this allows us to have the "prediction" function be an arbitrary system rather than
-restricting it to a single model call. This is how we're using it in the examples below;
-the `EvaluationRecord` shown below will be used to populate the `{{ }}` template
-variables.
+最直接的 Evals 用法是提供 prompt 和模型，讓 eval 對輸入自己產生輸出。另一種有用的方法是用先前記錄下來的 response 或 completion 當作輸出來源。最有彈性的做法稍微複雜一點，就是提供一個 item，裡面包含所有我們想讓它使用的東西，這樣「預測」函式可以是任意系統，不必限定為一次模型呼叫。下面的範例就是這樣用，下面的 `EvaluationRecord` 會用來填入 `{{ }}` 範本變數。
 
-> **Note on Model Selection:**  
-> Selecting the right model is crucial. While faster, less expensive models are often preferable in production, development workflows benefit from prioritizing the most capable models available. For this guide, we use `o4-mini` for both system tasks and LLM-based grading—while `o3` is more capable, our experience suggests the difference in output quality is modest relative to the substantial increase in cost. In practice, spending $10+/day/engineer on evals is typical, but scaling to $100+/day/engineer may not be sustainable.
+> **關於模型選擇的 Note：**  
+> 選對模型很重要。上線時通常偏好更快、更便宜的模型，但開發流程應該優先用最強的模型。這份指南的系統任務和 LLM grading 都用 `o4-mini`，因為 `o3` 雖然更強，但我們的經驗是輸出品質的差距不大，成本卻大幅增加。實務上，每位工程師每天花 $10 以上在 eval 上很常見，但擴大到每天 $100 以上就可能撐不下去。
 >
-> Nonetheless, it's valuable to periodically benchmark with a more advanced model like `o3`. If you observe significant improvements, consider incorporating it for a representative subset of your evaluation data. Discrepancies between models can reveal important edge cases and guide system improvements.
+> 話雖如此，定期用更進階的模型（像 `o3`）做 benchmark 還是有價值。如果發現明顯進步，可以考慮在有代表性的一部分評估資料上使用它。不同模型之間的差異，能揭露重要的邊界案例並引導系統改進。
 
 ```python
 import asyncio
@@ -723,7 +600,7 @@ async def create_dataset_content(
 file_content = await create_dataset_content(receipt_image_dir)
 ```
 
-Once we have the graders and the data, creating and running our evals is very straightforward:
+有了 grader 和資料，建立並執行 eval 就非常簡單：
 
 ```python
 from persist_cache import cache
@@ -762,60 +639,44 @@ print(f"Evaluation run created: {eval_run.id}")
 print(f"View results at: {eval_run.report_url}")
 ```
 
-After you run that eval you'll be able to view it in the UI, and should see something
-like the below. 
+跑完這個 eval 後，你可以在 UI 裡查看，應該會看到類似下面的畫面。
 
-(Note, if you have a Zero-Data-Retention agreement, this data is not stored
-by OpenAI, so will not be available in this interface.)
-like:
+（注意：如果你有 Zero-Data-Retention 協議，這些資料不會被 OpenAI 儲存，所以不會出現在這個介面。）
 
 ![Summary UI](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_summary_ui.png)
 
-You can drill into the data tab to look at individual examples:
+可以點進 data 分頁查看個別範例：
 
 ![Details UI](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_details_ui.png)
 
-## Connecting Evals to Business Metrics
+## 把 Eval 連到商業指標
 
-Evals show you where you can improve, and help track progress and regressions over time.
-But the three evals above are just measurements — we need to imbue them with raison
-d'être.
+eval 會告訴你哪裡可以改進，並幫你追蹤進步和退步。但上面那三個 eval 只是測量值，我們得賦予它們存在的意義。
 
-The first thing we need is to add evaluations for the final stage of our receipt
-processing, so that we can start seeing the results of our audit decisions. The next
-thing we need, the most important, is a *model of business relevance*.
+第一件事，是替收據處理的最後一個階段加上評估，這樣才能開始看到稽核決定的結果。接下來最重要的，是一個*商業相關性的模型*。
 
-### A Business Model
+### 商業模型
 
-It's almost never easy to work out what costs and benefits you could get out of a new
-system depending on how well it performs. Often people will avoid trying to put
-numbers to things because they know how much uncertainty there is and they don't want to
-make guesses that make them look bad. That's okay; we just have to make our best guess,
-and if we get more information later we can refine our model.
+要算出新系統在不同表現下能帶來多少成本和效益，幾乎從來不容易。人們常常因為知道不確定性很高、不想做出讓自己難看的猜測，就避免給數字。這沒關係，我們只要盡力猜，之後有更多資訊再修正模型。
 
-For this cookbook, we're going to create a simple cost structure:
+這本 cookbook 建一個簡單的成本結構：
 
-- our company processes 1 million receipts a year, at a baseline cost of $0.20 /
-  receipt
-- auditing a receipt costs about $2
-- failing to audit a receipt we should have audited costs an average of $30
-- 5% of receipts need to be audited
-- the existing process
-  - identifies receipts that need to be audited 97% of the time
-  - misidentifies receipts that don't need to be audited 2% of the time
+- 公司一年處理 100 萬張收據，基準成本是每張 $0.20
+- 稽核一張收據大約花 $2
+- 沒稽核到本來該稽核的收據，平均損失 $30
+- 5% 的收據需要稽核
+- 現有流程
+  - 97% 的情況能辨識出需要稽核的收據
+  - 2% 的情況會誤判不需稽核的收據
 
-This gives us two baseline comparisons:
+這給我們兩個基準比較：
 
-- if we identified every receipt correctly, we would spend $100,000 on audits
-- our current process spends $135,000 on audits and loses $45,000 to un-audited expenses
+- 如果每張收據都判斷正確，稽核會花 $100,000
+- 現有流程在稽核上花 $135,000，並因為未稽核的費用損失 $45,000
 
-On top of that, the human-driven process costs an additional $200,000.
+除此之外，人工流程還要額外花 $200,000。
 
-We're expecting our service to save money by costing less to run (≈1¢/receipt if we use
-the prompts from above with `o4-mini`), but whether we save or lose money on audits and
-missed audits depends on how well our system performs. It might be worth writing this as
-a simple function — written below is a version that includes the above factors but
-neglects nuance and ignores development, maintenance, and serving costs.
+我們預期這個服務能因為執行成本更低而省錢（用上面的 prompt 搭配 `o4-mini` 約每張 1 美分），但在稽核和漏稽核上是賺是賠，取決於系統表現。把它寫成簡單的函式可能會有幫助，下面這個版本包含上述因素，但忽略細節，也不計開發、維護和服務成本。
 
 
 ```python
@@ -845,33 +706,17 @@ print(f"Current system cost: ${current_system_cost:,.0f}")
 ```
 
 
-### Connecting Back To Evals
+### 連回 Eval
 
-The point of the above model is it lets us apply meaning to an eval that would
-otherwise just be a number. For instance, when we ran the system above we were wrong 85%
-of the time for merchant names. But digging in, it seems like most instances are
-capitalization issues or "Shell Gasoline" vs. "Shell Oil #2144" — problems that when
-we follow through, do not appear to affect our audit decision or change our fundamental
-costs.
+這個模型的重點，是讓我們能替原本只是一個數字的 eval 賦予意義。例如，上面跑系統時，商家名稱有 85% 是錯的。但仔細看，多數是大小寫問題，或是「Shell Gasoline」對「Shell Oil #2144」這類差異，追下去後發現不影響稽核決定，也不改變基本成本。
 
-On the other hand, it seems like we fail to catch handwritten "X"s on receipts about
-half the time, and about half of the time when there's an "X" on a receipt that gets
-missed, it results in a receipt not getting audited when it should. Those are
-overrepresented in our dataset, but if that makes up even 1% of receipts, that 50%
-failure would cost us $75,000 a year.
+另一方面，我們大約有一半的情況抓不到收據上手寫的「X」，而在漏抓「X」的收據中，大約一半會導致該稽核的收據沒被稽核。這類收據在我們的資料集中比例偏高，但如果它占所有收據的 1%，那 50% 的失敗率一年就會讓我們損失 $75,000。
 
-Similarly, it seems like we have OCR errors that cause us to audit receipts quite often
-on account of the math not working out, up to 20% of the time. This could cost us almost
-$400,000!
+同樣地，OCR 錯誤造成算式對不上，讓我們常常因此稽核收據，比例高達 20%，這可能花掉將近 $400,000！
 
-Now, we're in a place to add more graders and start working backwards from the audit
-decision accuracy to determine which problems we should focus on.
+現在我們可以加入更多 grader，從稽核決定的準確度往回推，找出該專注解決哪些問題。
 
-Below are the rest of our graders and the results we get with our initial un-optimized
-prompts. Note that at this point we do quite badly! Across our 20 samples (8 positive,
-12 negative), we had two false negatives and two false positives. If we extrapolated to
-our entire business, we'd be losing $375,000 on audits we missed and $475,000 on
-unnecessary audits.
+下面是其餘的 grader，以及用最初未優化的 prompt 得到的結果。注意目前表現相當差！在 20 個樣本中（8 個正例、12 個負例），有兩個 false negative 和兩個 false positive。如果推算到整個業務，漏稽核會損失 $375,000，不必要的稽核會多花 $475,000。
 
 ```python
 simple_extraction_graders = [
@@ -1139,81 +984,36 @@ eval_run = await client.evals.runs.create(
 
 eval_run.report_url
 ```
-
 ![Large Summary UI](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_large_summary_ui.png)
 
-## Spin Up the Flywheel
+## 啟動飛輪
 
-Having our business model means we have a map of what's worth doing and what isn't. Our
-initial evals are a road sign that lets us know we're moving in the right direction; but
-eventually we'll need more signage. At this point in the process we usually have a lot
-of different things we can work on, with a few linked cycles where improvement on one
-will open up more room for improvement on a different cycle.
+有了商業模型，就等於有一張地圖，知道哪些事值得做、哪些不用做。初始 eval 像一個路標，讓我們知道方向對不對，但最後還需要更多路標。到這個階段，通常有很多事可以做，其中有幾個互相連動的循環，一個循環改善了，會替另一個循環騰出更多改進空間。
 
 ![Development Flywheel](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_development_flywheel.png)
 
-1. Our evals show us where we can improve, and we can immediately use them to guide us
-   in model selection, prompt engineering, tool use, and fine-tuning strategies.
-2. We're not done once system performs well according to our evals. That's when it's
-   time to *improve our evals*. We will process more data, give it to our domain experts
-   to review, and feed the corrections into building better, more comprehensive evals.
+1. eval 告訴我們哪裡能改進，可以馬上拿來引導模型選擇、prompt engineering、tool 使用和 fine-tuning 策略。
+2. 系統在 eval 上表現好，不代表就做完了。這時候該*改進 eval*。我們會處理更多資料，交給領域專家檢視，再把修正回饋到更完整的 eval。
 
-This cycle can go on for a while. We can speed it along by identifying the efficient
-frontier of "interesting" data to examine. There are a few techniques for this, but an
-easy one is re-running models on inputs to prioritize labeling inputs that don't
-get consistent answers. This works especially well when using different underlying
-models, and often even benefits from using less-intelligent models (if a dumb model
-agrees with a smart model then it's probably not a hard problem).
+這個循環可以持續很久。我們可以找出「有意思」資料的效率前緣來加速，技術有好幾種，簡單的一種是對輸入重跑模型，優先標註那些答案不一致的輸入。換不同底層模型時特別有效，甚至用比較不聰明的模型也有幫助（如果笨模型和聰明模型意見一致，那多半不是難題）。
 
-Once it seems like we've hit a point of dimishing returns on performance, we can keep
-using the same techniques to optimize model cost; if we have a system that performs
-quite well, then fine-tuning or some form of model distillation will probably allow us
-to get similar performance from smaller, cheaper, faster models.
+一旦效能看起來到了報酬遞減的地步，就可以用同樣的技術來優化模型成本。如果系統表現已經很好，fine-tuning 或某種 model distillation 通常能讓更小、更便宜、更快的模型達到相近的表現。
 
-## System Improvements
+## 系統改進
 
-With our evals in place and an understanding of how they connect to our business metrics,
-we're finally ready to turn our attention to improving the output of our system.
+有了 eval，也了解它們和商業指標的關係，終於可以開始改善系統的輸出了。
 
-Above, we noted that we get merchant names wrong 85% of the time, more than any other
-output we're evaluating. This looks pretty bad, and it's probably something we can
-improve dramatically with only a little work, but instead let's start from the endpoint
-of our business metrics and work backwards to see what issues caused incorrect
-decisions.
+前面提到，商家名稱有 85% 是錯的，比其他任何評估的輸出都高。看起來很糟，也很可能只要花一點功夫就能大幅改善，但我們先不急，改從商業指標的終點往回推，看是哪些問題造成錯誤的決定。
 
-When we do that, we see that the mistakes we made on merchant names are completely
-uncorrelated with our final audit decision, and there's no evidence that they have any
-impact on that decision. Based on our business model, we don't actually see a need to
-improve it -- in other words, *not all evals matter*. Instead, we can examine
-specifically the examples where we made a bad audit decision. There are only two of them
-(out of 20). Examining them closely, we observe that in both cases the problem came from
-the second stage of the pipeline making a wrong decision based on a non-problematic
-extraction. And in fact, both of them come from a failure to reason correctly about
-travel-related expenses.
+這樣做之後會發現，商家名稱的錯誤跟最終稽核決定完全不相關，也沒有證據顯示它們對決定有影響。依照我們的商業模型，其實不需要改進它，換句話說，*不是所有 eval 都重要*。我們應該改去檢視稽核決定做錯的那些範例，只有兩個（20 個中）。仔細檢查後發現，兩個案例的問題都出在第二階段：在沒有問題的抽取結果上做出錯誤決定。而且兩個都是對差旅相關費用推理失敗。
 
-In the first case, the purchase is a snowbroom from an auto-parts store. This is a
-little bit of an edge case, but our domain experts identified this as a valid travel
-expense (because drivers might need one to clear their windshield). This seems like
-explaining the decision process in more detail and providing an analogous example would
-correct the error.
+第一個案例，購買的是汽車零件行的一支雪刷。這有點邊界，但領域專家認定這是合理的差旅費用（因為駕駛可能需要用它清擋風玻璃）。看起來把決策過程解釋得更詳細，再提供一個類似的例子就能修正。
 
-In the second case, the purchase is some tools from a home improvement store. The tools
-don't have anything to do with normal driving, so this receipt should be audited as a
-"non-travel-related expense". In this case our model *correctly* identifies it as an
-expense that's not travel-related, but then reasons incorrectly about that fact,
-apparently misunderstanding that `true` for `not_travel_related` should imply `true` for
-`needs_audit`. Again, this seems like an example where more clarity in our instructions
-and a few examples should fix the issue.
+第二個案例，購買的是居家修繕店的一些工具。這些工具跟一般開車無關，所以這張收據應該以「非差旅相關費用」被稽核。這裡我們的模型*正確地*判斷它不是差旅相關費用，但接著卻推理錯誤，似乎沒搞懂 `not_travel_related` 為 `true` 應該代表 `needs_audit` 也為 `true`。這同樣看起來是指令更清楚、再加幾個範例就能解決的問題。
 
-Connecting this back to our cost model, we note that we have 1 false negative and 1
-false positive, along with 7 true positives and 11 true negatives. Extrapolating this to
-the frequencies we see in production, this would increase our overall costs by $63,000
-per year.
+連回成本模型，我們有 1 個 false negative 和 1 個 false positive，另外有 7 個 true positive 和 11 個 true negative。依照正式環境的頻率推算，這會讓整體成本每年增加 $63,000。
 
-Let's modify the prompt and re-run our evals to see how we do. We'll provide more
-guidance in the form of a specific example in the instructions about engine oil
-(different from a snow broom, but requires the same reasoning), and we'll include three
-examples pulled from our training set (`data/train`) as few-shot guidance.
+我們來修改 prompt，重跑 eval 看結果。我們會在指令中提供更具體的引導，加入一個關於機油的範例（跟雪刷不同，但需要同樣的推理），並從訓練集（`data/train`）挑三個範例當 few-shot 引導。
 
 ```python
 first_ai_system_cost = calculate_costs(
@@ -1410,9 +1210,9 @@ Return a structured response with your evaluation.
 """
 ```
 
-The modifications we made to the prompt above are:
+上面 prompt 的修改有：
 
-1. Under item 1 concerning travel-related expenses, we added a bullet point
+1. 在第 1 項關於差旅相關費用下，加了一個 bullet point
 
 ```
 - Travel-related expenses include anything that could be reasonably required for
@@ -1422,8 +1222,7 @@ The modifications we made to the prompt above are:
   travel-related expense.
 ```
 
-2. We added more prescriptive guidance on how to evaluate for a math error.
-   Specifically, we added the bullet points:
+2. 針對怎麼評估計算錯誤，加了更具體的指引。也就是加了這幾個 bullet point：
 
 ```
    - Add up the price and quantity of each line item to get the subtotal
@@ -1432,11 +1231,9 @@ The modifications we made to the prompt above are:
    - If the total is off by no more than $0.01, this is NOT a math error
 ```
 
-   This doesn't actually have to do with the issues we mentioned, but is another issue
-   we noticed as a flaw in the reasoning provided by the audit model.
+   這跟前面提到的問題其實無關，而是我們從稽核模型提供的推理中注意到的另一個缺陷。
 
-3. We added very strong guidance (we actually needed to state it and restate it
-   emphatically) to say that non-travel-related expenses should be audited.
+3. 加了非常強烈的指引（我們真的需要講完又再強調一次）：非差旅相關費用應該被稽核。
 
 ```
 Note that violation of a criterion means that it is `true`. If any of the above four
@@ -1448,10 +1245,9 @@ and therefore NEEDS_AUDIT must also be set to `true`. IF THE RECEIPT LISTS ITEMS
 ARE NOT TRAVEL-RELATED, THEN IT MUST BE AUDITED.
 ```
 
-4. We added three examples, JSON input/output pairs wrapped in XML tags.
+4. 加了三個範例，是包在 XML 標籤裡的 JSON 輸入／輸出配對。
 
-With our prompt revisions, we'll regenerate the data to evaluate and re-run the same
-eval to compare our results:
+改完 prompt 後，重新產生要評估的資料，再重跑同一個 eval 來比較結果：
 
 ```python
 file_content = await create_dataset_content(receipt_image_dir)
@@ -1468,31 +1264,20 @@ eval_run = await client.evals.runs.create(
 eval_run.report_url
 ```
 
-When we ran the eval again, we actually still got two audit decisions wrong. Digging into
-the examples we made a mistake on, it turns out that we completely fixed the issues we
-identified, but our examples improved the reasoning step and caused two other issues to
-surface. Specifically:
+再跑一次 eval，居然還是有兩個稽核決定錯誤。深入看犯錯的範例，發現我們完全修好了先前找到的問題，但範例改善了 reasoning 步驟，讓另外兩個問題浮現。具體來說：
 
-1. One receipt needed to be audited only because there was a mistake in extraction and
-   a handwritten "X" wasn't identified. The audit model reasoned correctly, but based on
-   incorrect data.
-2. One receipt was extracted in such a way that a $0.35 debit fee wasn't visible, so the
-   audit model identified a math error. This almost certainly happened because we
-   provided it with more detailed instructions and clear examples that demonstrated it
-   needed to actually add up all the line items in order to decide whether there was a
-   math error. Again, this demonstrates correct behavior on the part of the audit model
-   and suggests we need to correct the extraction model.
+1. 有一張收據需要稽核，只是因為抽取出錯，沒辨識出手寫的「X」。稽核模型推理正確，只是依據的資料不對。
+2. 有一張收據的抽取方式，導致一筆 $0.35 的 debit fee 看不到，所以稽核模型判定有計算錯誤。這幾乎可以確定是因為我們提供了更詳細的指令和清楚的範例，示範它必須真的把所有品項加總，才能判斷有沒有計算錯誤。這也是稽核模型行為正確的例子，顯示我們需要修正的是抽取模型。
 
-This is great, and we'll continue iterating on issues as we uncover them. This is the
-cycle of improvement!
+這很好，我們會在發現問題時持續迭代。這就是改進的循環！
 
-### Model Choice
+### 模型選擇
 
-When beginning a project, we usually start with one of the most capable models available, such as `o4-mini`, to establish a performance baseline. Once we’re confident in the model’s ability to solve the task, the next step is to explore smaller, faster, or more cost-effective alternatives.
+開始專案時，我們通常先用最強的模型之一（例如 `o4-mini`）建立效能基準。一旦確認模型有能力解決任務，下一步就是探索更小、更快或更省錢的替代方案。
 
-Optimizing for inference cost and latency is essential, especially for production or customer-facing systems, where these factors can significantly impact overall expenses and user experience. For instance, switching from `o4-mini` to `gpt-4.1-mini` could reduce inference costs by nearly two-thirds—an example where thoughtful model selection leads to meaningful savings.
+優化推論成本和延遲很重要，尤其是正式上線或面對客戶的系統，這些因素會大幅影響整體費用和使用者體驗。例如，從 `o4-mini` 換成 `gpt-4.1-mini` 可以把推論成本降低將近三分之二，這就是謹慎選模型帶來實質節省的例子。
 
-In the next section, we’ll rerun our evaluations using `gpt-4.1-mini` for both extraction and audit steps to see how well a more efficient model performs.
+下一節，我們用 `gpt-4.1-mini` 同時跑抽取和稽核兩個步驟，重跑評估，看更有效率的模型表現如何。
 
 ```python
 file_content = await create_dataset_content(receipt_image_dir, model="gpt-4.1-mini")
@@ -1509,17 +1294,11 @@ eval_run = await client.evals.runs.create(
 eval_run.report_url
 ```
 
-The results are pretty promising. It doesn't look like the extraction accuracy suffered
-at all. We see one regression (the snowbroom again), but our audit decision is correct
-twice as often as it was before our prompt changes.
+結果相當有希望。抽取準確度看起來完全沒下降。有一個退步（又是雪刷），但我們的稽核決定正確的頻率，是 prompt 修改前的兩倍。
 
 ![Eval Variations](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_eval_variations.png)
 
-This is great evidence that we'll be able to switch to a cheaper model, but it might
-require more prompt engineering, fine-tuning, or some form of model-distillation. Note
-however that according to our current model this would already be saving us money. We
-don't quite believe that yet because we don't have a large enough sample — our real
-false negative rate will be more than the 0 we see here.
+這是個很好的證據，顯示我們可以換成比較便宜的模型，不過可能需要更多 prompt engineering、fine-tuning 或某種 model distillation。另外要注意，依照我們目前的模型，這樣換已經能省錢。但我們還不太敢相信，因為樣本不夠大，真正的 false negative 率會比我們現在看到的 0 高。
 
 ```python
 system_cost_4_1_mini = calculate_costs(
@@ -1530,52 +1309,53 @@ print(f"Cost using gpt-4.1-mini: ${system_cost_4_1_mini:,.0f}")
 ```
 
 
-### Further improvements
+### 進一步的改進
 
-This cookbook focuses on the philosophy and practicalities of evals, not the full range of model improvement techniques. For boosting or maintaining model performance (especially when moving to smaller, faster, or cheaper models), consider these steps in order—start from the top, and only proceed down if needed. For example, always optimize your prompt before resorting to fine-tuning; fine-tuning on a weak prompt can lock in bad performance even if you improve the prompt later.
+這本 cookbook 專注在 eval 的理念和實務，不談所有改善模型的技術。要提升或維持模型表現（尤其是換到更小、更快或更便宜的模型時），建議依序考慮下面這些步驟：從最上面開始，必要時才往下。例如，一定要先優化 prompt 再考慮 fine-tuning，因為在差的 prompt 上做 fine-tuning，即使之後改好 prompt，也可能把糟糕的表現鎖死。
 
 ![Model Improvement Waterfall](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/partner_model_improvement_waterfall.png)
 
-1. **Model selection:** try smarter models, or increase their reasoning budget.
-2. **Prompt tuning:** clarify instructions and provide very explicit rules.
-3. **Examples and context:** add few- or many-shot examples, or more context for the
-   problem. RAG fits in here, and may be used to dynamically select similar examples.
-4. **Tools use:** provide tools to solve specific problems, including access to external
-   APIs, the ability to query databases, or otherwise enable the model to have its own
-   questions answered.
-5. **Accessory models:** add models to perform limited sub-tasks, to supervise and provide
-   guardrails, or use a mixture of experts and aggregate solutions from multiple
-   sub-models.
-6. **Fine-tuning:** use labeled training data for supervised fine tuning, eval
-   graders for reinforcement fine tuning, or different outputs for direct preference
-   optimization.
+1. **模型選擇：** 試更聰明的模型，或增加它們的 reasoning 預算。
+2. **Prompt 調整：** 把指令講清楚，給很明確的規則。
+3. **範例與上下文：** 加入 few-shot 或 many-shot 範例，或給問題更多上下文。RAG 屬於這一層，可以用來動態選擇相似的範例。
+4. **Tool 使用：** 提供 tool 解決特定問題，包括存取外部 API、查詢資料庫，或讓模型能自己找到問題的答案。
+5. **輔助模型：** 加入模型執行有限的子任務、負責監督和 guardrail，或使用 mixture of experts 並整合多個子模型的解答。
+6. **Fine-tuning：** 用標註的訓練資料做 supervised fine tuning，用 eval grader 做 reinforcement fine tuning，或用不同的輸出做 direct preference optimization。
 
-The above options are all tools to maximize performance. Once you're trying to optimize
-for a price:performance ratio, you'll usually have already done all of the above and
-likely don't need to repeat most steps, but you can still fine-tune smaller models or
-use your best model to train a smaller model (model distillation).
+上面這些選項都是用來最大化效能的工具。到了要優化性價比的時候，通常上面這些都已經做過，大多數步驟不用重複，但你仍然可以 fine-tune 較小的模型，或用你最好的模型去訓練較小的模型（model distillation）。
 
-> One really excellent thing about OpenAI Evals is that you can use the same graders for
-> [Reinforcement Fine-Tuning](https://cookbook.openai.com/examples/reinforcement_fine_tuning)
-> to produce better model performance in an extremely sample-efficient manner. One note
-> of caution is to make sure that you use separate training data and don't leak your
-> eval datasets during RFT.
+> OpenAI Evals 一個很棒的地方，是你可以把同樣的 grader 用在
+> [Reinforcement Fine-Tuning](https://cookbook.openai.com/examples/reinforcement_fine_tuning)，
+> 以極高的樣本效率得到更好的模型表現。要注意的是，一定要用另外的訓練資料，不要在 RFT 時洩漏 eval 資料集。
 
-## Deploying and Post-Development
-Building and deploying an LLM application is just the beginning—the real value comes from ongoing improvement. Once your system is live, prioritize continuous monitoring: log traces, track outputs, and proactively sample real user interactions for human review using smart sampling techniques.
+## 部署與開發後
 
-Production data is your most authentic source for evolving your evaluation and training datasets. Regularly collect and curate fresh samples from actual use cases to identify gaps, edge cases, and new opportunities for enhancement.
+建構並部署 LLM 應用只是開始，真正的價值來自持續改進。系統上線後，要優先做持續監控：記錄 trace、追蹤輸出，並用聰明的抽樣技巧主動抽取真實使用者互動交給人工審查。
 
-In practice, leverage this data for rapid iteration. Automate periodic fine-tuning pipelines that retrain your models on recent, high-quality samples and automatically deploy new versions when they outperform existing ones in your evals. Capture user corrections and feedback, then systematically feed these insights back into your prompts or retraining process—especially when they highlight persistent issues.
+正式環境的資料是演進 eval 和訓練資料集最真實的來源。定期從實際使用案例收集並整理新樣本，找出缺口、邊界案例和新的改進機會。
 
-By embedding these feedback loops into your post-development workflow, you ensure your LLM applications continuously adapt, stay robust, and remain closely aligned with user needs as they evolve.
+實務上，用這些資料快速迭代。可以自動化定期的 fine-tuning pipeline，用最近的高品質樣本重新訓練模型，當新版本在 eval 上勝過現有版本時自動部署。收集使用者的修正和回饋，再有系統地回饋到 prompt 或重新訓練的流程中，尤其是當它們指出反覆出現的問題時。
+
+在開發後流程中內建這些回饋循環，才能讓 LLM 應用持續適應、保持穩健，並隨著使用者需求演變而貼近他們。
 
 ### Contributors
-This cookbook serves as a joint collaboration effort between OpenAI and [Fractional](https://www.fractional.ai/).
+這本 cookbook 是 OpenAI 與 [Fractional](https://www.fractional.ai/) 共同合作的成果。
 
 - Hugh Wimberly
 - Joshua Marker
 - Eddie Siegel
 - Shikhar Kwatra
 
-<!-- tutor:summary -->
+## 重點整理
+
+- eval 是把 LLM 系統從憑感覺調整變成工程的核心，要先有能跑的端到端 V0，再談改進。
+- 多步驟 pipeline 要同時看端到端表現和每一步在前一步輸出條件下的表現，否則可能訓練出無視輸入的 auditor。
+- 用商業模型把 eval 分數換算成金額，才知道哪些指標值得改。商家名稱錯 85% 但不影響決策，就不用優先處理。
+- 改 prompt 修好一個問題，常會讓另一個問題浮現（例如抽取錯誤），這就是 eval 和系統交替改進的飛輪。
+- 先用強模型建立基準，再用同一套 eval 驗證換成便宜模型的代價。優化順序是模型、prompt、範例、tool、輔助模型、fine-tuning。
+
+## 練習
+
+1. 把商業模型裡的「漏稽核平均損失 $30」改成 $60，重算一次，看哪些 eval 失敗的金額影響變得最大。
+2. 在 `evaluate_receipt_for_audit` 的 prompt 加一條新規則（例如單筆金額超過某個數字一律稽核），並多放一個對應的 few-shot 範例，重跑 eval 看 false positive 有沒有增加。
+3. 把抽取和稽核兩步的模型分開設定（例如抽取用 `o4-mini`、稽核用 `gpt-4.1-mini`），比較各步驟的 eval 結果，判斷哪一步換便宜模型的代價比較小。

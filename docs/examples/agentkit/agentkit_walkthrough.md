@@ -1,51 +1,62 @@
 ---
-translated: false
+translated: true
 source: examples/agentkit/agentkit_walkthrough.ipynb
 ---
 
-# Build, deploy, and optimize agentic workflows with AgentKit
+# 用 AgentKit 建置、部署、優化 agentic workflow
 
 > 原文：[examples/agentkit/agentkit_walkthrough.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agentkit/agentkit_walkthrough.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 AgentKit 的三個元件走完一輪完整流程：先在 Agent Builder 拉出一個三個 agent 串接的 workflow（讀履歷、分析職涯落差、推薦線上課程），再用 ChatKit 把它嵌進自己的前端聊天 app，最後用 Evals 做 prompt optimization 跟 trace grading 改善表現。
 
+## 學完你會
 
-## Introduction
+- 在 Agent Builder 建多 agent workflow，設定 reasoning、structured output、Web Search，並用 Preview 測試跟 Publish。
+- 用 ChatKit starter template 加上 workflow ID，部署聊天 app，並用 theme、Widget Builder 自訂外觀跟課程卡片。
+- 用 Datasets 的 model grader 做單一 agent 的 prompt optimization，再用 trace grading 評估整條 workflow。
 
-At DevDay 2025 we launched [AgentKit](https://openai.com/index/introducing-agentkit/), a complete set of tools for developers and enterprises to build, deploy, and optimize agents. AgentKit is a set of interconnected building blocks:
+## 開跑前
 
-* [Agent Builder](https://platform.openai.com/docs/guides/agents/agent-builder): visually build and iterate on agent workflows  
-* [ChatKit](https://platform.openai.com/docs/guides/chatkit): easily embed chat-based workflows into your app  
-* [Evals](https://platform.openai.com/docs/guides/evals?api-mode=responses): improve the performance of your LLM-powered apps
+- 一個可以用 Agent Builder、ChatKit、Evals 的 OpenAI Platform 帳號。
+- 部署前端要有 Node.js 跟 npm，並把 workflow ID 填進 `.env.local` 的 `NEXT_PUBLIC_CHATKIT_WORKFLOW_ID`。
 
-**This cookbook will take an end-to-end journey through AgentKit - we'll build, deploy, and optimize an app. You'll understand how AgentKit’s building blocks connect together, enabling you to bring your agentic workflows into production faster and more reliably.** 
+## 簡介
 
-We’ll walk through the following steps:
+在 DevDay 2025，我們推出了 [AgentKit](https://openai.com/index/introducing-agentkit/)，這是一整套讓開發者跟企業建置、部署、優化 agent 的工具。AgentKit 是一組互相連動的積木：
 
-1. Build a workflow in Agent Builder to serve as the back-end of our app  
-2. Deploy a front-end chat app using the ChatKit web component  
-3. Optimize workflow performance in Evals with prompt optimization and trace grading
+* [Agent Builder](https://platform.openai.com/docs/guides/agents/agent-builder)：用視覺化方式建置跟迭代 agent workflow  
+* [ChatKit](https://platform.openai.com/docs/guides/chatkit)：輕鬆把聊天式 workflow 嵌進你的 app  
+* [Evals](https://platform.openai.com/docs/guides/evals?api-mode=responses)：改善 LLM 應用的表現
 
-## Building the multi-agent workflow with Agent Builder
+**這份 cookbook 會從頭到尾走一遍 AgentKit，我們會建置、部署並優化一個 app。你會了解 AgentKit 的各個積木怎麼串在一起，讓你更快、更穩地把 agentic workflow 推上正式環境。** 
 
-Let's get started by using Agent Builder to create the initial workflow that will underpin our app. Agent Builder is a visual canvas that lets you drag-and-drop nodes to design your agentic workflows. You can learn more about Agent Builder [here](https://platform.openai.com/docs/guides/agent-builder), including additional functionality and a full list of supported nodes, but in this cookbook we'll create a simple workflow with three Agent nodes working sequentially.
+步驟如下：
 
-We’ll build a simple app that helps people accelerate their careers through curated learning recommendations. Users can upload their resume and tell us their dream job, and they'll receive a curated set of learning courses based on the skills they need to develop. So we'll create three agents: 
+1. 在 Agent Builder 建一個 workflow，當作 app 的後端  
+2. 用 ChatKit web component 部署前端聊天 app  
+3. 在 Evals 用 prompt optimization 跟 trace grading 優化 workflow 的表現
 
-1. **Resume extraction** agent to parse uploaded resumes and extract relevant skills and experiences  
-2. **Career analysis** agent to analyze knowledge gaps relative to their target job  
-3. **Course recommendation** agent which uses the upstream information to suggest relevant online courses.
+## 用 Agent Builder 建多 agent workflow
 
-Let's build each of these agents sequentially.
+先用 Agent Builder 建出支撐 app 的初始 workflow。Agent Builder 是一個視覺化畫布，你可以拖放 node 來設計 agentic workflow。更多功能跟支援的 node 清單可以看[這裡](https://platform.openai.com/docs/guides/agent-builder)，這份 cookbook 只做一個簡單的 workflow：三個 Agent node 依序執行。
+
+我們要做一個靠精選學習推薦來幫人加速職涯發展的 app。使用者上傳履歷、說出理想工作，就會根據他們需要補強的技能，收到一組精選課程。所以我們會建三個 agent： 
+
+1. **履歷擷取** agent：解析上傳的履歷，擷取相關技能跟經歷  
+2. **職涯分析** agent：分析他們相對於目標工作的知識落差  
+3. **課程推薦** agent：用上游的資訊推薦相關的線上課程。
+
+我們依序建每一個 agent。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_workflow.png" /></center></div>
 
-### 1. Resume extraction agent
+### 1. 履歷擷取 agent
 
-This agent will be responsible for parsing the uploaded resume and returning a structured output of skills and experiences that will be used for downstream analysis. We'll use the following prompt:
+這個 agent 負責解析上傳的履歷，回傳技能跟經歷的結構化輸出，供下游分析使用。我們用下面的 prompt：
 
 
 ```text
@@ -55,13 +66,13 @@ Extract and summarize information from the input resume, organizing your output 
 - Continue reviewing the text until all skills and experiences are extracted.
 ```
 
-We'll use `gpt-5` for this agent, starting with `minimal` reasoning, but we can always change the model later if needed. And, we'll enforce a structured response (by selecting Output format to JSON, and adding a schema) to instruct the model to return the exact data shape we're looking for. (The JSON schema for this structured output can be found [here](https://cdn.openai.com/cookbook/agent_walkthrough/Skills_schema.json).)
+這個 agent 用 `gpt-5`，reasoning 先設 `minimal`，之後需要的話隨時可以換模型。我們也會強制結構化回應（把 Output format 選成 JSON 並加上 schema），讓模型回傳我們要的精確資料格式。（這個結構化輸出的 JSON schema 在[這裡](https://cdn.openai.com/cookbook/agent_walkthrough/Skills_schema.json)。）
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_json_schema.png" width="50%"/></center></div>
 
-### 2. Career analysis agent
+### 2. 職涯分析 agent
 
-This agent will analyze skill and knowledge gaps for an individual to progress to a desired professional or career goal. We'll use `gpt-5` for this agent and select reasoning effort `low`, which should provide sufficient reasoning for this level of analysis while keeping the responses sufficiently fast.
+這個 agent 分析一個人要達成目標職位或職涯目標，在技能跟知識上的落差。這個 agent 一樣用 `gpt-5`，reasoning effort 選 `low`，這個程度的分析用它就夠了，回應速度也夠快。
 
 ```text
 Your role is to analyze skill and knowledge gaps for an individual to progress to a desired professional or career goal. 
@@ -77,11 +88,11 @@ Already-obtained skills and experiences:
 {{input.output_text}}
 ```
 
-Note that our prompt includes context from previous nodes enclosed in {{brackets}}. You can also click "Add context" to see the context variables to the model.
+注意我們的 prompt 包含用 {{大括號}} 包起來的前面 node 的 context。你也可以點「Add context」，查看能提供給模型的 context 變數。
 
-### 3. Course recommendation agent
+### 3. 課程推薦 agent
 
-This agent will use the web search tool to find and select online training courses that match the identified skill gaps. We'll use `gpt-5` with `minimal` reasoning and equip this agent with Web Search.
+這個 agent 會用 web search tool 找出符合技能落差的線上訓練課程。我們用 `gpt-5`、`minimal` reasoning，並幫這個 agent 配上 Web Search。
 
 ```text
 Your job is to identify and recommend online training courses that help develop one or more of the skills identified. Given the list of required skills and descriptions below, return a list of 3-5 online courses along with course details.
@@ -89,90 +100,90 @@ Your job is to identify and recommend online training courses that help develop 
 Skills: {{input.output_text}}
 ```
 
-## Testing our workflow
+## 測試 workflow
 
-**Now that we've built our initial workflow, we can use the Preview functionality in Agent Builder to give it a spin!** We'll first Publish the workflow, which will create a named and versioned copy (with a unique workflow ID) that we can share with colleagues, or deploy or revert between versions as needed.
+**初始 workflow 建好了，可以用 Agent Builder 的 Preview 功能試跑！** 我們先 Publish workflow，這會建立一份有名稱、有版本的副本（附唯一的 workflow ID），可以分享給同事，也可以部署或在版本之間回退。
 
-Preview lets you interact with your workflow the same way a chat user would, from directly within Agent Builder. If we upload a resume, type in a description of our dream job, and click Submit, we'll see the workflow proceed step-by-step through each node on the left of the screen, and we'll see the output from each node on the right.
+Preview 讓你在 Agent Builder 裡，用跟聊天使用者一樣的方式跟 workflow 互動。上傳履歷、輸入理想工作的描述再點 Submit，就會看到 workflow 在畫面左邊一個個 node 逐步執行，右邊則看得到每個 node 的輸出。
 
-As an example, I've uploaded a resume for a teacher who's looking to become a school superintendent.
+這裡我上傳了一位想成為學區督學的老師的履歷當範例。
 
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_workflow_preview.png" /></center></div>
 
-We can follow the workflow as it proceeds through resume parsing, skill analysis, and web search. As the workflow completes, as expected we see a list of online programs that meet the search parameters.
+我們可以看著 workflow 依序走過履歷解析、技能分析跟 web search。workflow 跑完後，如預期看到一份符合搜尋條件的線上課程清單。
 
-**Everything looks good - we're now ready to deploy our app!** Let's make sure we publish any changes we've made, and get the workflow ID. We can select "Code" at the top of the screen to access the ID again.
+**一切正常，可以部署 app 了！** 先確定你做的修改都已 publish，並取得 workflow ID。需要再找 ID 時，可以點畫面上方的「Code」。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_code.png" /></center></div>
 
-Note that you can use the "Agents SDK" tab to access the code that supports the workflow you just built, implemented using the Agents SDK package (in [JavaScript/TypeScript](https://github.com/openai/openai-agents-js) or [Python](https://github.com/openai/openai-agents-python)). This is a great option if you want to run your workflow in your own environment, or develop it further with custom functionality. (However, you would miss out on some of the benefits of using AgentKit in an integrated way, as we describe below.)
+另外，你可以用「Agents SDK」分頁取得剛建好的 workflow 的程式碼，它是用 Agents SDK 套件（[JavaScript/TypeScript](https://github.com/openai/openai-agents-js) 或 [Python](https://github.com/openai/openai-agents-python)）實作的。如果你想在自己的環境跑 workflow，或加上自訂功能繼續開發，這是個好選擇。（不過這樣你會錯過整合使用 AgentKit 的一些好處，後面會說明。）
 
-## Deploying the chat app with ChatKit
+## 用 ChatKit 部署聊天 app
 
-To deploy our app, we'll use the [ChatKit starter template](https://github.com/openai/openai-chatkit-starter-app) to help us spin up a chat-based app using the ChatKit web component.
+部署 app 時，我們用 [ChatKit starter template](https://github.com/openai/openai-chatkit-starter-app)，它能幫我們用 ChatKit web component 快速架起聊天 app。
 
-Before doing that, it's worth explaining the full set of options that the suite of tools across AgentKit provides for deploying your agentic workflows. We've already seen how you can build a workflow in Agent Builder, and then run it directly within the tool (Preview), or export it as Agents SDK code to use in your own environment. Now, we'll demonstrate how you can use an Agent Builder workflow ID to create a chat experience embedded in your own front-end, which points to the workflow you created as a back-end. (By the way, you can also use just the rich chat GUI provided by the ChatKit SDK, without the workflow back-end - learn more [here](https://platform.openai.com/docs/guides/custom-chatkit).)
+在那之前，先說明 AgentKit 這一整套工具提供的完整部署選項。我們已經看過怎麼在 Agent Builder 建 workflow，然後直接在工具裡執行（Preview），或匯出成 Agents SDK 程式碼在自己的環境用。接下來示範怎麼用 Agent Builder 的 workflow ID，在你自己的前端建一個聊天體驗，並以你建好的 workflow 當後端。（順帶一提，你也可以只用 ChatKit SDK 提供的完整聊天 GUI，不接 workflow 後端，細節看[這裡](https://platform.openai.com/docs/guides/custom-chatkit)。）
 
-So let's get started with the ChatKit starter template and plug in our workflow. The starter template makes it simple to spin up a chat-based app using our newly created workflow. Just follow the [Getting Started](https://github.com/openai/openai-chatkit-starter-app?tab=readme-ov-file#getting-started) instructions in the repo, entering in your workflow ID from Agent Builder as the value for `NEXT_PUBLIC_CHATKIT_WORKFLOW_ID` into `.env.local`, and running `npm install` and then `npm run dev` to test the app.
+所以我們從 ChatKit starter template 開始，把 workflow 接進去。starter template 讓我們很容易用剛建好的 workflow 架起聊天 app。照 repo 的 [Getting Started](https://github.com/openai/openai-chatkit-starter-app?tab=readme-ov-file#getting-started) 說明做：把 Agent Builder 的 workflow ID 填成 `.env.local` 裡 `NEXT_PUBLIC_CHATKIT_WORKFLOW_ID` 的值，再跑 `npm install` 跟 `npm run dev` 測試 app。
 
-In just a few minutes, the workflow is embedded in a front-end chat interface that's up and running!
+短短幾分鐘，workflow 就嵌進前端聊天介面並跑起來了！
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_chat_app.png" /></center></div>
 
-## Quickly iterating on workflow and user experience
+## 快速迭代 workflow 跟使用者體驗
 
-One of the most valuable aspects of AgentKit is how quickly it enables you to experiment, iterate, and improve your agentic applications. Let's make some quick changes that will improve the functionality of our app and provide a richer chat experience.
+AgentKit 最有價值的地方之一，是能讓你很快地實驗、迭代、改善 agentic 應用。我們做幾個小改動，讓 app 功能更好，聊天體驗更豐富。
 
-**First, let's add some custom theming** to give our front-end some style, while still retaining the native chat experience. A great resource here is [ChatKit Studio](https://chatkit.studio/), which includes a playground to explore the customization options in ChatKit, a Widget Builder (which we'll see in action shortly), and sample apps and galleries for inspiration. To get our custom theme, we'll use the ChatKit [Playground](https://chatkit.studio/playground) to visually select our desired style options, click on the `</>` icon at the top of the Playground screen to get the configuration code. 
+**首先加上自訂 theme**，讓前端有自己的風格，同時保留原生的聊天體驗。這裡有個很好用的資源是 [ChatKit Studio](https://chatkit.studio/)，裡面有可以探索 ChatKit 自訂選項的 playground、Widget Builder（等下會用到），還有範例 app 跟作品集可以參考。要取得自訂 theme，我們用 ChatKit [Playground](https://chatkit.studio/playground) 視覺化地選好想要的樣式，再點 Playground 畫面上方的 `</>` 圖示取得設定程式碼。 
 
-We'll use the `theme` object from this code to overwrite the default theme located in [lib/config.ts](https://github.com/openai/openai-chatkit-starter-app/blob/main/lib/config.ts). While we're in that file, we'll also adjust the starter prompts, greeting text, and placeholder copy to more appropriate values:
+我們會用這段程式碼裡的 `theme` 物件，覆蓋 [lib/config.ts](https://github.com/openai/openai-chatkit-starter-app/blob/main/lib/config.ts) 裡的預設 theme。在同一個檔案裡，我們也把 starter prompt、問候文字跟輸入框 placeholder 改成更合適的內容：
 
 ```text
 export const GREETING = "Upload your resume, and tell me the job you're looking to get!";
 export const PLACEHOLDER_INPUT = "Describe your dream job, and don't forget to attach your resume!"; 
 ```
 
-**Next, we'll design a custom widget** to display our recommended courses in a more intuitive format that makes it easier for users to understand and compare. We can use the [Widget Builder](https://widgets.chatkit.studio/) to simply describe the output we're looking for, and get an LLM-generated starting point that we can edit further. For this example, we'll present the courses in a list with a clean, structured format, and we'll also show a summary below the recommendations. In the Widget Builder, we can see not only the widget code (top-left), but sample data (bottom-left) and how that data gets rendered within the widget for the end user (right).
+**接著設計自訂 widget**，用更直觀的格式顯示推薦課程，讓使用者更容易理解跟比較。我們可以用 [Widget Builder](https://widgets.chatkit.studio/)，只要描述想要的輸出，就能得到 LLM 生成的起點，再進一步編輯。這個範例要把課程用結構清楚的列表呈現，推薦下方再顯示一段摘要。在 Widget Builder 裡不只看得到 widget 程式碼（左上）、範例資料（左下），還有資料在 widget 裡呈現給終端使用者的樣子（右邊）。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_widget_builder.png" /></center></div>
 
-When we're happy with the design, we can download the .widget file. (The file used in the screenshot below is located [here](https://cdn.openai.com/cookbook/agent_walkthrough/Course%20recommendation.widget).)
+設計滿意後，就可以下載 .widget 檔。（下面截圖用的檔案在[這裡](https://cdn.openai.com/cookbook/agent_walkthrough/Course%20recommendation.widget)。）
 
-To actually use the custom widget we've designed in our chat app, **we need to instruct our workflow to return the widget component** as part of our recommendation agent's response. So we'll go back to the `Course recommendations` agent, select Output format of `Widget`, and upload the .widget file.
+要在聊天 app 實際用上我們設計的 widget，**必須讓 workflow 在推薦 agent 的回應裡回傳 widget component**。所以我們回到 `Course recommendations` agent，把 Output format 選成 `Widget`，並上傳 .widget 檔。
 
-Our agent will automatically know to output the JSON format required to populate the widget. However, we'll need to update the agent prompt to instruct the model a bit more precisely what information it needs to obtain about each course. 
+agent 會自動知道要輸出填充 widget 所需的 JSON 格式。不過我們得更新 agent 的 prompt，更精確地告訴模型每個課程需要取得哪些資訊。 
 
 ```text
 Your job is to identify and recommend online training courses that help develop one or more of the skills identified. Given the list of required skills, return a list of 3-5 online courses along with course details including course name, provider (school or program), recommendation reason (a brief sentence on why you're recommending the course), course format, and URL. In addition to the list of courses, share a few-sentence summary of the recommendations you're making. 
 ```
 
-Finally, because we're dealing with resumes, we'll add a guardrail to our workflow to make sure we're not propagating any personally identifiable information (PII) where it doesn't belong. We'll insert this guardrail between our resume parser and our career analysis agents, which will help prevent anything downstream of the resume agent from having access to any PII, such as a name or contact information.
+最後，因為處理的是履歷，我們要在 workflow 加一個 guardrail，確保不會把個人可識別資訊（PII）傳到不該去的地方。我們把這個 guardrail 插在履歷解析 agent 跟職涯分析 agent 之間，讓履歷 agent 下游的任何環節都拿不到姓名、聯絡方式等 PII。
 
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_guardrails.png" /></center></div>
 
-## Improving system performance using prompt optimization and trace grading
+## 用 prompt optimization 跟 trace grading 改善系統表現
 
-Now we’ll see how the native integrations with Evals help make it easy to optimize both individual agents and your entire workflow. Let's imagine our chat app has been deployed - perhaps to an initial set of internal users or beta testers - and we have some real-world examples of users interacting with the system.
+現在來看 Evals 的原生整合，怎麼讓你輕鬆優化單一 agent 跟整個 workflow。假設我們的聊天 app 已經部署了，可能先給一批內部使用者或 beta 測試者用，我們也有一些使用者跟系統互動的真實範例。
 
-If this application were being developed into a production-grade system where performance and quality were critical, we'd want to incorporate evals even earlier and more systematically into our development process. (You can learn more in [Eval Driven System Design](https://cookbook.openai.com/examples/partners/eval_driven_system_design/receipt_inspection) about how to build a set of initial evals and established ground truth, mapping evals to business metrics, and progressively improve your system to drive the business goals.)
+如果這個應用要發展成效能跟品質都很關鍵的正式系統，我們會更早、更有系統地把 eval 放進開發流程。（想了解怎麼建立初始 eval 跟 ground truth、把 eval 對應到商業指標，並逐步改善系統以達成商業目標，可以看 [Eval Driven System Design](https://cookbook.openai.com/examples/partners/eval_driven_system_design/receipt_inspection)。）
 
-But in this cookbook, we'll focus less on the techniques behind evals as part of LLM app development, and more about how AgentKit lets you implement these techniques more easily. We'll drive performance improvements in two ways: first we'll **optimize a single agent node in our workflow** using the prompt optimization tool, then we'll **optimize the entire workflow** using trace grading.
+不過這份 cookbook 比較不談 eval 在 LLM 應用開發裡的技巧，重點是 AgentKit 怎麼讓你更輕鬆地實作這些技巧。我們用兩種方式改善表現：先用 prompt optimization 工具**優化 workflow 裡的單一 agent node**，再用 trace grading **優化整個 workflow**。
 
-### Single agent optimization
+### 單一 agent 優化
 
-We want to dive into our Course recommendations agent to see if we can improve the quality of its recommendations to users. We've isolated some sample prompts for this agent from our test environment. (You can also access completed in the [Logs tab](https://platform.openai.com/logs?api=responses) of the API platform. For this cookbook example, you can access [here](https://cdn.openai.com/cookbook/agent_walkthrough/course_recommendations_dataset.csv) the data set we'll be using.)
+我們想深入 Course recommendations agent，看看能不能提升它給使用者的推薦品質。我們從測試環境挑出一些這個 agent 的範例 prompt。（你也可以在 API 平台的 [Logs 分頁](https://platform.openai.com/logs?api=responses)取得完成的紀錄。這份 cookbook 用的資料集可以從[這裡](https://cdn.openai.com/cookbook/agent_walkthrough/course_recommendations_dataset.csv)取得。）
 
-We can optimize our agent starting directly from Agent Builder. Select the Course recommendations agent, and click on "Evaluate" in the bottom right of the agent modal. This will take us directly to the **Datasets** feature within Evals. 
+可以直接從 Agent Builder 開始優化 agent。選 Course recommendations agent，點 agent 視窗右下角的「Evaluate」，就會直接進到 Evals 裡的 **Datasets** 功能。 
 
-We see the configuration of our agent has been copied over, and we're ready to optimize. Let's first upload the data file with sample prompts (note the column names should match your input and output variables), and click "Generate output" to generate responses.
+可以看到 agent 的設定已經複製過來，可以開始優化了。先上傳含範例 prompt 的資料檔（欄位名稱要跟你的輸入、輸出變數一致），再點「Generate output」產生回應。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_generate_output.png" /></center></div>
 
-Now, let's create some **human annotations** and **model graders**. We'll select "Columns" to add a Rating (thumbs up/down) and Feedback (text input), and we'll manually review our samples to populate these fields with some high-quality feedback. We'll also add a couple of model graders, which will evaluate the agent's output in an automated way based on criteria that we can specify. For this example, we might be concerned about whether the course recommendations are relevant to the skill gaps identified (relevance), whether all of the skill gaps are addressed (coverage), and whether the recommendation summary that is presented is appropriate (style).
+接下來建立一些 **human annotation（人工標註）** 跟 **model grader（模型評分器）**。選「Columns」新增 Rating（讚/倒讚）跟 Feedback（文字輸入）欄位，並手動檢視樣本，填上高品質的回饋。我們也會加幾個 model grader，依我們指定的標準自動評估 agent 的輸出。以這個範例來說，我們可能關心課程推薦是否跟找出的技能落差相關（relevance）、是否涵蓋所有技能落差（coverage），以及呈現的推薦摘要是否合適（style）。
 
-Here are example model grader prompts for each criteria: 
+下面是各項標準的 model grader prompt 範例： 
 
 ```text
 [relevance] You are evaluating whether a list of recommended courses is relevant to the skills described. Return a pass if all courses are relevant to at least one skill, and fail otherwise.
@@ -182,15 +193,15 @@ Here are example model grader prompts for each criteria:
 [summary] You are evaluating whether the summary recommendation provided is relevant, thoughtful, and related to the recommended courses proposed. Evaluate the summary recommendation on a scale of 0 to 1, with 1 being the highest quality. 
 ```
 
-We'll use GPT-5 for our model graders, and include a 0.7 threshold for the summary grader.
+model grader 用 GPT-5，並替摘要 grader 設 0.7 的門檻。
 
-We'll now select Grade > All graders to run these graders against the system output. As the grading proceeds, we'll start to see the cells populated to indicate how each example scored on our model grader criteria.
+接著選 Grade > All graders，對系統輸出跑這些 grader。評分進行時，格子會逐漸填入，顯示每個範例在各項 model grader 標準上的得分。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_grading.png" /></center></div>
 
-**Now, here's where the magic happens: we can click Optimize to automatically rewrite our prompt based on the feedback we've provided - both the model grader output and the human-provided feedback.** 
+**接下來是神奇的地方：點 Optimize，就能依我們提供的回饋（包含 model grader 的輸出跟人工回饋），自動改寫 prompt。** 
 
-If we examine the new prompt, we see that our prompt contains new **Requirements** and **Output** format sections to instruct the model to make the course descriptions more specific, and aim for better coverage of the different skills. 
+看新的 prompt，可以發現多了 **Requirements** 跟 **Output** format 兩個區塊，指示模型把課程描述寫得更具體，並盡量更完整涵蓋各項技能。 
 
 ```text
 Requirements:
@@ -210,40 +221,40 @@ Output format:
    - Skills covered: [list skill names from below]
 ```
 
-Now, we can click Update to automatically insert the new prompt into our workflow in Agent Builder. **In just a few minutes, we've been able to use real prompt examples and feedback to automatically improve our system's performance - all directly within the Agent Builder and Evals tools.**
+現在點 Update，就能把新 prompt 自動放進 Agent Builder 的 workflow。**只花幾分鐘，我們就用真實的 prompt 範例跟回饋自動改善系統表現，而且全部都在 Agent Builder 跟 Evals 工具裡完成。**
 
-(Although in this cookbook we've optimized our prompt automatically using this grading output, it's often very helpful to examine specific failure examples to understand in what ways the model might be making mistakes. This analysis can help us generate more precise human-based or model-graded feedback, and even synthesize data to help improve performance against specific failure modes.)
+（雖然這份 cookbook 是用評分輸出自動優化 prompt，但實務上檢視具體的失敗案例通常很有幫助，可以了解模型在哪些地方會出錯。這種分析能幫我們產生更精準的人工或模型評分回饋，甚至合成資料，來改善特定失敗模式的表現。）
 
 
-### Entire workflow optimization
+### 整個 workflow 優化
 
-Once we're comfortable with the performance of each individual agent node, we can turn our attention to the full workflow.
+等我們對每個 agent node 的表現都滿意後，就可以把注意力轉到整個 workflow。
 
-Previously, in order to analyze and improve the performance of a complex workflow involving multiple agents, you'd need to read through entire traces of your workflow to understand exactly where and why the system was failing. This can be a time-consuming process, especially when you have a large number of trace examples.
+以前，要分析、改善包含多個 agent 的複雜 workflow，你得讀完整條 trace，才能搞清楚系統到底在哪裡、為什麼失敗。trace 很多的時候，這個過程非常耗時。
 
-Using **trace grading**, we can now run end-to-end assessments of full sets of traces using automated model grading. We'll create graders to describe the behavior we're looking to correct, and we'll automatically run these graders across our entire data set.
+用 **trace grading**，現在可以用自動化的 model grading，對整批 trace 做端到端評估。我們建立 grader 來描述想修正的行為，並自動對整個資料集執行這些 grader。
 
-To get started, we'll go back to our workflow in Agent Builder and click Evaluate on the top of the screen. This lets us deep-dive into the traces that have been generated for our workflow runs, including examining the inputs and outputs for all nodes (in this case, the prompts and responses for each of our agents). 
+開始時，回到 Agent Builder 裡的 workflow，點畫面上方的 Evaluate。這能讓我們深入看 workflow 執行時產生的 trace，包含所有 node 的輸入跟輸出（這裡就是每個 agent 的 prompt 跟回應）。 
 
-We can create graders to run across the entire model trace, defining evaluation criteria for the end-to-end workflow that **spans multiple agents**. For example, we might want to ensure that the final recommendation summary (output of agent 3) is relevant to the user’s initial input about their career goals (input to agent 1). And, we might want to check that the recommended courses (output of agent 3) are not duplicative with the skills the user already possesses (output of agent 1). 
+我們可以建立針對整條 trace 的 grader，替**橫跨多個 agent** 的端到端 workflow 定義評估標準。例如，確保最終的推薦摘要（agent 3 的輸出）跟使用者一開始提到的職涯目標（agent 1 的輸入）相關。也可以檢查推薦的課程（agent 3 的輸出）沒有重複使用者已有的技能（agent 1 的輸出）。 
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_traces.png" /></center></div>
 
-If you had a workflow with conditional statements or while loops, you could grade against more complex multi-step behavior, such as a support agent shouldn’t engage in more than three responses with a user without escalating to a supervisor.
+如果 workflow 有條件判斷或 while 迴圈，還可以評估更複雜的多步驟行為，例如客服 agent 跟使用者來回超過三輪就該轉給主管。
 
-Once we have a full set of grading criteria, we select Grade all to grade our traces. This action will lead us to the Evaluations tab, where we can see a new eval has been created and an eval run has been kicked off.
+訂好完整的評分標準後，選 Grade all 對 trace 評分。這會帶我們到 Evaluations 分頁，可以看到新建立了一個 eval，也啟動了一次 eval run。
 
 <div><center><img src="https://cdn.openai.com/cookbook/agent_walkthrough/agentkit_walkthrough_trace_evals.png" /></center></div>
 
-We can then dive into the workflow traces for our failure cases to better understand why the specific workflow run failed, and how we can improve our system to avoid the failure. This approach helps you optimize complex workflows more efficiently, by iteratively identifying failure modes, evaluating the performance of your system, and targeting improvements to improve performance.
+然後可以深入失敗案例的 workflow trace，了解那次 workflow 為什麼失敗、怎麼改善系統來避免。這個做法靠反覆找出失敗模式、評估系統表現、針對性改進，讓你更有效率地優化複雜 workflow。
 
-## Recap and resources
+## 回顧與資源
 
-We demonstrated how **Agent Builder**, **ChatKit**, and **Evals** work together to help you build, deploy, and optimize agentic workflows.
+我們示範了 **Agent Builder**、**ChatKit** 跟 **Evals** 如何一起幫你建置、部署、優化 agentic workflow。
 
-With a specific example — a career development app that analyzes resumes, identifies skill gaps, and recommends online courses — we saw how Agent Builder makes it easy to design and build multi-agent workflows, ChatKit lets us embed those workflows in a rich and customizable chat UI, and Evals close the loop by enabling prompt optimization and trace grading against real data.
+以一個具體範例來說，這個職涯發展 app 會分析履歷、找出技能落差並推薦線上課程。我們看到 Agent Builder 讓設計跟建置多 agent workflow 變得容易，ChatKit 讓我們把這些 workflow 嵌進豐富又可自訂的聊天 UI，Evals 則用真實資料做 prompt optimization 跟 trace grading，把整個迴圈閉起來。
 
-To learn more, here's a list of some of the resources mentioned in this cookbook:
+想了解更多，下面是這份 cookbook 提到的一些資源：
 
 * [Agent Builder documentation](#)
 * [ChatKit starter template](#)
@@ -253,4 +264,16 @@ To learn more, here's a list of some of the resources mentioned in this cookbook
 
 Happy building!
 
-<!-- tutor:summary -->
+## 重點整理
+
+- AgentKit 三個元件各管一段：Agent Builder 建 workflow、ChatKit 把它嵌進前端、Evals 做優化，用同一個 workflow ID 串起來。
+- workflow 要先 Publish 才有版本跟 workflow ID，之後可以分享、部署或回退。
+- 每個 agent node 可以各自選模型、reasoning effort、output format（JSON schema 或 Widget）跟 tool，不需要一刀切。
+- 用 guardrail 擋 PII，可以放在 workflow 中間，讓下游 agent 看不到敏感資料。
+- 單一 agent 用 human annotation 加 model grader 做 prompt optimization，整條 workflow 用 trace grading 看跨 agent 的端到端行為。
+
+## 練習
+
+1. 在 `lib/config.ts` 改掉 starter prompt 跟問候文字，換成符合你自己情境（例如不同職業）的內容，重跑 `npm run dev` 看效果。
+2. 在 Agent Builder 把職涯分析 agent 的 reasoning effort 從 `low` 改成 `medium`，用同一份履歷在 Preview 比較輸出差異。
+3. 在 Evals 的 trace grading 新增一個 grader，檢查推薦課程是否真的對應到職涯分析 agent 找出的每一項技能落差，跑 Grade all 後看失敗的 trace。

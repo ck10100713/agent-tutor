@@ -1,32 +1,44 @@
 ---
-translated: false
+translated: true
 source: examples/gpt4o/introduction_to_gpt4o.ipynb
 ---
 
-# Introduction to GPT-4o and GPT-4o mini
+# GPT-4o 與 GPT-4o mini 入門
 
 > 原文：[examples/gpt4o/introduction_to_gpt4o.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt4o/introduction_to_gpt4o.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+介紹 GPT-4o 和 GPT-4o mini 這類原生多模態模型，從純文字請求開始，再到用 Base64 或 URL 送圖片。最後示範怎麼把影片抽成 frames 加音訊，分別只用畫面、只用聲音、兩者合用來做摘要和問答，比較結果差異。
 
-GPT-4o ("o" for "omni") and GPT-4o mini are natively multimodal models designed to handle a combination of text, audio, and video inputs, and can generate outputs in text, audio, and image formats. GPT-4o mini is the lightweight version of GPT-4o.
+## 學完你會
 
-### Background
+- 用 Python SDK 對 `gpt-4o-mini` 送文字和圖片（Base64 與 URL 兩種）請求。
+- 把影片切成 frames，再搭配 Whisper 轉出的逐字稿，餵給模型做摘要和 Q&A。
+- 比較只用視覺、只用音訊、視覺加音訊三種輸入，看多模態合用為什麼比較準。
 
-Before GPT-4o, users could interact with ChatGPT using Voice Mode, which operated with three separate models. GPT-4o integrates these capabilities into a single model that's trained across text, vision, and audio. This unified approach ensures that all inputs — whether text, visual, or auditory — are processed cohesively by the same neural network.
+## 開跑前
 
-GPT-4o mini is the next iteration of this omni model family, available in a smaller and cheaper version. This model offers higher accuracy than GPT-3.5 Turbo while being just as fast and supporting multimodal inputs and outputs.
+- 需要 OpenAI API key，呼叫會產生費用。
+- 處理影片需要安裝 [ffmpeg](https://ffmpeg.org/about.html)。
 
-### Current API Capabilities
+GPT-4o（"o" 代表 "omni"）和 GPT-4o mini 是原生多模態模型，可以處理文字、音訊、影片的組合輸入，輸出可以是文字、音訊和圖片。GPT-4o mini 是 GPT-4o 的輕量版。
 
-Currently, the `gpt-4o-mini` model supports `{text, image}`, with `{text}` outputs, the same modalities as `gpt-4-turbo`.  As a preview, we will also be using the `gpt-4o-audio-preview` model to showcase transcription though the GPT4o model.
+### 背景
 
-## Getting Started
+在 GPT-4o 之前，使用者在 ChatGPT 用 Voice Mode 互動，背後是三個獨立的模型。GPT-4o 把這些能力整合進同一個跨文字、視覺、音訊訓練的模型。這種統一的做法讓所有輸入，不論是文字、畫面還是聲音，都由同一個 neural network 一起處理。
 
-### Install OpenAI SDK for Python
+GPT-4o mini 是 omni 模型家族的下一代，體積更小、價格更低。它的準確度比 GPT-3.5 Turbo 高，速度一樣快，也支援多模態的輸入和輸出。
+
+### 目前 API 的能力
+
+目前 `gpt-4o-mini` 支援 `{text, image}` 輸入和 `{text}` 輸出，跟 `gpt-4-turbo` 的模態一樣。另外會用 `gpt-4o-audio-preview` 模型作為預覽，示範透過 GPT4o 做轉錄。
+
+## 開始使用
+
+### 安裝 OpenAI SDK for Python
 
 
 
@@ -34,15 +46,15 @@ Currently, the `gpt-4o-mini` model supports `{text, image}`, with `{text}` outpu
 %pip install --upgrade openai
 ```
 
-### Configure the OpenAI client and submit a test request
-To setup the client for our use, we need to create an API key to use with our request. Skip these steps if you already have an API key for usage. 
+### 設定 OpenAI client 並送出測試 request
+要設定 client，需要先建立一把 API key。如果你已經有了就跳過這些步驟。
 
-You can get an API key by following these steps:
-1. [Create a new project](https://help.openai.com/en/articles/9186755-managing-your-work-in-the-api-platform-with-projects)
-2. [Generate an API key in your project](https://platform.openai.com/api-keys)
-3. (RECOMMENDED, BUT NOT REQUIRED) [Setup your API key for all projects as an env var](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key)
+取得 API key 的步驟：
+1. [建立新 project](https://help.openai.com/en/articles/9186755-managing-your-work-in-the-api-platform-with-projects)
+2. [在 project 裡產生 API key](https://platform.openai.com/api-keys)
+3. （建議但非必要）[把 API key 設成環境變數，讓所有 project 共用](https://platform.openai.com/docs/quickstart/step-2-set-up-your-api-key)
 
-Once we have this setup, let's start with a simple {text} input to the model for our first request. We'll use both `system` and `user` messages for our first request, and we'll receive a response from the `assistant` role.
+設定好之後，先用簡單的 {text} 輸入送第一個 request。這次會同時用 `system` 和 `user` message，回應則來自 `assistant` 角色。
 
 ```python
 from openai import OpenAI 
@@ -71,12 +83,12 @@ print("Assistant: " + completion.choices[0].message.content)
     Assistant: Of course! \( 2 + 2 = 4 \).
     ```
 
-## Image Processing
-GPT-4o mini can directly process images and take intelligent actions based on the image. We can provide images in two formats:
-1. Base64 Encoded
+## 圖片處理
+GPT-4o mini 可以直接處理圖片，並根據圖片內容採取合理的動作。圖片可以用兩種格式提供：
+1. Base64 編碼
 2. URL
 
-Let's first view the image we'll use, then try sending this image as both Base64 and as a URL link to the API
+先看一下要用的圖片，再試著用 Base64 和 URL 兩種方式把它送給 API
 
 ```python
 from IPython.display import Image, display, Audio, Markdown
@@ -92,7 +104,7 @@ display(Image(IMAGE_PATH))
 
     ![](introduction_to_gpt4o_files/out_10_0.png)
 
-#### Base64 Image Processing
+#### Base64 圖片處理
 
 ```python
 # Open the image file and encode it as a base64 string
@@ -148,7 +160,7 @@ print(response.choices[0].message.content)
     Thus, the area of the triangle is **22.5 square units**.
     ```
 
-#### URL Image Processing
+#### URL 圖片處理
 
 ```python
 response = client.chat.completions.create(
@@ -197,26 +209,26 @@ print(response.choices[0].message.content)
     Thus, the area of the triangle is **22.5 square units**.
     ```
 
-## Video Processing
-While it's not possible to directly send a video to the API, GPT-4o can understand videos if you sample frames and then provide them as images. 
+## 影片處理
+API 沒辦法直接送影片，但只要對影片抽樣取 frames，再當成圖片送進去，GPT-4o 就能理解影片內容。
 
-Since GPT-4o mini in the API does not yet support audio-in (as of July 2024), we'll use a combination of GPT-4o mini and Whisper to process both the audio and visual for a provided video, and showcase two usecases:
-1. Summarization
-2. Question and Answering
+由於 API 裡的 GPT-4o mini 還不支援 audio-in（截至 2024 年 7 月），我們會結合 GPT-4o mini 和 Whisper，同時處理影片的音訊和畫面，並展示兩種用法：
+1. 摘要
+2. 問答
 
 
 
-### Setup for Video Processing
-We'll use two python packages for video processing - opencv-python and moviepy. 
+### 影片處理的準備
+影片處理用到兩個 Python 套件：opencv-python 和 moviepy。
 
-These require [ffmpeg](https://ffmpeg.org/about.html), so make sure to install this beforehand. Depending on your OS, you may need to run `brew install ffmpeg` or `sudo apt install ffmpeg`
+它們需要 [ffmpeg](https://ffmpeg.org/about.html)，請先安裝。依作業系統不同，可能要執行 `brew install ffmpeg` 或 `sudo apt install ffmpeg`
 
 ```python
 %pip install opencv-python
 %pip install moviepy
 ```
 
-### Process the video into two components: frames and audio
+### 把影片拆成兩部分：frames 和音訊
 
 ```python
 import cv2
@@ -287,15 +299,15 @@ for img in base64Frames:
 Audio(audio_path)
 ```
 
-### Example 1: Summarization
-Now that we have both the video frames and the audio, let's run a few different tests to generate a video summary to compare the results of using the models with different modalities. We should expect to see that the summary generated with context from both visual and audio inputs will be the most accurate, as the model is able to use the entire context from the video.
+### 範例 1：摘要
+現在有了影片的 frames 和音訊，我們跑幾組不同的測試，產生影片摘要，比較用不同模態的結果。預期同時用上畫面和聲音所產生的摘要最準確，因為模型可以用到整部影片的完整脈絡。
 
-1. Visual Summary
-2. Audio Summary
-3. Visual + Audio Summary
+1. 視覺摘要
+2. 音訊摘要
+3. 視覺加音訊摘要
 
-#### Visual Summary
-The visual summary is generated by sending the model only the frames from the video. With just the frames, the model is likely to capture the visual aspects, but will miss any details discussed by the speaker.
+#### 視覺摘要
+視覺摘要只把影片的 frames 送給模型。只有畫面的話，模型大概能抓到視覺上的重點，但會漏掉講者說的細節。
 
 ```python
 response = client.chat.completions.create(
@@ -353,12 +365,12 @@ print(response.choices[0].message.content)
     The OpenAI Dev Day serves as a platform for showcasing the latest advancements in AI technology, encouraging developers to leverage these innovations for enhanced applications and user experiences.
     ```
 
-The results are as expected - the model is able to capture the high level aspects of the video visuals, but misses the details provided in the speech.
+結果跟預期一樣，模型能抓到影片畫面的大方向，但漏掉了講話中提供的細節。
 
-#### Audio Summary
-The audio summary is generated by sending the model the audio transcript. With just the audio, the model is likely to bias towards the audio content, and will miss the context provided by the presentations and visuals.
+#### 音訊摘要
+音訊摘要把音訊的逐字稿送給模型。只有聲音的話，模型會偏向語音內容，漏掉簡報和畫面提供的脈絡。
 
-`{audio}` input for GPT-4o is currently in preview, but will be incorporated into the base model in the near future.  Because of this, we will use the `gpt-4o-audio-preview` model to process the audio.
+GPT-4o 的 `{audio}` 輸入目前是 preview，不久之後會併進基礎模型。所以這裡用 `gpt-4o-audio-preview` 模型處理音訊。
 
 ```python
 #transcribe the audio
@@ -397,7 +409,7 @@ transcription = response.choices[0].message.content
 print (transcription)
 ```
 
-Looking good.  Now let's summarize this and format in markdown.
+看起來不錯。接下來把它整理成 markdown 格式的摘要。
 
 ```python
 #summarize the transcript
@@ -448,10 +460,10 @@ print (transcription_summary)
     The event concluded with excitement about the future of AI technology and an invitation for attendees to return next year to see further advancements.
     ```
 
-The audio summary is biased towards the content discussed during the speech, but comes out with much less structure than the video summary.
+音訊摘要偏向演講中討論的內容，但結構比影片摘要差很多。
 
-#### Audio + Visual Summary
-The Audio + Visual summary is generated by sending the model both the visual and the audio from the video at once. When sending both of these, the model is expected to better summarize since it can perceive the entire video at once.
+#### 音訊加視覺摘要
+音訊加視覺摘要，是把影片的畫面和聲音同時送給模型。兩者一起送的話，模型能一次感知整部影片，預期摘要會更好。
 
 ```python
 ## Generate a summary with visual and audio
@@ -514,13 +526,13 @@ print(response.choices[0].message.content)
     Thank you for attending!
     ```
 
-After combining both the video and audio, we're able to get a much more detailed and comprehensive summary for the event which uses information from both the visual and audio elements from the video.
+把影片和音訊合在一起之後，我們得到一份更詳細、更完整的活動摘要，用上了影片中視覺和聽覺兩邊的資訊。
 
-### Example 2: Question and Answering
-For the Q&A, we'll use the same concept as before to ask questions of our processed video while running the same 3 tests to demonstrate the benefit of combining input modalities:
-1. Visual Q&A
-2. Audio Q&A
-3. Visual + Audio Q&A 
+### 範例 2：問答
+問答這邊沿用同樣的概念，對處理過的影片提問，同樣跑三組測試，展示結合多種輸入模態的好處：
+1. 視覺 Q&A
+2. 音訊 Q&A
+3. 視覺加音訊 Q&A
 
 ```python
 QUESTION = "Question: Why did Sam Altman have an example about raising windows and turning the radio on?"
@@ -595,12 +607,24 @@ print("Both QA:\n" + qa_both_response.choices[0].message.content)
     Sam Altman used the example of raising windows and turning the radio on to illustrate the new function calling feature in GPT-4 Turbo. This example demonstrates how the model can interpret natural language commands and translate them into specific function calls, making it easier for users to interact with the model in a more intuitive way. It highlights the model's ability to understand context and perform multiple actions based on user instructions.
     ```
 
-Comparing the three answers, the most accurate answer is generated by using both the audio and visual from the video. Sam Altman did not discuss the raising windows or radio on during the Keynote, but referenced an improved capability for the model to execute multiple functions in a single request while the examples were shown behind him.
+比較三個答案，同時用影片音訊和畫面所產生的答案最準確。Sam Altman 在 Keynote 裡並沒有講到升起車窗或打開收音機，他提到的是模型在單一 request 中執行多個 function 的能力提升，而這些範例是在他身後的畫面上展示的。
 
-## Conclusion
+## 結論
 
-Integrating many input modalities such as audio, visual, and textual, significantly enhances the performance of the model on a diverse range of tasks. This multimodal approach allows for more comprehensive understanding and interaction, mirroring more closely how humans perceive and process information. 
+整合音訊、視覺、文字等多種輸入模態，能明顯提升模型在各種任務上的表現。這種多模態做法讓模型能更全面地理解和互動，也更接近人類感知和處理資訊的方式。
 
-Currently, GPT-4o and GPT-4o mini in the API support text and image inputs, with audio capabilities coming soon.  For the time being, use the `gpt-4o-audio-preview` for audio inputs.
+目前 API 中的 GPT-4o 和 GPT-4o mini 支援文字和圖片輸入，音訊功能即將推出。在那之前，音訊輸入請用 `gpt-4o-audio-preview`。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 模型不能直接收影片，要自己抽樣成 frames 當圖片送，音訊另外轉成逐字稿。
+- 圖片可以用 Base64 或 URL 兩種方式送進 API。
+- 只看畫面會漏掉講者的細節，只看聲音會漏掉簡報脈絡，兩者合用答案最完整。
+- 多模態的價值在於輸入互補，不是單一模態做得更好。
+- 音訊輸入在這篇寫成時還是 preview，需要用 `gpt-4o-audio-preview`。
+
+## 練習
+
+1. 換一張自己的圖片，分別用 Base64 和 URL 送出，問模型圖裡有什麼，確認兩種結果一致。
+2. 改影片抽樣 frames 的間隔（取更少或更多張），觀察視覺摘要的品質和 token 用量怎麼變。
+3. 換成自己的影片，自己設計三個問題，跑視覺、音訊、視覺加音訊三種 Q&A，挑一題找出只有合用才答得對的例子。

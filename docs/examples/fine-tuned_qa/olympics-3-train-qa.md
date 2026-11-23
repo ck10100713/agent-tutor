@@ -1,21 +1,33 @@
 ---
-translated: false
+translated: true
 source: examples/fine-tuned_qa/olympics-3-train-qa.ipynb
 ---
 
-# Fine-Tuned Q&A - train
+# Fine-Tuned Q&A：訓練
 
 > 原文：[examples/fine-tuned_qa/olympics-3-train-qa.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/olympics-3-train-qa.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+承接前面做好的「context、問題、答案」資料集，這篇另外造出對抗式的問題與 context 配對（問題不是從那個 context 產生的），訓練模型在這種情況回答「沒有足夠的 context 可以回答」。同時訓練一個 discriminator，判斷問題能不能從 context 回答。
 
-<span style="color:orange; font-weight:bold">Note: To answer questions based on text documents, we recommend the procedure in <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering using Embeddings</a>. Some of the code below may rely on <a href="https://github.com/openai/openai-cookbook/tree/main/transition_guides_for_deprecated_API_endpoints">deprecated API endpoints</a>.</span>
+## 學完你會
+- 為 Q&A 模型和 discriminator 建立含正例、隨機負例和 hard negative 的 fine-tuning 資料集
+- 提交 fine-tuning 工作，並用 logprobs 看 discriminator 對 yes/no 的把握度
+- 組合 discriminator 與 Q&A 模型，並接上檢索，做成能依知識庫回答的流程
 
-This notebook will utilize the dataset of context, question and answer pairs to additionally create adversarial questions and context pairs, where the question was not generated on that context. In those cases the model will be prompted to answer "No sufficient context for answering the question". We will also train a discriminator model, which predicts whether the question can be answered based on the context or not.
+## 開跑前
+- OpenAI API key，以及 fine-tuning 的費用
+- 前面步驟產生的資料集
+- 注意部分程式碼用到已棄用的 API endpoint
 
-We will add hard adversarial examples as well, which will be based either on semantically similar sections, or neighbouring sections, originating from the same article.
+
+<span style="color:orange; font-weight:bold">注意：如果要根據文字文件回答問題，我們建議用 <a href="https://github.com/openai/openai-cookbook/blob/main/examples/Question_answering_using_embeddings.ipynb">Question Answering using Embeddings</a> 的做法。下面有些程式碼可能依賴<a href="https://github.com/openai/openai-cookbook/tree/main/transition_guides_for_deprecated_API_endpoints">已棄用的 API endpoint</a>。</span>
+
+這份 notebook 會利用 context、問題、答案配對的資料集，額外建立對抗式的問題與 context 配對，也就是問題不是從該 context 產生的。這種情況下，模型會被提示回答「No sufficient context for answering the question」。我們也會訓練一個 discriminator 模型，預測問題能不能根據 context 回答。
+
+我們還會加入困難的對抗式範例，這些範例來自語意相似的段落，或同一篇文章裡相鄰的段落。
 
 ```python
 import openai
@@ -64,7 +76,7 @@ df.head()
     4  1. The COVID-19 pandemic was a pandemic that o...
     ```
 
-Split the sections into a training and testing set
+把段落切成訓練集和測試集
 
 ```python
 from sklearn.model_selection import train_test_split
@@ -78,7 +90,7 @@ len(train_df), len(test_df)
     (3014, 754)
     ```
 
-we check that the separator we intend to use isn't present within the contexts
+檢查我們打算使用的分隔符號沒有出現在 context 裡
 
 ```python
 df.context.str.contains('->').sum()
@@ -90,18 +102,18 @@ df.context.str.contains('->').sum()
     0
     ```
 
-## 3.1 Create the fine-tuning datasets for Q&A and discriminator models
-The fine-tuning dataset is created in the following way. For every corresponding question, answer and context pair we create:
-- Positive example: correct question, answer, context pair
-- Negative examples:
-  - random negative example, where the random context is paired with the question 
-  - two hard negative examples
-    - one originating from the same wikipedia article
-    - another, which is most similar to the correct context
+## 3.1 建立 Q&A 和 discriminator 模型的 fine-tuning 資料集
+fine-tuning 資料集的建立方式如下。對每一組對應的問題、答案和 context，我們建立：
+- 正例：正確的問題、答案、context 配對
+- 負例：
+  - 隨機負例：把隨機的 context 配上這個問題 
+  - 兩個 hard negative 範例
+    - 一個來自同一篇 wikipedia 文章
+    - 另一個是跟正確 context 最相似的
 
-This process is noisy, as sometimes the question might be answerable given a different context, but on average we hope this won't affect the performance too much.
+這個過程有雜訊，因為有時換個 context 問題也能回答，但我們希望平均來說不會對效能造成太大影響。
 
-We apply the same process of dataset creation for both the discriminator, and the Q&A answering model. We apply the process separately for the training and testing set, to ensure that the examples from the training set don't feature within the test set.
+discriminator 和 Q&A 回答模型用同樣的方式建立資料集。訓練集和測試集分開處理，確保訓練集的範例不會出現在測試集。
 
 ```python
 import random
@@ -188,7 +200,7 @@ def create_fine_tuning_dataset(df, discriminator=False, n_negative=1, add_relate
     return pd.DataFrame(rows)
 ```
 
-We apply the same process of dataset creation for both the discriminator, and the Q&A answering model. We apply the process separately for the training and testing set, to ensure that the examples from the training set don't feature within the test set.
+discriminator 和 Q&A 回答模型用同樣的方式建立資料集。訓練集和測試集分開處理，確保訓練集的範例不會出現在測試集。
 
 ```python
 for name, is_disc in [('discriminator', True), ('qa', False)]:
@@ -197,13 +209,13 @@ for name, is_disc in [('discriminator', True), ('qa', False)]:
         ft.to_json(f'{name}_{train_test}.jsonl', orient='records', lines=True)
 ```
 
-We formatted the data according to the recommendations from the fine-tuning tool, which is available using
+我們依照 fine-tuning 工具的建議格式化資料，可以這樣使用
 > openai tools fine_tunes.prepare_data -f qa_train.jsonl
 
-We highly recommend that you use this tool, which suggests improvements in your data formatting for fine-tuning.
+我們強烈建議使用這個工具，它會針對 fine-tuning 的資料格式提出改進建議。
 
 
-## 3.2 Submit the datasets for fine-tuning
+## 3.2 提交資料集進行 fine-tuning
 
 ```python
 !openai api fine_tunes.create -t "olympics-data/discriminator_train.jsonl" -v "olympics-data/discriminator_test.jsonl" --batch_size 16  --compute_classification_metrics --classification_positive_class " yes" --model ada
@@ -213,9 +225,9 @@ We highly recommend that you use this tool, which suggests improvements in your 
 !openai api fine_tunes.create -t "olympics-data/qa_train.jsonl" -v "olympics-data/qa_test.jsonl" --batch_size 16
 ```
 
-## 3.3 Using the fine-tuned models
+## 3.3 使用 fine-tuned 模型
 
-We will now use the fine-tuned discriminator and the fine-tuned Q&A model. By requesting logprobs, we can see how certain the discriminator is in a `yes` vs `no` answer.
+現在使用 fine-tuned discriminator 和 fine-tuned Q&A 模型。要求回傳 logprobs，就能看出 discriminator 對 `yes` 和 `no` 答案有多確定。
 
 ```python
 ft_discriminator = "curie:ft-openai-internal-2021-08-23-23-58-57"
@@ -242,7 +254,7 @@ apply_ft_discriminator('The first human-made object in space was the Soviet Unio
      }]
     ```
 
-We can see that the model can generalize well to different contexts and questions. 
+可以看到模型能很好地泛化到不同的 context 和問題。 
 
 ```python
 def apply_ft_qa_answer(context, question, answering_model):
@@ -263,7 +275,7 @@ apply_ft_qa_answer('The first human-made object in space was the Soviet Union sa
     ' The first human-made object in space was the Soviet Union satellite Sputnik 1 on 4 October 1957'
     ```
 
-We can see that the model can answer the question, when the context is appropriate.
+可以看到，context 合適時，模型能回答問題。
 
 ```python
 apply_ft_qa_answer('The first human-made object in space was the Soviet Union satellite Sputnik 1 on 4 October 1957.',
@@ -287,9 +299,9 @@ apply_ft_qa_answer('The first human-made object in space was the Soviet Union sa
     ' No appropriate context found to answer the question'
     ```
 
-We can see that the model knows when to answer the question, and when to say that insufficient context is present to answer the question.
+可以看到模型知道什麼時候該回答問題，什麼時候該說 context 不足以回答。
 
-We can also combine a discriminator and a base model, or a fine-tuned Q&A model. Discriminator can essentially serve as a decision whether the question can be answered given the context or not.
+我們也可以把 discriminator 和基礎模型，或 fine-tuned Q&A 模型組合起來。discriminator 基本上可以用來決定：給定 context 之後，這個問題能不能回答。
 
 ```python
 def answer_question_conditionally(answering_model, discriminator_model, context, question, discriminator_logprob_yes_modifier=0):
@@ -315,12 +327,12 @@ answer_question_conditionally(ft_qa, ft_discriminator,
     ' Weather could cause a sport event to have no crowd'
     ```
 
-The above function illustrates how to potentially combine a discriminator and a fine-tuned Q&A model. This gives a more fine-grained control over how certain we want the model to be before it answers the question.
+上面的函式示範了怎麼組合 discriminator 和 fine-tuned Q&A 模型。這能更細緻地控制模型要多確定才回答問題。
 
-We'll now take a look on how answers endpoint works - combining search to retrieve the relevant context from a knowledge base, and then using the fine-tuned Q&A model to answer the question.
+接下來看 answers endpoint 怎麼運作：先搜尋，從知識庫取得相關 context，再用 fine-tuned Q&A 模型回答問題。
 
-## 3.4 Answering the question based on a knowledge base
-Finally we can use a logic similar to the [/answers](https://beta.openai.com/docs/api-reference/answers) endpoint, where we first search for the relevant context, and then ask a Q&A model to answer the question given that context. If you'd like to see the implementation details, check out the [`answers_with_ft.py`](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/answers_with_ft.py) file.
+## 3.4 根據知識庫回答問題
+最後，我們可以用類似 [/answers](https://beta.openai.com/docs/api-reference/answers) endpoint 的邏輯：先搜尋相關 context，再請 Q&A 模型根據那個 context 回答問題。想看實作細節，請看 [`answers_with_ft.py`](https://github.com/openai/openai-cookbook/blob/main/examples/fine-tuned_qa/answers_with_ft.py) 檔案。
 
 ```python
 from answers_with_ft import answer_question
@@ -333,4 +345,14 @@ answer_question(olympics_search_fileid, ft_qa, "Which country won the Women's fo
     " Canada won the Women's football tournament at the 2020 Olympic games"
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 只用正確配對訓練的 Q&A 模型，遇到答不出來的問題還是會亂答，所以要加入負例教它說「context 不足」。
+- 負例分三種：隨機 context、同一篇文章的 context、最相似的 context，hard negative 讓模型學會區分接近的情況。
+- discriminator 用 logprobs 輸出對 yes/no 的把握度，可以拿來調整「多確定才回答」的門檻。
+- 訓練集和測試集要分開造資料，避免洩漏。
+- 完整流程是先檢索 context，再讓 Q&A 模型回答，必要時由 discriminator 把關。
+
+## 練習
+1. 看建立資料集的程式，把每組例子的隨機負例數量改成 2 個，觀察資料集大小怎麼變。
+2. 在組合 discriminator 與 Q&A 模型的函式裡，調整 discriminator 的信心門檻，比較模型回答和拒答的比例。
+3. 對知識庫流程換一個自己的問題，檢查檢索到的 context 是否正確，以及模型是否在 context 不足時拒答。

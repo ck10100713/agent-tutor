@@ -1,44 +1,55 @@
 ---
-translated: false
+translated: true
 source: articles/sop_to_voice_agent_builder.md
 ---
-
-# Build a voice agent that follows an SOP
+# 打造一個照 SOP 走的語音 agent
 
 > 原文：[articles/sop_to_voice_agent_builder.md](https://github.com/openai/openai-cookbook/blob/main/articles/sop_to_voice_agent_builder.md)
 
-Turn a written SOP into prompts, tools, and application checks that keep a voice agent on the right procedure when a caller changes their request or corrects an answer.
+把書面的 SOP 變成 prompt、tool 和應用程式端的檢查，讓語音 agent 在來電者改口或更正答案時，仍然走在正確的流程上。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇用兩個範例流程示範怎麼讓 GPT-Live 語音 agent 照 SOP 做事：一個是照退貨 SOP 走的電商客服，一個是逐題問出可上班時段的排班助理。重點是 SOP 的規則不能只塞進 prompt，要分散到 GPT-Live 的 prompt、後端模型的 prompt 和應用程式程式碼三個地方。
 
+## 學完你會
 
-## Introduction
+- 把一份 SOP 拆成「GPT-Live 的 prompt」「後端模型的 prompt」「應用程式檢查」三層，並知道每條規則該放哪層。
+- 處理通話中途的狀況：過期或延遲的 handoff 要丟掉、消費者同意（consent）要另外驗證、使用者改口時只採用最新答案。
+- 用 Decisions trigger 當備援，在 GPT-Live 漏掉或太晚 handoff 時仍然只觸發一次後端工作，不會重複存檔。
 
-GPT-Live makes it possible to build voice agents that respond with low latency, handle interruptions, and carry on natural conversations. But many applications also need to follow a detailed procedure, SOP, or structured workflow.
+## 開跑前
 
-In a chained voice architecture, your application coordinates transcription, a model response, and speech playback, giving you control over when each utterance begins and what it contains. GPT-Live supports a continuous conversation in which listening, speaking, and backend work can overlap. A caller can correct an answer while a lookup is running or interrupt an explanation before hearing a required qualification. That flexibility makes the conversation more natural, but following the procedure requires more than putting the SOP in a prompt.
+- Python 3.12，以及 OpenAI Cookbook 的 [companion package](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/README.md)。
+- 離線重播不需要 key；要用麥克風實際通話，需要設定 `OPENAI_API_KEY`，而且該 project 要有 GPT-Live 和 Terra（`gpt-6.1-terra`）的存取權。
+- 建議戴耳機。
 
-## What’s included
+## 簡介
 
-- **Recordings:** Nine short calls with a synthetic caller and GPT-Live. Each example says what to listen for, such as a replacement offer, a late handoff, or a cancellation.
-- **Diagrams and tool timelines:** The diagrams show how the app, voice model, and backend divide the work. The timelines put handoffs, tool arguments, and results next to the recording so you can jump to the moment they happened.
-- **Runnable examples:** The [companion package](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/README.md) contains the two apps, their prompts and tools, and instructions for replaying a case offline or trying a call with your microphone.
+GPT-Live 讓你做出低延遲、能被打斷、對話自然的語音 agent。但很多應用還是得照一套詳細的流程、SOP 或結構化 workflow 走。
 
-## Manage workflows during a live call
+在 chained 語音架構裡，你的應用負責串起語音轉文字、模型回應和語音播放，所以每句話什麼時候開始、說什麼，都由你控制。GPT-Live 支援連續對話，聽、說和後端工作可以重疊進行。來電者可以在查詢還在跑的時候更正答案，也可以在聽到必要的但書之前就打斷說明。這樣對話比較自然，但要讓它照流程走，光把 SOP 放進 prompt 是不夠的。
 
-We’ll use two example workflows: an e-commerce customer service that must follow a return SOP and a scheduling assistant that needs to go question-by-question to determine user availability.
+## 內容包含什麼
 
-First, we’ll follow a Blossom Store customer who calls about order tracking and tries to negotiate a store credit against policy. Then we’ll walk through an availability interviewer that saves a candidate’s answers and gets subsequent questions from the applicant tracking system (ATS). We’ll listen to the calls alongside the tool logs and track what happens in the voice frontend, backend and application state.
+- **錄音：** 九段簡短通話，是模擬來電者跟 GPT-Live 的對話。每個範例都會說明要注意聽什麼，例如替換品的提案、太晚的 handoff 或取消。
+- **圖表和 tool 時間軸：** 圖表說明 app、語音模型和後端怎麼分工。時間軸把 handoff、tool 參數和結果放在錄音旁邊，可以直接跳到事情發生的那一刻。
+- **可執行的範例：** [companion package](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/README.md) 裡有這兩個 app、它們的 prompt 和 tool，還有離線重播案例或用麥克風實際通話的說明。
 
-In a [GPT-Live session](https://developers.openai.com/api/docs/guides/live-conversations), the voice model (`gpt-live-1`) speaks with the caller while your app runs the workflow. Give the model the instructions it needs for the conversation and tell it when to hand work to the backend.
+## 在通話中管理 workflow
 
-1. **[Blossom Store](#example-1-blossom-store).** When a tracking request becomes a damage report, GPT-Live uses [client delegation](https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=client#configure-client-delegation) to hand the new request to the app. A Responses backend with `gpt-6.1-terra` reads the store SOP and proposes a tool. The app checks the order and the caller’s agreement before creating a replacement.
-2. **[Availability interview](#example-2-structured-interviewing).** GPT-Live asks for a start day and preferred shift and delegates after each response. The app saves each clear choice, gets the next official question from the ATS, and asks the candidate to confirm both choices at the end. A [Decisions trigger on the caller’s transcript](https://developers.openai.com/api/docs/guides/decisions-voice#react-to-transcripts) can flag a finished answer if GPT-Live’s handoff is late. The app records which signal actually started the work.
+我們用兩個範例流程：一個是必須照退貨 SOP 走的電商客服，另一個是要逐題問出使用者可上班時段的排班助理。
 
-## Prerequisites and setup
+先看一位 Blossom Store 的顧客來電詢問訂單追蹤，接著試圖違反政策爭取商店抵用金。再來看一個可用時段訪談員，它會儲存應徵者的答案，並從應徵者追蹤系統（ATS）取得後續問題。我們會一邊聽通話、一邊對照 tool log，追蹤語音前端、後端和應用狀態發生了什麼事。
 
-Play the recordings inline on the Cookbook site, or use the WebM download links when reading on GitHub. To run the examples, use Python 3.12 and the [companion package](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/README.md). Run the following commands from the root of your OpenAI Cookbook clone. Use a fresh output directory for each run.
+在 [GPT-Live session](https://developers.openai.com/api/docs/guides/live-conversations) 裡，語音模型（`gpt-live-1`）負責跟來電者講話，你的 app 負責跑 workflow。你要給模型對話所需的指示，並告訴它什麼時候把工作交給後端。
+
+1. **[Blossom Store](#example-1-blossom-store)。** 當追蹤請求變成損壞回報，GPT-Live 會用 [client delegation](https://developers.openai.com/api/docs/guides/live-delegation?delegation-mode=client#configure-client-delegation) 把新請求交給 app。用 `gpt-6.1-terra` 的 Responses 後端讀店家 SOP 並提出要用的 tool。app 在建立替換品之前，會先檢查訂單和來電者是否同意。
+2. **[可用時段訪談](#example-2-structured-interviewing)。** GPT-Live 詢問開始上班的日子和偏好班別，每次回答後都 delegate。app 儲存每個明確的選擇，向 ATS 取得下一個正式問題，最後請應徵者確認兩個選擇。如果 GPT-Live 的 handoff 太晚，[針對來電者逐字稿的 Decisions trigger](https://developers.openai.com/api/docs/guides/decisions-voice#react-to-transcripts) 可以標記答案已完成。app 會記錄實際是哪個訊號啟動了工作。
+
+## 前置條件與設定
+
+在 Cookbook 網站上可以直接播放錄音；在 GitHub 上看就用 WebM 下載連結。要跑範例的話，使用 Python 3.12 和 [companion package](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/README.md)。以下指令請在你的 OpenAI Cookbook clone 根目錄執行，每次執行都用新的輸出目錄。
 
 ```sh
 cd examples/audio/sop_voice_workflows
@@ -47,147 +58,146 @@ source .venv/bin/activate
 export PYTHONPATH=.
 ```
 
-**Replay Blossom offline.** This runs the four scripted caller lines and a scripted backend against the test store. It needs no key, microphone, or package install. Look for `"pass": true` in the terminal and replacement receipt `RP001` in `runs/blossom-reference/reference.json`.
+**離線重播 Blossom。** 這會對測試用的店家跑四句腳本化的來電者台詞和一個腳本化的後端。不需要 key、麥克風或安裝套件。在終端機找 `"pass": true`，並在 `runs/blossom-reference/reference.json` 找替換單 `RP001`。
 
 ```sh
 python -m delivery.runner --reference --out runs/blossom-reference
 ```
 
-**Talk to Blossom Store.** Connect headphones, set `OPENAI_API_KEY` for a project with access to GPT-Live and Terra, and run these commands. When you see “Connected. Speak now,” try “My desk lamp arrived with a cracked base. Can I get a replacement?” Use Ctrl-C to finish. In `runs/blossom-mic/final-state.json`, check `store.effects` to see whether the store created a replacement. Asking about one leaves the order unchanged until you accept the offer.
+**跟 Blossom Store 對話。** 接上耳機，為有 GPT-Live 和 Terra 存取權的 project 設定 `OPENAI_API_KEY`，然後執行下面的指令。看到「Connected. Speak now」之後，試著說「My desk lamp arrived with a cracked base. Can I get a replacement?」。結束時按 Ctrl-C。在 `runs/blossom-mic/final-state.json` 檢查 `store.effects`，看店家有沒有建立替換品。只是詢問的話，在你接受提案之前訂單不會有任何變動。
 
 ```sh
 python -m pip install -r requirements.txt
 python -m delivery_voice --mic --output runs/blossom-mic
 ```
 
-**Try the availability interview.** With the same dependencies and access to the interview models, start a fresh call. GPT-Live asks the opening question from the applicant tracking system (ATS).
+**試試可用時段訪談。** 用同樣的相依套件，並且要有訪談模型的存取權，開一通新的通話。GPT-Live 會從應徵者追蹤系統（ATS）取得開場問題並詢問。
 
 ```sh
 python -m interview_app --mic --output runs/interview-01
 ```
 
-To inspect either configuration offline, run `python -m delivery_voice --describe` or `python -m interview_app --describe`. To test Blossom’s backend without a voice session, [run a text-only case](#choosing-a-backend-for-blossom).
+要離線檢視任一組設定，執行 `python -m delivery_voice --describe` 或 `python -m interview_app --describe`。要在不開語音 session 的情況下測 Blossom 的後端，可以[跑純文字案例](#choosing-a-backend-for-blossom)。
 
-## Example 1: Blossom Store
+## 範例 1：Blossom Store
 
-A customer calls to ask “Where’s my order?” Before the tracking request reaches the store, their roommate brings in the package. “The lamp is broken.”
+顧客來電問「我的訂單到哪了？」。追蹤請求還沒送到店家，室友就把包裹拿進來了。「燈壞了。」
 
-## 1. Turn the order-support SOP into instructions and tools
+## 1. 把訂單支援 SOP 變成 instructions 和 tool
 
-Start with the three requests in [Blossom Store’s order-support SOP](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/SOP.md). For each one, decide what the backend must look up, what GPT-Live should explain, and what requires the customer’s permission.
+從 [Blossom Store 的訂單支援 SOP](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/SOP.md) 的三種請求開始。針對每一種，決定後端必須查什麼、GPT-Live 該解釋什麼、哪些需要顧客許可。
 
-- **Track a delivery.** `get_order({})` returns the carrier update for the order the customer selected. GPT-Live can give an estimated delivery date if the carrier returned one.
-- **Request a late-delivery credit.** `check_credit_eligibility({})` returns a quote if the order is more than 24 hours late. The credit is the smaller of $20 and the order total. GPT-Live gives the amount, explains that it goes to the original payment method, and asks permission. After a clear yes, the backend requests `register_credit` with the quote ID.
-- **Replace a damaged item.** Once the customer describes the damage, `check_replacement_availability` checks the item on their order. The carrier must show it was delivered, and the same item must be in stock. GPT-Live offers the same item at no charge, sent to the original order address. After a clear yes, the backend requests `create_replacement` with the offer ID.
+- **追蹤配送。** `get_order({})` 回傳顧客所選訂單的物流更新。如果物流商有提供，GPT-Live 可以告知預計送達日。
+- **申請延遲配送抵用金。** 訂單延遲超過 24 小時時，`check_credit_eligibility({})` 會回傳報價。抵用金是 $20 和訂單總額兩者中較小的。GPT-Live 說出金額、解釋會退回原付款方式，並徵求許可。顧客明確同意後，後端用報價 ID 請求 `register_credit`。
+- **替換損壞商品。** 顧客描述損壞情況後，`check_replacement_availability` 會檢查訂單上的商品。物流商必須顯示已送達，而且同一商品要有庫存。GPT-Live 提供同一商品免費替換，寄到原訂單地址。顧客明確同意後，後端用 offer ID 請求 `create_replacement`。
 
-Let's look at this detail from the store SOP and follow it into the implementation.
+我們來看店家 SOP 裡的這一條，並跟著它走進實作。
 
-> If the customer corrects a detail or changes their request, use the latest information.
+> 如果顧客更正細節或改變請求，使用最新的資訊。
 
-| Where the rule belongs | How this example implements it |
+| 規則該放哪裡 | 這個範例怎麼實作 |
 | --- | --- |
-| GPT-Live’s prompt | “Hand off order questions, damage descriptions, requests for a credit, and replies to an open offer to the backend.” When the caller reports damage, GPT-Live delegates and hands off the new request. |
-| Terra’s prompt | “A previously interrupted lookup supplies no usable result.” Terra reads the selected order again. Once it has the item ID and knows what broke, it requests `check_replacement_availability`. |
-| Application code | Match each handoff to the caller’s words by its timestamp. If a tracking handoff arrives after the caller reports damage, discard it. Before creating a replacement, check that the caller agreed to the offer the store just made. |
+| GPT-Live 的 prompt | 「把訂單問題、損壞描述、抵用金請求，以及對未結提案的回覆交給後端處理。」當來電者回報損壞，GPT-Live 會 delegate 並交出新請求。 |
+| Terra 的 prompt | 「先前被中斷的查詢不提供可用結果。」Terra 重新讀取所選訂單。一拿到商品 ID 並知道壞了什麼，就請求 `check_replacement_availability`。 |
+| 應用程式碼 | 用時間戳把每個 handoff 對應到來電者說的話。如果追蹤的 handoff 在來電者回報損壞之後才到，就丟掉。建立替換品之前，先確認來電者同意的是店家剛剛提出的那個提案。 |
 
-## 2. Call flow
+## 2. 通話流程
 
-1. **“Where’s my order?”** GPT-Live delegates the tracking request. In this test, we delay the tracking handoff until the caller starts reporting the broken lamp. We check that the app skips the outdated tracking lookup and follows the replacement procedure when GPT-Live hands off the damage report.
-2. **“Actually, my roommate just brought it in. The lamp is broken.”** The new request takes priority. The backend retrieves the order for the damage report and asks which part of the lamp is broken.
-3. **“The base is cracked.”** The backend uses the item ID from the order and the customer’s description to check stock. The store offers another desk lamp at no charge, shipped to the original order address. GPT-Live can now explain those terms and ask whether the customer wants the replacement.
-4. **“Yes, send the replacement.”** Terra requests `create_replacement({"offer_id": "REPL-LAMP-1"})`. Before issuing a new replacement, the current app runs a separate consent check with Terra to confirm whether the customer agreed to the offer GPT-Live described. The store checks that the offer is still current and records one replacement. GPT-Live can read back the store’s receipt.
+1. **「我的訂單到哪了？」** GPT-Live delegate 追蹤請求。在這個測試裡，我們故意延遲追蹤的 handoff，直到來電者開始說燈壞了。我們要檢查 app 會跳過過期的追蹤查詢，並在 GPT-Live 交出損壞回報時改走替換流程。
+2. **「其實室友剛把它拿進來了。燈壞了。」** 新請求優先。後端為損壞回報取得訂單，並詢問燈的哪個部分壞了。
+3. **「底座裂了。」** 後端用訂單裡的商品 ID 和顧客的描述檢查庫存。店家提供另一盞檯燈免費替換，寄到原訂單地址。GPT-Live 現在可以說明這些條件並詢問顧客是否要替換。
+4. **「好，寄替換品給我。」** Terra 請求 `create_replacement({"offer_id": "REPL-LAMP-1"})`。在開立新的替換品之前，目前的 app 會先跟 Terra 做一次獨立的同意檢查，確認顧客是否同意 GPT-Live 所描述的提案。店家檢查提案是否仍有效，並只記錄一筆替換。GPT-Live 可以唸出店家的收據。
 
 ![The customer reports a broken lamp before the tracking handoff arrives. The app drops the old handoff, checks the lamp, and creates one replacement after the customer accepts.](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/audio/sop_voice_workflows/diagrams/store-order-support.svg)
 
-Trace the late tracking handoff and the replacement in the [full-size Blossom Store diagram](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/diagrams/store-order-support.svg).
+想追蹤太晚的追蹤 handoff 和替換流程，請看[完整尺寸的 Blossom Store 圖](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/diagrams/store-order-support.svg)。
 
 <a id="lets-listen-and-inspect-the-tool-calls"></a>
 
-## Listen to the broken-lamp call
+## 聽聽燈壞掉的通話
 
-In this call, the customer starts with “Where’s my order?” and ends with a confirmed replacement for a broken desk lamp.
+在這通電話裡，顧客從「我的訂單到哪了？」開始，最後確認替換一盞壞掉的檯燈。
 
 <audio controls preload="metadata" aria-label="Blossom Store. A customer reports a broken lamp and accepts a replacement." src="../examples/audio/sop_voice_workflows/recordings/blossom-late-handoff.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/blossom-late-handoff.webm?raw=true">Download the broken-lamp call (WebM)</a>
 </audio>
 
 <details id="blossom-tool-calls" style="border: 1px solid #84848455; border-radius: 8px; padding: 0.75rem 1rem">
-<summary style="cursor: pointer"><strong>Show tool calls</strong></summary>
+<summary style="cursor: pointer"><strong>顯示 tool call</strong></summary>
 
-Times are measured from the start of the recording. Expand a call to see its arguments and what happened.
+時間從錄音開頭算起。展開每個 call 可以看參數和當時發生的事。
 
 <details>
-<summary style="cursor: pointer">0:03.18 · Hold the original tracking handoff</summary>
+<summary style="cursor: pointer">0:03.18 · 扣住原本的追蹤 handoff</summary>
 
-The test deliberately held GPT-Live’s tracking handoff. It released that same event at **0:03.78**, when the caller began reporting the damage. Its timestamp still referred to the tracking request. The app ignored it before it could run a store tool.
+測試故意扣住 GPT-Live 的追蹤 handoff，在 **0:03.78**（來電者開始回報損壞時）才放出同一個事件。它的時間戳仍然指向追蹤請求，所以 app 在它能執行任何店家 tool 之前就忽略了它。
 
 </details>
 <details>
-<summary style="cursor: pointer">0:07.52 · GPT-Live hands the damage report to the app</summary>
+<summary style="cursor: pointer">0:07.52 · GPT-Live 把損壞回報交給 app</summary>
 
-GPT-Live sent a second delegation for “The lamp is broken.” The app passed the updated conversation to Terra, which requested the order for the damage report.
+GPT-Live 為「燈壞了」送出第二次 delegation。app 把更新後的對話交給 Terra，Terra 為損壞回報請求取得訂單。
 
 </details>
 <details>
-<summary style="cursor: pointer">0:09.42 · Read the order for the damaged item</summary>
+<summary style="cursor: pointer">0:09.42 · 讀取訂單，確認損壞的商品</summary>
 
 `get_order({})`
 
-The store returned `shipping_status: delivered` and identified the item as a desk lamp (`LAMP-1`). GPT-Live asked which part was damaged.
+店家回傳 `shipping_status: delivered`，並辨識出商品是一盞檯燈（`LAMP-1`）。GPT-Live 問是哪個部分損壞。
 
 </details>
 <details>
-<summary style="cursor: pointer">0:22.52 · Check whether the lamp can be replaced</summary>
+<summary style="cursor: pointer">0:22.52 · 檢查這盞燈能不能替換</summary>
 
 `check_replacement_availability({"item_id": "LAMP-1", "damage_description": "The base is cracked"})`
 
-The store offered the same lamp at no charge, shipped to the original order address. It returned offer ID `REPL-LAMP-1`. GPT-Live explained the terms and asked permission.
+店家提供同一盞燈免費替換，寄到原訂單地址，並回傳 offer ID `REPL-LAMP-1`。GPT-Live 說明條件並徵求許可。
 
 </details>
 <details>
-<summary style="cursor: pointer">0:39.14 · Create the replacement after the customer accepts</summary>
+<summary style="cursor: pointer">0:39.14 · 顧客接受後建立替換品</summary>
 
 `create_replacement({"offer_id": "REPL-LAMP-1"})`
-
-The caller started saying “Yes, send the replacement” at **0:34.84**. The store returned `status: created` and `RP001`. GPT-Live then read back the reference.
-
-</details>
-
-Use the [full call timeline](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/broken-lamp.html) to jump from a tool call to that moment in the recording.
+來電者在 **0:34.84** 開始說「好，寄替換品給我」。店家回傳 `status: created` 和 `RP001`，GPT-Live 接著唸出這個編號。
 
 </details>
 
-## Policy negotiation
+想從 tool call 直接跳到錄音中的對應時刻，請看[完整通話時間軸](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/broken-lamp.html)。
 
-We want to make sure we're following policy for something consequential like a credit. If GPT-Live asks, “May I put a $20 credit back on your original payment method?” **“That works for me. Let’s do that”** is a clear confirmation, but **“Yes, but can you make it $35?”** still requires conversation before we confirm any credit.
+</details>
 
-Terra follows the SOP and chooses which tool to request. When it proposes issuing a new credit or creating a replacement, the app makes a second, tool-free Responses call to Terra. It supplies the verified terms, GPT-Live’s offer and the caller’s whole reply. Terra identifies the words that conveyed each required term and decides whether the caller agreed. For example, if GPT-Live offers another lamp but never mentions the price, the cost field should be empty. The app requires evidence for every term and an `accepted` decision before it proceeds.
+## 政策協商
 
-Python checks facts the store can verify. The offered quote must still belong to this order, the caller’s reply must still be current, and the store must have no prior submission for that offer. An uncertain or unavailable review leaves the ledger untouched. If the caller speaks again while that check is running, the app discards the old decision.
+像抵用金這種有實質影響的事，我們要確保有照政策走。如果 GPT-Live 問「要不要把 $20 抵用金退回您原本的付款方式？」，**「That works for me. Let’s do that」** 是明確的同意，但 **「Yes, but can you make it $35?」** 在確認任何抵用金之前還需要再談。
 
-**The caller asks for $35.** GPT-Live explains that the store can offer $20 and asks whether the caller wants it. The store issues no credit.
+Terra 照 SOP 選擇要請求哪個 tool。當它提議開立新抵用金或建立替換品時，app 會對 Terra 做第二次不帶 tool 的 Responses 呼叫，並提供已驗證的條款、GPT-Live 的提案，以及來電者完整的回覆。Terra 要指出傳達每個必要條款的字句，並判斷來電者是否同意。例如 GPT-Live 提供另一盞燈卻沒提價格，價格欄位就應該是空的。app 要求每個條款都有證據，而且決定是 `accepted` 才會繼續。
+
+Python 負責檢查店家能驗證的事實。被提供的報價必須仍屬於這張訂單、來電者的回覆必須仍是最新的、店家對這個提案不能已有送出紀錄。審查結果不確定或無法取得時，帳本維持不動。如果檢查進行中來電者又開口說話，app 會丟掉舊的決定。
+
+**來電者要求 $35。** GPT-Live 說明店家能提供 $20，並問來電者要不要。店家不發放任何抵用金。
 
 <audio controls preload="metadata" aria-label="Blossom Store. The caller asks for $35 after a $20 offer." src="../examples/audio/sop_voice_workflows/recordings/blossom-consent-counteroffer.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/blossom-consent-counteroffer.webm?raw=true">Download the $35 counteroffer (WebM)</a>
 </audio>
 
-<details><summary><strong>Inspect the counteroffer tool calls</strong></summary>
+<details><summary><strong>查看還價的 tool call</strong></summary>
 
-At 0:06.10 the store retrieved the order with `get_order`. At 0:07.26 `check_credit_eligibility` returned a $20 quote. After the caller asked for $35, GPT-Live handed the reply to Terra at 0:22.90. Terra asked for no write, so the app had no consent check to run. The ledger stayed empty.
+在 0:06.10，店家用 `get_order` 取得訂單。在 0:07.26，`check_credit_eligibility` 回傳 $20 的報價。來電者要求 $35 之後，GPT-Live 在 0:22.90 把回覆交給 Terra。Terra 沒有要求任何寫入，所以 app 沒有同意檢查要跑，帳本維持空的。
 
-We also [tested a mistaken write request](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/consent-results.json) with the same reply. When the test proposed registering the $20 quote anyway, the consent check returned `not_accepted` and the store rejected it.
+我們也用同樣的回覆[測試了錯誤的寫入請求](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/consent-results.json)。測試仍然提議登記那筆 $20 報價時，同意檢查回傳 `not_accepted`，店家拒絕了這個請求。
 
 </details>
 
-**The caller accepts.** This caller says, “That works for me. Let’s do that.” Listen for the offer before the reply and the confirmation after the store issues the credit.
+**來電者接受。** 這位來電者說「That works for me. Let’s do that.」。注意聽回覆前的提案，以及店家發放抵用金之後的確認。
 
 <audio controls preload="metadata" aria-label="Blossom Store. The caller accepts the $20 credit in their own words." src="../examples/audio/sop_voice_workflows/recordings/blossom-consent-acceptance.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/blossom-consent-acceptance.webm?raw=true">Download the accepted $20 credit (WebM)</a>
 </audio>
 
-<details><summary><strong>Inspect the accepted credit and its consent check</strong></summary>
+<details><summary><strong>查看已接受的抵用金和它的同意檢查</strong></summary>
 
-The store retrieved the order at 0:05.84 and checked eligibility at 0:06.88. After the caller accepted, Terra proposed `register_credit({"quote_id":"CREDIT-20"})`. The consent review found the $20 amount, original payment method and request for permission in GPT-Live’s offer. At 0:25.14 the store registered the quote and returned `RF001`. The ledger contains one credit. The [recorded tool timelines](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/blossom-consent-calls.json) include the reviewer’s evidence alongside both final ledgers.
+店家在 0:05.84 取得訂單，在 0:06.88 檢查資格。來電者接受後，Terra 提議 `register_credit({"quote_id":"CREDIT-20"})`。同意審查在 GPT-Live 的提案裡找到 $20 金額、原付款方式，以及徵求許可的說法。在 0:25.14，店家登記了這筆報價並回傳 `RF001`。帳本裡有一筆抵用金。[錄下來的 tool 時間軸](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/blossom-consent-calls.json)除了兩份最終帳本，也包含審查者的證據。
 
 ```json
 {
@@ -202,130 +212,129 @@ The store retrieved the order at 0:05.84 and checked eligibility at 0:06.88. Aft
 
 </details>
 
-<details><summary><strong>Hear what happens when the caller interrupts the offer</strong></summary>
+<details><summary><strong>聽聽來電者打斷提案時會怎樣</strong></summary>
 
-Listen for GPT-Live to repeat the credit terms and ask permission again before the store issues the credit.
+注意聽 GPT-Live 在店家發放抵用金之前，會重複抵用金條款並再次徵求許可。
 
 <audio controls preload="none" aria-label="Blossom Store. The caller interrupts the credit offer and asks GPT-Live to repeat it." src="../examples/audio/sop_voice_workflows/recordings/blossom-interruption.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/blossom-interruption.webm?raw=true">Download the interrupted offer (WebM)</a>
 </audio>
 
-In this earlier recording, the caller spoke over GPT-Live at 0:10.82 before it had asked permission. GPT-Live repeated the $20 amount, named the original payment method, and asked again. The caller’s new “Yes” began at 0:20.92. The store registered the credit once at 0:23.74.
+在這段較早的錄音裡，來電者在 0:10.82 GPT-Live 還沒徵求許可前就搶話。GPT-Live 重複了 $20 的金額、說出原付款方式，並再問了一次。來電者新的「Yes」從 0:20.92 開始。店家在 0:23.74 登記了一次抵用金。
 
 </details>
 
 <a id="choosing-backend-models"></a>
 
-## Choosing a backend for Blossom
+## 為 Blossom 選後端
 
-With client delegation, our app chooses which model handles store requests from GPT-Live. We chose `gpt-6.1-terra` because it followed Blossom’s SOP more consistently than Luna in our tests.
+用 client delegation 的話，由我們的 app 決定哪個模型處理 GPT-Live 送來的店家請求。我們選了 `gpt-6.1-terra`，因為在我們的測試裡它比 Luna 更穩定地照 Blossom 的 SOP 走。
 
-**Following the SOP.** In the [original backend test](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#how-we-compared-the-backends), both models received the same SOP, five store tools, and scripted text replies. We ran this test before adding a separate consent check.
+**照 SOP 走。** 在[原始的後端測試](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#how-we-compared-the-backends)裡，兩個模型拿到同樣的 SOP、五個店家 tool 和腳本化的文字回覆。這個測試是在加入獨立的同意檢查之前跑的。
 
-| Recorded backend runs, rescored | Terra | Luna |
+| 錄下的後端執行，重新評分 | Terra | Luna |
 | --- | ---: | ---: |
-| Runs that followed the full SOP | 68/68 | 65/68 |
-| Asked permission again after a clear yes | 0/29 | 0/29 |
-| Total store tool calls | 157 | 172 |
+| 完整照 SOP 走的執行次數 | 68/68 | 65/68 |
+| 明確同意後又再問一次許可 | 0/29 | 0/29 |
+| 店家 tool call 總數 | 157 | 172 |
 
-One caller replied to a $20 offer with “Yes, but can you make it $35?” Terra asked whether $20 was acceptable. In [one Luna run](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/results.json), Luna requested the credit. The test store checked that the caller had replied to a current, unused quote. It relied on Luna to interpret the reply, so it issued $20.
+有位來電者對 $20 的提案回覆「Yes, but can you make it $35?」。Terra 會問 $20 可不可以接受。在[其中一次 Luna 的執行](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/results.json)裡，Luna 直接請求了抵用金。測試用的店家只檢查來電者回覆的是一個目前有效、未使用的報價，並依賴 Luna 解讀回覆，所以發出了 $20。
 
-We [graded the saved replies again](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/credit-grade-results.json) using a text reviewer that reads the full credit offer without seeing the expected price. It identifies the amount actually offered, where the money would go and whether the agent asked permission. Code compares its findings with the store’s quote. One additional Luna reply offered the correct $20 but omitted the quote ID the app needed to record a new offer. No credit was issued in that run. This check grades the backend’s text. To find out what GPT-Live actually said, use the receiver audio.
+我們用一個文字審查者[重新評分了存下來的回覆](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/delivery/credit-grade-results.json)，它會讀完整的抵用金提案，但看不到預期的價格。它找出實際提供的金額、錢會去哪裡，以及 agent 有沒有徵求許可，再由程式把它的結果跟店家的報價比對。另有一次 Luna 的回覆提供了正確的 $20，但漏掉了 app 記錄新提案所需的報價 ID，那次執行沒有發放抵用金。這個檢查評的是後端的文字。要知道 GPT-Live 實際說了什麼，要看接收端的音訊。
 
-The [timings](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/diagrams/blossom-backend-time.json) cover the backend’s work for each scripted reply, including tool calls. Twelve of Luna’s 15 extra calls were order lookups.
+[計時資料](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/diagrams/blossom-backend-time.json)涵蓋後端處理每句腳本化回覆的工作，包括 tool call。Luna 多出來的 15 次 call 裡，有 12 次是訂單查詢。
 
 ![Median backend time per scripted caller turn, including tool round trips. Terra, 2.88 seconds. Luna, 3.18 seconds. Each median covers 129 turns.](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/audio/sop_voice_workflows/diagrams/blossom-backend-time.svg)
 
-**Checking consent.** Today, before the store issues a new credit or replacement, a separate Terra call checks whether GPT-Live explained the store’s terms and the caller agreed to them.
+**檢查同意。** 現在，店家在發放新抵用金或建立替換品之前，會另外用一次 Terra 呼叫，檢查 GPT-Live 有沒有說明店家的條款、來電者有沒有同意。
 
-We [tested this check](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#checking-consent-before-a-write) by asking the store to go ahead in every trial, even when the caller said no. A trial passed when the review finished and the store correctly issued or withheld the credit or replacement. Across 78 cases with repeats, Terra passed **142/142** trials and Luna passed **133/142**. The Terra check took a median of 2.00 seconds.
+我們[測試了這個檢查](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#checking-consent-before-a-write)：每次試驗都要求店家照做，即使來電者說了不。試驗在審查跑完、且店家正確發放或拒絕抵用金或替換品時算通過。在含重複的 78 個案例中，Terra 通過 **142/142** 次試驗，Luna 通過 **133/142**。Terra 的檢查中位數耗時 2.00 秒。
 
-**Try the broken-lamp case.** With the dependencies installed and `OPENAI_API_KEY` set for a project with Terra access, run this text-only test of the current app.
+**試試燈壞掉的案例。** 裝好相依套件，並為有 Terra 存取權的 project 設定 `OPENAI_API_KEY` 後，執行這個針對目前 app 的純文字測試。
 
 ```sh
 python -m delivery.runner --ids status_to_damage --out runs/blossom-terra
 ```
 
-Open `status_to_damage__gpt-6.1-terra__1.json` in the output directory to see the tool calls, their results, and the grade. A passing run records one replacement. You can also [run the case with both backends](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#try-the-same-case).
+打開輸出目錄裡的 `status_to_damage__gpt-6.1-terra__1.json`，可以看 tool call、結果和評分。通過的執行會記錄一筆替換。你也可以[用兩個後端跑同一個案例](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/delivery/REPORT.md#try-the-same-case)。
 
-## Example 2: Structured interviewing
+## 範例 2：結構化訪談
 
-We're building a simple scheduler - the interviewer needs to collect two preferences, a start day and a shift. The ATS supplies the opening question before the call. After each clear choice the app saves the answer and looks up what to ask next. The app has to be able to handle the candidate changing their answer or their choice at any time.
+我們要做一個簡單的排程器，訪談員要收集兩個偏好：開始上班的日子和班別。ATS 在通話前提供開場問題。每次明確選擇後，app 儲存答案並查下一題要問什麼。app 必須能處理應徵者隨時更改答案或選擇。
 
-## 1. Start the session with the first question
+## 1. 用第一個問題開始 session
 
-Seed GPT-Live with the opening question from the ATS, “Which start day works for you, Monday or Tuesday?” The [interview prompts](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/meaning.py) give each model a different job.
+用 ATS 的開場問題「Which start day works for you, Monday or Tuesday?」當作 GPT-Live 的起點。[訪談 prompt](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/meaning.py) 讓每個模型各司其職。
 
-| Who | What we ask it to do |
+| 誰 | 我們要它做什麼 |
 | --- | --- |
-| **GPT-Live**, the interviewer | Ask one official question at a time. Hand answers, corrections, and requests to the app. Wait for the app to supply the next question. |
-| **Decisions**, watching the transcript | As the candidate speaks, ask “Does the app have work to do?” (`needs_backend_v1`) and “Does the answer depend on something?” (`condition_v1`). Decisions can revise either label as more words arrive. |
-| **Luna**, the backend interpreter | Read the interviewee's reply alongside the current question, interview record, and Decisions labels. Propose a next step, such as saving a day, clarifying a condition, or repeating the question. |
+| **GPT-Live**，訪談員 | 一次問一個正式問題。把答案、更正和請求交給 app。等 app 提供下一題。 |
+| **Decisions**，盯著逐字稿 | 在應徵者說話時，問「app 有事要做嗎？」（`needs_backend_v1`）和「答案取決於某個條件嗎？」（`condition_v1`）。隨著更多字出現，Decisions 可以修改任一個標籤。 |
+| **Luna**，後端解讀者 | 連同目前的問題、訪談紀錄和 Decisions 標籤，一起讀受訪者的回覆。提出下一步，例如儲存日期、釐清條件或重複問題。 |
 
-The app checks Luna’s proposal against the current ATS record before it saves an answer. A Decisions result can start that check when a handoff is missing. If the check is already running, the trigger adds no second save.
+app 在儲存答案之前，會拿 Luna 的提案對照目前的 ATS 紀錄做檢查。在缺少 handoff 時，Decisions 的結果可以啟動這個檢查。如果檢查已經在跑，trigger 不會再多存一次。
 
-## When one reply answers two questions
+## 當一句回覆回答了兩個問題
 
-GPT-Live asks which day the candidate can start. “Yeah, I could work any shift on Monday” answers two questions at once. At **0:10.10**, GPT-Live hands the reply to the app. Decisions also flags the answer. The app starts the backend work once, from GPT-Live’s handoff.
+GPT-Live 問應徵者哪天可以開始。「Yeah, I could work any shift on Monday」一次回答了兩個問題。在 **0:10.10**，GPT-Live 把回覆交給 app，Decisions 也標記了這個答案。app 只從 GPT-Live 的 handoff 啟動一次後端工作。
 
-At **0:13.26**, the app saves Monday and asks the ATS what comes next. The ATS returns the shift question and lists `either` as an allowed answer. Since the candidate already said any shift works, the app saves `either` and asks the ATS again. Only the confirmation goes back to GPT-Live. Listen for the interviewer to read back both choices and ask the candidate to confirm them.
+在 **0:13.26**，app 儲存 Monday，並問 ATS 接下來是什麼。ATS 回傳班別問題，並列出 `either` 為允許的答案。因為應徵者已經說過任何班別都行，app 就儲存 `either`，再問 ATS 一次。只有確認動作會回到 GPT-Live。注意聽訪談員把兩個選擇唸回來並請應徵者確認。
 
 <audio controls preload="metadata" aria-label="Availability interview. The candidate can work any shift on Monday." src="../examples/audio/sop_voice_workflows/recordings/interview-multi-answer.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/interview-multi-answer.webm?raw=true">Download the Monday interview (WebM)</a>
 </audio>
 
 <details>
-<summary>Inspect the Monday tool calls</summary>
+<summary>查看週一的 tool call</summary>
 
-The timeline groups four calls at **0:13.26**, in the order the app ran them.
+時間軸把 **0:13.26** 的四個 call 依 app 執行的順序放在一起。
 
-| ATS call | Result |
+| ATS call | 結果 |
 | --- | --- |
-| `record_answer({"question_id": "day", "value": "Monday"})` | Saved Monday at revision 1. |
-| `get_next_question({})` | Returned the shift question with `either` among the allowed answers. |
-| `record_answer({"question_id": "shift", "value": "either"})` | Saved the shift at revision 2. |
-| `get_next_question({})` | Returned the confirmation question. |
-
-At **0:29.00**, after the candidate confirmed both choices, `complete_interview({"day": "Monday", "shift": "either"})` recorded completion at revision 3.
+| `record_answer({"question_id": "day", "value": "Monday"})` | 以 revision 1 儲存 Monday。 |
+| `get_next_question({})` | 回傳班別問題，允許的答案包含 `either`。 |
+| `record_answer({"question_id": "shift", "value": "either"})` | 以 revision 2 儲存班別。 |
+| `get_next_question({})` | 回傳確認問題。 |
+在 **0:29.00**，應徵者確認兩個選擇之後，`complete_interview({"day": "Monday", "shift": "either"})` 以 revision 3 記錄了完成。
 
 </details>
 
-Open the [full Monday timeline](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-multi-answer.html) to jump to a handoff or tool call in the recording.
+打開[完整的週一時間軸](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-multi-answer.html)，可以跳到錄音中的某個 handoff 或 tool call。
 
-**When an answer has a condition.** The candidate says, “Tuesday, if the shift ends before five.” GPT-Live hands the answer to the app. The app keeps Tuesday and the candidate’s condition together. The ATS has no shift hours to check, so GPT-Live explains that and asks whether to leave Tuesday unconfirmed. Listen for the follow-up. The ATS still had no confirmed start day when the call ended.
+**當答案帶有條件。** 應徵者說「Tuesday, if the shift ends before five.」。GPT-Live 把答案交給 app。app 把 Tuesday 和應徵者的條件放在一起。ATS 沒有班別時數可以查，所以 GPT-Live 解釋這點，並問是否先不確認 Tuesday。注意聽後續的問答。通話結束時，ATS 仍然沒有已確認的開始日。
 
 <audio controls preload="metadata" aria-label="Interview call with tentative Tuesday availability and a five o'clock finish condition" src="../examples/audio/sop_voice_workflows/recordings/interview-conditional-clarification.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/interview-conditional-clarification.webm?raw=true">Download the conditional Tuesday answer (WebM)</a>
 </audio>
 
 <details>
-<summary>What happened in the two test calls?</summary>
+<summary>這兩通測試通話發生了什麼？</summary>
 
-In both calls, GPT-Live made the handoff itself. It briefly acknowledged the candidate while the app worked, then asked about leaving Tuesday open. In the featured call, the first voiced part of that follow-up reached the receiver 0.98 seconds after the app returned guidance. In the second, the receiver audio was also clear, but two caption words shared a timing frame with the guidance. The [recording checks and ATS results](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-conditional-clarification.json) include the earlier attempts and five text tests of what happens next. Repeating “Tuesday” leaves the condition open. Explaining that the condition has been resolved can confirm the day.
+兩通電話裡，handoff 都是 GPT-Live 自己做的。app 在處理時它先簡短回應應徵者，然後問要不要把 Tuesday 留空。在主打的那通裡，這段後續問話第一個有聲的部分，在 app 回傳指引後 0.98 秒到達接收端。第二通的接收端音訊也很清楚，但有兩個字幕字詞和指引落在同一個時間 frame。[錄音檢查和 ATS 結果](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-conditional-clarification.json)包含較早的嘗試，以及五個文字測試，測的是接下來會發生什麼事。重複說「Tuesday」會讓條件維持未解決。說明條件已經解決，則可以確認這一天。
 
 </details>
 
-Once the ATS has a day and shift, it returns both as a summary. GPT-Live reads them back, explains that this records availability and does not confirm a job offer, and asks the candidate to confirm both. Before completing the interview, the app [checks the current summary and its delivery evidence](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/workflow.py#L188-L199). If the app can verify only part of the spoken summary, it keeps the saved answers and asks GPT-Live to read them back again. A correction calls for a fresh summary with the updated answers.
+ATS 一旦有了日期和班別，就會把兩者當作摘要回傳。GPT-Live 把它們唸回來，說明這只是記錄可用時段，並不代表確認錄取，再請應徵者確認兩項。在完成訪談之前，app 會[檢查目前的摘要和它的播放證據](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/workflow.py#L188-L199)。如果 app 只能驗證口述摘要的一部分，就保留已儲存的答案，並請 GPT-Live 再唸一次。有更正的話，要用更新後的答案產生新的摘要。
 
 ![In the recorded Tuesday call, Decisions starts the interview check while the app holds GPT-Live’s handoff. The ATS saves Tuesday once.](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/audio/sop_voice_workflows/diagrams/interview-current.svg)
 
-## 2. Missed or late delegation
+## 2. 漏掉或太晚的 delegation
 
-In the [recorded Tuesday call](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-handoff.html), Decisions flagged the answer at **0:09.32**. GPT-Live delegated at **0:09.68**, but the test deliberately held that handoff. At **0:10.96**, the controller logged `decisions_recovery` and asked Luna to interpret the answer. At **0:12.66**, the ATS saved Tuesday once and returned the shift question. The late handoff reached the same answer and produced no second save.
+在[錄下的 Tuesday 通話](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-handoff.html)裡，Decisions 在 **0:09.32** 標記了答案。GPT-Live 在 **0:09.68** delegate，但測試故意扣住這個 handoff。在 **0:10.96**，controller 記錄了 `decisions_recovery`，並請 Luna 解讀答案。在 **0:12.66**，ATS 只儲存一次 Tuesday 並回傳班別問題。太晚到的 handoff 指向同一個答案，沒有造成第二次儲存。
 
 <audio controls preload="metadata" aria-label="Tuesday answer with a deliberately delayed handoff" src="../examples/audio/sop_voice_workflows/recordings/interview-handoff.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/interview-handoff.webm?raw=true">Download the late Tuesday handoff (WebM)</a>
 </audio>
 
-Read the `reason` on the controller’s `app.route` event to see what started interpretation. The app records one reason for each transcript update it processes.
+看 controller 的 `app.route` 事件上的 `reason`，就知道是什麼啟動了解讀。app 對每次處理的逐字稿更新記錄一個 reason。
 
-| Route in the log | What happened |
+| log 裡的 route | 發生了什麼 |
 | --- | --- |
-| `native_delegation` | GPT-Live handed the answer to the app. Decisions may also have flagged it. |
-| `decisions_recovery` | No handoff had claimed this answer. Decisions flagged the latest transcript update as needing backend work. |
-| `settled_unclassified` | Neither a handoff nor a positive Decisions result was available. After 1.8 seconds without new speech or transcript text, this example asks Luna to interpret what it has. A trigger that labels the reply as a backchannel skips this fallback. |
+| `native_delegation` | GPT-Live 把答案交給 app。Decisions 可能也標記過。 |
+| `decisions_recovery` | 沒有任何 handoff 認領這個答案。Decisions 把最新的逐字稿更新標記為需要後端處理。 |
+| `settled_unclassified` | 沒有 handoff，也沒有 Decisions 的正向結果。在 1.8 秒沒有新的語音或逐字稿文字之後，這個範例會請 Luna 解讀手上有的內容。如果 trigger 把回覆標為 backchannel（附和語），就跳過這個備援。 |
 
-Starting interpretation does not authorize a save. For example, when no condition label is available, a timeout alone cannot commit Tuesday. The [controller](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/live.py) marks the transcript update as in progress before it starts the interpreter. All three routes use that check.
+啟動解讀不代表授權儲存。例如沒有 condition 標籤時，光靠 timeout 不能確定 Tuesday。[controller](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/live.py) 在啟動解讀者之前，會先把這筆逐字稿更新標記為處理中。三種 route 都用這個檢查。
 
 ```python
 # Excerpt from Controller.tick, with timing and logging omitted.
@@ -337,50 +346,62 @@ scope = {"turn": t.number, "source_event_id": t.source,
 self.start(self.process(t, scope, labels))
 ```
 
-**Is Tuesday still the answer?** While Luna is interpreting “Tuesday,” the candidate might add “actually, Monday.” When Luna replies, the app [checks that it still has the same answer](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/live.py#L445-L453). If the candidate has spoken again, the transcript has changed, or the ATS record has a newer version, the app drops the old interpretation.
+**Tuesday 還是答案嗎？** Luna 解讀「Tuesday」的時候，應徵者可能又補一句「actually, Monday」。Luna 回覆時，app [會檢查自己手上仍是同一個答案](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/live.py#L445-L453)。如果應徵者又說話了、逐字稿變了，或 ATS 紀錄有了較新的版本，app 就丟掉舊的解讀。
 
-**Save first, then ask what comes next.** In this call, saving Tuesday moved the interview record from version 0 to version 1. The app [asked the ATS for the next question](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/workflow.py#L241-L248) using version 1. With the day filled in, the ATS returned the shift question. The app sent it to GPT-Live in `session.commentary.append` with `delegation_id: null` because no GPT-Live handoff owned the work. The `app.route` entry tells us that Decisions started it.
+**先儲存，再問下一題。** 在這通電話裡，儲存 Tuesday 讓訪談紀錄從版本 0 變成版本 1。app 用版本 1 [向 ATS 要下一個問題](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/workflow.py#L241-L248)。日期填好之後，ATS 回傳班別問題。app 用 `session.commentary.append` 把它送給 GPT-Live，`delegation_id: null`，因為沒有 GPT-Live 的 handoff 擁有這件工作。`app.route` 的紀錄告訴我們是 Decisions 啟動的。
 
-**If the save confirmation gets lost,** the app [checks the ATS receipt](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/store.py#L93-L103) for the request ending in `/save_day`. The next-question request has its own ID ending in `/after_day`. Retrying with the same ID and arguments returns the original result.
+**如果儲存確認遺失，** app 會[檢查 ATS 的收據](https://github.com/openai/openai-cookbook/blob/b71327cc3713b87229eab2407c07ff8b95c9a00d/examples/audio/sop_voice_workflows/interview_app/store.py#L93-L103)，找結尾是 `/save_day` 的請求。下一題的請求有自己的 ID，結尾是 `/after_day`。用同樣的 ID 和參數重試，會回傳原本的結果。
 
-## 3. Check corrections, cancellation, and a failed lookup
+## 3. 檢查更正、取消和查詢失敗
 
-**A correction.** If the candidate changes Monday to Tuesday, use the latest answer. Work that began on Monday cannot overwrite Tuesday. In the recorded correction test, the ATS saved Monday, then changed it to Tuesday and fetched the shift question again.
+**更正。** 如果應徵者把 Monday 改成 Tuesday，就用最新的答案。從 Monday 開始的工作不能蓋掉 Tuesday。在錄下的更正測試裡，ATS 先儲存 Monday，然後改成 Tuesday，並再次取得班別問題。
 
-**A cancellation.** “Maybe cancel the interview” leaves the record open. The app can cancel only when the backend interprets the reply as a request to stop and Decisions marks it as clear. In our call, “Please cancel this interview now” produced one cancellation.
+**取消。** 「Maybe cancel the interview」不會關閉紀錄。只有當後端把回覆解讀為要求停止，而且 Decisions 把它標為明確時，app 才能取消。在我們的通話裡，「Please cancel this interview now」產生了一次取消。
 
-<details><summary><strong>Hear the two cancellation requests and inspect the result</strong></summary>
+<details><summary><strong>聽兩次取消請求並查看結果</strong></summary>
 
 <audio controls preload="none" aria-label="A candidate considers cancelling, then clearly asks to stop." src="../examples/audio/sop_voice_workflows/recordings/interview-cancel.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/interview-cancel.webm?raw=true">Download the cancellation call (WebM)</a>
 </audio>
 
-Decisions marked “Maybe cancel” as `incomplete`. The app left the record open. After the second reply, Decisions returned `unconditional` and the backend requested cancellation. The ATS ran `cancel_interview({})` once.
+Decisions 把「Maybe cancel」標為 `incomplete`，app 讓紀錄保持開啟。第二次回覆之後，Decisions 回傳 `unconditional`，後端請求取消。ATS 只跑了一次 `cancel_interview({})`。
 
 </details>
 
-**A failed lookup.** The ATS saved Tuesday, but it could not supply the next question. The app paused the session with the record still open. On the receiver recording, GPT-Live says, “I saved Tuesday. I couldn’t retrieve the next question, so we’ll pause here.” This workflow has no recruiting follow-up queue.
+**查詢失敗。** ATS 儲存了 Tuesday，但無法提供下一題。app 暫停 session，紀錄仍保持開啟。在接收端錄音裡，GPT-Live 說：「I saved Tuesday. I couldn’t retrieve the next question, so we’ll pause here.」。這個 workflow 沒有招募後續追蹤的佇列。
 
 <audio controls preload="metadata" aria-label="Availability interview. Tuesday is saved and the interviewer pauses when the next question is unavailable." src="../examples/audio/sop_voice_workflows/recordings/interview-lookup-pause.webm">
   <a href="../examples/audio/sop_voice_workflows/recordings/interview-lookup-pause.webm?raw=true">Download the failed lookup (WebM)</a>
 </audio>
 
 <details id="failed-lookup-tool-calls" style="margin-top: 0.75rem; border: 1px solid #84848455; border-radius: 8px; padding: 0.75rem 1rem">
-<summary style="cursor: pointer"><strong>Show tool calls</strong></summary>
+<summary style="cursor: pointer"><strong>顯示 tool call</strong></summary>
 
-At **0:12.70** in this recording, the [tool receipts](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-lookup-pause-tools.json) show the answer was saved before the lookup failed.
+在這段錄音的 **0:12.70**，[tool 收據](https://github.com/openai/openai-cookbook/blob/main/examples/audio/sop_voice_workflows/recordings/interview-lookup-pause-tools.json)顯示答案是在查詢失敗之前就已儲存。
 
-1. `record_answer({"question_id": "day", "value": "Tuesday"})` returned `ok`. The ATS stored Tuesday at revision 1.
-2. `get_next_question({})` at revision 1 returned `unavailable`. The ATS kept Tuesday, left the shift empty, and recorded no completion.
+1. `record_answer({"question_id": "day", "value": "Tuesday"})` 回傳 `ok`。ATS 以 revision 1 儲存 Tuesday。
+2. 在 revision 1 的 `get_next_question({})` 回傳 `unavailable`。ATS 保留 Tuesday、班別維持空白，也沒有記錄完成。
 
 </details>
 
-## Adapting a turn-based workflow to GPT-Live
+## 把回合制 workflow 改成 GPT-Live
 
-In a turn-based voice app, the caller finishes speaking and your code decides what happens before the agent replies. With GPT-Live, the conversation keeps going while the backend works. A caller can pause, hear the agent start to respond, and then add “but only if…” to what sounded like a complete answer. Rethink how your application is architected to take advantage of the low latency and full-duplex nature of the model while providing structure, guardrails, and checks in your backend.
+在回合制語音 app 裡，來電者說完話，你的程式碼才決定 agent 回覆前要做什麼。用 GPT-Live 的話，後端在忙的時候對話還在繼續。來電者可以停頓一下，聽到 agent 開始回應，然後對一個聽起來已經完整的答案補上「but only if…」。你要重新思考應用架構，才能善用模型的低延遲和全雙工特性，同時在後端提供結構、guardrail 和檢查。
 
-When you bring an SOP into GPT-Live, ask what makes each step complete. Use the prompt to tell GPT-Live when to bring in the backend for guidance or verified facts. Use Decisions triggers to track sentiment, act as guardrails, flag backend work or otherwise assess what the agent or caller is saying.
+把 SOP 帶進 GPT-Live 時，先問每個步驟「怎樣才算完成」。用 prompt 告訴 GPT-Live 什麼時候要找後端取得指引或已驗證的事實。用 Decisions trigger 來追蹤情緒、當 guardrail、標記後端工作，或評估 agent 或來電者正在說什麼。
 
-To test how your workflow handles a complete call, follow the [GPT-Live evaluation guide](https://developers.openai.com/cookbook/examples/audio/voice_agent_evaluation).
+要測整通電話的 workflow 表現，請參考 [GPT-Live 評估指南](https://developers.openai.com/cookbook/examples/audio/voice_agent_evaluation)。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- SOP 的一條規則通常要拆到三個地方：GPT-Live 的 prompt 決定何時 handoff，後端模型的 prompt 決定怎麼用 tool，應用程式碼負責驗證事實和時序。
+- 全雙工對話裡，過期的結果一定會出現。用時間戳、逐字稿版本和 ATS 的 revision 判斷結果是否還是最新，過期就丟掉。
+- 有實質影響的寫入（抵用金、替換品）要在 app 端另做一次同意檢查，要求每個條款都有證據，不能只靠 agent 自己說「對方同意了」。
+- Decisions trigger 是 handoff 的備援，而不是第二條寫入路徑。啟動解讀不等於授權儲存，所以一個答案不會被存兩次。
+- 儲存要有冪等性：用帶固定 ID 的請求，丟了確認也能重試並拿回原結果。
+
+## 練習
+
+1. 在 Blossom 的 SOP 規則表（GPT-Live 的 prompt、Terra 的 prompt、應用程式碼）裡，替「抵用金不能超過訂單總額」這條規則決定放哪一層，並寫一句理由。
+2. 把 `settled_unclassified` 的 1.8 秒等待時間改成 0.5 秒和 4 秒各跑一次，觀察 `app.route` 的 reason 分佈和 Tuesday 被存幾次有什麼變化。
+3. 在訪談 app 的儲存流程裡，模擬「save 的確認遺失」：用同一個以 `/save_day` 結尾的請求 ID 和參數重送兩次，確認 ATS 的 revision 沒有多加一次。

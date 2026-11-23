@@ -1,73 +1,84 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/rag-quickstart/azure/Azure_AI_Search_with_Azure_Functions_and_GPT_Actions_in_ChatGPT.ipynb
 ---
-
 # Azure AI Search with Azure Functions and GPT Actions in ChatGPT
 
 > 原文：[examples/chatgpt/rag-quickstart/azure/Azure_AI_Search_with_Azure_Functions_and_GPT_Actions_in_ChatGPT.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/azure/Azure_AI_Search_with_Azure_Functions_and_GPT_Actions_in_ChatGPT.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇一步步帶你把 Azure AI Search 當 vector database，存放用 OpenAI embedding 處理過的文件，再用 Azure Function 包成 API，接到 ChatGPT 的 Custom GPT 當 GPT Action。整套 RAG 基礎設施都在 Azure 裡，只把一個 endpoint 開出去給 ChatGPT 之類的平台用。
 
+## 學完你會
 
-This notebook provides step-by-step instructions on using Azure AI Search (f.k.a Azure Cognitive Search) as a vector database with OpenAI embeddings, then creating an Azure Function on top to plug into a Custom GPT in ChatGPT. 
+- 把文件切 chunk、做 embedding、加 metadata，上傳到 Azure AI Search 的 index
+- 在本機測試純 vector search 和 hybrid search
+- 部署 Azure Function，並產生 OpenAPI spec 和 instructions 接進 Custom GPT
 
-This can be a solution for customers looking to set up RAG infrastructure contained within Azure, and exposing it as an endpoint to integrate that with other platforms such as ChatGPT.
+## 開跑前
 
-Azure AI Search is a cloud search service that gives developers infrastructure, APIs, and tools for building a rich search experience over private, heterogeneous content in web, mobile, and enterprise applications. 
+- 有權限建立 Azure AI Search Service 和 Function App 的 Azure 帳號，以及 subscription ID 和 resource group（會產生 Azure 費用）
+- OpenAI API Key
+- 本機要有 Azure CLI 和 Azure Functions Core Tools（文中的程式碼會嘗試幫你安裝）
 
-Azure Functions is a serverless compute service that runs event-driven code, automatically managing infrastructure, scaling, and integrating with other Azure services.
+這篇的 notebook 說明了怎麼用 Azure AI Search（舊名 Azure Cognitive Search）當 vector database 搭配 OpenAI embedding，再在上面建立 Azure Function，接到 ChatGPT 的 Custom GPT。
 
-## Prerequisites:
-For the purposes of this exercise you must have the following:
-- Azure user with permission to create [Azure AI Search Service](https://learn.microsoft.com/azure/search/) and Azure Function Apps
-- Azure subscription ID and a resource group.
+這可以給想把 RAG 基礎設施放在 Azure 內，並把它開成 endpoint 來整合 ChatGPT 等其他平台的客戶參考。
+
+Azure AI Search 是雲端搜尋服務，提供開發者基礎設施、API 和工具，用來在網頁、行動和企業應用程式裡，對私有的異質內容建立豐富的搜尋體驗。
+
+Azure Functions 是 serverless 運算服務，執行事件驅動的程式碼，自動管理基礎設施、擴展，並整合其他 Azure 服務。
+
+## 前置需求：
+要完成這個練習，你需要：
+- 有權限建立 [Azure AI Search Service](https://learn.microsoft.com/azure/search/) 和 Azure Function Apps 的 Azure 使用者
+- Azure subscription ID 和一個 resource group。
 - [OpenAI Key](https://platform.openai.com/account/api-keys) 
 
-# Architecture
-Below is a diagram of the architecture of this solution, which we'll walk through step-by-step.
+# 架構
+下面是這個方案的架構圖，我們會一步步走過。
 
 ![azure-rag-architecture.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/azure-rag-architecture.png)
 
 
-> Note: This architecture pattern of vector data store + serverless functions can be extrapolated to other vector data stores. For example, if you would want to use something like Postgres within Azure, you'd change the [Configure Azure AI Search Settings](#configure-azure-ai-search-settings) step to set-up the requirements for Postgres, you'd modify the [Create Azure AI Vector Search](#create-azure-ai-vector-search) to create the database and table in Postgres instead, and you'd update the `function_app.py` code in this repository to query Postgres instead of Azure AI Search. The data preparation and creation of the Azure Function would stay consistent. 
+> 注意：這種 vector data store 加 serverless function 的架構，也可以套用到其他 vector data store。例如想在 Azure 內用 Postgres，就把 [Configure Azure AI Search Settings](#configure-azure-ai-search-settings) 那步改成設定 Postgres 的需求，把 [Create Azure AI Vector Search](#create-azure-ai-vector-search) 改成在 Postgres 建資料庫和資料表，再把這個 repository 裡的 `function_app.py` 改成查 Postgres，不再查 Azure AI Search。資料準備和 Azure Function 的建立則維持不變。
 
 
-# Table of Contents:
+# 目錄：
 
-1. **[Setup of Environment](#set-up-environment)**
-    Setup environment by installing and importing the required libraries and configuring our Azure settings. Includes:
+1. **[環境設定](#set-up-environment)**
+    安裝並 import 需要的函式庫，設定 Azure 相關設定。包含：
      - [Install and Import Required Libraries](#install-and-import-required-libraries)
      - [Configure OpenAI Settings](#configure-openai-settings)
      - [Configure Azure AI Search Settings](#configure-azure-ai-search-settings)
  
 
-2. **[Prepare Data](#prepare-data)** Prepare the data for uploading by embedding the documents, as well as capturing additional metadata. We will use a subset of OpenAI's docs as example data for this.
+2. **[準備資料](#prepare-data)** 把文件做 embedding 並收集額外 metadata，準備好上傳。這裡用 OpenAI 文件的一小部分當範例資料。
  
-3. **[Create Azure AI Vector Search](#create-azure-ai-vector-search)** Create an Azure AI Vector Search and upload the data we've prepared. Includes:
-     - [Create Index](#create-index): Steps to create an index in Azure AI Search.
-     - [Upload Data](#upload-data): Instructions to upload data to Azure AI Search.
-     - [Test Search](#test-search): Steps to test the search functionality.
+3. **[建立 Azure AI Vector Search](#create-azure-ai-vector-search)** 建立 Azure AI Vector Search 並上傳準備好的資料。包含：
+     - [Create Index](#create-index)：在 Azure AI Search 建立 index 的步驟。
+     - [Upload Data](#upload-data)：上傳資料到 Azure AI Search 的說明。
+     - [Test Search](#test-search)：測試搜尋功能的步驟。
  
-4. **[Create Azure Function](#create-azure-function)** Create an Azure Function to interact with the Azure AI Vector Search. Includes:
-     - [Create Storage Account](#create-storage-account): Steps to create a storage account for the Azure Function.
-     - [Create Function App](#create-function-app): Instructions to create a function app in Azure.
+4. **[建立 Azure Function](#create-azure-function)** 建立跟 Azure AI Vector Search 互動的 Azure Function。包含：
+     - [Create Storage Account](#create-storage-account)：為 Azure Function 建立 storage account 的步驟。
+     - [Create Function App](#create-function-app)：在 Azure 建立 function app 的說明。
  
-5. **[Input in a Custom GPT in ChatGPT](#input-in-a-custom-gpt-in-chatgpt)** Integrate the Azure Function with a Custom GPT in ChatGPT. Includes:
-     - [Create OpenAPI Spec](#create-openapi-spec): Steps to create an OpenAPI specification for the Azure Function.
-     - [Create GPT Instructions](#create-gpt-instructions): Instructions to create GPT-specific instructions for the integration.
+5. **[接進 ChatGPT 的 Custom GPT](#input-in-a-custom-gpt-in-chatgpt)** 把 Azure Function 整合到 ChatGPT 的 Custom GPT。包含：
+     - [Create OpenAPI Spec](#create-openapi-spec)：為 Azure Function 建立 OpenAPI 規格的步驟。
+     - [Create GPT Instructions](#create-gpt-instructions)：為這個整合建立 GPT 專用 instructions 的說明。
 
 
 
 
-# Set up environment
-We'll set up our environment by importing the required libraries and configuring our Azure settings.
+# 環境設定
+先 import 需要的函式庫並設定 Azure 相關設定，環境就準備好了。
 
-## Install and import required libraries
-We categorize these libraries into standard Python libraries, third-party libraries, and Azure-related libraries for readability.
+## 安裝並 import 需要的函式庫
+為了好讀，我們把函式庫分成標準 Python 函式庫、第三方函式庫和 Azure 相關函式庫。
 
 ```python
 ! pip install -q wget
@@ -136,9 +147,8 @@ from azure.mgmt.resource import ResourceManagementClient, SubscriptionClient
 from azure.mgmt.storage import StorageManagementClient
 ```
 
-## Configure OpenAI settings
-
-Before going through this section, make sure you have your OpenAI API key.
+## 設定 OpenAI
+進行這一節前，先確認你有 OpenAI API key。
 
 
 ```python
@@ -147,14 +157,14 @@ openai_client = OpenAI(api_key=openai_api_key)
 embeddings_model = "text-embedding-3-small" # We'll use this by default, but you can change to your text-embedding-3-large if desired
 ```
 
-## Configure Azure AI Search Settings
-You can locate your Azure AI Search service details in the Azure Portal or programmatically via the [Search Management SDK](https://learn.microsoft.com/rest/api/searchmanagement/).
+## 設定 Azure AI Search
+你可以在 Azure Portal 找到 Azure AI Search 服務的資訊，或用 [Search Management SDK](https://learn.microsoft.com/rest/api/searchmanagement/) 用程式取得。
 
 
-#### Prerequisites:
-- Subscription ID from Azure
-- Resource Group name from Azure
-- Region in Azure
+#### 前置需求：
+- Azure 的 Subscription ID
+- Azure 的 Resource Group 名稱
+- Azure 的 Region
 
 ```python
 # Update the below with your values
@@ -168,8 +178,8 @@ subscription_client = SubscriptionClient(credential)
 subscription = next(subscription_client.subscriptions.list())
 ```
 
-#### Create and Configure Azure AI Search Service
-Below we'll generate a unique name for the search service, set up the service properties, and create the search service.
+#### 建立並設定 Azure AI Search Service
+下面會產生一個唯一的 search service 名稱、設定服務屬性，然後建立 search service。
 
 ```python
 # Initialize the SearchManagementClient with the provided credentials and subscription ID
@@ -206,8 +216,8 @@ print("Search Service Name:" + search_service_name)
 print("Search Service Endpoint:" + search_service_endpoint)
 ```
 
-#### Get the Search Service API Key
-Now that we have the search service up and running, we need the [Search Service API Key](https://learn.microsoft.com/en-us/azure/search/search-security-api-keys?tabs=rest-use,portal-find,portal-query), which we'll use to initiate the index creation, and later to execute the search.
+#### 取得 Search Service API Key
+Search service 跑起來之後，需要 [Search Service API Key](https://learn.microsoft.com/en-us/azure/search/search-security-api-keys?tabs=rest-use,portal-find,portal-query)，用它來建立 index，之後也用它執行搜尋。
 
 ```python
 # Retrieve the admin keys for the search service
@@ -223,12 +233,12 @@ except Exception as e:
     print(f"Failed to retrieve the API key: {e}")
 ```
 
-# Prepare data
-We're going to embed and store a few pages of the OpenAI docs in the oai_docs folder. We'll first embed each, add it to a CSV, and then use that CSV to upload to the index.
+# 準備資料
+我們要把 oai_docs 資料夾裡幾頁 OpenAI 文件做 embedding 並存起來。先對每一份做 embedding、加進 CSV，再用這個 CSV 上傳到 index。
 
-In order to handle longer text files beyond the context of 8191 tokens, we can either use the chunk embeddings separately, or combine them in some way, such as averaging (weighted by the size of each chunk).
+為了處理超過 8191 tokens context 的長文字檔，可以分別使用各 chunk 的 embedding，或用某種方式合併，例如平均（依各 chunk 大小加權）。
 
-We will take a function from Python's own cookbook that breaks up a sequence into chunks.
+我們從 Python 自己的 cookbook 拿一個把序列切成 chunk 的 function。
 
 ```python
 def batched(iterable, n):
@@ -241,9 +251,9 @@ def batched(iterable, n):
         yield batch
 ```
 
-Now we define a function that encodes a string into tokens and then breaks it up into chunks. We'll use tiktoken, a fast open-source tokenizer by OpenAI.
+接著定義一個 function，把字串編碼成 token，再切成 chunk。我們用 tiktoken，這是 OpenAI 開源的快速 tokenizer。
 
-To read more about counting tokens with Tiktoken, check out [this cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken). 
+想了解更多用 Tiktoken 計算 token 的方法，看[這篇 cookbook](https://cookbook.openai.com/examples/how_to_count_tokens_with_tiktoken)。
 
 
 
@@ -259,13 +269,13 @@ def chunked_tokens(text, chunk_length, encoding_name='cl100k_base'):
     yield from chunks_iterator
 ```
 
-Finally, we can write a function that safely handles embedding requests, even when the input text is longer than the maximum context length, by chunking the input tokens and embedding each chunk individually. The average flag can be set to True to return the weighted average of the chunk embeddings, or False to simply return the unmodified list of chunk embeddings.
+最後寫一個能安全處理 embedding 請求的 function，即使輸入文字超過最大 context 長度也沒問題，做法是把輸入 token 切 chunk，每個 chunk 各自做 embedding。average 旗標設成 True 會回傳各 chunk embedding 的加權平均，設成 False 則直接回傳原封不動的 chunk embedding 清單。
 
-> Note: there are other, more sophisticated techniques you can take here, including:
-> - using GPT-4o to capture images/chart descriptions for embedding.
-> - keeping text overlap between the chunks to minimize cutting off important context.
-> - chunking based on paragraphs or sections.
-> - adding more descriptive metadata about each article.
+> 注意：這裡還有其他更進階的做法，包括：
+> - 用 GPT-4o 擷取圖片 / 圖表描述來做 embedding。
+> - chunk 之間保留重疊文字，減少重要 context 被截斷。
+> - 依段落或章節切 chunk。
+> - 為每篇文章加更多描述性 metadata。
 
 ```python
 ## Change the below based on model. The below is for the latest embeddings models from OpenAI, so you can leave as is unless you are using a different embedding model..
@@ -295,9 +305,9 @@ def len_safe_get_embedding(text, model=embeddings_model, max_tokens=EMBEDDING_CT
     return chunk_embeddings, chunk_texts
 ```
 
-Next, we can define a helper function that will capture additional metadata about the documents. This is useful to use as a metadata filter for search queries, and capturing richer data for search. 
+接著定義一個 helper function 來收集文件的額外 metadata。這可以拿來當搜尋 query 的 metadata filter，也能為搜尋保留更豐富的資料。
 
-In this example, I'll choose from a list of categories to use later on in a metadata filter.
+在這個範例，我從一份類別清單中挑選，之後用在 metadata filter。
 
 ```python
 ## These are the categories I will be using for the categorization task. You can change these as needed based on your use case.
@@ -324,7 +334,7 @@ def categorize_text(text, categories):
         return None
 ```
 
-Now, we can define some helper functions to process the .txt files in the oai_docs folder within the data folder. You can use this with your own data as well and supports both .txt and .pdf files.
+現在定義幾個 helper function，處理 data 資料夾內 oai_docs 資料夾裡的 .txt 檔。你也可以拿自己的資料來用，支援 .txt 和 .pdf 檔。
 
 ```python
 def extract_text_from_pdf(pdf_path):
@@ -377,9 +387,9 @@ def process_file(file_path, idx, categories, embeddings_model):
     return data
 ```
 
-We'll now use this helper function to process our OpenAI documentation. Feel free to update this to use your own data by changing the folder in `process_files` below.
+現在用這個 helper function 處理 OpenAI 文件。想用自己的資料，改下面 `process_files` 的資料夾就行。
 
-Note that this will process the documents in chosen folder concurrently, so this should take <30 seconds if using txt files, and slightly longer if using PDFs.
+注意這會並行處理選定資料夾裡的文件，所以 txt 檔應該不到 30 秒，PDF 會稍久一點。
 
 ```python
 ## Customize the location below if you are using different data besides the OpenAI documentation. Note that if you are using a different dataset, you will need to update the categories list as well.
@@ -418,12 +428,12 @@ article_df["category"] = article_df["category"].apply(str)
 article_df.head()
 ```
 
-We now have an `embedded_data.csv` file with six columns that we can upload to our vector database! 
+現在有一個 `embedded_data.csv` 檔，有六個欄位，可以上傳到我們的 vector database 了！
 
-# Create Azure AI Vector Search
+# 建立 Azure AI Vector Search
 
-##  Create index
-We'll define and create a search index using the `SearchIndexClient` from the Azure AI Search Python SDK. The index incorporates both vector search and hybrid search capabilities. For more details, visit Microsoft's documentation on how to [Create a Vector Index](https://learn.microsoft.com/azure/search/vector-search-how-to-create-index?.tabs=config-2023-11-01%2Crest-2023-11-01%2Cpush%2Cportal-check-index)
+##  建立 index
+我們用 Azure AI Search Python SDK 的 `SearchIndexClient` 定義並建立 search index。這個 index 同時支援 vector search 和 hybrid search。細節請看 Microsoft 文件的[建立 Vector Index](https://learn.microsoft.com/azure/search/vector-search-how-to-create-index?.tabs=config-2023-11-01%2Crest-2023-11-01%2Cpush%2Cportal-check-index)
 
 ```python
 index_name = "azure-ai-search-openai-cookbook-demo"
@@ -492,9 +502,9 @@ result = index_client.create_index(index)
 print(f"{result.name} created")  # Output the name of the created index
 ```
 
-## Upload Data
+## 上傳資料
 
-Now we'll upload the articles from above that we've stored in `embedded_data.csv` from a pandas DataFrame to an Azure AI Search index. For a detailed guide on data import strategies and best practices, refer to  [Data Import in Azure AI Search](https://learn.microsoft.com/azure/search/search-what-is-data-import).
+現在把前面存在 `embedded_data.csv` 的文章，從 pandas DataFrame 上傳到 Azure AI Search index。資料匯入策略和最佳實務的詳細指南，請看 [Data Import in Azure AI Search](https://learn.microsoft.com/azure/search/search-what-is-data-import)。
 
 
 ```python
@@ -551,10 +561,10 @@ finally:
     batch_client.close()
 ```
 
-## Test search
-Now that the data is uploaded, we'll test both vector similarity search and hybrid search locally below to make sure it is working as expected.
+## 測試搜尋
+資料上傳完後，下面在本機測試 vector 相似度搜尋和 hybrid search，確認運作正常。
 
-You can test both a pure vector search and hybrid search. Pure vector search passes in `None` to the `search_text` below and will only search on vector similarity. Hybrid search will combines the capabilities of traditional keyword-based search by passing in the query text `query` to the `search_text` with vector-based similarity search to provide more relevant and contextual results. 
+兩種都可以測：純 vector search 是把 `None` 傳給下面的 `search_text`，只用 vector 相似度搜尋。Hybrid search 則把 query 文字 `query` 傳給 `search_text`，把傳統關鍵字搜尋跟 vector 相似度搜尋結合，給出更相關、更貼合 context 的結果。
 
 ```python
 query = "What model should I use to embed?"
@@ -575,22 +585,22 @@ for result in results:
     print(result)
 ```
 
-## Create Azure Function
+## 建立 Azure Function
 
-Azure Functions are an easy way to build an API on top of our new AI search. Our code (see the `function_app.py` file in this folder, or linked [here](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/azure/function_app.py)) does the following:
+Azure Functions 是在我們新做的 AI 搜尋上建立 API 的簡單方法。程式碼（見這個資料夾的 `function_app.py`，或[這個連結](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/azure/function_app.py)）做的事如下：
 
-1. Takes in an input of the user's query, search index endpoint, the index name, the k_nearest_neighbors*, the search column to use (either content_vector or title_vector), and whether it should use a hybrid query
-2. Takes the user's query and embeds it.
-3. Conducts a vector search and retrieves relevant text chunks.
-4. Returns those relevant text chunks as the response body. 
+1. 接收輸入：使用者的 query、search index endpoint、index 名稱、k_nearest_neighbors*、要用的搜尋欄位（content_vector 或 title_vector），以及是否使用 hybrid query
+2. 把使用者的 query 做 embedding。
+3. 執行 vector search，取回相關文字 chunk。
+4. 把這些相關文字 chunk 當回應 body 回傳。
 
-*In the context of vector search, k_nearest_neighbors specifies the number of "closest" vectors (in terms of cosine similarity) that the search should return. For example, if k_nearest_neighbors is set to 3, the search will return the 3 vectors in the index that are most similar to the query vector.
+*在 vector search 裡，k_nearest_neighbors 指定搜尋要回傳多少個「最近」的 vector（以 cosine similarity 計算）。例如 k_nearest_neighbors 設成 3，搜尋會回傳 index 裡跟 query vector 最相似的 3 個 vector。
 
-> Note that this Azure Function _does not have any authentication_. However, you can set authentication on it following docs [here](https://learn.microsoft.com/en-us/azure/azure-functions/security-concepts?tabs=v4)
+> 注意這個 Azure Function _沒有任何驗證_。不過你可以照[這裡](https://learn.microsoft.com/en-us/azure/azure-functions/security-concepts?tabs=v4)的文件幫它加上驗證。
 
-### Create storage account
+### 建立 storage account
 
-We can create a new storage account using the code below, but feel free to skip that block and modify the subsequent steps to use an existing storage account. This may take up to 30 seconds.
+可以用下面的程式碼建立新的 storage account，也可以跳過這個區塊，把後面的步驟改成用現有的 storage account。可能要花到 30 秒。
 
 ```python
 ## Update below with a different name
@@ -619,14 +629,14 @@ storage_account = storage_async_operation.result()
 print(f"Storage account {storage_account.name} created")
 ```
 
-### Create Function App
-This Function App is where the python code will execute once it is triggered via a GPT Action. To read more about Function Apps, see the docs [here](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp). 
+### 建立 Function App
+這個 Function App 就是 Python 程式碼被 GPT Action 觸發後執行的地方。想多了解 Function App，看[這裡](https://learn.microsoft.com/en-us/azure/azure-functions/functions-overview?pivots=programming-language-csharp)的文件。
 
-To deploy Function Apps, we'll need to use the Azure CLI and Azure Functions Core Tools. 
+要部署 Function App，需要用 Azure CLI 和 Azure Functions Core Tools。
 
-> The below will attempt to install it and run it based on your platform type in your virtual environment, but if that does not work, read the Azure documentation to figure out how to install [Azure Function Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/create-first-function-cli-python?tabs=linux,bash,azure-cli,browser) and [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli). After doing that, run the below `subprocess.run` commands in your terminal after navigating to this folder.
+> 下面的程式會依你的平台類型，嘗試在 virtual environment 裡安裝並執行。如果不成功，請看 Azure 文件安裝 [Azure Function Core Tools](https://learn.microsoft.com/en-us/azure/azure-functions/create-first-function-cli-python?tabs=linux,bash,azure-cli,browser) 和 [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli)。裝好後，切到這個資料夾，在 terminal 執行下面的 `subprocess.run` 指令。
 
-First we'll make sure we have the relevant tools in the environment in order to run the Azure commands necessary. This may take a few minutes to install.
+先確認環境裡有執行 Azure 指令需要的工具。安裝可能要幾分鐘。
 
 ```python
 os_type = platform.system()
@@ -670,7 +680,7 @@ subprocess.run([
 ], check=True)
 ```
 
-Now, we need to create a `local.settings.json` file with our key environment variables for Azure
+接著要建立一個 `local.settings.json`，放 Azure 的關鍵環境變數
 
 ```python
 local_settings_content = f"""
@@ -690,9 +700,9 @@ with open("local.settings.json", "w") as file:
     file.write(local_settings_content)
 ```
 
-Check the `local.settings.json` file and make sure that the environment variables match what you expect. 
+檢查 `local.settings.json`，確認環境變數跟你預期的一致。
 
-Now, give your app a name below, and you are ready to create your Function App and then publish your function. 
+現在幫你的 app 取個名字，就可以建立 Function App 並發佈 function 了。
 
 ```python
 # Replace this with your own values. This name will appear in the URL of the API call https://<app_name>.azurewebsites.net
@@ -709,7 +719,7 @@ subprocess.run([
 ], check=True)
 ```
 
-Once we've created the Function App, we now want to add the configuration variables to the function app to use in the function. Specifically, we need the `OPENAI_API_KEY`, the `SEARCH_SERVICE_API_KEY`, and the `EMBEDDINGS_MODEL` as these are all used in the `function_app.py` code.
+Function App 建好後，要把設定變數加進去給 function 用。具體來說需要 `OPENAI_API_KEY`、`SEARCH_SERVICE_API_KEY` 和 `EMBEDDINGS_MODEL`，因為 `function_app.py` 程式碼都會用到。
 
 ```python
 # Collect the relevant environment variables 
@@ -732,7 +742,7 @@ subprocess.run([
 ], check=True)
 ```
 
-We are now ready to publish your function code `function_app.py` to the Azure Function. This may take up to 10 minutes to deploy. Once this is finished, we now have an API endpoint using an Azure Function on top of Azure AI Search.
+現在可以把 function 程式碼 `function_app.py` 發佈到 Azure Function 了。部署可能要花到 10 分鐘。完成後，我們就有一個建在 Azure AI Search 之上、由 Azure Function 提供的 API endpoint。
 
 ```python
 subprocess.run([
@@ -740,16 +750,16 @@ subprocess.run([
 ], check=True)
 ```
 
-## Input in a Custom GPT in ChatGPT
-Now that we have an Azure Function that queries this Vector Search Index, let's put it as a GPT Action!
+## 接進 ChatGPT 的 Custom GPT
+現在有了查詢這個 Vector Search Index 的 Azure Function，把它做成 GPT Action 吧！
 
-See documentation [here](https://openai.com/index/introducing-gpts/) on GPTs and [here](https://platform.openai.com/docs/actions) on GPT Actions. Use the below as the instructions for the GPT and as the OpenAPI spec for the GPT Action.
+GPT 的說明看[這裡](https://openai.com/index/introducing-gpts/)，GPT Actions 的說明看[這裡](https://platform.openai.com/docs/actions)。下面的內容分別用作 GPT 的 instructions 和 GPT Action 的 OpenAPI spec。
 
 
-### Create OpenAPI Spec
-Below is a sample OpenAPI spec. When we run the block below, a functional spec should be copied to the clipboard to paste in the GPT Action.
+### 建立 OpenAPI Spec
+下面是一份範例 OpenAPI spec。執行下面的區塊後，一份可用的 spec 會被複製到剪貼簿，可以貼到 GPT Action。
 
-Note that this does not have any authentication by default, but you can set up Azure Functions with OAuth by following the pattern in [this cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function#part-2-set-up-auth) in the Authentication section or looking at the documentation [here](https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization).
+注意預設沒有任何驗證，不過你可以照[這篇 cookbook](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function#part-2-set-up-auth) Authentication 那段的做法，或看[這裡](https://learn.microsoft.com/en-us/azure/app-service/overview-authentication-authorization)的文件，幫 Azure Functions 設定 OAuth。
 
 ```python
 
@@ -834,9 +844,9 @@ print("OpenAPI spec copied to clipboard")
 print(spec)
 ```
 
-### Create GPT Instructions
+### 建立 GPT Instructions
 
-Feel free to modify instructions as you see fit. Check out our docs [here](https://platform.openai.com/docs/guides/prompt-engineering) for some tips on prompt engineering.
+instructions 可以隨你需要修改。prompt engineering 的技巧看我們[這裡](https://platform.openai.com/docs/guides/prompt-engineering)的文件。
 
 ```python
 instructions = f'''
@@ -858,18 +868,30 @@ print("GPT Instructions copied to clipboard")
 print(instructions)
 ```
 
-We now have a GPT that queries a vector database! 
+現在我們有一個會查詢 vector database 的 GPT 了！
 
-# Recap
-We've now successfully integrated Azure AI Search with GPT Actions in ChatGPT by doing the following:
-1. embedded them using OpenAI's embeddings, while adding some additional metadata using gpt-4o.
-2. uploaded that data to Azure AI Search.
-3. created an endpoint to query it using Azure Functions.
-4. incorporated it into a Custom GPT. 
+# 回顧
+我們成功把 Azure AI Search 整合到 ChatGPT 的 GPT Actions，做法如下：
+1. 用 OpenAI embedding 對文件做 embedding，並用 gpt-4o 加上一些額外 metadata。
+2. 把資料上傳到 Azure AI Search。
+3. 用 Azure Functions 建一個 endpoint 來查詢。
+4. 把它整合進 Custom GPT。
 
-Our GPT can now retrieve information to help answer user queries, making it much more accurate and customized to our data. Here's the GPT in action:
+我們的 GPT 現在能檢索資訊來回答使用者的問題，答案更準，也更貼合我們的資料。下面是這個 GPT 實際運作的樣子：
 
 # ![azure-rag-quickstart-gpt.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/azure-rag-quickstart-gpt.png)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 這個架構是「vector store + serverless function + GPT Action」，換成 Postgres 等其他 vector store 時，只需要改建 index 和 `function_app.py` 的查詢部分。
+- 超過 8191 tokens 的長文字要切 chunk 分別 embedding，再視需要用加權平均合併。
+- Index 同時支援純 vector search 和 hybrid search（關鍵字加 vector 相似度），hybrid 通常結果更貼合 context。
+- Function 做的事很單純：把 query 做 embedding、搜出前 k 個相近的 chunk、回傳文字，其餘交給 GPT 回答。
+- 範例的 Azure Function 預設沒有驗證，正式使用前要自己加上（例如 OAuth）。
+
+## 練習
+
+1. 在 Test Search 那段，把 hybrid search 和純 vector search（`search_text` 傳 `None`）用同一個 query 各跑一次，比較回傳結果的差別。
+2. 調整 k_nearest_neighbors（例如從 3 改成 5），或把搜尋欄位在 content_vector 和 title_vector 之間切換，看結果怎麼變。
+3. 修改 metadata 那段 helper function 的類別清單，換成你自己的資料夾和分類，重新產生 `embedded_data.csv` 並上傳，再把 GPT instructions 改成會依分類查詢。

@@ -1,34 +1,46 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_finetune_chat_models.ipynb
 ---
 
-# How to fine-tune chat models
+# 如何 fine-tune chat 模型
 
 > 原文：[examples/How_to_finetune_chat_models.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_finetune_chat_models.ipynb)
 
+## 這篇在做什麼
+
+用 RecipeNLG 資料集做食材實體抽取（NER），一步步 fine-tune `gpt-4o-mini-2024-07-18`。流程涵蓋載入資料、準備訓練與驗證資料、上傳檔案、建立 fine-tuning job，最後拿 fine-tuned 模型做推論。
+
+## 學完你會
+
+- 把資料整理成 chat 格式的 `.jsonl` 訓練與驗證檔，並上傳到 `Files` endpoint
+- 建立 fine-tuning job、追蹤狀態與事件，拿到 `fine_tuned_model` ID
+- 用 fine-tuned 模型呼叫 chat completions 做推論
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`
+- GPT-4o mini fine-tuning 只開放給 [Tier 4 和 5 用量等級](https://platform.openai.com/docs/guides/rate-limits/usage-tiers)的開發者
+- fine-tuning 與推論都會產生費用
 
 
-<!-- tutor:goals -->
+Fine-tuning 是用比 prompt 放得下的多得多的範例去訓練模型，讓你在很多任務上得到更好的結果。這個 notebook 是新的 GPT-4o mini fine-tuning 的逐步指南。我們用 [RecipeNLG 資料集](https://github.com/Glorf/recipenlg)做實體抽取，這個資料集提供各種食譜，以及每份食譜抽取出來的通用食材清單，是常見的具名實體辨識（NER）資料集。
+
+注意：**GPT-4o mini fine-tuning 開放給 [Tier 4 和 5 用量等級](https://platform.openai.com/docs/guides/rate-limits/usage-tiers)的開發者。**你可以到 fine-tuning dashboard，點「create」，在 base model 下拉選單選「gpt-4o-mini-2024-07-18」開始。
+
+我們會依序進行這幾個步驟：
+
+1. **設定：**載入資料集，篩選成單一領域來 fine-tune。
+2. **資料準備：**建立訓練與驗證範例，並上傳到 `Files` endpoint。
+3. **Fine-tuning：**建立你的 fine-tuned 模型。
+4. **推論：**用 fine-tuned 模型對新輸入做推論。
+
+做完之後，你應該能訓練、評估並部署 fine-tuned 的 `gpt-4o-mini-2024-07-18` 模型。
+
+更多 fine-tuning 資訊，可參考[文件指南](https://platform.openai.com/docs/guides/fine-tuning)或 [API reference](https://platform.openai.com/docs/api-reference/fine-tuning)。
 
 
-Fine-tuning improves the model by training on many more examples than can fit in a prompt, letting you achieve better results on a wide number of tasks. This notebook provides a step-by-step guide for our new GPT-4o mini fine-tuning. We'll perform entity extraction using the [RecipeNLG dataset](https://github.com/Glorf/recipenlg), which provides various recipes and a list of extracted generic ingredients for each. This is a common dataset for named entity recognition (NER) tasks.
-
-Note: **GPT-4o mini fine-tuning is available to developers in our [Tier 4 and 5 usage tiers](https://platform.openai.com/docs/guides/rate-limits/usage-tiers).** You can start fine-tuning GPT-4o mini by visiting your fine-tuning dashboard, clicking "create", and selecting “gpt-4o-mini-2024-07-18” from the base model drop-down.
-
-We will go through the following steps:
-
-1. **Setup:** Loading our dataset and filtering down to one domain to fine-tune on.
-2. **Data preparation:** Preparing your data for fine-tuning by creating training and validation examples, and uploading them to the `Files` endpoint.
-3. **Fine-tuning:** Creating your fine-tuned model.
-4. **Inference:** Using your fine-tuned model for inference on new inputs.
-
-By the end of this you should be able to train, evaluate and deploy a fine-tuned `gpt-4o-mini-2024-07-18` model.
-
-For more information on fine-tuning, you can refer to our [documentation guide](https://platform.openai.com/docs/guides/fine-tuning) or [API reference](https://platform.openai.com/docs/api-reference/fine-tuning).
-
-
-## Setup
+## 設定
 
 
 ```python
@@ -50,7 +62,7 @@ client = openai.OpenAI(
 )
 ```
 
-Fine-tuning works best when focused on a particular domain. It's important to make sure your dataset is both focused enough for the model to learn, but general enough that unseen examples won't be missed. Having this in mind, we have extracted a subset from the RecipesNLG dataset to only contain documents from [cookbooks.com](https://cookbooks.com/).
+Fine-tuning 在聚焦於特定領域時效果最好。資料集要夠聚焦，模型才學得起來，但也要夠通用，沒看過的範例才不會被漏掉。基於這點，我們從 RecipesNLG 資料集取出一個子集，只保留來自 [cookbooks.com](https://cookbooks.com/) 的文件。
 
 
 ```python
@@ -93,9 +105,9 @@ recipe_df.head()
     4  ["peanut butter", "graham cracker crumbs", "bu...
     ```
 
-## Data preparation
+## 資料準備
 
-We'll begin by preparing our data. When fine-tuning with the `ChatCompletion` format, each training example is a simple list of `messages`. For example, an entry could look like:
+先來準備資料。用 `ChatCompletion` 格式 fine-tune 時，每個訓練範例就是一個簡單的 `messages` 清單。例如一筆資料可能長這樣：
 
 ```
 [{'role': 'system',
@@ -108,9 +120,9 @@ We'll begin by preparing our data. When fine-tuning with the `ChatCompletion` fo
   'content': '["brown sugar", "milk", "vanilla", "nuts", "butter", "bite size shredded rice biscuits"]'}]
 ```
 
-During the training process this conversation will be split, with the final entry being the `completion` that the model will produce, and the remainder of the `messages` acting as the prompt. Consider this when building your training examples - if your model will act on multi-turn conversations, then please provide representative examples so it doesn't perform poorly when the conversation starts to expand.
+訓練時這段對話會被拆開：最後一則是模型要產生的 `completion`，其餘的 `messages` 則當作 prompt。建立訓練範例時要記得這點。如果你的模型要處理多輪對話，就要提供有代表性的多輪範例，對話變長時才不會表現變差。
 
-Please note that currently there is a 4096 token limit for each training example. Anything longer than this will be truncated at 4096 tokens.
+注意目前每個訓練範例有 4096 token 的上限，超過的部分會在 4096 token 處被截斷。
 
 
 ```python
@@ -156,7 +168,7 @@ pprint(prepare_example_conversation(recipe_df.iloc[0]))
                    'role': 'assistant'}]}
     ```
 
-Let's now do this for a subset of the dataset to use as our training data. You can begin with even 30-50 well-pruned examples. You should see performance continue to scale linearly as you increase the size of the training set, but your jobs will also take longer.
+現在對資料集的一個子集這麼做，當作訓練資料。你可以從 30 到 50 個精心挑選的範例開始。訓練集變大，效能會持續線性成長，但 job 也會跑更久。
 
 
 ```python
@@ -180,7 +192,7 @@ for example in training_data[:5]:
     {'messages': [{'role': 'system', 'content': 'You are a helpful recipe assistant. You are to extract the generic ingredients from each of the recipes provided.'}, {'role': 'user', 'content': 'Title: Reeses Cups(Candy)  \n\nIngredients: ["1 c. peanut butter", "3/4 c. graham cracker crumbs", "1 c. melted butter", "1 lb. (3 1/2 c.) powdered sugar", "1 large pkg. chocolate chips"]\n\nGeneric ingredients: '}, {'role': 'assistant', 'content': '["peanut butter", "graham cracker crumbs", "butter", "powdered sugar", "chocolate chips"]'}]}
     ```
 
-In addition to training data, we can also **optionally** provide validation data, which will be used to make sure that the model does not overfit your training set.
+除了訓練資料，也可以**選擇性**提供驗證資料，用來確認模型沒有對訓練集 overfit。
 
 
 ```python
@@ -189,7 +201,7 @@ validation_data = validation_df.apply(
     prepare_example_conversation, axis=1).tolist()
 ```
 
-We then need to save our data as `.jsonl` files, with each line being one training example conversation.
+接著要把資料存成 `.jsonl` 檔，每一行是一個訓練範例對話。
 
 
 ```python
@@ -208,7 +220,7 @@ validation_file_name = "tmp_recipe_finetune_validation.jsonl"
 write_jsonl(validation_data, validation_file_name)
 ```
 
-This is what the first 5 lines of our training `.jsonl` file look like:
+訓練用 `.jsonl` 檔的前 5 行長這樣：
 
 
 ```python
@@ -226,9 +238,9 @@ This is what the first 5 lines of our training `.jsonl` file look like:
     {"messages": [{"role": "system", "content": "You are a helpful recipe assistant. You are to extract the generic ingredients from each of the recipes provided."}, {"role": "user", "content": "Title: Reeses Cups(Candy)  \n\nIngredients: [\"1 c. peanut butter\", \"3/4 c. graham cracker crumbs\", \"1 c. melted butter\", \"1 lb. (3 1/2 c.) powdered sugar\", \"1 large pkg. chocolate chips\"]\n\nGeneric ingredients: "}, {"role": "assistant", "content": "[\"peanut butter\", \"graham cracker crumbs\", \"butter\", \"powdered sugar\", \"chocolate chips\"]"}]}
     ```
 
-### Upload files
+### 上傳檔案
 
-You can now upload the files to our `Files` endpoint to be used by the fine-tuned model.
+現在可以把檔案上傳到我們的 `Files` endpoint，讓 fine-tuned 模型使用。
 
 
 ```python
@@ -254,9 +266,9 @@ print("Validation file ID:", validation_file_id)
 
 ## Fine-tuning
 
-Now we can create our fine-tuning job with the generated files and an optional suffix to identify the model. The response will contain an `id` which you can use to retrieve updates on the job.
+現在可以用產生好的檔案，加上一個選填的 suffix（用來辨識模型）建立 fine-tuning job。回應裡有一個 `id`，可以用來查詢 job 的更新。
 
-Note: The files have to first be processed by our system, so you might get a `File not ready` error. In that case, simply retry a few minutes later.
+注意：檔案要先經過我們系統處理，所以你可能會遇到 `File not ready` 錯誤。這時等幾分鐘再重試就好。
 
 
 ```python
@@ -282,11 +294,11 @@ print("Status:", response.status)
     Status: validating_files
     ```
 
-#### Check job status
+#### 檢查 job 狀態
 
-You can make a `GET` request to the `https://api.openai.com/v1/alpha/fine-tunes` endpoint to list your alpha fine-tune jobs. In this instance you'll want to check that the ID you got from the previous step ends up as `status: succeeded`.
+你可以對 `https://api.openai.com/v1/alpha/fine-tunes` endpoint 發 `GET` request 列出 alpha fine-tune job。這裡要確認上一步拿到的 ID 最後變成 `status: succeeded`。
 
-Once it is completed, you can use the `result_files` to sample the results from the validation set (if you uploaded one), and use the ID from the `fine_tuned_model` parameter to invoke your trained model.
+完成後，可以用 `result_files` 從驗證集取樣結果（如果你有上傳驗證集），並用 `fine_tuned_model` 參數裡的 ID 呼叫你訓練好的模型。
 
 
 ```python
@@ -305,7 +317,7 @@ print("Trained Tokens:", response.trained_tokens)
     Trained Tokens: None
     ```
 
-We can track the progress of the fine-tune with the events endpoint. You can rerun the cell below a few times until the fine-tune is ready.
+我們可以用 events endpoint 追蹤 fine-tune 的進度。下面的 cell 可以多跑幾次，直到 fine-tune 完成。
 
 
 ```python
@@ -343,7 +355,7 @@ for event in events:
     The job has successfully completed
     ```
 
-Now that it's done, we can get a fine-tuned model ID from the job:
+完成後，就能從 job 取得 fine-tuned 模型的 ID：
 
 
 ```python
@@ -364,10 +376,10 @@ print("Fine-tuned model ID:", fine_tuned_model_id)
     Fine-tuned model ID: ft:gpt-4o-mini-2024-07-18:openai-gtm:recipe-ner:9o1eNNKO
     ```
 
-## Inference
+## 推論
 
 
-The last step is to use your fine-tuned model for inference. Similar to the classic `FineTuning`, you simply call `ChatCompletions` with your new fine-tuned model name filling the `model` parameter.
+最後一步是用你的 fine-tuned 模型做推論。跟傳統的 `FineTuning` 一樣，只要呼叫 `ChatCompletions`，把新的 fine-tuned 模型名稱填進 `model` 參數即可。
 
 
 ```python
@@ -411,9 +423,21 @@ print(response.choices[0].message.content)
     ["beef brisket", "catsup", "water", "onion", "cider vinegar", "horseradish", "mustard", "salt", "pepper"]
     ```
 
-## Conclusion
+## 結論
 
-Congratulations, you are now ready to fine-tune your own models using the `ChatCompletion` format! We look forward to seeing what you build
+恭喜，你現在可以用 `ChatCompletion` 格式 fine-tune 自己的模型了！期待看到你做出什麼
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Fine-tuning 適合範例多到塞不進 prompt 的任務，領域要聚焦但又不能窄到漏掉沒見過的案例。
+- chat 格式的訓練範例是 `messages` 清單，最後一則是模型要產生的輸出，其餘當 prompt。
+- 訓練資料從 30 到 50 筆精選範例就能起步，資料越多效果越好，但 job 也越久。
+- 驗證集是選配，用來確認沒有 overfit。
+- fine-tuning job 是非同步的，要輪詢狀態或事件，成功後用 `fine_tuned_model` 的 ID 呼叫。
+
+## 練習
+
+1. 把訓練資料的筆數改成 50，重新產生 `.jsonl` 並確認每行格式正確。
+2. 建立 job 時加上自己的 `suffix`，並在 job 完成後確認 `fine_tuned_model` 名稱裡有它。
+3. 推論時換三個沒在訓練集出現的食譜，比較 fine-tuned 模型和原本 `gpt-4o-mini` 抽出的食材差異。

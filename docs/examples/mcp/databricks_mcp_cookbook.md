@@ -1,31 +1,41 @@
 ---
-translated: false
+translated: true
 source: examples/mcp/databricks_mcp_cookbook.ipynb
 ---
-
-# Building a Supply-Chain Copilot with OpenAI Agent SDK and Databricks MCP Servers
+# 用 OpenAI Agent SDK 和 Databricks MCP Server 做供應鏈 Copilot
 
 > 原文：[examples/mcp/databricks_mcp_cookbook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/databricks_mcp_cookbook.ipynb)
 
+## 這篇在做什麼
 
+用 OpenAI Agent SDK 搭配 Databricks Managed MCP，做一個能查庫存、需求預測、原料依賴和 e-mail 的供應鏈 agent。後端用 FastAPI 提供串流 `/chat`，前端是 React 聊天介面。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 設定 `~/.databrickscfg`，讓程式用 `WorkspaceClient(profile=...)` 認證，不必把 token 寫進程式碼。
+- 把 Databricks 的 vector search 和 Unity Catalog function 當成 MCP tool 接進 Agent。
+- 用第二個 agent 做 output guardrail，並在 OpenAI Traces 看 agent 呼叫了哪些 tool。
 
-## Solution Overview
+## 開跑前
 
-In supply-chain operations, an agent can resolve questions that directly affect service levels and revenue: Do we have the inventory and capacity to satisfy current demand? Where will manufacturing delays occur, and how will those delays propagate downstream? Which workflow adjustments will minimise disruption? 
+- 需要 Databricks workspace，並啟用 Serverless compute 和 Unity Catalog。
+- 需要 Databricks personal access token（PAT）、`DATABRICKS_HOST`，以及 `OPENAI_API_KEY`。
+- 要用範例資料的話，需把 accelerator repo clone 到 Databricks workspace 跑過。
+
+## 方案總覽
+
+在供應鏈營運中，agent 可以回答直接影響服務水準和營收的問題：庫存和產能夠不夠滿足目前需求？製造延遲會發生在哪裡，又會怎麼往下游傳？調整哪些工作流程能把中斷降到最低？
 
 ![Databricks MCP UI](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/databricks_mcp_ui.png)
 
-This cookbook outlines the process for building a supply-chain copilot with the OpenAI Agent SDK and Databricks Managed MCP. MCP enables the agent to query structured and unstructured enterprise data, such as inventory, sales, supplier feeds, local events, and more, for real-time visibility, early detection of material shortages, and proactive recommendations. An orchestration layer underpins the system, unifying:
-- Queries against structured inventory, demand, and supplier data
-- Time series forecasting for every wholesaler
-- Graph based raw material requirements and transport optimizations
-- Vector-indexed e-mail archives that enable semantic search across unstructured communications 
-- Revenue risk calculation
+這份 cookbook 說明怎麼用 OpenAI Agent SDK 和 Databricks Managed MCP 打造供應鏈 copilot。MCP 讓 agent 能查詢結構化和非結構化的企業資料，例如庫存、銷售、供應商 feed、當地活動等，達到即時可視性、提早發現原料短缺，並主動給建議。底下有一層 orchestration 把這些整合起來：
+- 查詢結構化的庫存、需求和供應商資料
+- 每個批發商的時間序列預測
+- 以 graph 為基礎的原料需求和運輸最佳化
+- 向量索引的 e-mail 封存，可對非結構化通訊做語意搜尋
+- 營收風險計算
 
-By the end of this guide you will deploy a template that queries distributed data sources, predictive models, highlights emerging bottlenecks, and recommends proactive actions. It can address questions such as:
+讀完這份指南，你會部署一個範本，能查詢分散的資料來源和預測模型、標出正在浮現的瓶頸，並建議主動的行動。它能回答這類問題：
 - What products are dependent on L6HUK material?
 - How much revenue is at risk if we can’t produce the forecasted amount of product autoclave_1?
 - Which products have delays right now?
@@ -34,29 +44,29 @@ By the end of this guide you will deploy a template that queries distributed dat
 - Are there any shortages with one of the following raw materials: O4GRQ, Q5U3A, OAIFB or 58RJD?
 - What are the delays associated with wholesaler 9?
 
-Stakeholders can submit a natural-language prompt and receive answers instantly.
-This guide walks you through each step to implement this solution in your own environment.
+相關人員只要送出自然語言 prompt，就能立刻拿到答案。
+這份指南會一步步帶你在自己的環境實作這個方案。
 
-## Architecture
+## 架構
 
-The architecture presented in this cookbook layers an OpenAI Agent on top of your existing analytics workloads in Databricks. You can expose Databricks components as callable Unity Catalog functions. The agent is implemented with the [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) and connects to [Databricks Managed MCP servers](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp). 
+這份 cookbook 的架構是在你 Databricks 現有的分析工作負載上疊一層 OpenAI Agent。你可以把 Databricks 的元件開放成可呼叫的 Unity Catalog function。agent 用 [OpenAI Agent SDK](https://openai.github.io/openai-agents-python/) 實作，並連到 [Databricks Managed MCP servers](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp)。
 
-The result is a single, near-real-time conversational interface that delivers fine-grained forecasts, dynamic inventory recommendations, and data-driven decisions across the supply chain. The architecture yields an agent layer that harnesses your existing enterprise data (structured and unstructured), classical ML models, and graph-analytics capabilities.
+結果是一個近乎即時的單一對話介面，提供細粒度的預測、動態的庫存建議，以及整條供應鏈的資料導向決策。這個架構讓 agent 層能運用你現有的企業資料（結構化和非結構化）、傳統 ML 模型和 graph 分析能力。
 
 ![Databricks MCP Architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/databricks_mcp_architecture.png)
 
-## Set up Databricks authentication
+## 設定 Databricks 認證
 
-You can set up your Databricks authentication by adding a profile to `~/.databrickscfg`. A [Databricks configuration profile](https://docs.databricks.com/aws/en/dev-tools/auth/config-profiles) contains settings and other information that Databricks needs to authenticate. 
+你可以在 `~/.databrickscfg` 加一個 profile 來設定 Databricks 認證。[Databricks configuration profile](https://docs.databricks.com/aws/en/dev-tools/auth/config-profiles) 包含 Databricks 認證所需的設定和資訊。
 
-The snippet’s `WorkspaceClient(profile=...)` call will pick that up. It tells the SDK which of those stored credentials to load, so that your code never needs to embed tokens. Another option would be to create environment variables such as `DATABRICKS_HOST` and `DATABRICKS_TOKEN`, but using `~/.databrickscfg` is recommended.
+程式裡的 `WorkspaceClient(profile=...)` 會讀到這個 profile，告訴 SDK 要載入哪一組存好的憑證，所以你的程式碼不需要嵌入 token。另一個做法是建立 `DATABRICKS_HOST` 和 `DATABRICKS_TOKEN` 之類的環境變數，但建議用 `~/.databrickscfg`。
 
-Generate a workspace [personal access token (PAT)](https://docs.databricks.com/aws/en/dev-tools/auth/pat#databricks-personal-access-tokens-for-workspace-users) via Settings → Developer → Access tokens → Generate new token, then record it in `~/.databrickscfg`.
+到 Settings → Developer → Access tokens → Generate new token 產生 workspace 的[personal access token (PAT)](https://docs.databricks.com/aws/en/dev-tools/auth/pat#databricks-personal-access-tokens-for-workspace-users)，再記到 `~/.databrickscfg`。
 
-To create this Databricks configuration profile file, run the [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/) databricks configure command, or follow these steps:
-- If `~/.databrickscfg` is missing, create it: touch `~/.databrickscfg`
-- Open the file: `nano ~/.databrickscfg`
-- Insert a profile section that lists the workspace URL and personal-access token (PAT) (additional profiles can be added at any time):
+要建立這個 Databricks configuration profile 檔，可以執行 [Databricks CLI](https://docs.databricks.com/aws/en/dev-tools/cli/) 的 databricks configure 指令，或照下面步驟：
+- 如果沒有 `~/.databrickscfg`，先建立：touch `~/.databrickscfg`
+- 打開檔案：`nano ~/.databrickscfg`
+- 加入一段 profile，寫上 workspace URL 和 personal access token (PAT)（之後隨時可以再加其他 profile）：
 
 
 ```bash
@@ -66,62 +76,61 @@ token = dapi123...    # add your PAT here
 ```
 
 
-You can then run this sanity check command `databricks clusters list` with the Databricks CLI or SDK. If it returns data without prompting for credentials, the host is correct and your token is valid.
+接著可以用 Databricks CLI 或 SDK 跑 `databricks clusters list` 當 sanity check。如果沒要求輸入憑證就回傳資料，代表 host 正確、token 有效。
 
-As a pre-requisite, Serverless compute and Unity Catalog must be enabled in the Databricks workspace. 
+前提是 Databricks workspace 要啟用 Serverless compute 和 Unity Catalog。
 
-## (Optional) Databricks Supply Chain set up 
+## （選用）設定 Databricks 供應鏈資料
 
-This cookbook can be used to work with your own Databricks supply chain datasets and analytical workloads.
+這份 cookbook 可以用你自己的 Databricks 供應鏈資料集和分析工作負載。
 
-Alternatively, you can accelerate your setup by using a tailored version of the Databricks’ Supply Chain Optimization Solution Accelerator. To do so, you can clone this GitHub [repository](https://github.com/lara-openai/databricks-supply-chain) into your Databricks workspace and follow the instructions in the README [file](https://github.com/lara-openai/databricks-supply-chain/blob/main/README.md). Running the solution will stand up every asset the Agent will later reach via MCP, from raw enterprise tables and unstructured e-mails to classical ML models and graph workloads. 
+你也可以用 Databricks Supply Chain Optimization Solution Accelerator 的客製版本加快設定。做法是把這個 GitHub [repository](https://github.com/lara-openai/databricks-supply-chain) clone 到你的 Databricks workspace，照 README [檔案](https://github.com/lara-openai/databricks-supply-chain/blob/main/README.md)的說明做。跑完後，Agent 之後要透過 MCP 存取的所有資產都會建好，從原始的企業資料表、非結構化 e-mail，到傳統 ML 模型和 graph 工作負載。
 
-If you prefer to use your own datasets and models, make sure to wrap relevant components as Unity Catalog functions and define a Vector Search index as shown in the accelerator. You can also expose Genie Spaces.
+如果你要用自己的資料集和模型，請依 accelerator 的做法，把相關元件包成 Unity Catalog function，並定義 Vector Search index。你也可以開放 Genie Spaces。
 
-The sample data mirrors a realistic pharma network: three plants manufacture 30 products, ship them to five distribution centers, and each distribution center serves 30-60 wholesalers. The repo ships time-series demand for every product-wholesaler pair, a distribution center-to-wholesaler mapping, a plant-to-distribution center cost matrix, plant output caps, and an e-mail archive flagging shipment delays. 
+範例資料模擬一個真實的製藥網路：三間工廠生產 30 種產品，送到五個配送中心，每個配送中心服務 30 到 60 個批發商。repo 內含每個產品與批發商組合的時間序列需求、配送中心到批發商的對應、工廠到配送中心的成本矩陣、工廠產出上限，以及標記出貨延遲的 e-mail 封存。
 
 ![Pharma Network](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pharma_network.png)
 
-Answering supply-chain operations questions requires modelling how upstream bottlenecks cascade through production, logistics, and fulfillment so that stakeholders can shorten lead times, avoid excess stock, and control costs. The notebooks turn these raw feeds into governed, callable artefacts:
-- Demand forecasting & aggregation ([notebook 2](https://github.com/lara-openai/databricks-supply-chain/blob/main/02_Fine_Grained_Demand_Forecasting.py)): Generates one-week-ahead SKU demand for every wholesaler and distribution center with a Holt-Winters seasonal model (or any preferred time-series approach). It leverages Spark’s parallelisation for large-scale forecasting tasks by using Pandas UDFs (taking your single node data science code and distributing it across multiple nodes). Forecasts are then rolled up to DC-level totals for each product. The output is a table  product_demand_forecasted with aggregate forecasts at the distribution center level.
-- Raw-material planning ([notebook 3](https://github.com/lara-openai/databricks-supply-chain/blob/main/03_Derive_Raw_Material_Demand.py)): Constructs a product-to-material using graph processing, propagating demand up the bill-of-materials hierarchy to calculate component requirements at scale. We transform the bill‑of‑materials into a graph so product forecasts can be translated into precise raw‑material requirements, yielding two tables: raw_material_demand and raw_material_supply.
-- Transportation optimisation ([notebook 4](https://github.com/lara-openai/databricks-supply-chain/blob/main/04_Optimize_Transportation.py)): Minimises plant to distribution center transportation cost under capacity and demand constraints, leveraging Pandas UDFs, outputting recommendations in shipment_recommendations.
-- Semantic e-mail search ([notebook 6](https://github.com/lara-openai/databricks-supply-chain/blob/main/06_Vector_Search.py)): Embeds supply-chain manager e-mails in a vector index using OpenAI embedding models, enabling semantic queries that surface delay and risk signals.
+要回答供應鏈營運的問題，得建模上游瓶頸如何在生產、物流和出貨之間層層擴散，相關人員才能縮短 lead time、避免庫存過多並控制成本。這些 notebook 把原始資料轉成受治理、可呼叫的產物：
+- 需求預測與彙總（[notebook 2](https://github.com/lara-openai/databricks-supply-chain/blob/main/02_Fine_Grained_Demand_Forecasting.py)）：用 Holt-Winters 季節性模型（或任何你偏好的時間序列方法），對每個批發商和配送中心產生未來一週的 SKU 需求。它用 Pandas UDF 發揮 Spark 的平行化能力來處理大規模預測（把你的單機資料科學程式碼分散到多個節點）。預測再彙總成每個產品的配送中心層級總量，輸出是 product_demand_forecasted 這張表。
+- 原料規劃（[notebook 3](https://github.com/lara-openai/databricks-supply-chain/blob/main/03_Derive_Raw_Material_Demand.py)）：用 graph 處理建出產品到原料的對應，沿 bill-of-materials 階層往上推需求，大規模算出零組件需求。我們把 bill-of-materials 轉成 graph，讓產品預測能換算成精確的原料需求，產出 raw_material_demand 和 raw_material_supply 兩張表。
+- 運輸最佳化（[notebook 4](https://github.com/lara-openai/databricks-supply-chain/blob/main/04_Optimize_Transportation.py)）：在產能和需求限制下，把工廠到配送中心的運輸成本降到最低，同樣用 Pandas UDF，建議結果輸出到 shipment_recommendations。
+- 語意 e-mail 搜尋（[notebook 6](https://github.com/lara-openai/databricks-supply-chain/blob/main/06_Vector_Search.py)）：用 OpenAI embedding model 把供應鏈經理的 e-mail 嵌入 vector index，讓語意查詢能找出延遲和風險訊號。
 
-Each insight is wrapped as a Unity Catalog (UC) function in [notebook 5](https://github.com/lara-openai/databricks-supply-chain/blob/main/05_Data_Analysis_%26_Functions.py) and [notebook 7](https://github.com/lara-openai/databricks-supply-chain/blob/main/07_More_Functions.py), e.g. product_from_raw, raw_from_product, revenue_risk, lookup_product_demand, query_unstructured_emails. Because UC governs tables, models, and vector indexes alike, the Agent can decide at runtime whether to forecast, trace a BOM dependency, gauge revenue impact, fetch history, or search e-mails, always within the caller’s data-access rights.
+每個洞察都在 [notebook 5](https://github.com/lara-openai/databricks-supply-chain/blob/main/05_Data_Analysis_%26_Functions.py) 和 [notebook 7](https://github.com/lara-openai/databricks-supply-chain/blob/main/07_More_Functions.py) 包成 Unity Catalog (UC) function，例如 product_from_raw、raw_from_product、revenue_risk、lookup_product_demand、query_unstructured_emails。因為 UC 同時治理資料表、模型和 vector index，Agent 可以在執行時自己決定要做預測、追 BOM 依賴、評估營收影響、查歷史，還是搜尋 e-mail，而且一律在呼叫者的資料存取權限內。
 
-The result is an end-to-end pipeline that forecasts demand, identifies raw‑material gaps, optimizes logistics, surfaces hidden risks, and lets analysts ask ad‑hoc questions and surface delay warnings.
+最後得到一條端到端的 pipeline：預測需求、找出原料缺口、最佳化物流、浮現隱藏風險，讓分析師可以臨時提問並看到延遲警示。
 
-After all notebooks have been executed (by running notebook 1), the Databricks environment is ready, you can proceed to build the Agent and connect it to Databricks.
+所有 notebook 都跑完後（執行 notebook 1 就會全部跑完），Databricks 環境就緒，可以開始建 Agent 並連到 Databricks。
 
-## Connect to Databricks MCP servers
+## 連接 Databricks MCP servers
 
-Currently, the [MCP spec](https://openai.github.io/openai-agents-python/mcp/) defines three kinds of servers, based on the transport mechanism they use: 
-- stdio servers run as a subprocess of your application. You can think of them as running "locally".
-- HTTP over SSE servers run remotely. You connect to them via a URL.
-- Streamable HTTP servers run remotely using the Streamable HTTP transport defined in the MCP spec.
+目前 [MCP spec](https://openai.github.io/openai-agents-python/mcp/) 依傳輸機制定義三種 server：
+- stdio server 以你應用程式的 subprocess 執行，可以想成在「本機」跑。
+- HTTP over SSE server 在遠端執行，透過 URL 連線。
+- Streamable HTTP server 在遠端執行，使用 MCP spec 定義的 Streamable HTTP transport。
 
-[Databricks-hosted MCP endpoints](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp) (vector-search, Unity Catalog functions, Genie) sit behind standard HTTPS URLs and implement the Streamable HTTP transport defined in the MCP spec. Make sure that your workspace is serverless enabled so that you can connect to the Databricks managed MCP. 
+[Databricks 代管的 MCP endpoint](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp)（vector-search、Unity Catalog function、Genie）都在標準 HTTPS URL 後面，實作的是 MCP spec 定義的 Streamable HTTP transport。要確認 workspace 已啟用 serverless，才能連到 Databricks managed MCP。
 
-## Integrate Databricks MCP servers into an OpenAI Agent 
+## 把 Databricks MCP servers 整合進 OpenAI Agent
 
-The OpenAI Agent is available [here](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/README.md). Start by installing the required dependencies:
+OpenAI Agent 的程式碼在[這裡](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/README.md)。先安裝需要的套件：
 
 ```python
 pip install -r requirements.txt
 ```
 
-You will need an OpenAI API key to securely access the API. If you're new to the OpenAI API, [sign up for an account](https://platform.openai.com/signup). You can follow [these steps](https://platform.openai.com/docs/libraries?project_id=proj_2NqyDkmG63zyr3TzOh64F2ac#create-and-export-an-api-key) to create a key and store it in a safe location. 
+你需要 OpenAI API key 才能安全地存取 API。如果你剛接觸 OpenAI API，可以[註冊帳號](https://platform.openai.com/signup)，照[這些步驟](https://platform.openai.com/docs/libraries?project_id=proj_2NqyDkmG63zyr3TzOh64F2ac#create-and-export-an-api-key)建立 key 並存放在安全的地方。
 
-This cookbook shows how to serve this Agent with FastAPI and chat through a React UI. However, `main.py` is set up as a self‑contained REPL, so after installing the required dependencies and setting up the necessary credentials (including the Databricks host and personal-access token as described above), you can run the Agent directly from the command line with a single command:
+這份 cookbook 示範用 FastAPI 提供這個 Agent，再透過 React UI 聊天。不過 `main.py` 本身就是獨立的 REPL，所以裝好套件並設好必要的憑證（包含上面說的 Databricks host 和 personal access token）後，只要一行指令就能直接在命令列跑 Agent：
 
 ```python
 python main.py
 ```
+[main.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/main.py) 負責 agent 邏輯的編排，用 OpenAI Agent SDK，並把 Databricks MCP 的 vector-search endpoint 和 Unity Catalog function 開放成可呼叫的 tool。它先讀環境變數，取得目標 catalog、schema 和 Unity Catalog (UC) function 路徑，然後提供兩個 tool：vector_search 查詢 Databricks Vector Search index，uc_function 則透過 MCP 執行 Unity Catalog function。兩個 tool 都用 httpx 發出帶認證的 POST request，回傳 Databricks REST API 的原始 JSON。兩個 helper 都透過 _databricks_ctx() 這個 utility（由 DatabricksOAuthClientProvider 支撐）取得 workspace host 和 Personal Access Token。
 
-The [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/main.py) file orchestrates the agent logic, using the OpenAI Agent SDK and exposing Databricks MCP vector-search endpoints and Unity Catalog functions as callable tools. It starts by reading environment variables that point to the target catalog, schema, and Unity Catalog (UC) function path, then exposes two tools: vector_search, which queries a Databricks Vector Search index, and uc_function, which executes Unity Catalog functions via MCP. Both tools make authenticated, POST requests through httpx, returning raw JSON from the Databricks REST API. Both helpers obtain the workspace host and Personal Access Token through the _databricks_ctx() utility (backed by DatabricksOAuthClientProvider) and issue authenticated POST requests with httpx, returning raw JSON responses. 
-
-Inside run_agent(), the script instantiates an Agent called “Assistant” that is hard-scoped to supply-chain topics. Every response must invoke one of the two registered tools, and guardrails force the agent to refuse anything outside logistics, inventory, procurement or forecasting. Each user prompt is processed inside an SDK trace context. A simple REPL drives the interaction: user input is wrapped in an OpenTelemetry-style trace, dispatched through Runner.run, and the final answer (or guardrail apology) is printed. The program is kicked off through an asyncio.run call in main(), making the whole flow fully asynchronous and non-blocking. 
+在 run_agent() 裡，程式建立一個叫「Assistant」的 Agent，範圍被嚴格限定在供應鏈主題。每個回應都必須呼叫這兩個已註冊 tool 的其中一個，guardrail 會強迫 agent 拒絕物流、庫存、採購、預測以外的問題。每個使用者 prompt 都在 SDK 的 trace context 裡處理。一個簡單的 REPL 驅動互動：使用者輸入被包進 OpenTelemetry 風格的 trace，透過 Runner.run 送出，最後印出最終答案（或 guardrail 的拒絕訊息）。程式由 main() 裡的 asyncio.run 啟動，整個流程完全非同步、不會阻塞。
 
 ```python
 """
@@ -216,7 +225,7 @@ if __name__ == "__main__":
     main()
 ```
 
-[databricks_mcp.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/databricks_mcp.py) serves as a focused authentication abstraction: it obtains the Personal Access Token we created earlier from a given WorkspaceClient (ws.config.token) and shields the rest of the application from Databricks‑specific OAuth logic. By confining all token‑handling details to this single module, any future changes to Databricks’ authentication scheme can be accommodated by updating this file.
+[databricks_mcp.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/databricks_mcp.py) 是專注在認證的抽象層：它從指定的 WorkspaceClient（ws.config.token）取得我們前面建立的 Personal Access Token，讓應用程式其他部分不用碰 Databricks 專屬的 OAuth 邏輯。因為所有 token 處理細節都限制在這個模組，日後 Databricks 的認證機制改變，只要更新這個檔案就好。
 
 
 ```python
@@ -233,7 +242,7 @@ class DatabricksOAuthClientProvider:
         return self.ws.config.token
 ```
 
-[supply_chain_guardrails.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/supply_chain_guardrails.py) implements a lightweight output guardrail by spinning up a second agent (“Supply‑chain check”) that classifies candidate answers. The main agent hands its draft reply to this checker, which returns a Pydantic object with a Boolean is_supply_chain. If that flag is false, the guardrail raises a tripwire and the caller swaps in a refusal.
+[supply_chain_guardrails.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/supply_chain_guardrails.py) 實作一個輕量的 output guardrail，做法是另外啟動第二個 agent（「Supply‑chain check」）來分類候選答案。主 agent 把草稿回覆交給這個檢查者，它回傳一個帶 Boolean is_supply_chain 的 Pydantic 物件。如果這個值是 false，guardrail 就觸發 tripwire，呼叫端改用拒絕訊息。
 
 ```python
 """
@@ -274,17 +283,17 @@ async def supply_chain_guardrail(
     )
 ```
 
-## Serve the agent with FastAPI 
+## 用 FastAPI 提供 agent 服務
 
-To kick off the backend (Fast API), run the following command: 
+啟動後端（FastAPI），執行下面的指令：
 
 ```python
 python -m uvicorn api_server:app --reload --port 8000
 ```
 
-The API will be available at http://localhost:8000 (for FastAPI docs go to: http://localhost:8000/docs). 
+API 會在 http://localhost:8000 提供服務（FastAPI 文件在 http://localhost:8000/docs）。
 
-The [api_server.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/api_server.py) is a FastAPI backend that exposes your agent as a streaming /chat API endpoint. At startup it configures CORS so a local front-end can talk to it, then defines `build_mcp_servers()`, which authenticates to the caller’s Databricks workspace, constructs two HTTP “server tools” (one for vector search, one for Unity-Catalog functions), and pre-connects them for low-latency use. Each incoming POST to /chat contains a single user message. The handler spins up a fresh Agent whose mcp_servers list is populated by those streaming tools and whose model is forced to call a tool for every turn. 
+[api_server.py](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/api_server.py) 是 FastAPI 後端，把你的 agent 開放成串流的 /chat API endpoint。啟動時它先設定 CORS，讓本機前端能連上，接著定義 `build_mcp_servers()`：向呼叫者的 Databricks workspace 認證，建立兩個 HTTP「server tool」（一個給 vector search，一個給 Unity Catalog function），並預先連線以降低延遲。每個進來的 POST /chat 帶一則使用者訊息。handler 會建立一個新的 Agent，它的 mcp_servers 清單由這些串流 tool 組成，model 被強制每一輪都要呼叫 tool。
 
 ```python
 """
@@ -428,11 +437,11 @@ async def chat_endpoint(req: ChatRequest):
         )
 ```
 
-The endpoint streams tokens back to the browser while the agent reasons and calls MCP tools.
+endpoint 會在 agent 推理和呼叫 MCP tool 的同時，把 token 串流回瀏覽器。
 
-## Engage users through a React chat UI
+## 用 React 聊天 UI 與使用者互動
 
-In a different terminal, run the following to start the Frontend (React UI):
+在另一個 terminal 執行下面的指令，啟動前端（React UI）：
 
 ```python
 cd ui
@@ -440,13 +449,13 @@ npm install
 npm run dev
 ```
 
-The app will be available at http://localhost:5173
+應用程式會在 http://localhost:5173 提供服務。
 
-The React chat UI in the [/ui folder](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/ui) provides a user-friendly web interface for interacting with the backend agent. It features components for displaying the conversation history and a text input for sending messages. 
+[/ui 資料夾](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/ui)裡的 React 聊天 UI 提供好用的網頁介面來跟後端 agent 互動。它有顯示對話記錄的元件和送出訊息的文字輸入框。
 
-When a user submits a message, the UI sends it to the backend /chat endpoint and streams the agent’s response in real time, updating the chat window as new content arrives. The design emphasizes a conversational experience, making it easy for users to ask questions and receive answers from the Databricks-powered agent, all within a responsive and interactive web application.
+使用者送出訊息時，UI 把它送到後端的 /chat endpoint，並即時串流 agent 的回應，新內容一到就更新聊天視窗。設計重點是對話式的體驗，讓使用者方便提問並從 Databricks 驅動的 agent 拿到答案，全部在一個回應式、可互動的網頁應用裡完成。
 
-In particular, the file [ChatUI.jsx](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/ui/src/components/ChatUI.jsx) file contains the core logic for the chat interface, including how user messages are sent to the backend and how streaming responses from the agent are handled and displayed in real time.
+其中 [ChatUI.jsx](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/building-a-supply-chain-copilot-with-agent-sdk-and-databricks-mcp/ui/src/components/ChatUI.jsx) 這個檔案包含聊天介面的核心邏輯，包括使用者訊息怎麼送到後端，以及 agent 的串流回應怎麼即時處理和顯示。
 
 ```python
 """
@@ -465,13 +474,13 @@ while (true) {
 }
 ```
 
-The UI streams and displays the agent’s response as it arrives, creating a smooth, real-time chat experience. Highlighting this will clearly show your readers how the UI achieves interactive, conversational feedback from your backend agent.
+UI 會在 agent 回應抵達時串流顯示，帶來流暢的即時聊天體驗。這也清楚展示 UI 如何從後端 agent 得到互動式、對話式的回饋。
 
 ![Databricks MCP UI](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/databricks_mcp_ui.png)
 
-## Prompt the app
+## 操作這個 app
 
-Navigate to http://localhost:5173 and try the following prompts:
+打開 http://localhost:5173，試試下面這些 prompt：
 - What products are dependent on L6HUK material?
 - How much revenue is at risk if we can’t produce the forecasted amount of product autoclave_1?
 - Which products have delays right now?
@@ -479,24 +488,36 @@ Navigate to http://localhost:5173 and try the following prompts:
 - What raw materials are required for syringe_1?
 - Are there any shortages with one of the following raw materials: O4GRQ, Q5U3A, OAIFB or 58RJD?
 - What are the delays associated with wholesaler 9?
-The agent will call relevant tools and format a grounded answer for the user. 
+agent 會呼叫相關的 tool，整理出有依據的答案給使用者。
 
 
-## Trace Agent calls in the OpenAI API Dashboard
+## 在 OpenAI API Dashboard 追蹤 Agent 呼叫
 
-In the OpenAI API [dashboard](https://platform.openai.com/prompts) you can open the Traces view to see every function the agent invoked. In the example below, the agent first calls raw_from_product to fetch the material linked to a specific product, and then calls revenue_risk to estimate the revenue impact of a shortage.
+在 OpenAI API [dashboard](https://platform.openai.com/prompts) 可以打開 Traces 檢視，看 agent 呼叫過的每個 function。下面的例子裡，agent 先呼叫 raw_from_product 取得某個產品相關的原料，再呼叫 revenue_risk 估算原料短缺的營收影響。
 
 ![Tracing Dashboard](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/tracing_dashboard_databricks_mcp.png)
 
-## Next Steps
+## 下一步
 
-* You can consider adding multi-turn capabilities
-* You can also add Genie Space MCP servers if you’d like to adapt this setup to your own workspace
+* 可以考慮加上多輪對話能力
+* 如果要改成適用你自己的 workspace，也可以加 Genie Space MCP servers
 
-## References
-- Databricks Managed MCP [documentation](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp)
-- OpenAI Agent SDK [documentation](https://openai.github.io/openai-agents-python/)
-- OpenAI Agent Guardrails [documentation](https://openai.github.io/openai-agents-python/guardrails/)
-- `openai-agents-python` example [snippets](https://github.com/openai/openai-agents-python/tree/main/examples/mcp/streamablehttp_example)
+## 參考資料
+- Databricks Managed MCP [文件](https://docs.databricks.com/aws/en/generative-ai/agent-framework/mcp)
+- OpenAI Agent SDK [文件](https://openai.github.io/openai-agents-python/)
+- OpenAI Agent Guardrails [文件](https://openai.github.io/openai-agents-python/guardrails/)
+- `openai-agents-python` 範例[程式片段](https://github.com/openai/openai-agents-python/tree/main/examples/mcp/streamablehttp_example)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- MCP 讓 agent 用統一方式呼叫企業資料平台的能力，這篇把 Databricks 的 vector search 和 Unity Catalog function 都包成 tool。
+- 把預測、BOM 追蹤、營收風險等分析先包成受治理的 UC function，agent 就能在呼叫者權限內自己決定該用哪個。
+- 認證邏輯集中在 `databricks_mcp.py` 一個模組，之後認證機制改了只動這裡。
+- output guardrail 用第二個小 agent 分類答案是否屬於供應鏈，讓主 agent 守住主題範圍。
+- 同一個 agent 可以用 REPL、FastAPI 串流 endpoint 加 React UI 兩種方式提供服務，並能在 Traces 看到每次 tool 呼叫。
+
+## 練習
+
+1. 照 `main.py` 的 REPL 方式跑 agent，問頁面上列的任一個問題，再到 OpenAI Traces 看它呼叫了哪些 tool。
+2. 改 `supply_chain_guardrails.py` 裡檢查 agent 的指令，把允許的主題擴大或縮小一個範圍，再問一個邊界問題，看 guardrail 會不會觸發。
+3. 在 `api_server.py` 的 `build_mcp_servers()` 多加一個 MCP server（例如 Genie Space），並確認 agent 能呼叫它。

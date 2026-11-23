@@ -1,45 +1,53 @@
 ---
-translated: false
+translated: true
 source: examples/agents_api/apps/sev_bot/README.md
 ---
-
-# Build an SRE agent for incident response
+# 打造處理事故的 SRE agent
 
 > 原文：[examples/agents_api/apps/sev_bot/README.md](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/README.md)
 
-Investigate incidents in Slack using service telemetry, GitHub, AWS, and past incident reports, with human review before recovery.
+在 Slack 裡用服務 telemetry、GitHub、AWS 和過去的事故報告調查事故，復原動作需要人工審核。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+事故警報進來時，這個 agent 會在 Slack `#oncall` 開一個 thread，調查 production telemetry、GitHub PR 和 commit、AWS 基礎設施，以及類似的歷史事故，然後貼出發現，並請值班人員核准 rollback。範例用 Agents API 的 persistent session、webhook 和 sandbox 把整條流程串起來。
 
+## 學完你會
+- 把 PagerDuty、incident.io 或 Alertmanager 的警報轉成「一個事故對應一個 Slack thread 加一個 agent session」。
+- 用 `agent.session.action_required` webhook 讓 `propose_rollback` 停下來等人按 Slack 按鈕核准，再繼續跑。
+- 把 GitHub MCP、AWS MCP、runbook 和跨事故的 `recall_incidents` 記憶接進同一個 agent。
 
-An incident alert opens a Slack thread in `#oncall`. The agent investigates production telemetry, GitHub pull requests and commits, AWS infrastructure, and similar past incidents. It posts its findings and asks a responder to approve any rollback.
+## 開跑前
+- Python 3.14+ 和 `uv`，以及自架 Docker 或第三方 sandbox。
+- OpenAI API key 加一把權限受限的 executor key（`OPENAI_EXECUTOR_API_KEY`）。
+- 安裝在 `#oncall` 的 Slack app（bot token、signing secret、訊息事件訂閱），且 Slack 要能用 HTTPS 連到你的服務。
+- 監控系統（PagerDuty、incident.io 或 Alertmanager）、GitHub 唯讀權限、AWS DevOps Agent 憑證（接真實 AWS 時才需要）。
 
-## Why use the Agents API?
+事故警報會在 Slack `#oncall` 開一個 thread。agent 調查 production telemetry、GitHub pull request 和 commit、AWS 基礎設施，以及類似的過去事故。它貼出調查結果，並請值班人員核准任何 rollback。
 
-An incident webhook starts the work; responders continue it in Slack. The Agents
-API keeps the investigation in a persistent session, connects operational tools,
-and pauses for application-owned decisions. Your application manages alert
-deduplication, responder permissions, historical incident records, and cleanup.
+## 為什麼用 Agents API？
 
-This example records rollback approval but never executes a deployment.
+事故 webhook 觸發工作，值班人員在 Slack 接手。Agents
+API 把調查保存在 persistent session 裡，串接營運工具，並在需要由應用程式決定的地方暫停。你的應用程式負責警報去重、值班人員權限、歷史事故紀錄和清理。
+
+這個範例只記錄 rollback 的核准，從不真的執行部署。
 
 ![Incident response workflow: receive an alert, investigate evidence, request rollback approval in Slack, save incident memory, and clean up.](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/agents_api/apps/sev_bot/assets/workflow.svg)
 
-## What you need
+## 你需要什麼
 
-- Python 3.14+ and `uv`.
-- A sandbox: self-hosted Docker or a [third-party provider](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers).
-- An OpenAI API key and a separate restricted executor key.
-- A Slack app installed in `#oncall`, with a bot token, signing secret, and message event subscriptions.
-- PagerDuty, incident.io, or an Alertmanager-compatible monitoring system.
-- Read access to the affected GitHub repository.
-- AWS DevOps Agent credentials or another read-only AWS operational integration.
+- Python 3.14+ 和 `uv`。
+- 一個 sandbox：自架 Docker 或[第三方供應商](https://developers.openai.com/api/docs/guides/agents-api/environments/self-hosted#sandbox-providers)。
+- 一把 OpenAI API key 和另一把受限的 executor key。
+- 安裝在 `#oncall` 的 Slack app，有 bot token、signing secret 和訊息事件訂閱。
+- PagerDuty、incident.io 或相容 Alertmanager 的監控系統。
+- 受影響 GitHub repo 的讀取權限。
+- AWS DevOps Agent 憑證或其他唯讀的 AWS 營運整合。
 
-The first run uses bundled metrics, logs, deployments, GitHub changes, AWS telemetry, and incident history for `checkout-api`. Tool results label this sample data; it is not a live production diagnosis. Slack delivery is real. Replace the evidence tools when connecting your own incidents.
+第一次執行會用內建的 `checkout-api` metrics、logs、deployments、GitHub 變更、AWS telemetry 和事故歷史。tool 結果會標示這是範例資料，不是真實 production 診斷。Slack 的訊息是真的會送出。接上你自己的事故時，要把這些 evidence tool 換掉。
 
-## Configure the Slack bot
+## 設定 Slack bot
 
-Clone the Cookbook, or run the remaining commands from your existing checkout:
+clone Cookbook，或在你現有的 checkout 裡跑後面的指令：
 
 ```bash
 git clone https://github.com/openai/openai-cookbook.git
@@ -48,31 +56,31 @@ cp examples/agents_api/apps/sev_bot/.env.example examples/agents_api/apps/sev_bo
 docker build -t agent-api-sev-sandbox:latest examples/agents_api/apps/sev_bot
 ```
 
-Create the Slack app from [`slack-app-manifest.yaml`](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/slack-app-manifest.yaml). Replace `https://your-app.example` with your application's HTTPS address, install the app, and invite it to `#oncall`.
+用 [`slack-app-manifest.yaml`](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/slack-app-manifest.yaml) 建立 Slack app。把 `https://your-app.example` 換成你應用程式的 HTTPS 位址，安裝 app，並邀請它進 `#oncall`。
 
-Add `OPENAI_API_KEY`, `OPENAI_EXECUTOR_API_KEY`, `SLACK_BOT_TOKEN`, and `SLACK_SIGNING_SECRET` to `examples/agents_api/apps/sev_bot/.env`. Use OpenAI keys with the same owner, organization, and project.
+把 `OPENAI_API_KEY`、`OPENAI_EXECUTOR_API_KEY`、`SLACK_BOT_TOKEN` 和 `SLACK_SIGNING_SECRET` 加到 `examples/agents_api/apps/sev_bot/.env`。兩把 OpenAI key 要有相同的 owner、organization 和 project。
 
-The manifest subscribes to `message.channels` and `message.groups` at `/slack/events`, and sends approval actions to `/slack/actions`. Slack must be able to reach both URLs over HTTPS. Posting the initial investigation only needs the bot token; follow-ups and approval buttons also require these callbacks.
+manifest 在 `/slack/events` 訂閱 `message.channels` 和 `message.groups`，並把核准動作送到 `/slack/actions`。Slack 必須能用 HTTPS 連到這兩個 URL。貼出最初的調查只需要 bot token；後續追問和核准按鈕也需要這些 callback。
 
-Each incident gets a self-hosted sandbox running `codex exec-server`. The app passes only `OPENAI_EXECUTOR_API_KEY` as `CODEX_API_KEY`; the application, Slack, GitHub, and AWS credentials stay outside the sandbox. The executor key needs `api.agents.environments.connect` and IP restrictions that allow the sandbox's outbound network. Follow-ups reuse the sandbox, and resolution or application shutdown deletes it.
+每個事故會拿到一個自架的 sandbox，裡面跑 `codex exec-server`。app 只把 `OPENAI_EXECUTOR_API_KEY` 當作 `CODEX_API_KEY` 傳進去；應用程式、Slack、GitHub 和 AWS 的憑證都留在 sandbox 外面。executor key 需要 `api.agents.environments.connect` 權限，以及允許 sandbox 對外網路的 IP 限制。後續追問會重用同一個 sandbox，事故解決或應用程式關閉時會把它刪掉。
 
-To create an executor key with the required permission, open [Agents > Environments > Keys](https://platform.openai.com/agents?tab=environments&environment_view=keys) and select **Create**.
+要建立有這個權限的 executor key，打開 [Agents > Environments > Keys](https://platform.openai.com/agents?tab=environments&environment_view=keys)，選 **Create**。
 
-The app mounts [`runbooks/`](https://github.com/openai/openai-cookbook/tree/main/examples/agents_api/apps/sev_bot/runbooks) read-only at `/workspace/runbooks`. The agent reads `checkout-api.md` for mitigation steps and recovery checks. Add a runbook named after each service when connecting your own incidents.
+app 會把 [`runbooks/`](https://github.com/openai/openai-cookbook/tree/main/examples/agents_api/apps/sev_bot/runbooks) 以唯讀方式掛載到 `/workspace/runbooks`。agent 讀 `checkout-api.md` 取得緩解步驟和復原檢查。接上你自己的事故時，每個服務都要加一份以服務命名的 runbook。
 
-## Connect Agents API approval webhooks
+## 串接 Agents API 核准 webhook
 
-In [Project settings > Webhooks](https://platform.openai.com/settings/project/webhooks), register `https://your-app.example/webhooks/openai`, subscribe to `agent.session.action_required`, and add its signing secret as `OPENAI_WEBHOOK_SECRET` in `.env`.
+在 [Project settings > Webhooks](https://platform.openai.com/settings/project/webhooks) 註冊 `https://your-app.example/webhooks/openai`，訂閱 `agent.session.action_required`，並把它的 signing secret 以 `OPENAI_WEBHOOK_SECRET` 加進 `.env`。
 
-With these credentials configured, start the receiver:
+這些憑證都設好後，啟動 receiver：
 
 ```bash
 uv run examples/agents_api/apps/sev_bot/main.py
 ```
 
-The app verifies OpenAI's signature, retrieves the session's `required_actions`, and posts Slack buttons for `propose_rollback`. It saves the pending `turn_id` and `call_id` and ignores repeated deliveries for the same proposal. Read-only tools still run through the streaming handler; `propose_rollback` deliberately has no automatic handler.
+app 會驗證 OpenAI 的簽章，取回 session 的 `required_actions`，並為 `propose_rollback` 貼出 Slack 按鈕。它會存下待處理的 `turn_id` 和 `call_id`，並忽略同一個提案的重複送達。唯讀 tool 仍透過 streaming handler 執行；`propose_rollback` 刻意沒有自動 handler。
 
-The Slack callback returns the decision to the waiting call:
+Slack callback 把決定回傳給正在等待的 call：
 
 ```python
 import json
@@ -91,11 +99,11 @@ await client.beta.agents.sessions.events.create(
 )
 ```
 
-The agent continues after approval or rejection. Approval is not execution: the example never contacts a deployment system. Keep the app running to receive callbacks and stream the final update. OpenAI and Slack callbacks both require a reachable HTTPS address. Persist pending actions and use a durable worker when deploying beyond this single-process example.
+agent 在核准或拒絕後繼續。核准不等於執行：這個範例從不連到部署系統。要讓 app 持續執行，才能接收 callback 並 stream 最終更新。OpenAI 和 Slack 的 callback 都需要可連到的 HTTPS 位址。如果要部署到超出這個單一 process 範例的環境，請把待處理動作持久化，並使用 durable worker。
 
-## Send a sample incident
+## 送出範例事故
 
-From another terminal, send the included alert to the receiver:
+從另一個終端機，把附帶的警報送給 receiver：
 
 ```bash
 curl -X POST http://127.0.0.1:8003/webhooks/alerts \
@@ -103,21 +111,20 @@ curl -X POST http://127.0.0.1:8003/webhooks/alerts \
   --data-binary @examples/agents_api/apps/sev_bot/sample_alert.json
 ```
 
-The agent posts its sample investigation to `#oncall`, tracing the outage to the fixture's pull request #418 and Redis pool exhaustion. Approve or reject the proposed rollback using the buttons in the Slack thread. Approval records a decision; it does not execute a deployment.
+agent 會把範例調查貼到 `#oncall`，把故障追到 fixture 裡的 pull request #418 和 Redis pool 耗盡。用 Slack thread 裡的按鈕核准或拒絕提議的 rollback。核准只會記錄決定，不會執行部署。
 
-To inspect a real repository, configure GitHub MCP below.
+要檢查真實 repo，請照下面設定 GitHub MCP。
 
-## Follow the implementation
+## 跟著看實作
 
-These excerpts show the incident flow in [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/main.py), [alerts.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/alerts.py),
-and [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/agent.py). Run the receiver above for the complete signature checks,
-deduplication, approval handling, and cleanup.
+這些片段展示 [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/main.py)、[alerts.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/alerts.py)
+和 [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/agent.py) 裡的事故流程。完整的簽章檢查、
+去重、核准處理和清理，請執行上面的 receiver 來看。
 
-### 1. Turn an alert into one investigation
+### 1. 把警報變成一個調查
 
-The receiver normalizes provider payloads and queues investigations in the
-background. An active alert fingerprint maps to one incident, Slack thread, and
-agent session.
+receiver 會把各供應商的 payload 正規化，並在背景把調查排進佇列。一個進行中的警報 fingerprint 對應一個事故、一個 Slack thread 和一個
+agent session。
 
 ```python
 from fastapi import BackgroundTasks, Request
@@ -130,14 +137,14 @@ async def receive_alert(request: Request, tasks: BackgroundTasks):
     return queue_alerts(app.state.bot, payload, tasks)
 ```
 
-`queue_alerts` also handles resolution events. The runnable receiver checks
-`ALERT_WEBHOOK_TOKEN`; native PagerDuty or incident.io signatures must be verified
-at your ingress before forwarding.
+`queue_alerts` 也處理解決事件。可執行的 receiver 會檢查
+`ALERT_WEBHOOK_TOKEN`；PagerDuty 或 incident.io 的原生簽章必須在
+你的 ingress 驗證完才轉發。
 
-### 2. Create the incident session
+### 2. 建立事故 session
 
-The agent gets read-only evidence tools and a separate function for proposing
-a rollback. GitHub and AWS MCP tools are added only when configured in `.env`.
+agent 拿到唯讀的 evidence tool，以及一個獨立的函式用來提議
+rollback。GitHub 和 AWS MCP tool 只有在 `.env` 設定後才會加入。
 
 ```python
 from openai import AsyncOpenAI
@@ -165,14 +172,14 @@ session = await client.beta.agents.sessions.create(
 incident.session_id = session.id
 ```
 
-The app opens a message in `#oncall` and stores its timestamp on the incident.
-All findings and follow-ups use that thread.
+app 會在 `#oncall` 開一則訊息，並把它的 timestamp 存在事故上。
+所有發現和後續追問都用這個 thread。
 
-### 3. Attach the incident sandbox
+### 3. 掛上事故 sandbox
 
-The sandbox image contains the Codex CLI and AWS skills. `start_executor` mounts
-the runbooks read-only and passes only `OPENAI_EXECUTOR_API_KEY` as
-`CODEX_API_KEY`. Use the connection values returned by the session:
+sandbox image 裡有 Codex CLI 和 AWS skills。`start_executor` 以唯讀方式掛載
+runbooks，並只把 `OPENAI_EXECUTOR_API_KEY` 當作
+`CODEX_API_KEY` 傳入。使用 session 回傳的連線值：
 
 ```python
 import asyncio
@@ -186,13 +193,13 @@ container = await asyncio.to_thread(
 incident.sandbox = container
 ```
 
-Skills supply investigation instructions; they do not grant AWS access. Live
-GitHub and AWS credentials remain with the service-connected MCP tools.
+Skills 提供調查指示，不會授予 AWS 存取權。真實的
+GitHub 和 AWS 憑證留在服務串接的 MCP tool 那邊。
 
-### 4. Stream evidence and wait for approval
+### 4. Stream 證據並等待核准
 
-Only read-only tools have automatic handlers. Keep `propose_rollback` out of
-the handler map so the function call remains pending until a responder decides.
+只有唯讀 tool 有自動 handler。不要把 `propose_rollback` 放進
+handler map，這樣函式呼叫會維持待處理狀態，直到值班人員決定。
 
 ```python
 handlers = {
@@ -215,28 +222,28 @@ async with client.beta.agents.sessions.stream(
             raise RuntimeError(f"Investigation failed: {event.to_dict()}")
 ```
 
-The application collects the answer and posts it to the incident's Slack thread.
-If the agent proposes a rollback, the `agent.session.action_required` webhook
-tells the receiver to retrieve the pending function call and show approval
-buttons. The [approval callback](#connect-agents-api-approval-webhooks) returns
-the decision using the pending turn and call IDs. Keep the stream and receiver
-running while waiting for that decision.
+應用程式收集答案並貼到事故的 Slack thread。
+如果 agent 提議 rollback，`agent.session.action_required` webhook
+會通知 receiver 取回待處理的函式呼叫並顯示核准
+按鈕。[核准 callback](#connect-agents-api-approval-webhooks) 用待處理的 turn 和 call ID
+回傳決定。等待決定的期間，要讓 stream 和 receiver
+持續執行。
 
-### 5. Continue the incident, then save the resolution
+### 5. 繼續處理事故，然後存下解決結果
 
-A Slack follow-up retrieves `incident.session_id` and starts another turn with
-the same tools and workspace. For example:
+Slack 的後續追問會取回 `incident.session_id`，並用
+同樣的 tool 和 workspace 開始另一個 turn。例如：
 
 ```text
 Did this Redis connection-pool failure happen before?
 What should we check after the rollback?
 ```
 
-When a resolved alert arrives, the app saves the report through
-[memory.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/memory.py), posts a final update, and closes the runtime. The next
-incident can find that report through `recall_incidents`.
+收到已解決的警報時，app 透過
+[memory.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/memory.py) 存下報告，貼出最終更新，並關閉 runtime。下一個
+事故可以透過 `recall_incidents` 找到那份報告。
 
-Cleanup must attempt both resources even if one operation fails:
+清理時，即使其中一個操作失敗，兩個資源都必須嘗試清理：
 
 ```python
 try:
@@ -245,12 +252,12 @@ finally:
     await asyncio.to_thread(container.remove, force=True)
 ```
 
-The app also attempts cleanup after investigation failures and on shutdown.
-Close the OpenAI client after all incident runtimes have been released.
+調查失敗後和關閉時，app 也會嘗試清理。
+要等所有事故 runtime 都釋放後，才關閉 OpenAI client。
 
-### Expected result
+### 預期結果
 
-The bundled alert supplies evidence for a report like this; wording will vary:
+內建的警報提供的證據會產生像這樣的報告，措辭會有差異：
 
 ```text
 SEV-1: Checkout API error rate reached 18.7%
@@ -262,18 +269,18 @@ History: INC-0931 recorded a similar pool exhaustion incident.
 Proposal: Roll back to 2026.08.26.3, pending responder approval.
 ```
 
-Check that the findings cite the sample evidence and that approval records a
-decision without contacting a deployment system.
+確認發現有引用範例證據，且核准只記錄
+決定，不會連到部署系統。
 
-## Connect incident alerts
+## 串接事故警報
 
-Send incident webhooks through your authenticated ingress to:
+透過你已驗證的 ingress，把事故 webhook 送到：
 
 ```text
 https://your-app.example/webhooks/alerts
 ```
 
-For Alertmanager:
+Alertmanager 的設定：
 
 ```yaml
 receivers:
@@ -285,43 +292,43 @@ receivers:
             credentials: your-shared-token
 ```
 
-Set `ALERT_WEBHOOK_TOKEN` to the same value. Alertmanager sends it as a bearer token. Alert fingerprints deduplicate active incidents; a later alert can start a new investigation after the earlier incident is resolved.
+把 `ALERT_WEBHOOK_TOKEN` 設成同一個值。Alertmanager 會把它當 bearer token 送出。警報 fingerprint 用來對進行中的事故去重；先前的事故解決後，之後的警報可以開始新的調查。
 
-For PagerDuty, subscribe to `incident.triggered` and `incident.resolved`, and match the PagerDuty service name to an entry in `operations.json`. For incident.io, subscribe to `public_incident.incident_created_v2` and `public_incident.incident_status_updated_v2`; set `INCIDENT_SERVICE` to the affected service for that subscription. Adapt this mapping for multi-service incidents.
+PagerDuty 要訂閱 `incident.triggered` 和 `incident.resolved`，並把 PagerDuty 的服務名稱對應到 `operations.json` 裡的一筆。incident.io 要訂閱 `public_incident.incident_created_v2` 和 `public_incident.incident_status_updated_v2`；把 `INCIDENT_SERVICE` 設成該訂閱所影響的服務。多服務事故需要自行調整這個對應。
 
-The example parses these provider payloads but does not verify their native signatures. Your ingress must verify PagerDuty or incident.io signatures before forwarding them with `ALERT_WEBHOOK_TOKEN`. Slack signatures are verified by the application.
+範例會解析這些供應商的 payload，但不會驗證它們的原生簽章。你的 ingress 必須先驗證 PagerDuty 或 incident.io 簽章，再用 `ALERT_WEBHOOK_TOKEN` 轉發。Slack 簽章由應用程式驗證。
 
-## Use AWS skills
+## 使用 AWS skills
 
-The [Dockerfile](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/Dockerfile) installs the Codex CLI and all [AWS Agent Toolkit skills](https://github.com/aws/agent-toolkit-for-aws/tree/main/skills) during the image build. From `/workspace`, it runs:
+[Dockerfile](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/Dockerfile) 在建置 image 時安裝 Codex CLI 和所有 [AWS Agent Toolkit skills](https://github.com/aws/agent-toolkit-for-aws/tree/main/skills)。在 `/workspace` 底下，它會執行：
 
 ```bash
 npx --yes skills add aws/agent-toolkit-for-aws/skills \
   --agent codex --copy --yes
 ```
 
-The skills are copied to `/workspace/.agents/skills` for automatic discovery. The agent selects relevant skills and loads their instructions as needed. Ask in the incident's Slack thread: "List the installed AWS skills and explain which ones help investigate Redis connection exhaustion."
+skills 會被複製到 `/workspace/.agents/skills` 供自動探索。agent 會挑選相關的 skills，並視需要載入它們的指示。你可以在事故的 Slack thread 裡問：「List the installed AWS skills and explain which ones help investigate Redis connection exhaustion.」
 
-Skills provide instructions, not AWS access. No cloud credentials are needed to read them. The sample evidence tools stay in the application; use read-only integrations for live AWS evidence. Rebuild the image to refresh its skills, and review third-party instructions before granting production access.
+Skills 提供的是指示，不是 AWS 存取權。讀它們不需要雲端憑證。範例的 evidence tool 留在應用程式裡；要取得真實 AWS 證據，請用唯讀整合。要更新 skills 就重建 image，並且在給予 production 存取權之前先檢查第三方的指示。
 
-## Connect GitHub
+## 串接 GitHub
 
-Set `GITHUB_TOKEN` and `GITHUB_REPOSITORY` in `.env`. Use a fine-grained token limited to the affected repository, with read access to **Contents** and **Pull requests**.
+在 `.env` 設定 `GITHUB_TOKEN` 和 `GITHUB_REPOSITORY`。使用只限於受影響 repo 的 fine-grained token，並給予 **Contents** 和 **Pull requests** 的讀取權限。
 
-The app connects to [GitHub MCP](https://github.com/github/github-mcp-server) through its read-only endpoint, `https://api.githubcopilot.com/mcp/readonly`. Its allowlist contains five tools: `list_commits`, `get_commit`, `list_pull_requests`, `pull_request_read`, and `get_file_contents`. Agents API calls these directly; no application handler or GitHub CLI installation is needed.
+app 透過唯讀 endpoint `https://api.githubcopilot.com/mcp/readonly` 連到 [GitHub MCP](https://github.com/github/github-mcp-server)。它的 allowlist 有五個 tool：`list_commits`、`get_commit`、`list_pull_requests`、`pull_request_read` 和 `get_file_contents`。Agents API 直接呼叫這些，不需要應用程式 handler，也不用安裝 GitHub CLI。
 
-GitHub credentials stay outside the sandbox. If the configured MCP server cannot connect, the session fails rather than silently skipping repository inspection. Without `GITHUB_TOKEN`, `get_service_evidence` returns the bundled sample PRs and commits instead.
+GitHub 憑證留在 sandbox 外面。如果設定的 MCP server 連不上，session 會失敗，而不是默默略過 repo 檢查。沒有 `GITHUB_TOKEN` 時，`get_service_evidence` 會改回傳內建的範例 PR 和 commit。
 
-## Connect AWS
+## 串接 AWS
 
-The [AWS Agent Toolkit](https://github.com/aws/agent-toolkit-for-aws) includes observability skills and an AWS DevOps Agent MCP server for infrastructure investigations. Uncomment `DEVOPS_AGENT_REGION` and `DEVOPS_AGENT_TOKEN` in `examples/agents_api/apps/sev_bot/.env`:
+[AWS Agent Toolkit](https://github.com/aws/agent-toolkit-for-aws) 包含 observability skills 和給基礎設施調查用的 AWS DevOps Agent MCP server。把 `examples/agents_api/apps/sev_bot/.env` 裡的 `DEVOPS_AGENT_REGION` 和 `DEVOPS_AGENT_TOKEN` 取消註解：
 
 ```text
 DEVOPS_AGENT_REGION=us-east-1
 DEVOPS_AGENT_TOKEN=...
 ```
 
-The application registers the service-connected MCP server automatically:
+應用程式會自動註冊服務串接的 MCP server：
 
 ```python
 {
@@ -336,34 +343,44 @@ The application registers the service-connected MCP server automatically:
 }
 ```
 
-Without AWS MCP configured, `get_service_evidence` includes bundled CloudWatch, ECS, and ElastiCache telemetry. With `DEVOPS_AGENT_TOKEN` set, it omits that sample AWS data so the agent uses the MCP server for AWS evidence. The service metrics, logs, and deployments remain sample data until you connect your monitoring system.
+沒設定 AWS MCP 時，`get_service_evidence` 會包含內建的 CloudWatch、ECS 和 ElastiCache telemetry。設了 `DEVOPS_AGENT_TOKEN` 後，它會省略那些範例 AWS 資料，讓 agent 用 MCP server 取得 AWS 證據。在你接上自己的監控系統之前，服務 metrics、logs 和 deployments 仍然是範例資料。
 
-## Incident memory
+## 事故記憶
 
-Memory works at two levels:
+記憶分兩層：
 
-- **Within an incident:** The alert fingerprint and Slack thread map to one Agents API session and sandbox. Follow-up questions retain previous evidence, tool results, investigation context, and workspace files.
-- **Across incidents:** `recall_incidents` searches prior reports for related symptoms, root causes, and resolutions. A resolved alert saves findings to `examples/agents_api/apps/sev_bot/incident_memory.json` before the session closes. The app reloads this file on startup, or starts with `incident_history.json` when no saved file exists.
+- **事故內：** 警報 fingerprint 和 Slack thread 對應一個 Agents API session 和 sandbox。後續追問會保留先前的證據、tool 結果、調查脈絡和 workspace 檔案。
+- **跨事故：** `recall_incidents` 會搜尋過去的報告，找相關的症狀、根本原因和解決方式。警報解決時，會在 session 關閉前把發現存到 `examples/agents_api/apps/sev_bot/incident_memory.json`。app 啟動時會重新載入這個檔案，沒有存檔時則從 `incident_history.json` 開始。
 
-The generated memory file is ignored by Git and replaced atomically on each save. Deleting it resets history to the bundled samples. Run one app process against this file; it is not a shared database.
+產生的記憶檔不進 Git，每次存檔都以原子方式取代。刪掉它會把歷史重設成內建範例。這個檔案只跑一個 app process，它不是共用資料庫。
 
-Only resolved-incident history survives restarts. Active Slack threads, session IDs, pending approvals, and sandbox handles still live in memory. Approving a rollback records the decision; this example never deploys or changes production infrastructure.
+只有已解決事故的歷史能撐過重啟。進行中的 Slack thread、session ID、待處理的核准和 sandbox handle 仍然只存在記憶體。核准 rollback 只會記錄決定，這個範例從不部署或更動 production 基礎設施。
 
-## Investigation tools
+## 調查 tool
 
-- `get_service_evidence` returns metrics, recent error logs, and deployments together.
-- `recall_incidents` retrieves relevant incident history and prior mitigations.
-- `propose_rollback` requests human approval without changing production.
+- `get_service_evidence` 一次回傳 metrics、近期錯誤 log 和 deployments。
+- `recall_incidents` 取得相關的事故歷史和先前的緩解方式。
+- `propose_rollback` 請求人工核准，不會更動 production。
 
-Only the first two have automatic handlers. The webhook and Slack callback complete `propose_rollback` after a responder decides. GitHub and AWS use MCP integrations; runbooks are files in the sandbox.
+只有前兩個有自動 handler。值班人員決定後，由 webhook 和 Slack callback 完成 `propose_rollback`。GitHub 和 AWS 用 MCP 整合；runbook 是 sandbox 裡的檔案。
 
-## Files
+## 檔案
 
-- [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/main.py): Webhook routes and application startup.
-- [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/agent.py): Incident investigation, approval, resolution, and cleanup.
-- [alerts.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/alerts.py): Alert normalization and background task scheduling.
-- [tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/tools.py): Service evidence and GitHub/AWS MCP tools.
-- [slack.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/slack.py): Slack messages, buttons, and callback verification.
-- [memory.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/memory.py): Incident history loading, search, and atomic saves.
+- [main.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/main.py)：Webhook 路由和應用程式啟動。
+- [agent.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/agent.py)：事故調查、核准、解決和清理。
+- [alerts.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/alerts.py)：警報正規化和背景任務排程。
+- [tools.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/tools.py)：服務證據和 GitHub/AWS MCP tool。
+- [slack.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/slack.py)：Slack 訊息、按鈕和 callback 驗證。
+- [memory.py](https://github.com/openai/openai-cookbook/blob/main/examples/agents_api/apps/sev_bot/memory.py)：事故歷史的載入、搜尋和原子存檔。
 
-<!-- tutor:summary -->
+## 重點整理
+- 警報 fingerprint 對應一個事故、一個 Slack thread、一個 agent session 和一個 sandbox，後續追問都重用它們。
+- 有副作用的動作（`propose_rollback`）刻意不給自動 handler，函式呼叫停在待處理狀態，由 webhook 和人工決定來完成。
+- 憑證分離：sandbox 只拿受限的 executor key，GitHub 和 AWS 憑證留在 MCP 那一側。
+- 記憶有兩層：事故內靠 session，跨事故靠 `recall_incidents` 搜尋已解決事故的報告。
+- 這個範例預設用範例資料且從不真的部署，上 production 前要持久化待處理動作並驗證供應商簽章。
+
+## 練習
+1. 在 `incident_history.json` 加一筆你自編的過去事故，送一次範例事故，看 `recall_incidents` 會不會引用它。
+2. 照 `checkout-api.md` 的格式為另一個服務寫一份 runbook，並在 `operations.json` 加上對應項目。
+3. 仿照 `get_service_evidence` 新增一個唯讀 tool（例如查詢近期設定變更），註冊進 handler map，同時確認 `propose_rollback` 仍然沒有自動 handler。

@@ -1,30 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/Whisper_processing_guide.ipynb
 ---
 
-# Enhancing Whisper transcriptions: pre- & post-processing techniques
+# 強化 Whisper 逐字稿：前處理與後處理技巧
 
 > 原文：[examples/Whisper_processing_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Whisper_processing_guide.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+教你在送進 Whisper 之前先把音檔修剪、切段，轉完逐字稿後再補標點、修正產品術語、處理 Unicode 問題，讓逐字稿更清楚。範例音檔是一段 ChatGPT 寫的虛構財報電話會議，由作者朗讀。
+
+## 學完你會
+
+- 用 PyDub 偵測並裁掉音檔開頭的靜音，再把音檔切成多段
+- 寫後處理函式：移除非 ASCII 字元、補格式與標點、修正術語（例如 "five two nine" 改成 "529"）
+- 把各段逐字稿串起來，得到整份處理過的結果
+
+## 開跑前
+
+- OpenAI API key（呼叫 Whisper 轉錄）
+- 安裝 PyDub，並準備一個音檔
+
+這份 notebook 是改善 Whisper 逐字稿的指南。我們會透過修剪和切段整理音訊資料，提升 Whisper 的轉錄品質。轉錄完之後，再修飾輸出：補標點、調整產品術語（例如把 'five two nine' 改成 '529'）、減輕 Unicode 問題。這些做法能讓逐字稿更清楚，但別忘了，依你自己的使用情境客製可能更有幫助。
 
 
-This notebook offers a guide to improve the Whisper's transcriptions. We'll streamline your audio data via trimming and segmentation, enhancing Whisper's transcription quality. After transcriptions, we'll refine the output by adding punctuation, adjusting product terminology (e.g., 'five two nine' to '529'), and mitigating Unicode issues. These strategies will help improve the clarity of your transcriptions, but remember, customization based on your unique use-case may be beneficial.
 
+## 設定
 
+先匯入幾個函式庫：
 
-## Setup
+- [PyDub](http://pydub.com/) 是簡單好用的 Python 音訊處理函式庫，可以切片、串接、匯出音檔。
 
-To get started let's import a few different libraries:
+- `IPython.display` 模組的 `Audio` 類別可以建立音訊控制元件，在 Jupyter notebook 裡播放聲音，直接在 notebook 裡播放音訊資料很方便。
 
-- [PyDub](http://pydub.com/) is a simple and easy-to-use Python library for audio processing tasks such as slicing, concatenating, and exporting audio files.
-
-- The `Audio` class from the `IPython.display` module allows you to create an audio control that can play sound in Jupyter notebooks, providing a straightforward way to play audio data directly in your notebook.
-
-- For our audio file, we'll use a fictional earnings call written by ChatGPT and read aloud by the author.This audio file is relatively short, but hopefully provides you with an illustrative idea of how these pre and post processing steps can be applied to any audio file. 
+- 音檔方面，我們用一段 ChatGPT 寫的虛構財報電話會議，由作者朗讀。這個音檔相對較短，但希望能讓你清楚看到這些前處理和後處理步驟怎麼套用到任何音檔。
 
 ```python
 from openai import OpenAI
@@ -58,9 +70,9 @@ urllib.request.urlretrieve(earnings_call_remote_filepath, earnings_call_filepath
     ('data/EarningsCall.wav', <http.client.HTTPMessage at 0x11be41f50>)
     ```
 
-At times, files with long silences at the beginning can cause Whisper to transcribe the audio incorrectly. We'll use Pydub to detect and trim the silence. 
+有時候開頭有很長靜音的檔案，會讓 Whisper 轉錄錯誤。我們用 Pydub 偵測並修剪靜音。
 
-Here, we've set the decibel threshold of 20. You can change this if you would like.
+這裡把分貝閾值設成 20，你可以依需要調整。
 
 ```python
 # Function to detect leading silence
@@ -97,9 +109,9 @@ def transcribe_audio(file,output_dir):
         return transcription.text
 ```
 
-At times, we've seen unicode character injection in transcripts, removing any non-ASCII characters should help mitigate this issue.
+我們有時會看到逐字稿裡被插入 unicode 字元，移除所有非 ASCII 字元應該能減輕這個問題。
 
-Keep in mind you should not use this function if you are transcribing in Greek, Cyrillic, Arabic, Chinese, etc
+注意：如果你轉錄的是希臘文、斯拉夫文、阿拉伯文、中文等語言，就不要用這個函式。
 
 ```python
 # Define function to remove non-ascii characters
@@ -107,7 +119,7 @@ def remove_non_ascii(text):
     return ''.join(i for i in text if ord(i)<128)
 ```
 
-This function will add formatting and punctuation to our transcript. Whisper generates a transcript with punctuation but without formatting.
+這個函式會替逐字稿加上格式和標點。Whisper 產生的逐字稿有標點，但沒有格式。
 
 ```python
 # Define function to add punctuation
@@ -134,7 +146,7 @@ def punctuation_assistant(ascii_transcript):
     return response
 ```
 
-Our audio file is a recording from a fake earnings call that includes a lot of financial products. This function can help ensure that if Whisper transcribes these financial product names incorrectly, that they can be corrected. 
+我們的音檔是一場虛構財報電話會議的錄音，裡面有很多金融產品。這個函式可以確保 Whisper 把金融產品名稱轉錯的時候，能被修正回來。
 
 ```python
 # Define function to fix product mispellings
@@ -172,7 +184,7 @@ represent specific financial products (like 'twenty three percent'), these shoul
     return response
 ```
 
-This function will create a new file with 'trimmed' appended to the original file name
+這個函式會建立一個新檔案，檔名是在原檔名後面加上 'trimmed'
 
 ```python
 # Trim the start of the original audio file
@@ -183,7 +195,7 @@ trimmed_audio = trim_start(earnings_call_filepath)
 trimmed_audio, trimmed_filename = trim_start(earnings_call_filepath)
 ```
 
-Our fake earnings report audio file is fairly short in length, so we'll adjust the segments accordingly. Keep in mind you can adjust the segment length as you need.
+我們的假財報音檔長度偏短，所以切段的設定要配合調整。切段長度可以依需要調整。
 
 ```python
 # Segment audio
@@ -304,4 +316,15 @@ print(final_transcript)
     12. Q3 -> third quarter (Q3)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 前處理動音檔（修剪靜音、切段），後處理動文字（標點、術語、字元），兩邊都有改善空間。
+- 開頭太長的靜音會讓 Whisper 轉錯，先裁掉比較穩。
+- 移除非 ASCII 字元能擋掉怪字元，但非英文語言不能用。
+- 術語修正是依你的領域客製的，換一個領域就要換一份對照。
+
+## 練習
+
+1. 改分貝閾值（目前是 20），聽聽修剪結果有什麼不同。
+2. 在術語修正的函式裡加一個你自己領域的詞（例如把某個縮寫念法對應回正確寫法）。
+3. 調整切段長度，比較不同長度下各段逐字稿的銜接是否順。

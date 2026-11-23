@@ -1,39 +1,49 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/tair/QA_with_Langchain_Tair_and_OpenAI.ipynb
 ---
 
-# Question answering with Langchain, Tair and OpenAI
+# 用 Langchain、Tair 和 OpenAI 做問答
 
 > 原文：[examples/vector_databases/tair/QA_with_Langchain_Tair_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/tair/QA_with_Langchain_Tair_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Langchain 搭配 Tair（當知識庫）和 OpenAI embedding，做出一個問答系統。從存資料、檢索相關內容到讓 LLM 根據內容回答，全部簡化成呼叫 Langchain 的方法。
 
-This notebook presents how to implement a Question Answering system with Langchain, Tair as a knowledge based and OpenAI embeddings. If you are not familiar with Tair, it’s better to check out the [Getting_started_with_Tair_and_OpenAI.ipynb](Getting_started_with_Tair_and_OpenAI.md) notebook.
+## 學完你會
+- 用 Langchain 把一批答案存進 Tair，建立知識庫
+- 建立 `stuff` 類型的 QA chain，讓問題自動 embed、檢索，再交給 LLM 回答
+- 自訂 prompt template 改變 LLM 的回答行為
 
-This notebook presents an end-to-end process of:
-- Calculating the embeddings with OpenAI API.
-- Storing the embeddings in an Tair instance to build a knowledge base.
-- Converting raw text query to an embedding with OpenAI API.
-- Using Tair to perform the nearest neighbour search in the created collection to find some context.
-- Asking LLM to find the answer in a given context.
+## 開跑前
+- 一個 Tair 雲端實例，以及它的 `TAIR_URL`
+- OpenAI API key
 
-All the steps will be simplified to calling some corresponding Langchain methods.
+這個 notebook 說明如何用 Langchain、以 Tair 當知識庫，加上 OpenAI embedding，實作一個問答系統。如果你不熟悉 Tair，建議先看 [Getting_started_with_Tair_and_OpenAI.ipynb](Getting_started_with_Tair_and_OpenAI.md)。
 
-## Prerequisites
-For the purposes of this exercise we need to prepare a couple of things:
-[Tair cloud instance](https://www.alibabacloud.com/help/en/tair/latest/what-is-tair).
-[Langchain](https://github.com/hwchase17/langchain) as a framework.
-An OpenAI API key.
+這個 notebook 呈現一個端到端的流程：
+- 用 OpenAI API 計算 embedding。
+- 把 embedding 存進 Tair 實例，建立知識庫。
+- 用 OpenAI API 把原始文字 query 轉成 embedding。
+- 用 Tair 在建好的 collection 裡做最近鄰搜尋，找出一些上下文。
+- 請 LLM 在給定的上下文中找出答案。
 
-### Install requirements
-This notebook requires the following Python packages: `openai`, `tiktoken`, `langchain` and `tair`.
-- `openai` provides convenient access to the OpenAI API.
-- `tiktoken` is a fast BPE tokeniser for use with OpenAI's models.
-- `langchain` helps us to build applications with LLM more easily.
-- `tair` library is used to interact with the tair vector database.
+所有步驟都會簡化成呼叫相應的 Langchain 方法。
+
+## 前置條件
+要做這個練習，需要準備幾樣東西：
+[Tair 雲端實例](https://www.alibabacloud.com/help/en/tair/latest/what-is-tair)。
+[Langchain](https://github.com/hwchase17/langchain) 當框架。
+一把 OpenAI API key。
+
+### 安裝需求套件
+這個 notebook 需要以下 Python 套件：`openai`、`tiktoken`、`langchain` 和 `tair`。
+- `openai` 提供方便的 OpenAI API 存取方式。
+- `tiktoken` 是給 OpenAI 模型用的快速 BPE tokeniser。
+- `langchain` 幫助我們更容易地建立 LLM 應用。
+- `tair` 函式庫用來跟 tair vector database 互動。
 
 ```python
 ! pip install openai tiktoken langchain tair
@@ -79,12 +89,12 @@ This notebook requires the following Python packages: `openai`, `tiktoken`, `lan
     WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
     ```
 
-### Prepare your OpenAI API key
-The OpenAI API key is used for vectorization of the documents and queries.
+### 準備 OpenAI API key
+OpenAI API key 用於文件和 query 的向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://platform.openai.com/account/api-keys ).
+如果你還沒有 OpenAI API key，可以到 [https://platform.openai.com/account/api-keys ) 取得。
 
-Once you get your key, please add it by getpass.
+拿到 key 後，請用 getpass 加入。
 
 ```python
 import getpass
@@ -98,8 +108,8 @@ openai_api_key = getpass.getpass("Input your OpenAI API key:")
     Input your OpenAI API key:········
     ```
 
-### Prepare your Tair URL
-To build the Tair connection, you need to have `TAIR_URL`.
+### 準備 Tair URL
+要建立 Tair 連線，你需要 `TAIR_URL`。
 
 ```python
 # The format of url: redis://[[username]:[password]]@localhost:6379/0
@@ -112,8 +122,8 @@ TAIR_URL = getpass.getpass("Input your tair url:")
     Input your tair url:········
     ```
 
-## Load data
-In this section we are going to load the data containing some natural questions and answers to them. All the data will be used to create a Langchain application with Tair being the knowledge base.
+## 載入資料
+這一段會載入一批自然語言問題與答案的資料。所有資料都會用來建立以 Tair 當知識庫的 Langchain 應用。
 
 ```python
 import wget
@@ -165,9 +175,9 @@ print(answers[0])
     No . overall No. in season Title Directed by Written by Original air date U.S. viewers ( millions ) 100 `` Mercy '' Greg Nicotero Scott M. Gimple October 22 , 2017 ( 2017 - 10 - 22 ) 11.44 Rick , Maggie , and Ezekiel rally their communities together to take down Negan . Gregory attempts to have the Hilltop residents side with Negan , but they all firmly stand behind Maggie . The group attacks the Sanctuary , taking down its fences and flooding the compound with walkers . With the Sanctuary defaced , everyone leaves except Gabriel , who reluctantly stays to save Gregory , but is left behind when Gregory abandons him . Surrounded by walkers , Gabriel hides in a trailer , where he is trapped inside with Negan . 101 `` The Damned '' Rosemary Rodriguez Matthew Negrete & Channing Powell October 29 , 2017 ( 2017 - 10 - 29 ) 8.92 Rick 's forces split into separate parties to attack several of the Saviors ' outposts , during which many members of the group are killed ; Eric is critically injured and rushed away by Aaron . Jesus stops Tara and Morgan from executing a group of surrendered Saviors . While clearing an outpost with Daryl , Rick is confronted and held at gunpoint by Morales , a survivor he met in the initial Atlanta camp , who is now with the Saviors . 102 `` Monsters '' Greg Nicotero Matthew Negrete & Channing Powell November 5 , 2017 ( 2017 - 11 - 05 ) 8.52 Daryl finds Morales threatening Rick and kills him ; the duo then pursue a group of Saviors who are transporting weapons to another outpost . Gregory returns to Hilltop , and after a heated argument , Maggie ultimately allows him back in the community . Eric dies from his injuries , leaving Aaron distraught . Despite Tara and Morgan 's objections , Jesus leads the group of surrendered Saviors to Hilltop . Ezekiel 's group attacks another Savior compound , during which several Kingdommers are shot while protecting Ezekiel . 103 `` Some Guy '' Dan Liu David Leslie Johnson November 12 , 2017 ( 2017 - 11 - 12 ) 8.69 Ezekiel 's group is overwhelmed by the Saviors , who kill all of them except for Ezekiel himself and Jerry . Carol clears the inside of the compound , killing all but two Saviors , who almost escape but are eventually caught by Rick and Daryl . En route to the Kingdom , Ezekiel , Jerry , and Carol are surrounded by walkers , but Shiva sacrifices herself to save them . The trio returns to the Kingdom , where Ezekiel 's confidence in himself as a leader has diminished . 104 5 `` The Big Scary U '' Michael E. Satrazemis Story by : Scott M. Gimple & David Leslie Johnson & Angela Kang Teleplay by : David Leslie Johnson & Angela Kang November 19 , 2017 ( 2017 - 11 - 19 ) 7.85 After confessing their sins to each other , Gabriel and Negan manage to escape from the trailer . Simon and the other lieutenants grow suspicious of each other , knowing that Rick 's forces must have inside information . The workers in the Sanctuary become increasingly frustrated with their living conditions , and a riot nearly ensues , until Negan returns and restores order . Gabriel is locked in a cell , where Eugene discovers him sick and suffering . Meanwhile , Rick and Daryl argue over how to take out the Saviors , leading Daryl to abandon Rick . 105 6 `` The King , the Widow , and Rick '' John Polson Angela Kang & Corey Reed November 26 , 2017 ( 2017 - 11 - 26 ) 8.28 Rick visits Jadis in hopes of convincing her to turn against Negan ; Jadis refuses , and locks Rick in a shipping container . Carl encounters Siddiq in the woods and recruits him to Alexandria . Daryl and Tara plot to deviate from Rick 's plans by destroying the Sanctuary . Ezekiel isolates himself at the Kingdom , where Carol tries to encourage him to be the leader his people need . Maggie has the group of captured Saviors placed in a holding area and forces Gregory to join them as punishment for betraying Hilltop . 106 7 `` Time for After '' Larry Teng Matthew Negrete & Corey Reed December 3 , 2017 ( 2017 - 12 - 03 ) 7.47 After learning of Dwight 's association with Rick 's group , Eugene affirms his loyalty to Negan and outlines a plan to get rid of the walkers surrounding the Sanctuary . With help from Morgan and Tara , Daryl drives a truck through the Sanctuary 's walls , flooding its interior with walkers , killing many Saviors . Rick finally convinces Jadis and the Scavengers to align with him , and they plan to force the Saviors to surrender . However , when they arrive at the Sanctuary , Rick is horrified to see the breached walls and no sign of the walker herd . 107 8 `` How It 's Gotta Be '' Michael E. Satrazemis David Leslie Johnson & Angela Kang December 10 , 2017 ( 2017 - 12 - 10 ) 7.89 Eugene 's plan allows the Saviors to escape , and separately , the Saviors waylay the Alexandria , Hilltop , and Kingdom forces . The Scavengers abandon Rick , after which he returns to Alexandria . Ezekiel ensures that the Kingdom residents are able to escape before locking himself in the community with the Saviors . Eugene aids Gabriel and Doctor Carson in escaping the Sanctuary in order to ease his conscience . Negan attacks Alexandria , but Carl devises a plan to allow the Alexandria residents to escape into the sewers . Carl reveals he was bitten by a walker while escorting Siddiq to Alexandria . 108 9 `` Honor '' Greg Nicotero Matthew Negrete & Channing Powell February 25 , 2018 ( 2018 - 02 - 25 ) 8.28 After the Saviors leave Alexandria , the survivors make for the Hilltop while Rick and Michonne stay behind to say their final goodbyes to a dying Carl , who pleads with Rick to build a better future alongside the Saviors before killing himself . In the Kingdom , Morgan and Carol launch a rescue mission for Ezekiel . Although they are successful and retake the Kingdom , the Saviors ' lieutenant Gavin is killed by Benjamin 's vengeful brother Henry . 109 10 `` The Lost and the Plunderers '' TBA TBA March 4 , 2018 ( 2018 - 03 - 04 ) TBD 110 11 `` Dead or Alive Or '' TBA TBA March 11 , 2018 ( 2018 - 03 - 11 ) TBD 111 12 `` The Key '' TBA TBA March 18 , 2018 ( 2018 - 03 - 18 ) TBD
     ```
 
-## Chain definition
+## 定義 Chain
 
-Langchain is already integrated with Tair and performs all the indexing for given list of documents. In our case we are going to store the set of answers we have.
+Langchain 已經整合了 Tair，並會替給定的文件清單做完所有 indexing。這裡我們要存的是手上的那組答案。
 
 ```python
 from langchain.vectorstores import Tair
@@ -180,7 +190,7 @@ doc_store = Tair.from_texts(
 )
 ```
 
-At this stage all the possible answers are already stored in Tair, so we can define the whole QA chain.
+到這個階段，所有可能的答案都已經存進 Tair，所以可以定義整個 QA chain。
 
 ```python
 llm = OpenAI(openai_api_key=openai_api_key)
@@ -199,9 +209,9 @@ qa = VectorDBQA.from_chain_type(
       warnings.warn(
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into Tair we can start asking some questions. A question will be automatically vectorized by OpenAI model, and the created vector will be used to find some possibly matching answers in Tair. Once retrieved, the most similar answers will be incorporated into the prompt sent to OpenAI Large Language Model.
+資料放進 Tair 之後，就可以開始問問題了。問題會自動被 OpenAI 模型向量化，產生的向量會用來在 Tair 找出可能符合的答案。取回之後，最相似的答案會被放進送給 OpenAI 大型語言模型的 prompt 裡。
 
 
 ```python
@@ -239,9 +249,9 @@ for question in selected_questions:
      I don't know.
     ```
 
-### Custom prompt templates
+### 自訂 prompt template
 
-The `stuff` chain type in Langchain uses a specific prompt with question and context documents incorporated. This is what the default prompt looks like:
+Langchain 的 `stuff` chain type 使用一個特定的 prompt，裡面放入問題和上下文文件。預設的 prompt 長這樣：
 
 ```text
 Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
@@ -250,13 +260,13 @@ Question: {question}
 Helpful Answer:
 ```
 
-We can, however, provide our prompt template and change the behaviour of the OpenAI LLM, while still using the `stuff` chain type. It is important to keep `{context}` and `{question}` as placeholders.
+不過我們可以提供自己的 prompt template，改變 OpenAI LLM 的行為，同時仍然使用 `stuff` chain type。重要的是要保留 `{context}` 和 `{question}` 這兩個 placeholder。
 
-#### Experimenting with custom prompts
+#### 試試自訂 prompt
 
-We can try using a different prompt template, so the model:
-1. Responds with a single-sentence answer if it knows it.
-2. Suggests a random song title if it doesn't know the answer to our question.
+我們可以試試不同的 prompt template，讓模型：
+1. 如果知道答案，就用一句話回答。
+2. 如果不知道我們問題的答案，就推薦一個隨機的歌名。
 
 ```python
 from langchain.prompts import PromptTemplate
@@ -313,4 +323,13 @@ for question in random.choices(questions, k=5):
     You must be at least 18 years old to get a tattoo in Utah.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- RAG 問答的流程是：embed、存進向量庫、embed query、檢索最相近內容、讓 LLM 根據內容回答。
+- Langchain 把這些步驟包起來，你只要建 vector store 和 chain。
+- `stuff` chain 就是把檢索到的文件全部塞進同一個 prompt。
+- 自訂 prompt 可以改變回答風格，但一定要保留 `{context}` 和 `{question}`。
+
+## 練習
+1. 換幾個自己的問題丟給 QA chain，看它是否能從知識庫找到答案。
+2. 修改自訂 prompt，讓模型不知道時回答「我不知道」，而不是推薦歌名。
+3. 調整檢索時回傳的文件數量（retriever 的 k），觀察答案品質和 prompt 長度怎麼變。

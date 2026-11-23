@@ -1,22 +1,31 @@
 ---
-translated: false
+translated: true
 source: examples/azure/chat.ipynb
 ---
 
-# Azure Chat Completions example (preview)
+# Azure Chat Completions 範例（preview）
 
 > 原文：[examples/azure/chat.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/azure/chat.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範用 Azure OpenAI 服務做 chat completions，包含兩種驗證方式、一般與 streaming 呼叫，以及怎麼處理 content filtering。
 
+## 學完你會
+- 用 API key 或 Azure Active Directory 設定 `AzureOpenAI` client
+- 用 deployment 名稱建立一般和 streaming 的 chat completion
+- 處理被 content filter 擋下的 prompt，並讀取回應中的 content filter 結果
 
-This example will cover chat completions using the Azure OpenAI service. It also includes information on content filtering.
+## 開跑前
+- 一個 Azure OpenAI 資源，以及在 Azure OpenAI Studio 建立好的模型 deployment
+- 該資源的 API key 和 endpoint（或使用 Azure Active Directory 驗證）
 
-## Setup
+這個範例會介紹如何用 Azure OpenAI 服務做 chat completions，也包含內容過濾 (content filtering) 的資訊。
 
-First, we install the necessary dependencies and import the libraries we will be using.
+## 設定
+
+首先安裝需要的相依套件，並匯入我們會用到的函式庫。
 
 ```python
 ! pip install "openai>=1.0.0,<2.0.0"
@@ -31,17 +40,17 @@ import dotenv
 dotenv.load_dotenv()
 ```
 
-### Authentication
+### 驗證
 
-The Azure OpenAI service supports multiple authentication mechanisms that include API keys and Azure Active Directory token credentials.
+Azure OpenAI 服務支援多種驗證機制，包括 API key 和 Azure Active Directory token 憑證。
 
 ```python
 use_azure_active_directory = False  # Set this flag to True if you are using Azure Active Directory
 ```
 
-#### Authentication using API key
+#### 用 API key 驗證
 
-To set up the OpenAI SDK to use an *Azure API Key*, we need to set `api_key` to a key associated with your endpoint (you can find this key in *"Keys and Endpoints"* under *"Resource Management"* in the [Azure Portal](https://portal.azure.com)). You'll also find the endpoint for your resource here.
+要讓 OpenAI SDK 使用 *Azure API Key*，需要把 `api_key` 設成你的 endpoint 對應的 key（可以在 [Azure Portal](https://portal.azure.com) 的 *"Resource Management"* 底下的 *"Keys and Endpoints"* 找到）。你也會在那裡找到資源的 endpoint。
 
 ```python
 if not use_azure_active_directory:
@@ -55,10 +64,10 @@ if not use_azure_active_directory:
     )
 ```
 
-#### Authentication using Azure Active Directory
-Let's now see how we can authenticate via Azure Active Directory. We'll start by installing the `azure-identity` library. This library will provide the token credentials we need to authenticate and help us build a token credential provider through the `get_bearer_token_provider` helper function. It's recommended to use `get_bearer_token_provider` over providing a static token to `AzureOpenAI` because this API will automatically cache and refresh tokens for you. 
+#### 用 Azure Active Directory 驗證
+現在來看怎麼透過 Azure Active Directory 驗證。先安裝 `azure-identity` 函式庫。這個函式庫提供驗證所需的 token 憑證，並透過 `get_bearer_token_provider` 這個 helper 函式，幫我們建立 token 憑證 provider。建議使用 `get_bearer_token_provider`，而不是給 `AzureOpenAI` 一個靜態 token，因為這個 API 會自動幫你快取並更新 token。 
 
-For more information on how to set up Azure Active Directory authentication with Azure OpenAI, see the [documentation](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity).
+更多關於如何用 Azure OpenAI 設定 Azure Active Directory 驗證的資訊，請看[文件](https://learn.microsoft.com/azure/ai-services/openai/how-to/managed-identity)。
 
 ```python
 ! pip install "azure-identity>=1.15.0"
@@ -77,28 +86,28 @@ if use_azure_active_directory:
     )
 ```
 
-> Note: the AzureOpenAI infers the following arguments from their corresponding environment variables if they are not provided:
+> 注意：如果沒有提供這些參數，AzureOpenAI 會從對應的環境變數推斷：
 
-- `api_key` from `AZURE_OPENAI_API_KEY`
-- `azure_ad_token` from `AZURE_OPENAI_AD_TOKEN`
-- `api_version` from `OPENAI_API_VERSION`
-- `azure_endpoint` from `AZURE_OPENAI_ENDPOINT`
+- `api_key` 來自 `AZURE_OPENAI_API_KEY`
+- `azure_ad_token` 來自 `AZURE_OPENAI_AD_TOKEN`
+- `api_version` 來自 `OPENAI_API_VERSION`
+- `azure_endpoint` 來自 `AZURE_OPENAI_ENDPOINT`
 
 
-## Deployments
+## Deployment
 
-In this section we are going to create a deployment of a GPT model that we can use to create chat completions.
+這一段要建立一個 GPT 模型的 deployment，用來建立 chat completions。
 
-### Deployments: Create in the Azure OpenAI Studio
-Let's deploy a model to use with chat completions. Go to https://portal.azure.com, find your Azure OpenAI resource, and then navigate to the Azure OpenAI Studio. Click on the "Deployments" tab and then create a deployment for the model you want to use for chat completions. The deployment name that you give the model will be used in the code below.
+### Deployment：在 Azure OpenAI Studio 建立
+來部署一個要用在 chat completions 的模型。到 https://portal.azure.com，找到你的 Azure OpenAI 資源，然後進入 Azure OpenAI Studio。點選 "Deployments" 分頁，然後為你要用在 chat completions 的模型建立一個 deployment。你給模型取的 deployment 名稱，會用在下面的程式裡。
 
 ```python
 deployment = "" # Fill in the deployment name from the portal here
 ```
 
-## Create chat completions
+## 建立 chat completion
 
-Now let's create a chat completion using the client we built.
+現在用我們建好的 client 來建立 chat completion。
 
 ```python
 # For all possible arguments see https://platform.openai.com/docs/api-reference/chat-completions/create
@@ -116,9 +125,9 @@ response = client.chat.completions.create(
 print(f"{response.choices[0].message.role}: {response.choices[0].message.content}")
 ```
 
-### Create a streaming chat completion
+### 建立 streaming chat completion
 
-We can also stream the response.
+我們也可以用 stream 的方式取得回應。
 
 ```python
 response = client.chat.completions.create(
@@ -143,13 +152,13 @@ for chunk in response:
             print(delta.content, end="", flush=True)
 ```
 
-### Content filtering
+### 內容過濾 (Content filtering)
 
-Azure OpenAI service includes content filtering of prompts and completion responses. You can learn more about content filtering and how to configure it [here](https://learn.microsoft.com/azure/ai-services/openai/concepts/content-filter).
+Azure OpenAI 服務包含對 prompt 和 completion 回應的內容過濾。你可以在[這裡](https://learn.microsoft.com/azure/ai-services/openai/concepts/content-filter)進一步了解內容過濾以及怎麼設定。
 
-If the prompt is flagged by the content filter, the library will raise a `BadRequestError` exception with a `content_filter` error code. Otherwise, you can access the `prompt_filter_results` and `content_filter_results` on the response to see the results of the content filtering and what categories were flagged.
+如果 prompt 被內容過濾器標記，函式庫會丟出帶有 `content_filter` 錯誤碼的 `BadRequestError` 例外。否則，你可以從回應中存取 `prompt_filter_results` 和 `content_filter_results`，查看內容過濾的結果以及哪些類別被標記。
 
-#### Prompt flagged by content filter
+#### Prompt 被內容過濾器標記
 
 ```python
 import json
@@ -173,7 +182,7 @@ except openai.BadRequestError as e:
             print(f"{category}:\n filtered={details['filtered']}\n severity={details['severity']}")
 ```
 
-### Checking the result of the content filter
+### 檢查內容過濾的結果
 
 ```python
 messages = [
@@ -200,4 +209,13 @@ for category, details in completion_filter_result.items():
     print(f"{category}:\n filtered={details['filtered']}\n severity={details['severity']}")
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Azure OpenAI 用 `AzureOpenAI` client，驗證可用 API key 或 Azure AD token。
+- Azure AD 建議用 `get_bearer_token_provider`，會自動快取並更新 token。
+- 呼叫時填的是 deployment 名稱，不是模型名稱。
+- 被 content filter 擋下的 prompt 會丟 `BadRequestError`，沒被擋的回應則附帶各類別的過濾結果。
+
+## 練習
+1. 把 client 設定改成只靠環境變數（不傳參數），確認仍能呼叫成功。
+2. 把 streaming 範例改成逐 chunk 即時印出內容。
+3. 寫一段 try/except，抓到 `BadRequestError` 時判斷是不是 `content_filter` 錯誤碼，並印出友善訊息；沒被擋時印出每個類別的 `content_filter_results`。

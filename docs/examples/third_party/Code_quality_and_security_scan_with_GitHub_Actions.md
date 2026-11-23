@@ -1,67 +1,75 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md
 ---
 
-# Reasoning over Code Quality and Security in GitHub Pull Requests
+# 用 reasoning model 檢查 GitHub PR 的程式碼品質與安全性
 
 > 原文：[examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把 OpenAI 的 reasoning model 接進 GitHub Actions，每次開 PR 就自動 review 程式碼的品質、安全性和公司規範。結果會直接以留言的方式貼回 PR。
 
+## 學完你會
+- 寫出一個在 PR 觸發、抓出變更 diff 並丟給 OpenAI 分析的 GitHub Actions workflow
+- 用 repository variable（PROMPT、MODELNAME、BEST_PRACTICES）調整 prompt、模型和團隊規範
+- 讓第二個 job 產出一張 markdown 表格，總結 PR 符合規範的程度
 
+## 開跑前
+- 一把 OpenAI API key，存在 GitHub repository secrets，名稱為 `OPENAI_API_KEY`
+- 該 repo 已啟用 GitHub Actions，而且你有權限設定 secrets 和 variables
 
-## Introduction
-This guide explains how to integrate OpenAI reasoning models into your GitHub Pull Request (PR) workflow to automatically review code for quality, security, and enterprise standards compliance. By leveraging AI-driven insights early in the development process, you can catch issues sooner, reduce manual effort, and maintain consistent best practices across your codebase.
+## 簡介
+這份教學說明怎麼把 OpenAI reasoning model 接進 GitHub Pull Request (PR) 流程，自動 review 程式碼品質、安全性和企業規範是否符合。越早在開發流程中拿到 AI 的意見，就越早抓到問題，也少花人工，整個 codebase 的 best practice 也比較一致。
 
-## Why Integrate OpenAI Reasoning Models in PRs?
-• Save time during code reviews by automatically detecting code smells, security vulnerabilities, and style inconsistencies.  
-• Enforce coding standards organization-wide for consistent, reliable code.  
-• Provide developers with prompt, AI-guided feedback on potential improvements.
+## 為什麼要在 PR 裡接 reasoning model？
+• 自動抓 code smell、安全漏洞和風格不一致，省下 code review 的時間。  
+• 在整個組織落實 coding 標準，讓程式碼品質穩定。  
+• 讓開發者很快拿到 AI 給的改進建議。
 
-## Example Use Cases
-• A reviewer wants feedback on the security of a new code change before merging.  
-• A team seeks to enforce standard coding guidelines, ensuring consistent code quality across the organization.
+## 使用情境
+• reviewer 想在合併前，先知道這次變更的安全性如何。  
+• 團隊想落實統一的 coding 規範，讓全組織的程式碼品質一致。
 
-## Prerequisites
+## 前置準備
 
-### 1. Generate an OpenAI “Project Key”
-1. Go to platform.openai.com/api-keys and click to create a new secret key.  
-2. Securely store the token in your GitHub repository secrets as OPENAI_API_KEY.
+### 1. 產生 OpenAI 的「Project Key」
+1. 到 platform.openai.com/api-keys 建立一把新的 secret key。  
+2. 把這個 token 安全地存進 GitHub repository secrets，名稱用 OPENAI_API_KEY。
 
-### 2. Choose Your OpenAI Model
-Use [OpenAI Reasoning Models](https://platform.openai.com/docs/guides/reasoning) for in-depth analysis of code changes. Begin with the most advanced model and refine your prompt as needed.
+### 2. 選 OpenAI 模型
+用 [OpenAI Reasoning Models](https://platform.openai.com/docs/guides/reasoning) 深入分析程式碼變更。建議從最強的模型開始，再慢慢調 prompt。
 
-### 3. Select a Pull Request
-1. Confirm GitHub Actions is enabled for your repository.  
-2. Ensure you have permissions to configure repository secrets or variables (e.g., for your PROMPT, MODELNAME, and BEST_PRACTICES variables).
+### 3. 選一個 Pull Request
+1. 確認你的 repository 已啟用 GitHub Actions。  
+2. 確認你有權限設定 repository secrets 或 variables（例如 PROMPT、MODELNAME、BEST_PRACTICES 這幾個變數）。
 
-### 4. Define Enterprise Coding Standards
-Store your standards as a repository variable (BEST_PRACTICES). These may include:  
-• Code style & formatting  
-• Readability & maintainability  
-• Security & compliance  
-• Error handling & logging  
-• Performance & scalability  
-• Testing & QA  
-• Documentation & version control  
-• Accessibility & internationalization  
+### 4. 定義企業 coding 標準
+把標準存成 repository variable（BEST_PRACTICES），內容可以包含：  
+• 程式風格與格式  
+• 可讀性與可維護性  
+• 安全與合規  
+• 錯誤處理與 logging  
+• 效能與擴充性  
+• 測試與 QA  
+• 文件與版本控制  
+• 無障礙與國際化  
 
-### 5. Define Prompt Content
-Construct a meta-prompt to guide OpenAI toward security, quality, and best-practice checks. Include:  
-1. Code Quality & Standards  
-2. Security & Vulnerability Analysis  
-3. Fault Tolerance & Error Handling  
-4. Performance & Resource Management  
-5. Step-by-Step Validation  
+### 5. 定義 prompt 內容
+寫一個 meta-prompt，引導模型做安全、品質和 best practice 檢查，內容包含：  
+1. 程式碼品質與標準  
+2. 安全與漏洞分析  
+3. 容錯與錯誤處理  
+4. 效能與資源管理  
+5. 逐步驗證  
 
-Encourage OpenAI to provide a thorough, line-by-line review with explicit recommendations.
+可以要求模型逐行 review，並給出明確的建議。
 
-## Create Your GitHub Actions Workflow
+## 建立 GitHub Actions workflow
 
-This GitHub Actions workflow is triggered on every pull request against the main branch and comprises two jobs. The first job gathers a diff of all changed files—excluding .json and .png files—and sends these changes to OpenAI for analysis. Any suggested fixes from OpenAI are included in a comment on the PR. The second job evaluates the PR against your defined enterprise standards and returns a markdown table that summarizes the code’s adherence to those standards. You can easily adjust or refine the workflow by updating variables such as the prompt, model name, and best practices.
+這個 workflow 會在每個對 main branch 的 pull request 觸發，包含兩個 job。第一個 job 蒐集所有變更檔案的 diff（排除 .json 和 .png），送給 OpenAI 分析，OpenAI 建議的修正會以留言貼在 PR 上。第二個 job 根據你定義的企業標準評估這個 PR，回傳一張 markdown 表格，總結程式碼符合標準的程度。你可以直接改 prompt、模型名稱和 best practices 這些變數來調整 workflow。
 
 ```yaml
 name: PR Quality and Security Check
@@ -263,13 +271,22 @@ jobs:
             -f body="$COMMENT"
 ```
 
-## Test the Workflow
-Commit this workflow to your repository, then open a new PR. The workflow will run automatically, posting AI-generated feedback as a PR comment.
+## 測試 workflow
+把這個 workflow commit 到你的 repository，然後開一個新的 PR。workflow 會自動執行，並把 AI 產生的意見以 PR 留言貼出來。
 
-*For a public example, see the OpenAI-Forum repository’s workflow: [pr_quality_and_security_check.yml](https://github.com/alwell-kevin/OpenAI-Forum/blob/main/.github/workflows/pr_quality_and_security_check.yml).*
+*公開範例可以看 OpenAI-Forum repository 的 workflow：[pr_quality_and_security_check.yml](https://github.com/alwell-kevin/OpenAI-Forum/blob/main/.github/workflows/pr_quality_and_security_check.yml)。*
 
 ![pr_quality_and_security_check.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pr_quality_and_security_check.png)
 
 ![workflow_check.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/workflow_check.png)
 
-<!-- tutor:summary -->
+## 重點整理
+- 把 AI review 放在 PR 階段，問題在合併前就能被抓到。
+- prompt、模型名稱和團隊規範都放在 repository variable，不用改 workflow 就能調整。
+- 兩個 job 分工：一個給逐行修正建議，一個給符合規範程度的總覽表。
+- API key 一定放 secrets，不要寫進 workflow 檔。
+
+## 練習
+1. 在 workflow 裡把排除的檔案類型再加上 `.md`，讓文件變更不會被送去分析。
+2. 修改 BEST_PRACTICES 變數，只留下「安全與合規」和「錯誤處理」兩項，看輸出的表格怎麼變。
+3. 在第一個 job 的 prompt 裡要求模型只回報嚴重等級為 high 的問題，並在留言中加上檔名與行號。

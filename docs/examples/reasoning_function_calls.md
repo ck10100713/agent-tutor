@@ -1,26 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/reasoning_function_calls.ipynb
 ---
 
-# Handling Function Calls with Reasoning Models
+# 用 Reasoning 模型處理 Function Call
 
 > 原文：[examples/reasoning_function_calls.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/reasoning_function_calls.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼把 function calling 跟 reasoning 模型（o3、o4-mini 這類）搭配使用。重點是 reasoning 模型可能在思考過程中連續呼叫好幾次 function，所以要用 loop 來處理，並且在手動管理對話時保留 reasoning 項目。
 
-OpenAI now offers function calling using [reasoning models](https://platform.openai.com/docs/guides/reasoning?api-mode=responses). Reasoning models are trained to follow logical chains of thought, making them better suited for complex or multi-step tasks.
+## 學完你會
+- 用 Responses API 呼叫 reasoning 模型，並看出隱藏的 reasoning tokens 用了多少
+- 寫出一個 loop，處理模型串連多次 function call 的情況
+- 不靠 `previous_response_id`，自己維護對話項目陣列，並保留 reasoning 和 function call 結果
+
+## 開跑前
+需要 OpenAI API key，並有權限使用 o4-mini 之類的 reasoning 模型。
+
+OpenAI 現在支援在 [reasoning 模型](https://platform.openai.com/docs/guides/reasoning?api-mode=responses)上使用 function calling。Reasoning 模型經過訓練，會照邏輯思考鏈推理，比較適合複雜或多步驟的任務。
 > _Reasoning models like o3 and o4-mini are LLMs trained with reinforcement learning to perform reasoning. Reasoning models think before they answer, producing a long internal chain of thought before responding to the user. Reasoning models excel in complex problem solving, coding, scientific reasoning, and multi-step planning for agentic workflows. They're also the best models for Codex CLI, our lightweight coding agent._
 
-For the most part, using these models via the API is very simple and comparable to using familiar 'chat' models. 
+大部分情況下，透過 API 使用這些模型很簡單，跟一般的 chat 模型差不多。
 
-However, there are some nuances to bear in mind, particularly when it comes to using features such as function calling. 
+不過有些細節要注意，尤其是用到 function calling 這類功能的時候。
 
-All examples in this notebook use the newer [Responses API](https://community.openai.com/t/introducing-the-responses-api/1140929) which provides convenient abstractions for managing conversation state. However the principles here are relevant when using the older chat completions API.
+這份 notebook 的範例全部用較新的 [Responses API](https://community.openai.com/t/introducing-the-responses-api/1140929)，它幫你把對話狀態管理包得很方便。但這裡講的原則，用舊的 chat completions API 也一樣適用。
 
-## Making API calls to reasoning models
+## 呼叫 reasoning 模型
 
 ```python
 # pip install openai
@@ -37,9 +46,9 @@ MODEL_DEFAULTS = {
 }
 ```
 
-Let's make a simple call to a reasoning model using the Responses API.
-We specify a low reasoning effort and retrieve the response with the helpful `output_text` attribute.
-We can ask follow up questions and use the `previous_response_id` to let OpenAI manage the conversation history automatically
+先用 Responses API 對 reasoning 模型做一個簡單的呼叫。
+我們把 reasoning effort 設成 low，然後用方便的 `output_text` 屬性取得回應。
+接著可以追問後續問題，用 `previous_response_id` 讓 OpenAI 自動幫我們管理對話歷史。
 
 ```python
 response = client.responses.create(
@@ -70,12 +79,12 @@ print(response.output_text)
     Among those four, London has the lowest average annual temperature, at about 11 °C.
     ```
 
-Nice and easy!
+很簡單！
 
-We're asking relatively complex questions that may require the model to reason out a plan and proceed through it in steps, but this reasoning is hidden from us - we simply wait a little longer before being shown the response. 
+我們問的問題相對複雜，模型可能需要先推理出計畫，再一步步執行，但這段推理我們看不到，只是多等一下才拿到回應。
 
-However, if we inspect the output we can see that the model has made use of a hidden set of 'reasoning' tokens that were included in the model context window, but not exposed to us as end users.
-We can see these tokens and a summary of the reasoning (but not the literal tokens used) in the response.
+不過如果檢查輸出，會發現模型用了一批隱藏的 reasoning tokens，它們佔用 context window，但不會顯示給終端使用者。
+我們可以在回應裡看到這些 token 的數量，以及推理的摘要（但看不到實際用的 token 內容）。
 
 ```python
 print(next(rx for rx in response.output if rx.type == 'reasoning').summary[0].text)
@@ -98,13 +107,13 @@ response.usage.to_dict()
      'total_tokens': 225}
     ```
 
-It is important to know about these reasoning tokens, because it means we will consume our available context window more quickly than with traditional chat models.
+知道這些 reasoning tokens 很重要，因為這表示 context window 會比傳統 chat 模型消耗得更快。
 
-## Calling custom functions
-What happens if we ask the model a complex request that also requires the use of custom tools?
-* Let's imagine we have more questions about Olympic Cities, but we also have an internal database that contains IDs for each city.
-* It's possible that the model will need to invoke our tool partway through its reasoning process before returning a result.
-* Let's make a function that produces a random UUID and ask the model to reason about these UUIDs. 
+## 呼叫自訂 function
+如果我們問的複雜請求同時需要用到自訂 tool，會怎樣？
+* 假設我們還有一些關於奧運城市的問題，而且有一個內部資料庫，裡面存著每個城市的 ID。
+* 模型可能需要在推理到一半時呼叫我們的 tool，才能回傳結果。
+* 我們來做一個產生隨機 UUID 的 function，然後請模型針對這些 UUID 做推理。
 
 
 ```python
@@ -145,7 +154,7 @@ response = client.responses.create(
 print(response.output_text)
 ```
 
-We didn't get an `output_text` this time. Let's look at the response output
+這次沒有拿到 `output_text`。來看看 response 的 output。
 
 ```python
 response.output
@@ -158,10 +167,10 @@ response.output
      ResponseFunctionToolCall(arguments='{"city":"London"}', call_id='call_Mx6pyTjCkSkmASETsVASogoC', name='get_city_uuid', type='function_call', id='fc_6824621b8f6c8191a8095df7230b611e0c4fbdb0d4a46f3c', status='completed')]
     ```
 
-Along with the reasoning step, the model has successfully identified the need for a tool call and passed back instructions to send to our function call. 
+除了 reasoning 步驟，模型也正確判斷出需要呼叫 tool，並回傳要送給我們 function 的指令。
 
-Let's invoke the function and send the results to the model so it can continue reasoning.
-Function responses are a special kind of message, so we need to structure our next message as a special kind of input:
+接著我們執行 function，把結果送回給模型，讓它繼續推理。
+Function 的回應是一種特殊的訊息，所以下一則訊息也要組成特殊的 input 格式：
 ```json
 {
     "type": "function_call_output",
@@ -202,11 +211,11 @@ print(response.output_text)
     The internal ID for London is 816bed76-b956-46c4-94ec-51d30b022725.
     ```
 
-This works great here - as we know that a single function call is all that is required for the model to respond - but we also need to account for situations where multiple tool calls might need to be executed for the reasoning to complete.
+這裡運作得很好，因為我們知道只需要一次 function call 模型就能回應。但我們也得考慮到，推理過程可能需要執行多次 tool call 的情況。
 
-Let's add a second call to run a web search.
+我們再加第二個 function 來做網路搜尋。
 
-OpenAI's web search tool is not available out of the box with reasoning models (as of May 2025 - this may soon change) but it's not too hard to create a custom web search function using 4o mini or another web search enabled model.
+OpenAI 的 web search tool 在 reasoning 模型上沒辦法直接用（截至 2025 年 5 月，之後可能會改變），但用 4o mini 或其他支援 web search 的模型自己做一個自訂的搜尋 function 並不難。
 
 ```python
 def web_search(query: str) -> str:
@@ -233,13 +242,13 @@ tools.append({
 tool_mapping["web_search"] = web_search
 ```
 
-## Executing multiple functions in series
+## 依序執行多個 function
 
-Some OpenAI models support the parameter `parallel_tool_calls` which allows the model to return an array of functions which we can then execute in parallel. However, reasoning models may produce a sequence of function calls that must be made in series, particularly as some steps may depend on the results of previous ones.
-As such, we ought to define a general pattern which we can use to handle arbitrarily complex reasoning workflows:
-* At each step in the conversation, initialise a loop
-* If the response contains function calls, we must assume the reasoning is ongoing and we should feed the function results (and any intermediate reasoning) back into the model for further inference
-* If there are no function calls and we instead receive a response.output with a type of 'message', we can safely assume the agent has finished reasoning and we can break out of the loop
+有些 OpenAI 模型支援 `parallel_tool_calls` 參數，讓模型回傳一個 function 陣列，我們就能平行執行。不過 reasoning 模型可能產生必須依序執行的 function call，因為有些步驟會依賴前面步驟的結果。
+所以我們要定義一個通用的模式，來處理任意複雜的推理流程：
+* 在對話的每一步，啟動一個 loop
+* 如果 response 裡有 function call，就要假設推理還在進行，把 function 結果（以及中間的 reasoning）送回模型繼續推論
+* 如果沒有 function call，而是收到 type 為 'message' 的 response.output，就可以確定 agent 已經推理完了，跳出 loop
 
 ```python
 # Let's wrap our logic above into a function which we can use to invoke tool calls.
@@ -277,7 +286,7 @@ def invoke_functions_from_response(response,
     return intermediate_messages
 ```
 
-Now let's demonstrate the loop concept we discussed before.
+現在來示範剛剛講的 loop。
 
 ```python
 initial_question = (
@@ -351,24 +360,24 @@ while True:
     ... (省略 59 行)
     ```
 
-## Manual conversation orchestration
-So far so good! It's really cool to watch the model pause execution to run a function before continuing. 
-In practice the example above is quite trivial, and production use cases may be much more complex:
-* Our context window may grow too large and we may wish to prune older and less relevant messages, or summarize the conversation so far
-* We may wish to allow users to navigate back and forth through the conversation and re-generate answers
-* We may wish to store messages in our own database for audit purposes rather than relying on OpenAI's storage and orchestration
-* etc.
+## 手動編排對話
+目前為止都很順利！看模型暫停執行去跑一個 function，再繼續推理，真的很酷。
+實務上，上面的例子其實很簡單，正式環境的情況可能複雜很多：
+* Context window 可能長得太大，我們會想剪掉較舊、較不相關的訊息，或是把到目前為止的對話做摘要
+* 我們可能想讓使用者在對話中前後切換，並重新產生答案
+* 我們可能想把訊息存在自己的資料庫做稽核，而不是依賴 OpenAI 的儲存和編排
+* 等等
 
-In these situations we may wish to take full control of the conversation. Rather than using `previous_message_id` we can instead treat the API as 'stateless' and make and maintain an array of conversation items that we send to the model as input each time.
+這些情況下，我們會想完全掌控對話。不用 `previous_message_id`，而是把 API 當成「無狀態」的，自己建立並維護一個對話項目陣列，每次都當作 input 送給模型。
 
-This poses some Reasoning model specific nuances to consider. 
-* In particular, it is essential that we preserve any reasoning and function call responses in our conversation history.
-* This is how the model keeps track of what chain-of-thought steps it has run through. The API will error if these are not included.
+這對 reasoning 模型來說有一些特別的細節要注意。
+* 尤其是，一定要在對話歷史裡保留 reasoning 和 function call 的回應。
+* 模型就是靠這些來記得它已經走過哪些思考鏈步驟。如果沒包含，API 會報錯。
 
-Let's run through the example above again, orchestrating the messages ourselves and tracking token usage.
+我們用手動編排訊息的方式，把上面的例子再跑一次，並追蹤 token 用量。
 
 ---
-*Note that the code below is structured for readability - in practice you may wish to consider a more sophisticated workflow to handle edge cases*
+*注意，下面的程式碼是為了好讀而寫的，實務上處理邊界情況可能需要更完整的流程*
 
 ```python
 # Let's initialise our conversation with the first user message
@@ -464,21 +473,30 @@ print(f"Total tokens used: {total_tokens_used} ({total_tokens_used / 200_000:.2%
     ... (省略 28 行)
     ```
 
-## Summary
-In this cookbook, we identified how to combine function calling with OpenAI's reasoning models to demonstrate multi-step tasks that are dependent on external data sources., including searching the web.
+## 總結
+這份 cookbook 示範了怎麼把 function calling 跟 OpenAI 的 reasoning 模型結合，完成依賴外部資料來源（包括網路搜尋）的多步驟任務。
 
-Importantly, we covered reasoning-model specific nuances in the function calling process, specifically that:
-* The model may choose to make multiple function calls or reasoning steps in series, and some steps may depend on the results of previous ones
-* We cannot know how many of these steps there will be, so we must process responses with a loop
-* The responses API makes orchestration easy using the `previous_response_id` parameter, but where manual control is needed, it's important to maintain the correct order of conversation item to preserve the 'chain-of-thought'
+重要的是，我們講了 function calling 流程裡 reasoning 模型特有的細節：
+* 模型可能依序做出多個 function call 或 reasoning 步驟，有些步驟依賴前面步驟的結果
+* 我們無法預知會有幾步，所以必須用 loop 來處理 response
+* Responses API 用 `previous_response_id` 參數讓編排很輕鬆，但需要手動控制時，必須維持對話項目的正確順序，才能保留「思考鏈」
 
 ---
 
-The examples used here are rather simple, but you can imagine how this technique could be extended to more real-world use cases, such as:
+這裡的範例都很簡單，但你可以想像這個技巧如何延伸到更真實的場景，例如：
 
-* Looking up a customer's transaction history and recent correspondence to determine if they are eligible for a promotional offer
-* Calling recent transaction logs, geolocation data, and device metadata to assess the likelihood of a transaction being fraudulent
-* Reviewing internal HR databases to fetch an employee’s benefits usage, tenure, and recent policy changes to answer personalized HR questions
-* Reading internal dashboards, competitor news feeds, and market analyses to compile a daily executive briefing tailored to their focus areas
+* 查詢客戶的交易紀錄和近期往來信件，判斷他是否符合優惠資格
+* 調閱近期交易 log、地理位置資料和裝置 metadata，評估交易是詐欺的可能性
+* 查看公司內部 HR 資料庫，取得員工的福利使用情況、年資和近期政策變更，回答個人化的 HR 問題
+* 讀取內部儀表板、競爭對手新聞和市場分析，整理出符合主管關注領域的每日簡報
 
-<!-- tutor:summary -->
+## 重點整理
+- Reasoning 模型會產生隱藏的 reasoning tokens，佔用 context window 但看不到內容
+- 模型可能在推理中途要求呼叫 function，且次數不固定，所以要用 loop 處理
+- 判斷結束的條件是 output 裡出現 type 為 message 的項目，而不是有沒有 function call
+- 用 `previous_response_id` 最省事，手動管理時則必須保留 reasoning 和 function call 結果，否則 API 會報錯
+
+## 練習
+1. 把第一個範例的 reasoning effort 從 low 改成 high，比較 reasoning tokens 的數量差多少。
+2. 把產生 UUID 的 function 換成一個回傳固定資料的 function（例如城市名稱對應 ID），看模型怎麼使用結果。
+3. 在手動編排的版本裡，故意把 reasoning 項目從歷史中拿掉，觀察 API 回傳什麼錯誤。

@@ -1,39 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/analyticdb/QA_with_Langchain_AnalyticDB_and_OpenAI.ipynb
 ---
 
-# Question answering with Langchain, AnalyticDB and OpenAI
+# 用 Langchain、AnalyticDB 和 OpenAI 做問答
 
 > 原文：[examples/vector_databases/analyticdb/QA_with_Langchain_AnalyticDB_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/analyticdb/QA_with_Langchain_AnalyticDB_and_OpenAI.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Langchain 搭配 AnalyticDB 當知識庫、OpenAI embeddings 做向量化，建一個問答系統。所有步驟都簡化成呼叫 Langchain 的對應方法。
 
-This notebook presents how to implement a Question Answering system with Langchain, AnalyticDB as a knowledge based and OpenAI embeddings. If you are not familiar with AnalyticDB, it’s better to check out the [Getting_started_with_AnalyticDB_and_OpenAI.ipynb](Getting_started_with_AnalyticDB_and_OpenAI.md) notebook.
+## 學完你會
+- 把問答資料用 OpenAI embeddings 存進 AnalyticDB 建成知識庫
+- 用 Langchain 的 `stuff` chain 做檢索加回答
+- 自訂 prompt template 改變 LLM 的回答行為
 
-This notebook presents an end-to-end process of:
-- Calculating the embeddings with OpenAI API.
-- Storing the embeddings in an AnalyticDB instance to build a knowledge base.
-- Converting raw text query to an embedding with OpenAI API.
-- Using AnalyticDB to perform the nearest neighbour search in the created collection to find some context.
-- Asking LLM to find the answer in a given context.
+## 開跑前
+需要 OpenAI API key（設成環境變數 `OPENAI_API_KEY`），以及一個 AnalyticDB 雲端實例，連線用的 `PG_HOST`、`PG_PORT`、`PG_DATABASE`、`PG_USER`、`PG_PASSWORD` 也要設成環境變數。
 
-All the steps will be simplified to calling some corresponding Langchain methods.
+這份 notebook 示範怎麼用 Langchain、以 AnalyticDB 當知識庫，加上 OpenAI embeddings 實作一個問答系統。如果你不熟 AnalyticDB，建議先看 [Getting_started_with_AnalyticDB_and_OpenAI.ipynb](Getting_started_with_AnalyticDB_and_OpenAI.md)。
 
-## Prerequisites
-For the purposes of this exercise we need to prepare a couple of things:
-[AnalyticDB cloud instance](https://www.alibabacloud.com/help/en/analyticdb-for-postgresql/latest/product-introduction-overview).
-[Langchain](https://github.com/hwchase17/langchain) as a framework.
-An OpenAI API key.
+這份 notebook 呈現的是端到端流程：
+- 用 OpenAI API 計算 embedding。
+- 把 embedding 存進 AnalyticDB 實例，建立知識庫。
+- 用 OpenAI API 把原始文字問題轉成 embedding。
+- 用 AnalyticDB 在建好的 collection 裡做最近鄰搜尋，找到一些 context。
+- 請 LLM 在給定的 context 裡找出答案。
 
-### Install requirements
-This notebook requires the following Python packages: `openai`, `tiktoken`, `langchain` and `psycopg2cffi`.
-- `openai` provides convenient access to the OpenAI API.
-- `tiktoken` is a fast BPE tokeniser for use with OpenAI's models.
-- `langchain` helps us to build applications with LLM more easily.
-- `psycopg2cffi` library is used to interact with the vector database, but any other PostgreSQL client library is also acceptable.
+所有步驟都會簡化成呼叫對應的 Langchain 方法。
+
+## 前置條件
+要做這個練習，需要先準備幾樣東西：
+[AnalyticDB 雲端實例](https://www.alibabacloud.com/help/en/analyticdb-for-postgresql/latest/product-introduction-overview)。
+[Langchain](https://github.com/hwchase17/langchain) 當框架。
+一組 OpenAI API key。
+
+### 安裝需求套件
+這份 notebook 需要這些 Python 套件：`openai`、`tiktoken`、`langchain` 和 `psycopg2cffi`。
+- `openai` 讓你方便存取 OpenAI API。
+- `tiktoken` 是快速的 BPE tokeniser，給 OpenAI 模型用。
+- `langchain` 幫你更容易建 LLM 應用。
+- `psycopg2cffi` 用來跟向量資料庫互動，不過其他 PostgreSQL client 函式庫也可以。
 
 ```python
 ! pip install openai tiktoken langchain psycopg2cffi
@@ -63,15 +72,15 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-### Prepare your OpenAI API key
-The OpenAI API key is used for vectorization of the documents and queries.
+### 準備 OpenAI API key
+OpenAI API key 用來把文件和查詢向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://platform.openai.com/account/api-keys ).
+如果還沒有 OpenAI API key，可以到 [https://platform.openai.com/account/api-keys ) 取得。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY` by running following command:
+拿到 key 之後，請執行下面的指令，把它加到環境變數 `OPENAI_API_KEY`：
 
-### Prepare your AnalyticDB connection string
-To build the AnalyticDB connection string, you need to have the following parameters: `PG_HOST`, `PG_PORT`, `PG_DATABASE`, `PG_USER`, and `PG_PASSWORD`. You need to export them first to set correct connect string. Then build the connection string.
+### 準備 AnalyticDB 連線字串
+要組出 AnalyticDB 連線字串，需要這幾個參數：`PG_HOST`、`PG_PORT`、`PG_DATABASE`、`PG_USER` 和 `PG_PASSWORD`。要先 export 它們，才能組出正確的連線字串，然後再建立連線字串。
 
 ```python
 ! export PG_HOST="your AnalyticDB host url"
@@ -105,8 +114,8 @@ with open("answers.json", "r") as fp:
     answers = json.load(fp)
 ```
 
-## Load data
-In this section we are going to load the data containing some natural questions and answers to them. All the data will be used to create a Langchain application with AnalyticDB being the knowledge base.
+## 載入資料
+這一段要載入一份資料，內容是一些 natural questions 和它們的答案。這些資料全部用來建立一個以 AnalyticDB 當知識庫的 Langchain 應用。
 
 ```python
 print(questions[0])
@@ -138,9 +147,9 @@ print(answers[0])
     No . overall No. in season Title Directed by Written by Original air date U.S. viewers ( millions ) 100 `` Mercy '' Greg Nicotero Scott M. Gimple October 22 , 2017 ( 2017 - 10 - 22 ) 11.44 Rick , Maggie , and Ezekiel rally their communities together to take down Negan . Gregory attempts to have the Hilltop residents side with Negan , but they all firmly stand behind Maggie . The group attacks the Sanctuary , taking down its fences and flooding the compound with walkers . With the Sanctuary defaced , everyone leaves except Gabriel , who reluctantly stays to save Gregory , but is left behind when Gregory abandons him . Surrounded by walkers , Gabriel hides in a trailer , where he is trapped inside with Negan . 101 `` The Damned '' Rosemary Rodriguez Matthew Negrete & Channing Powell October 29 , 2017 ( 2017 - 10 - 29 ) 8.92 Rick 's forces split into separate parties to attack several of the Saviors ' outposts , during which many members of the group are killed ; Eric is critically injured and rushed away by Aaron . Jesus stops Tara and Morgan from executing a group of surrendered Saviors . While clearing an outpost with Daryl , Rick is confronted and held at gunpoint by Morales , a survivor he met in the initial Atlanta camp , who is now with the Saviors . 102 `` Monsters '' Greg Nicotero Matthew Negrete & Channing Powell November 5 , 2017 ( 2017 - 11 - 05 ) 8.52 Daryl finds Morales threatening Rick and kills him ; the duo then pursue a group of Saviors who are transporting weapons to another outpost . Gregory returns to Hilltop , and after a heated argument , Maggie ultimately allows him back in the community . Eric dies from his injuries , leaving Aaron distraught . Despite Tara and Morgan 's objections , Jesus leads the group of surrendered Saviors to Hilltop . Ezekiel 's group attacks another Savior compound , during which several Kingdommers are shot while protecting Ezekiel . 103 `` Some Guy '' Dan Liu David Leslie Johnson November 12 , 2017 ( 2017 - 11 - 12 ) 8.69 Ezekiel 's group is overwhelmed by the Saviors , who kill all of them except for Ezekiel himself and Jerry . Carol clears the inside of the compound , killing all but two Saviors , who almost escape but are eventually caught by Rick and Daryl . En route to the Kingdom , Ezekiel , Jerry , and Carol are surrounded by walkers , but Shiva sacrifices herself to save them . The trio returns to the Kingdom , where Ezekiel 's confidence in himself as a leader has diminished . 104 5 `` The Big Scary U '' Michael E. Satrazemis Story by : Scott M. Gimple & David Leslie Johnson & Angela Kang Teleplay by : David Leslie Johnson & Angela Kang November 19 , 2017 ( 2017 - 11 - 19 ) 7.85 After confessing their sins to each other , Gabriel and Negan manage to escape from the trailer . Simon and the other lieutenants grow suspicious of each other , knowing that Rick 's forces must have inside information . The workers in the Sanctuary become increasingly frustrated with their living conditions , and a riot nearly ensues , until Negan returns and restores order . Gabriel is locked in a cell , where Eugene discovers him sick and suffering . Meanwhile , Rick and Daryl argue over how to take out the Saviors , leading Daryl to abandon Rick . 105 6 `` The King , the Widow , and Rick '' John Polson Angela Kang & Corey Reed November 26 , 2017 ( 2017 - 11 - 26 ) 8.28 Rick visits Jadis in hopes of convincing her to turn against Negan ; Jadis refuses , and locks Rick in a shipping container . Carl encounters Siddiq in the woods and recruits him to Alexandria . Daryl and Tara plot to deviate from Rick 's plans by destroying the Sanctuary . Ezekiel isolates himself at the Kingdom , where Carol tries to encourage him to be the leader his people need . Maggie has the group of captured Saviors placed in a holding area and forces Gregory to join them as punishment for betraying Hilltop . 106 7 `` Time for After '' Larry Teng Matthew Negrete & Corey Reed December 3 , 2017 ( 2017 - 12 - 03 ) 7.47 After learning of Dwight 's association with Rick 's group , Eugene affirms his loyalty to Negan and outlines a plan to get rid of the walkers surrounding the Sanctuary . With help from Morgan and Tara , Daryl drives a truck through the Sanctuary 's walls , flooding its interior with walkers , killing many Saviors . Rick finally convinces Jadis and the Scavengers to align with him , and they plan to force the Saviors to surrender . However , when they arrive at the Sanctuary , Rick is horrified to see the breached walls and no sign of the walker herd . 107 8 `` How It 's Gotta Be '' Michael E. Satrazemis David Leslie Johnson & Angela Kang December 10 , 2017 ( 2017 - 12 - 10 ) 7.89 Eugene 's plan allows the Saviors to escape , and separately , the Saviors waylay the Alexandria , Hilltop , and Kingdom forces . The Scavengers abandon Rick , after which he returns to Alexandria . Ezekiel ensures that the Kingdom residents are able to escape before locking himself in the community with the Saviors . Eugene aids Gabriel and Doctor Carson in escaping the Sanctuary in order to ease his conscience . Negan attacks Alexandria , but Carl devises a plan to allow the Alexandria residents to escape into the sewers . Carl reveals he was bitten by a walker while escorting Siddiq to Alexandria . 108 9 `` Honor '' Greg Nicotero Matthew Negrete & Channing Powell February 25 , 2018 ( 2018 - 02 - 25 ) 8.28 After the Saviors leave Alexandria , the survivors make for the Hilltop while Rick and Michonne stay behind to say their final goodbyes to a dying Carl , who pleads with Rick to build a better future alongside the Saviors before killing himself . In the Kingdom , Morgan and Carol launch a rescue mission for Ezekiel . Although they are successful and retake the Kingdom , the Saviors ' lieutenant Gavin is killed by Benjamin 's vengeful brother Henry . 109 10 `` The Lost and the Plunderers '' TBA TBA March 4 , 2018 ( 2018 - 03 - 04 ) TBD 110 11 `` Dead or Alive Or '' TBA TBA March 11 , 2018 ( 2018 - 03 - 11 ) TBD 111 12 `` The Key '' TBA TBA March 18 , 2018 ( 2018 - 03 - 18 ) TBD
     ```
 
-## Chain definition
+## 定義 Chain
 
-Langchain is already integrated with AnalyticDB and performs all the indexing for given list of documents. In our case we are going to store the set of answers we have.
+Langchain 已經整合 AnalyticDB，會為給定的文件清單做完所有索引。在我們的例子裡，要存的是手上這一組答案。
 
 ```python
 from langchain.vectorstores import AnalyticDB
@@ -154,7 +163,7 @@ doc_store = AnalyticDB.from_texts(
 )
 ```
 
-At this stage all the possible answers are already stored in  AnalyticDB, so we can define the whole QA chain.
+到這一步，所有可能的答案都已經存進 AnalyticDB，所以可以定義完整的 QA chain。
 
 ```python
 from langchain.chains import RetrievalQA
@@ -168,9 +177,9 @@ qa = VectorDBQA.from_chain_type(
 )
 ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into AnalyticDB we can start asking some questions. A question will be automatically vectorized by OpenAI model, and the created vector will be used to find some possibly matching answers in AnalyticDB. Once retrieved, the most similar answers will be incorporated into the prompt sent to OpenAI Large Language Model.
+資料放進 AnalyticDB 之後，就可以開始問問題。問題會被 OpenAI 模型自動向量化，產生的向量用來在 AnalyticDB 裡找可能符合的答案。檢索回來之後，最相似的答案會被放進 prompt 送給 OpenAI 大型語言模型。
 
 
 ```python
@@ -205,9 +214,9 @@ for question in selected_questions:
      I don't know.
     ```
 
-### Custom prompt templates
+### 自訂 prompt template
 
-The `stuff` chain type in Langchain uses a specific prompt with question and context documents incorporated. This is what the default prompt looks like:
+Langchain 的 `stuff` chain type 使用一個特定的 prompt，裡面包含問題和 context 文件。預設的 prompt 長這樣：
 
 ```text
 Use the following pieces of context to answer the question at the end. If you don't know the answer, just say that you don't know, don't try to make up an answer.
@@ -216,13 +225,13 @@ Question: {question}
 Helpful Answer:
 ```
 
-We can, however, provide our prompt template and change the behaviour of the OpenAI LLM, while still using the `stuff` chain type. It is important to keep `{context}` and `{question}` as placeholders.
+不過我們可以提供自己的 prompt template，改變 OpenAI LLM 的行為，同時仍然使用 `stuff` chain type。重要的是 `{context}` 和 `{question}` 這兩個 placeholder 要保留。
 
-#### Experimenting with custom prompts
+#### 試試自訂 prompt
 
-We can try using a different prompt template, so the model:
-1. Responds with a single-sentence answer if it knows it.
-2. Suggests a random song title if it doesn't know the answer to our question.
+我們可以換一個 prompt template，讓模型：
+1. 知道答案的話，用一句話回答。
+2. 不知道問題答案的話，建議一個隨機的歌名。
 
 ```python
 from langchain.prompts import PromptTemplate
@@ -277,4 +286,13 @@ for question in random.choices(questions, k=5):
     In Utah, you must be at least 18 years old to get a tattoo.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 向量資料庫（這裡是 AnalyticDB）當知識庫，問題向量化後做最近鄰搜尋找 context。
+- Langchain 把 embedding、索引、檢索、呼叫 LLM 包成幾個方法，少寫很多膠水程式。
+- `stuff` chain 會把檢索到的文件全部塞進同一個 prompt。
+- 改 prompt template 就能改變 LLM 的回答行為，但 `{context}` 和 `{question}` 要保留。
+
+## 練習
+1. 換幾個不同的問題，看檢索回來的答案是不是合理。
+2. 改自訂 prompt，讓模型不知道答案時回答「我不知道」，而不是建議歌名。
+3. 調整檢索回來的文件數量（例如改成只取最相似的 1 筆或多取幾筆），比較回答的差異。

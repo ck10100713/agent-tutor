@@ -1,59 +1,65 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/rag-quickstart/pinecone-retool/gpt-action-pinecone-retool-rag.ipynb
 ---
-
-# Pinecone Vector Database and Retool Workflow with GPT Actions
+# Pinecone Vector Database 與 Retool Workflow 搭配 GPT Actions
 
 > 原文：[examples/chatgpt/rag-quickstart/pinecone-retool/gpt-action-pinecone-retool-rag.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/rag-quickstart/pinecone-retool/gpt-action-pinecone-retool-rag.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
-This notebook provides a step-by-step guide for using Pinecone as a vector database to store OpenAI embeddings. As an example, it demonstrates how to integrate this setup with Retool to create a REST endpoint, enabling seamless interaction with ChatGPT as an action. However, Retool is just one of many approaches available for connecting your Pinecone database to ChatGPT.
+用 Pinecone 當 vector database 存 OpenAI embedding，再用 Retool workflow 包成一個 REST endpoint，最後讓 Custom GPT 透過 action 呼叫它，做出一個能查你自己資料的 RAG。Retool 只是其中一種把 Pinecone 接到 ChatGPT 的做法。
 
-[Pinecone](https://www.pinecone.io/) is a fully managed vector database designed for storing, indexing, and querying large-scale vector embeddings. It enables fast and efficient similarity searches, making it ideal for AI-powered applications like recommendation systems, semantic search, and natural language processing.
+## 學完你會
 
-[Retool](https://retool.com/) is a low-code platform that simplifies building custom internal tools by connecting to databases, APIs, and third-party services. It enables users to create powerful, user-friendly interfaces and workflows with minimal coding, making it ideal for streamlining business operations and integrating complex systems.
+- 把文字轉成 embedding，建立 Pinecone index 並 upsert 進去，再用 query 驗證搜尋結果。
+- 在 Retool 建一個 Python workflow，用 webhook trigger 對外提供 vector search API。
+- 寫出 OpenAPI spec 並設定 API Key 驗證，讓 Custom GPT 以 action 呼叫這個 workflow。
 
+## 開跑前
 
-## Pre-requisites
+需要準備這些帳號和資源：
 
-- A Pinecone account
-- A Retool account
-- A Custom GPT with actions enabled
-- An OpenAI API key
+- Pinecone 帳號
+- Retool 帳號
+- 啟用 actions 的 Custom GPT
+- OpenAI API key
 
+[Pinecone](https://www.pinecone.io/) 是全託管的 vector database，專門用來儲存、索引和查詢大規模 vector embedding。它能做快速有效的相似度搜尋，很適合推薦系統、semantic search、自然語言處理這類 AI 應用。
 
-## Table of Contents
-
-1. [Setup Pinecone](#setup-pinecone)
-2. [Setup Notebook](#setup-notebook)
-3. [Prepare Data](#prepare-data)
-4. [Create a Pinecone Index](#create-a-pinecone-index)
-5. [Populate the Pinecone Index](#populate-the-pinecone-index)
-4. [Create a Retool Workflow](#create-a-retool-app)
-5. [Create a Custom GPT Action](#create-a-custom-gpt-action)
+[Retool](https://retool.com/) 是 low-code 平台，連接資料庫、API 和第三方服務，簡化內部工具的開發。只要很少的程式碼就能做出介面和 workflow，很適合簡化業務流程和整合複雜系統。
 
 
-## Setup Pinecone
+## 目錄
 
-If you haven't got a Pinecone account, sign up for an account. You're ready to move on to the next section once you get the following screen. Go to API Keys and create a new API key.  
+1. [設定 Pinecone](#setup-pinecone)
+2. [設定 Notebook](#setup-notebook)
+3. [準備資料](#prepare-data)
+4. [建立 Pinecone Index](#create-a-pinecone-index)
+5. [寫入 Pinecone Index](#populate-the-pinecone-index)
+4. [建立 Retool Workflow](#create-a-retool-app)
+5. [建立 Custom GPT Action](#create-a-custom-gpt-action)
+
+
+## 設定 Pinecone
+
+如果還沒有 Pinecone 帳號，先註冊一個。看到下面的畫面就可以進行下一節。到 API Keys 建立一把新的 API key。
 
 
 ![Vectors in Pinecone](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pinecone-dashboard.png)
 
 
-## Setup Notebook 
+## 設定 Notebook
 
-Install required libraries from OpenAI and Pinecone.
+安裝 OpenAI 和 Pinecone 需要的套件。
 
 ```python
 !pip install -qU openai pinecone
 ```
 
-Import the OpenAI and Pinecone libraries.
+匯入 OpenAI 和 Pinecone 套件。
 
 ```python
 
@@ -66,9 +72,9 @@ pc = Pinecone(api_key="YOUR API KEY")
 ## OpenAI key by default is set to the environment variable `OPENAI_API_KEY`
 ```
 
-## Prepare Data
+## 準備資料
 
-Define a sample dataset to embed store in Pinecone and to search over from ChatGPT.  
+定義一份範例資料集，用來 embed 後存進 Pinecone，並讓 ChatGPT 搜尋。
 
 ```python
 data = [
@@ -81,7 +87,7 @@ data = [
 ]
 ```
 
-We are now ready to convert the text to embeddings. The example below is the most simple implementation of this function. If your text is longer than the context window of the model you are using, you will need to chunk the text into smaller pieces.
+現在可以把文字轉成 embedding 了。下面是這個函式最簡單的實作。如果你的文字比所用模型的 context window 還長，就要先把文字切成較小的 chunk。
 
 ```python
 def embed(text):
@@ -95,9 +101,9 @@ doc_embeds = [embed(d["text"]) for d in data]
 print(doc_embeds)
 ```
 
-## Create a Pinecone Index
+## 建立 Pinecone Index
 
-The next step is to create a Pinecone index, we'll do this programmatically, alternatively you can do this from the Pinecone dashboard.
+下一步是建立 Pinecone index。這裡用程式建立，你也可以在 Pinecone dashboard 上建。
 
 ```python
 def create_index():
@@ -119,11 +125,11 @@ def create_index():
 index = create_index()
 ```
 
-## Populate the Pinecone Index
+## 寫入 Pinecone Index
 
-Now that we've created the index, we can populate it with our embeddings. Before we do this we need to append the ID to the embeddings along with the raw text, this is so we can retrieve the original text when we query the index.
+index 建好了，可以把 embedding 寫進去。寫入之前，要把 ID 和原始文字一起附加到 embedding 上，這樣查詢 index 時才能取回原文。
 
-When upserting vectors we choose a namespace, this is optional but can be useful if you want to store multiple datasets in the same index as it allows you to partition the data. For example if you needed to store a dataset of customer support queries and a dataset of product descriptions you could create two namespaces and query over each one separately.
+upsert vector 時要選一個 namespace。這是選填的，但如果想在同一個 index 存多份資料集，可以用它來分區。例如要存一份客服問題的資料集和一份產品描述的資料集，可以建兩個 namespace，各自獨立查詢。
 
 ```python
 def append_vectors(data, doc_embeds):
@@ -153,16 +159,16 @@ index.upsert(
     upserted_count: 6
     ```
 
-You should now see the vectors in the Pinecone Dashboard.  
+現在應該能在 Pinecone Dashboard 看到這些 vector。
 
 ![Vectors in Pinecone](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/pinecone-dashboard-2.png)
 
-The vectors should now be visible in the Pinecone Dashboard. 
+這些 vector 現在應該已經顯示在 Pinecone Dashboard 了。
 
-To test the search functionality we can query the index. Below we are taking a sample question, running this through the same embedding function and then checking the index for matching vectors.
+要測試搜尋功能，可以查詢 index。下面拿一個範例問題，用同一個 embedding 函式轉換，再到 index 裡找匹配的 vector。
 
-`top_k` refers to the number of results we want to return.
-`include_values` and `include_metadata` are used to return the embeddings and original text of the results.
+`top_k` 是想回傳的結果數量。
+`include_values` 和 `include_metadata` 用來回傳結果的 embedding 和原始文字。
 
 ```python
 query = "When was OpenAI founded?"
@@ -195,25 +201,25 @@ print(results)
      'usage': {'read_units': 6}}
     ```
 
-## Create a Retool Workflow
+## 建立 Retool Workflow
 
-Now we have a working vector database, we can create a Retool workflow to connect to it to run our queries from ChatGPT. 
+vector database 可以用了，接著建一個 Retool workflow 連到它，讓 ChatGPT 能執行查詢。
 
-Open Retool and create a new workflow. 
+打開 Retool，建立一個新的 workflow。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retool-new-workflow.png" alt="Create Retool Workflowt" width="500"/>
 
-You should now see the following screen.
+你應該會看到下面的畫面。
 
 ![Retool Workflow 2](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retool-workflow-1.png)
 
-In this example we'll be using Python to query the Pinecone index. To do this we'll need to import the `pinecone` and `openai` library. First switch to Python. 
+這個例子用 Python 查詢 Pinecone index，所以需要匯入 `pinecone` 和 `openai` 套件。先切換到 Python。
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(55.43981481481482% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/DnaN9MnRjDaBL9HWKabX?embed&embed_mobile=inline&embed_desktop=inline&show_copy_link=true" title="Cookbook - Retool Libraries" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-We are now ready to add our code to the code block. 
+現在可以把程式碼加到 code block 裡了。
 
-Start by declaring the libraries we just imported to this workflow. 
+先宣告剛匯入到這個 workflow 的套件。
 
 
 ```python
@@ -221,7 +227,7 @@ from pinecone import Pinecone
 from openai import OpenAI
 ```
 
-We now need to set the API keys for Pinecone and OpenAI. You can put these directly in the code block or use [Retool Configuration Variables](https://docs.retool.com/org-users/guides/config-vars). Configuration variables are recommended as they are more secure, this shown below.
+接著設定 Pinecone 和 OpenAI 的 API key。可以直接寫在 code block 裡，也可以用 [Retool Configuration Variables](https://docs.retool.com/org-users/guides/config-vars)。比較推薦用 configuration variable，因為更安全，下面就是這種寫法。
 
 
 ```python
@@ -229,7 +235,7 @@ client = OpenAI(api_key=retoolContext.configVars.openai_api_key)
 pc = Pinecone(api_key=retoolContext.configVars.pinecone_api_key)
 ```
 
-We can then reuse our OpenAI Embedding and Pinecone query functions from above in the Retool code snippet and return the results. Below is the completed code block. 
+然後在 Retool 的程式碼片段裡，重用前面的 OpenAI Embedding 和 Pinecone 查詢函式，並回傳結果。下面是完成的 code block。
 
 ```startTrigger.data.query``` is a variable passed in from the start trigger of the workflow. This is where the user query from ChatGPT will be passed in.
 
@@ -263,31 +269,31 @@ results = index.query(
 return results.to_dict()['matches']
 ```
 
-This should look like this in the UI. You can test this by clicking the run button at the top of the code block. You should see the results returned in the Data section at the bottom of the code block.
+在 UI 裡會長得像這樣。點 code block 上方的執行按鈕就能測試，結果會顯示在 code block 下方的 Data 區。
 
 ![Retool Workflow 3](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retool-workflow-2.png)
 
-We now have a workflow with a start trigger that will take a user query pass this to our Vector_Search code block. This will return the top 2 results from the Pinecone index. Next we need to add a block that will take these results and respond to the start trigger request.
+現在 workflow 有一個 start trigger，會接收使用者的 query 並傳給 Vector_Search code block，由它從 Pinecone index 回傳前 2 筆結果。接下來要加一個 block，把這些結果拿去回應 start trigger 的請求。
 
 
 <!--ARCADE EMBED START--><div style="position: relative; padding-bottom: calc(55.43981481481482% + 41px); height: 0; width: 100%;"><iframe src="https://demo.arcade.software/6lyRo3PP2iWq814KvY1f?embed&embed_mobile=tab&embed_desktop=inline&show_copy_link=true" title="Cookbook - Retool Return" frameborder="0" loading="lazy" webkitallowfullscreen mozallowfullscreen allowfullscreen allow="clipboard-write" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; color-scheme: light;" ></iframe></div><!--ARCADE EMBED END-->
 
-Finally we need to configure the start trigger to support calling via API to allow it to be used as a ChatGPT action. 
+最後要把 start trigger 設成可以用 API 呼叫，這樣才能當 ChatGPT action 使用。
 
-Go to Triggers, and toggle the switch to enable the Webhook. Click on the Webhook to open the configuration screen. We can optionally add an Alias to better describe what this webhook will trigger. In this case we'll call it `vector_search`. This provides a more identifiable name in the URL. When complete click Save Changes.
+到 Triggers，打開 Webhook 的開關，再點 Webhook 進入設定畫面。可以選擇加一個 Alias 來描述這個 webhook 會觸發什麼。這裡取名為 `vector_search`，這樣 URL 裡會有比較好辨識的名稱。完成後按 Save Changes。
 
 ![Retool Workflow 4](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retool-workflow-3.png)
 
-The final step is to deploy this workflow. Click the Deploy button at the top of the screen. The workflow is now accessible via API. You can test this by clicking the copy button next to the Alias URL, choosing Copy as cURL and then running this in the terminal.
+最後一步是部署 workflow。點畫面上方的 Deploy 按鈕，workflow 就能透過 API 存取了。要測試的話，點 Alias URL 旁的複製按鈕，選 Copy as cURL，然後在終端機執行。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/retool-workflow-4.png" alt="Retool Workflow 5" width="400"/>
 
 
-## Create a Custom GPT Action
+## 建立 Custom GPT Action
 
-We now have a working Vector Database, and a way of querying this over API through the Retool Workflow. The next step is to connect the Retool Workflow to ChatGPT via an action. 
+現在有了可用的 Vector Database，也有一個透過 Retool Workflow 用 API 查詢它的方式。下一步是用 action 把 Retool Workflow 接到 ChatGPT。
 
-Go to you GPT, and create a new action. Below is an example of the OpenAPI spec required to connect to the Retool Workflow. You will need to replace the URL and API key with your own. 
+到你的 GPT，建立一個新的 action。下面是連接 Retool Workflow 所需的 OpenAPI spec 範例。你要把 URL 和 API key 換成自己的。
 
 ```openapi
 openapi: 3.1.0
@@ -325,13 +331,25 @@ paths:
           description: Internal Server Error. Something went wrong on the server side.
 ```
 
-Under the Authentication section set the auth method to API Key. Paste in your API from the Retool Workflow trigger settings. Then set Auth Type to Custom and set the Custom Header Name to ```X-Workflow-Api-Key```
+在 Authentication 區塊，把驗證方式設成 API Key。貼上 Retool Workflow trigger 設定裡的 API key。再把 Auth Type 設成 Custom，Custom Header Name 填 ```X-Workflow-Api-Key```
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/chatgpt-auth-config.png" alt="ChatGPT Auth Config" width="400"/>
 
 
-Your setup is now complete. You can test this by sending a message to your GPT asking for information from the vector database. 
+設定完成。你可以傳訊息給你的 GPT，問一個向量資料庫裡有的資訊來測試。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gpt-rag-result.png" alt="GPT RAG Result" width="600"/>
 
-<!-- tutor:summary -->
+## 重點整理
+
+- ChatGPT 本身不能直接連 vector database，要中間包一層 HTTP endpoint，再用 Custom GPT action 去呼叫。
+- 查詢時要用跟寫入時同一個 embedding 模型，才能做相似度比對。
+- 寫入時把原文放在 metadata，查詢結果才能直接回傳原文。
+- namespace 可以在同一個 index 裡把不同資料集分區，各自查詢。
+- API key 放在 Retool Configuration Variables 比寫在程式碼裡安全。
+
+## 練習
+
+1. 把查詢的 `top_k` 從 2 改成 3，看看回傳的結果有什麼不同。
+2. 在範例資料集裡多加幾筆文字，重新 upsert 到另一個 namespace，查詢時指定那個 namespace。
+3. 修改 Retool 的 Vector_Search code block，把回傳結果只留下 metadata 裡的原文，並同步調整 OpenAPI spec 的 response schema。

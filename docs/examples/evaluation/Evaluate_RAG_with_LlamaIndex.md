@@ -1,51 +1,56 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/Evaluate_RAG_with_LlamaIndex.ipynb
 ---
-
-# Evaluate RAG with LlamaIndex
+# 用 LlamaIndex 評估 RAG
 
 > 原文：[examples/evaluation/Evaluate_RAG_with_LlamaIndex.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/Evaluate_RAG_with_LlamaIndex.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 LlamaIndex 建一個 RAG pipeline，吃 Paul Graham 的文章，然後用它內建的 evaluation 模組量化這個 pipeline 好不好。評估分兩塊：retrieval 有沒有撈到對的內容（Hit Rate、MRR），還有 response 有沒有幻覺、有沒有回答到問題（Faithfulness、Relevancy）。
 
+## 學完你會
 
-In this notebook we will look into building an RAG pipeline and evaluating it with LlamaIndex. It has following 3 sections.
+- 用 LlamaIndex 載入資料、建 vector index、做出 query engine 並檢查被撈回的 node。
+- 用 `generate_question_context_pairs` 產生評估資料集，再用 `RetrieverEvaluator` 算 Hit Rate 和 MRR。
+- 用 `FaithfulnessEvaluator`、`RelevancyEvaluator` 和 `BatchEvalRunner` 批次評估回答品質。
 
-1. Understanding Retrieval Augmented Generation (RAG).
-2. Building RAG with LlamaIndex.
-3. Evaluating RAG with LlamaIndex.
+## 開跑前
+
+需要設定 OpenAI API Key（會呼叫 embedding、`gpt-3.5-turbo` 和 `gpt-4`，會產生費用）。
+
+這篇是在講 RAG 的概念，先看它怎麼運作，再來看怎麼評估。
 
 **Retrieval Augmented Generation (RAG)**
 
-LLMs are trained on vast datasets, but these will not include your specific data. Retrieval-Augmented Generation (RAG) addresses this by dynamically incorporating your data during the generation process. This is done not by altering the training data of LLMs, but by allowing the model to access and utilize your data in real-time to provide more tailored and contextually relevant responses.
+LLM 是用大量資料訓練出來的，但裡面不會有你自己的資料。RAG 的做法是在生成回答的過程中，動態把你的資料帶進去。它不是去改 LLM 的訓練資料，而是讓模型在執行時直接存取、使用你的資料，所以回答會更貼近你的情境。
 
-In RAG, your data is loaded and prepared for queries or “indexed”. User queries act on the index, which filters your data down to the most relevant context. This context and your query then go to the LLM along with a prompt, and the LLM provides a response.
+在 RAG 裡，你的資料會先被載入並整理成可查詢的形式，也就是「建索引」（indexing）。使用者的 query 會對 index 作用，把資料篩成最相關的 context。這份 context 和 query 再加上 prompt 一起送給 LLM，LLM 才產生回答。
 
-Even if what you’re building is a chatbot or an agent, you’ll want to know RAG techniques for getting data into your application.
+就算你要做的是 chatbot 或 agent，也需要懂 RAG 的技巧，才知道怎麼把資料送進應用程式。
 
 ![RAG Overview](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/llamaindex_rag_overview.png)
 
-**Stages within RAG**
+**RAG 的幾個階段**
 
-There are five key stages within RAG, which in turn will be a part of any larger application you build. These are:
+RAG 有五個關鍵階段，任何比較大的應用都會包含它們：
 
-**Loading:** this refers to getting your data from where it lives – whether it’s text files, PDFs, another website, a database, or an API – into your pipeline. LlamaHub provides hundreds of connectors to choose from.
+**Loading（載入）：** 把資料從它原本的地方（文字檔、PDF、別的網站、資料庫或 API）拿進 pipeline。LlamaHub 提供數百種 connector 可以選。
 
-**Indexing:** this means creating a data structure that allows for querying the data. For LLMs this nearly always means creating vector embeddings, numerical representations of the meaning of your data, as well as numerous other metadata strategies to make it easy to accurately find contextually relevant data.
+**Indexing（索引）：** 建出能查詢資料的結構。對 LLM 來說，幾乎都是建 vector embedding（用數值表示資料的語意），再搭配各種 metadata 策略，讓系統能準確找到相關內容。
 
-**Storing:** Once your data is indexed, you will want to store your index, along with any other metadata, to avoid the need to re-index it.
+**Storing（儲存）：** 資料索引好之後，會想把 index 和 metadata 存起來，避免重新建索引。
 
-**Querying:** for any given indexing strategy there are many ways you can utilize LLMs and LlamaIndex data structures to query, including sub-queries, multi-step queries and hybrid strategies.
+**Querying（查詢）：** 同一種索引策略下，有很多方式可以用 LLM 和 LlamaIndex 的資料結構來查，包含 sub-query、multi-step query 和混合策略。
 
-**Evaluation:** a critical step in any pipeline is checking how effective it is relative to other strategies, or when you make changes. Evaluation provides objective measures of how accurate, faithful and fast your responses to queries are.
+**Evaluation（評估）：** 任何 pipeline 都該檢查它跟其他策略比起來效果如何，或是改動之後有沒有變好。評估能給你客觀的數字，看回答準不準、忠不忠實、快不快。
 
-## Build RAG system.
+## 建 RAG 系統
 
-Now that we have understood the significance of RAG system, let's build a simple RAG pipeline.
+了解 RAG 為什麼重要之後，我們來建一個簡單的 RAG pipeline。
 
 ```python
 !pip install llama-index
@@ -70,15 +75,15 @@ import os
 import pandas as pd
 ```
 
-Set Your OpenAI API Key
+設定你的 OpenAI API Key
 
 ```python
 os.environ['OPENAI_API_KEY'] = 'YOUR OPENAI API KEY'
 ```
 
-Let's use [Paul Graham Essay text](https://www.paulgraham.com/worked.html) for building RAG pipeline.
+我們用 [Paul Graham 的文章](https://www.paulgraham.com/worked.html)來建 RAG pipeline。
 
-#### Download Data
+#### 下載資料
 
 ```python
 !mkdir -p 'data/paul_graham/'
@@ -93,7 +98,7 @@ Let's use [Paul Graham Essay text](https://www.paulgraham.com/worked.html) for b
     100 75042  100 75042    0     0   190k      0 --:--:-- --:--:-- --:--:--  190k--:--  0:00:03 24586
     ```
 
-#### Load Data and Build Index.
+#### 載入資料並建 index
 
 ```python
 documents = SimpleDirectoryReader("./data/paul_graham/").load_data()
@@ -107,7 +112,7 @@ nodes = node_parser.get_nodes_from_documents(documents)
 vector_index = VectorStoreIndex(nodes)
 ```
 
-Build a QueryEngine and start querying.
+建一個 QueryEngine 然後開始查詢。
 
 ```python
 query_engine = vector_index.as_query_engine()
@@ -117,7 +122,7 @@ query_engine = vector_index.as_query_engine()
 response_vector = query_engine.query("What did the author do growing up?")
 ```
 
-Check response.
+檢查回應。
 
 ```python
 response_vector.response
@@ -129,9 +134,9 @@ response_vector.response
     'The author wrote short stories and worked on programming, specifically on an IBM 1401 computer using an early version of Fortran.'
     ```
 
-By default it retrieves `two` similar nodes/ chunks. You can modify that in `vector_index.as_query_engine(similarity_top_k=k)`.
+預設會撈回 `two` 個相似的 node（chunk）。想改的話用 `vector_index.as_query_engine(similarity_top_k=k)`。
 
-Let's check the text in each of these retrieved nodes.
+來看看這些被撈回的 node 各自的文字。
 
 ```python
 # First retrieved node
@@ -155,22 +160,22 @@ response_vector.source_nodes[1].get_text()
     "It felt like I was doing life right. I remember that because I was slightly dismayed at how novel it felt. The good news is that I had more moments like this over the next few years.\n\nIn the summer of 2016 we moved to England. We wanted our kids to see what it was like living in another country, and since I was a British citizen by birth, that seemed the obvious choice. We only meant to stay for a year, but we liked it so much that we still live there. So most of Bel was written in England.\n\nIn the fall of 2019, Bel was finally finished. Like McCarthy's original Lisp, it's a spec rather than an implementation, although like McCarthy's Lisp it's a spec expressed as code.\n\nNow that I could write essays again, I wrote a bunch about topics I'd had stacked up. I kept writing essays through 2020, but I also started to think about other things I could work on. How should I choose what to do? Well, how had I chosen what to work on in the past? I wrote an essay for myself to answer that question, and I was surprised how long and messy the answer turned out to be. If this surprised me, who'd lived it, then I thought perhaps it would be interesting to other people, and encouraging to those with similarly messy lives. So I wrote a more detailed version for others to read, and this is the last sentence of it.\n\n\n\n\n\n\n\n\n\nNotes\n\n[1] My experience skipped a step in the evolution of computers: time-sharing machines with interactive OSes. I went straight from batch processing to microcomputers, which made microcomputers seem all the more exciting.\n\n[2] Italian words for abstract concepts can nearly always be predicted from their English cognates (except for occasional traps like polluzione). It's the everyday words that differ. So if you string together a lot of abstract concepts with a few simple verbs, you can make a little Italian go a long way.\n\n[3] I lived at Piazza San Felice 4, so my walk to the Accademia went straight down the spine of old Florence: past the Pitti, across the bridge, past Orsanmichele, between the Duomo and the Baptistery, and then up Via Ricasoli to Piazza San Marco."
     ```
 
-We have built a RAG pipeline and now need to evaluate its performance. We can assess our RAG system/query engine using LlamaIndex's core evaluation modules. Let's examine how to leverage these tools to quantify the quality of our retrieval-augmented generation system.
+RAG pipeline 建好了，接下來要評估它的表現。我們可以用 LlamaIndex 的核心 evaluation 模組來評估 RAG 系統（query engine），看看怎麼量化檢索加生成的品質。
 
-## Evaluation
+## 評估
 
-Evaluation should serve as the primary metric for assessing your RAG application. It determines whether the pipeline will produce accurate responses based on the data sources and a range of queries.
+評估應該是衡量 RAG 應用的首要指標。它決定這個 pipeline 面對你的資料來源和各種問題時，能不能產生正確的回答。
 
-While it's beneficial to examine individual queries and responses at the start, this approach may become impractical as the volume of edge cases and failures increases. Instead, it may be more effective to establish a suite of summary metrics or automated evaluations. These tools can provide insights into overall system performance and indicate specific areas that may require closer scrutiny.
+一開始逐筆看 query 和回答是有幫助的，但 edge case 和失敗案例變多之後就不實際了。比較有效的做法是建一組彙總指標或自動化評估，用來掌握整體表現，並指出哪些地方需要細看。
 
-In a RAG system, evaluation focuses on two critical aspects:
+RAG 系統的評估看兩件事：
 
-*   **Retrieval Evaluation:** This assesses the accuracy and relevance of the information retrieved by the system.
-*   **Response Evaluation:** This measures the quality and appropriateness of the responses generated by the system based on the retrieved information.
+*   **Retrieval Evaluation：** 評估系統撈回來的資訊準不準、相不相關。
+*   **Response Evaluation：** 評估系統根據撈回的資訊所產生的回答，品質好不好、恰不恰當。
 
-#### Question-Context Pair Generation:
+#### 產生 Question-Context Pair
 
-For the evaluation of a RAG system, it's essential to have queries that can fetch the correct context and subsequently generate an appropriate response. `LlamaIndex` offers a `generate_question_context_pairs` module specifically for crafting questions and context pairs which can be used in the assessment of the RAG system of both Retrieval and Response Evaluation. For more details on Question Generation, please refer to the [documentation](https://docs.llamaindex.ai/en/stable/examples/evaluation/QuestionGeneration.html).
+要評估 RAG 系統，需要有能撈到正確 context、並產生適當回答的 query。`LlamaIndex` 提供 `generate_question_context_pairs` 模組，專門產生問題和 context 的配對，可以同時用在 Retrieval 和 Response 評估。更多關於 Question Generation 的細節請看[文件](https://docs.llamaindex.ai/en/stable/examples/evaluation/QuestionGeneration.html)。
 
 ```python
 qa_dataset = generate_question_context_pairs(
@@ -186,29 +191,29 @@ qa_dataset = generate_question_context_pairs(
     100%|██████████| 58/58 [06:26<00:00,  6.67s/it]
     ```
 
-#### Retrieval Evaluation:
+#### Retrieval Evaluation
 
-We are now prepared to conduct our retrieval evaluations. We will execute our `RetrieverEvaluator` using the evaluation dataset we have generated.
+現在可以做 retrieval 評估了。我們會用剛產生的評估資料集來跑 `RetrieverEvaluator`。
 
-We first create the `Retriever` and then define two functions: `get_eval_results`, which operates our retriever on the dataset, and `display_results`, which presents the outcomes of the evaluation.
+先建 `Retriever`，再定義兩個函式：`get_eval_results` 負責在資料集上跑 retriever，`display_results` 負責呈現評估結果。
 
-Let's create the retriever.
+先來建 retriever。
 
 ```python
 retriever = vector_index.as_retriever(similarity_top_k=2)
 ```
 
-Define `RetrieverEvaluator`. We use **Hit Rate** and **MRR** metrics to evaluate our Retriever.
+定義 `RetrieverEvaluator`。我們用 **Hit Rate** 和 **MRR** 兩個指標來評估 Retriever。
 
-**Hit Rate:**
+**Hit Rate：**
 
-Hit rate calculates the fraction of queries where the correct answer is found within the top-k retrieved documents. In simpler terms, it’s about how often our system gets it right within the top few guesses.
+Hit rate 算的是正確答案出現在前 k 個撈回文件裡的 query 比例。簡單講，就是系統在前幾次猜測內猜對的頻率。
 
-**Mean Reciprocal Rank (MRR):**
+**Mean Reciprocal Rank (MRR)：**
 
-For each query, MRR evaluates the system’s accuracy by looking at the rank of the highest-placed relevant document. Specifically, it’s the average of the reciprocals of these ranks across all the queries. So, if the first relevant document is the top result, the reciprocal rank is 1; if it’s second, the reciprocal rank is 1/2, and so on.
+對每個 query，MRR 看排名最高的相關文件排第幾。具體來說，是把所有 query 的排名倒數取平均。所以第一個相關文件排第一，倒數排名就是 1；排第二就是 1/2，以此類推。
 
-Let's check these metrics to check the performance of out retriever.
+來看這些指標，確認 retriever 的表現。
 
 ```python
 retriever_evaluator = RetrieverEvaluator.from_metric_names(
@@ -221,7 +226,7 @@ retriever_evaluator = RetrieverEvaluator.from_metric_names(
 eval_results = await retriever_evaluator.aevaluate_dataset(qa_dataset)
 ```
 
-Let's define a function to display the Retrieval evaluation results in table format.
+定義一個函式，把 Retrieval 評估結果用表格顯示。
 
 ```python
 def display_results(name, eval_results):
@@ -255,14 +260,14 @@ display_results("OpenAI Embedding Retriever", eval_results)
     0  OpenAI Embedding Retriever  0.758621  0.62069
     ```
 
-#### Observation:
+#### 觀察
 
-The Retriever with OpenAI Embedding  demonstrates a performance with a hit rate of `0.7586`, while the MRR, at `0.6206`, suggests there's room for improvement in ensuring the most relevant results appear at the top. The observation that MRR is less than the hit rate indicates that the top-ranking results aren't always the most relevant. Enhancing MRR could involve the use of rerankers, which refine the order of retrieved documents. For a deeper understanding of how rerankers can optimize retrieval metrics, refer to the detailed discussion in our [blog post](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83).
+用 OpenAI Embedding 的 Retriever，hit rate 是 `0.7586`，MRR 是 `0.6206`，代表要讓最相關的結果排在最前面還有進步空間。MRR 比 hit rate 低，表示排最前面的結果不一定是最相關的。要提升 MRR 可以用 reranker 重新排序撈回的文件。想深入了解 reranker 怎麼最佳化 retrieval 指標，請看這篇[部落格文章](https://blog.llamaindex.ai/boosting-rag-picking-the-best-embedding-reranker-models-42d079022e83)。
 
-#### Response Evaluation:
+#### Response Evaluation
 
-1. FaithfulnessEvaluator: Measures if the response from a query engine matches any source nodes which is useful for measuring if the response is hallucinated.
-2. Relevancy Evaluator: Measures if the response + source nodes match the query.
+1. FaithfulnessEvaluator：衡量 query engine 的回答是否符合 source node，可以用來判斷回答有沒有幻覺。
+2. Relevancy Evaluator：衡量回答加 source node 是否符合 query。
 
 ```python
 # Get the list of queries from the above created dataset
@@ -272,11 +277,11 @@ queries = list(qa_dataset.queries.values())
 
 #### Faithfulness Evaluator
 
-Let's start with FaithfulnessEvaluator.
+先從 FaithfulnessEvaluator 開始。
 
-We will use `gpt-3.5-turbo` for generating response for a given query and `gpt-4` for evaluation.
+我們用 `gpt-3.5-turbo` 針對 query 產生回答，用 `gpt-4` 做評估。
 
-Let's create service_context separately for `gpt-3.5-turbo` and `gpt-4`.
+分別為 `gpt-3.5-turbo` 和 `gpt-4` 建立 service_context。
 
 ```python
 # gpt-3.5-turbo
@@ -288,14 +293,14 @@ gpt4 = OpenAI(temperature=0, model="gpt-4")
 service_context_gpt4 = ServiceContext.from_defaults(llm=gpt4)
 ```
 
-Create a `QueryEngine` with `gpt-3.5-turbo` service_context to generate response for the query.
+用 `gpt-3.5-turbo` 的 service_context 建一個 `QueryEngine`，用來為 query 產生回答。
 
 ```python
 vector_index = VectorStoreIndex(nodes, service_context = service_context_gpt35)
 query_engine = vector_index.as_query_engine()
 ```
 
-Create a  FaithfulnessEvaluator.
+建立 FaithfulnessEvaluator。
 
 
 
@@ -305,7 +310,7 @@ from llama_index.evaluation import FaithfulnessEvaluator
 faithfulness_gpt4 = FaithfulnessEvaluator(service_context=service_context_gpt4)
 ```
 
-Let's evaluate on one question.
+先評估一個問題。
 
 ```python
 eval_query = queries[10]
@@ -319,7 +324,7 @@ eval_query
     "Based on the author's experience and observations, why did he consider the AI practices during his first year of grad school as a hoax? Provide specific examples from the text to support your answer."
     ```
 
-Generate response first and use faithfull evaluator.
+先產生回答，再用 faithfulness evaluator 評估。
 
 ```python
 response_vector = query_engine.query(eval_query)
@@ -344,17 +349,17 @@ eval_result.passing
 
 #### Relevancy Evaluator
 
-RelevancyEvaluator is useful to measure if the response and source nodes (retrieved context) match the query. Useful to see if response actually answers the query.
+RelevancyEvaluator 用來衡量回答和 source node（撈回的 context）是否符合 query，可以看回答到底有沒有回答到問題。
 
-Instantiate `RelevancyEvaluator` for relevancy evaluation with `gpt-4`
+建立用 `gpt-4` 做 relevancy 評估的 `RelevancyEvaluator`。
+
+對其中一個 query 做 relevancy 評估。
 
 ```python
 from llama_index.evaluation import RelevancyEvaluator
 
 relevancy_gpt4 = RelevancyEvaluator(service_context=service_context_gpt4)
 ```
-
-Let's do relevancy evaluation for one of the query.
 
 ```python
 # Pick a query
@@ -402,9 +407,9 @@ eval_result.feedback
     'YES'
     ```
 
-#### Batch Evaluator:
+#### Batch Evaluator
 
-Now that we have done FaithFulness and Relevancy Evaluation independently. LlamaIndex has `BatchEvalRunner` to compute multiple evaluations in batch wise manner.
+Faithfulness 和 Relevancy 都單獨評估過了，LlamaIndex 有 `BatchEvalRunner` 可以一次批次跑多個評估。
 
 ```python
 from llama_index.evaluation import BatchEvalRunner
@@ -452,16 +457,28 @@ relevancy_score
     1.0
     ```
 
-#### Observation:
+#### 觀察
 
-Faithfulness score of `1.0` signifies that the generated answers contain no hallucinations and are entirely based on retrieved context.
+Faithfulness 分數 `1.0` 代表產生的回答沒有幻覺，完全是根據撈回的 context。
 
-Relevancy score of `1.0` suggests that the answers generated are consistently aligned with the retrieved context and the queries.
+Relevancy 分數 `1.0` 代表回答跟撈回的 context 以及 query 一致。
 
-## Conclusion
+## 結論
 
-In this notebook, we have explored how to build and evaluate a RAG pipeline using LlamaIndex, with a specific focus on evaluating the retrieval system and generated responses within the pipeline. 
+這篇用 LlamaIndex 建了一個 RAG pipeline 並評估它，重點放在 pipeline 裡的 retrieval 系統和生成的回答。
 
-LlamaIndex offers a variety of other evaluation modules as well, which you can explore further [here](https://docs.llamaindex.ai/en/stable/module_guides/evaluating/root.html)
+LlamaIndex 還有其他評估模組，可以到[這裡](https://docs.llamaindex.ai/en/stable/module_guides/evaluating/root.html)了解更多。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- RAG 評估要分兩塊看：retrieval 有沒有撈到對的 context，以及 response 的品質。
+- Hit Rate 看正確結果有沒有出現在前 k 個，MRR 還看它排得多前面。MRR 低於 hit rate 代表排序有改善空間，可以加 reranker。
+- Faithfulness 檢查回答有沒有脫離 source node（幻覺），Relevancy 檢查回答有沒有切題。
+- 用強一點的模型（這裡是 `gpt-4`）來評估較弱模型（`gpt-3.5-turbo`）的輸出，是常見的做法。
+- 逐筆看結果撐不久，要靠資料集加自動化指標才能追蹤改動的效果。
+
+## 練習
+
+1. 把 `vector_index.as_query_engine(similarity_top_k=k)` 的 k 改成 4，看撈回的 node 和回答有什麼變化。
+2. 改 retriever 的 `similarity_top_k`，重跑 `RetrieverEvaluator`，比較 Hit Rate 和 MRR 怎麼變。
+3. 把評估用的模型從 `gpt-4` 換成別的，重跑 `BatchEvalRunner`，看 Faithfulness 和 Relevancy 分數有沒有差異。

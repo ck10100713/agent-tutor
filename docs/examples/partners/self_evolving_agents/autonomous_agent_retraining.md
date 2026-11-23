@@ -1,173 +1,185 @@
 ---
-translated: false
+translated: true
 source: examples/partners/self_evolving_agents/autonomous_agent_retraining.ipynb
 ---
-
-# Self-Evolving Agents - A Cookbook for Autonomous Agent Retraining
+# Self-Evolving Agents：讓 Agent 自主重新訓練的 Cookbook
 
 > 原文：[examples/partners/self_evolving_agents/autonomous_agent_retraining.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/self_evolving_agents/autonomous_agent_retraining.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+Agent 做完 proof-of-concept 之後常常卡住，因為邊界案例和錯誤都要靠人來診斷、修正。這篇示範一個可重複的重新訓練迴圈：收集問題、從回饋學習、把改進放回類 production 的流程。範例是受法規管制的醫藥文件撰寫，但做法適用於任何要求準確、可稽核、要快速迭代的領域。
 
-## Overview
+## 學完你會
 
-Agentic systems often reach a plateau after proof-of-concept because they depend on humans to diagnose edge cases and correct failures. This cookbook introduces a repeatable retraining loop that captures those issues, learns from the feedback, and promotes improvements back into production-like workflows. We ground the approach in a regulated healthcare documentation task, but the patterns generalize to any domain that demands accuracy, auditability, and rapid iteration.
+- 判斷一個 autonomous agent 為什麼還不夠 production-ready，並加上可量測的回饋訊號。
+- 比較三種 prompt 優化策略（手動快速迭代、靜態 metaprompt 自動迴圈、GEPA），知道各自適用的時機。
+- 組出一個自我修復的流程，結合人工審查、LLM-as-judge eval 和 prompt 迭代改寫。
 
-### What You Will Learn
-- Diagnose why an autonomous agent falls short of production readiness and instrument it with measurable feedback signals.
-- Compare three prompt-optimization strategies—from quick manual iteration to fully automated loops—and understand when to reach for each.
-- Assemble a self-healing workflow that combines human review, LLM-as-judge evals, and iterative prompt refinement.
+## 開跑前
 
-### Who This Notebook Is For
-- ML/AI engineers and solution architects who need to move beyond toy demos.
-- Product and delivery teams looking for executable artifacts they can adapt into internal tooling or production pipelines.
+- 需要 OpenAI API key，並使用 OpenAI Evals 和 Agents SDK。
+- 第 2 節用 OpenAI 平台的 Evals 介面操作，需要平台帳號。
+- 範例資料集 `dataset.csv` 在 GitHub repo 裡。
+- 第 4 節的 GEPA 需要安裝 `gepa`，跑一次大約 10 到 15 分鐘。
 
-### How to Work Through This Notebook
-1. Start with Section 1 to understand the healthcare use case, baseline agent, and system architecture.
-2. Use Section 2 to practice prompt optimization within the OpenAI Evals interface and collect structured feedback.
-3. Run Section 3 to automate the optimization loop with graders, evals, and retraining logic.
-4. Reference the appendix for reusable prompts, configurations, and evaluation templates as you tailor the workflow to your environment.
+## 總覽
 
-The notebook is modular—feel free to run sections independently or sequentially as you adapt the retraining loop to your own agents.
+Agentic 系統在 proof-of-concept 之後常常遇到瓶頸，因為要靠人去診斷邊界案例、修正錯誤。這份 cookbook 介紹一個可重複的重新訓練迴圈：抓出問題、從回饋中學習、再把改進推回類 production 的工作流程。我們用受法規管制的醫療文件任務當範例，不過這些做法可以套用到任何需要準確、可稽核、快速迭代的領域。
 
-## 1. Use Case Overview: Self-Evolving Agents in Healthcare
+### 你會學到什麼
+- 診斷 autonomous agent 為什麼還沒達到 production 水準，並用可量測的回饋訊號來監控它。
+- 比較三種 prompt 優化策略，從快速手動迭代到完全自動化的迴圈，了解各自什麼時候用。
+- 組出一個自我修復的 workflow，結合人工審查、LLM-as-judge eval 和 prompt 迭代改進。
 
-### Problem Definition
+### 這份 Notebook 適合誰
+- 需要從玩具 demo 往前走的 ML/AI 工程師和解決方案架構師。
+- 想拿到可執行的範例，改成內部工具或 production pipeline 的產品與交付團隊。
 
-For this cookbook, we focus on a **real-world use case**: drafting regulatory documents for pharmaceutical companies. These organizations must prepare and submit extensive documentation to regulatory authorities (e.g., the U.S. Food and Drug Administration) to obtain approval for new drugs. The accuracy and speed of these submissions are critical, as they directly impact how quickly life-saving treatments can reach patients.  
+### 怎麼讀這份 Notebook
+1. 先看第 1 節，了解醫療使用情境、baseline agent 和系統架構。
+2. 第 2 節在 OpenAI Evals 介面練習 prompt 優化，並收集結構化回饋。
+3. 第 3 節用 grader、eval 和重新訓練邏輯，把優化迴圈自動化。
+4. 附錄有可重用的 prompt、設定和評估範本，可以依你的環境調整。
 
-Regulatory document drafting is a highly complex, iterative, and precision-driven process that requires deep scientific, medical, and compliance expertise. Despite the availability of advanced authoring tools, it remains labor-intensive and prone to human error. **Agentic systems offer substantial leverage** by assisting with research synthesis, content generation, and document structuring, yet human experts are still needed to ensure factual accuracy and regulatory compliance.  
+Notebook 是模組化的，你可以單獨跑某一節，也可以依序跑，視你要怎麼把重新訓練迴圈套到自己的 agent 而定。
 
-The key challenge is to design a feedback loop that enables these agentic systems to learn iteratively and refine model behavior over time. Such a system can gradually shift human effort from detailed correction to high-level oversight, improving efficiency while maintaining the rigorous standards required for regulatory submissions.  
+## 1. 使用情境總覽：醫療領域的 Self-Evolving Agents
+
+### 問題定義
+
+這份 cookbook 聚焦在一個**真實的使用情境**：幫製藥公司草擬法規文件。這些公司要準備大量文件送交主管機關（例如美國 FDA）以取得新藥核准。送件的準確度和速度非常關鍵，直接影響救命的療法多快能到病人手上。  
+
+撰寫法規文件複雜、需要反覆修改、容不得差錯，需要深厚的科學、醫學和法遵專業。就算有先進的寫作工具，它仍然很耗人力，也容易出人為錯誤。**Agentic 系統能幫上很大的忙**，例如整理研究、產生內容、安排文件結構，但還是需要人類專家確保事實正確和符合法規。  
+
+核心挑戰是設計一個回饋迴圈，讓這些 agentic 系統能一步步學習，持續改善模型行為。這樣的系統可以慢慢把人力從逐項修正，轉成高層次的監督，在維持法規送件嚴格標準的同時提升效率。  
 
 ### Self-evolving Agent
 
-The diagram below illustrates the iterative process for continuously improving an AI agent through feedback, meta prompting, and evaluation. The loop combines human judgment or automated feedback using an LLM-as-a-judge to iteratively enhance performance.  
+下圖說明如何透過回饋、meta prompting 和評估，持續改進 AI agent 的迭代流程。這個迴圈結合人類判斷，或用 LLM-as-a-judge 產生的自動回饋，一輪一輪提升表現。  
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/baseline_agent.png" alt="Self-evolving loop" style="max-width:50%"/>
-<br><em>Figure 1 - Diagram showing the self-evolving loop for automated agent improvement.</em>
+<br><em>圖 1：自動改進 agent 的 self-evolving 迴圈示意圖。</em>
 
-The process consists of the following steps:  
+流程分成以下幾步：  
 
 1. **Baseline Agent**  
-   The process begins with a baseline agent. In this notebook, we use a deliberately simple example (an agent that summarizes sections of a document) to illustrate the iterative improvement loop. In real-world or enterprise settings, the baseline agent could be much more complex. The summaries it produces serve as the initial benchmark for subsequent evaluation and refinement.
+   一開始是一個 baseline agent。這份 notebook 用刻意簡化的範例（一個摘要文件段落的 agent）來說明迭代改進的迴圈。實際的企業場景裡，baseline agent 會複雜得多。它產出的摘要就是後續評估和改進的初始基準。
 
-2. **Human Feedback (or LLM-as-judge)**  
-   The baseline agent’s outputs are then evaluated either by human reviewers (e.g., for production environments) and/or by an automated **LLM-as-judge** system. This step gathers both quantitative and qualitative feedback that indicates how well the agent meets its goals — for instance, if we are testing the length of the summary, the feedback might be “the summary is too long” or a numerical score (generally between `0` and `1`) generated by eval when assessing if the summary is under 500 words.
+2. **人工回饋（或 LLM-as-judge）**  
+   baseline agent 的輸出會交給人類審查者（例如 production 環境），和/或自動化的 **LLM-as-judge** 系統評估。這一步會收集量化和質化的回饋，看 agent 達成目標的程度。例如測試摘要長度時，回饋可能是「摘要太長」，或是 eval 判斷摘要是否在 500 字以內後給出的分數（通常介於 `0` 到 `1`）。
 
-3. **Evals and Aggregated Score**  
-   Based on the collected feedback, new prompts are generated and tested through evaluations (**Evals**). These tests measure performance against predefined criteria, and the outcomes are combined into an aggregated score that reflects the overall performance. The loop continues until the score exceeds a target threshold (e.g., `0.8`) or the maximum number of retries is reached (e.g., `max_retry = 10`). If the retry limit is hit, engineers are alerted that manual improvements are required.
+3. **Evals 和彙總分數**  
+   根據收集到的回饋產生新的 prompt，再透過評估（**Evals**）測試。這些測試依預先定義的標準量測表現，結果合併成一個代表整體表現的彙總分數。迴圈會一直跑到分數超過目標門檻（例如 `0.8`），或達到最大重試次數（例如 `max_retry = 10`）。如果碰到重試上限，就通知工程師需要手動改進。
 
-4. **Updated Baseline Agent**  
-   Once an improved version achieves the target performance, it replaces the original baseline agent. This updated agent becomes the foundation for the next iteration, supporting a continuous cycle of learning, feedback, and optimization.
-
-
-
-### Dataset Overview
-
-The dataset used for evaluation comprises ~70 sections extracted from the _Sample CMC Section for Hyperpolarized Pyruvate (13C) Injection_, publicly available [here](https://dctd.cancer.gov/drug-discovery-development/reagents-materials/imaging-ind-resources/documentation/13c-pyruvate-cmc.pdf). This dataset provides realistic, domain-specific content suitable for testing both scientific summarization and regulatory compliance behavior. 
+4. **更新後的 Baseline Agent**  
+   改進版本達到目標表現後，就取代原本的 baseline agent。更新後的 agent 成為下一輪迭代的基礎，形成學習、回饋、優化的持續循環。
 
 
-### Baseline Agent Overview
 
-To keep this cookbook self-contained and easily reproducible, we simplified the regulatory drafting use case while retaining its essential complexity. In production, a typical regulatory authoring agent comprises multiple specialized sub-agents responsible for tasks such as drafting, data analysis, compliance checking, citation generation, and fact verification.
+### 資料集概述
 
-For this guide, we narrow the scope of the regulatory authoring agent to focus on the self-healing aspect of the system. Our regulatory authoring agent consists of two sub-agents:
-- **A summarizer** creating scientific and concise summaries.
-- **A compliance checker**: evaluating each summary against key regulatory requirements (e.g., FDA 21 CFR Part 11).  
+評估用的資料集有約 70 個段落，取自 _Sample CMC Section for Hyperpolarized Pyruvate (13C) Injection_，文件公開在[這裡](https://dctd.cancer.gov/drug-discovery-development/reagents-materials/imaging-ind-resources/documentation/13c-pyruvate-cmc.pdf)。這份資料集的內容貼近真實、屬於特定領域，適合測試科學摘要和法規遵循的行為。 
+
+
+### Baseline Agent 概述
+
+為了讓這份 cookbook 自成一體又容易重現，我們簡化了法規撰寫的情境，但保留它的核心複雜度。實際 production 中，典型的法規撰寫 agent 會由多個專門的 sub-agent 組成，分別負責草擬、資料分析、合規檢查、引用產生和事實查核。
+
+這份指南把範圍縮小到系統的自我修復部分。我們的法規撰寫 agent 有兩個 sub-agent：
+- **Summarizer**：產出科學且精簡的摘要。
+- **Compliance checker**：依主要法規要求（例如 FDA 21 CFR Part 11）檢查每份摘要。  
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/simplified_reg_agent.png" alt="Baseline Agent" style="max-width:50%"/>
-<br><em>Figure 2 - The baseline agent as created in the AgentBuilder UI.</em>
+<br><em>圖 2：在 AgentBuilder UI 裡建立的 baseline agent。</em>
 
-For the remainder of this cookbook, we implemented a simplified version of the Summarizer agent (see the section **Agent Setup** below). Alternatively, you can reuse the code for the agent created with AgentBuilder. If you’d like to reproduce the agent directly from the AgentBuilder UI, here are the key prompts and parameters used:
+在這份 cookbook 剩下的部分，我們實作的是簡化版的 Summarizer agent（見下面的 **Agent Setup**）。你也可以直接重用用 AgentBuilder 建立的 agent 程式碼。如果想在 AgentBuilder UI 直接重現這個 agent，關鍵的 prompt 和參數如下：
 
-- **Summarizer agent:** This agent used the file search tool, where the [CMC PDF](https://github.com/openai/openai-cookbook/blob/main/examples/partners/self_evolving_agents/data/c13_pyruvate_sample_CMC_from_UCSF.pdf) was uploaded to the vector store.
+- **Summarizer agent：** 這個 agent 用了 file search tool，[CMC PDF](https://github.com/openai/openai-cookbook/blob/main/examples/partners/self_evolving_agents/data/c13_pyruvate_sample_CMC_from_UCSF.pdf) 已上傳到 vector store。
 > _Prompt:_ "Summarize section {{workflow.input_as_text}} from {{state.cmc_pdf}} uploaded to the vector store."
 
-- **Compliance Checker agent:**
+- **Compliance Checker agent：**
 > _Prompt:_ "Verify that the summary below is compliant with FDA 21 CFR Part 11: {{input.output_text}}. If the summary is compliant, return _Compliant_. Otherwise, return _This section needs to be manually summarized_."  
 
-Both agents were configured with the default parameters - using GPT-5, low reasoning effort, and text as the output format.
+兩個 agent 都用預設參數：GPT-5、low reasoning effort、輸出格式為文字。
 
-### Evaluation Approach
+### 評估方式
 
-To evaluate the baseline agent, there are two main approaches:
+評估 baseline agent 有兩種主要做法：
 
-1. **Collecting Human Feedback.** This approach involves gathering feedback from human users through the OpenAI Evals platform (or a custom UI built for a specific application). It is best suited for production settings or when piloting a tool where subject matter experts (SMEs) interact with the tool in real-world scenarios. This method helps uncover edge cases that may not have been identified during development. On the Evals platform, users can provide thumbs-up or thumbs-down ratings and share qualitative feedback about the summaries.  
-
-
-2. **Using an LLM-as-a-Judge.** This option is typically used during the development phase, enabling fast feedback loops without requiring SME's time. An **LLM-as-a-judge** uses an LLM to automatically evaluate and score the agent’s outputs based on predefined criteria. It can also be used for monitoring model drift (e.g., in production) or validating changes between model and model versions (e.g., switching between `gpt-5` and `gpt-5-mini`).
+1. **收集人工回饋。** 透過 OpenAI Evals 平台（或為特定應用自建的 UI）蒐集人類使用者的回饋。最適合 production 環境，或是在領域專家（SME）真實使用工具的試行階段。這個方法能挖出開發時沒發現的邊界案例。在 Evals 平台上，使用者可以對摘要按讚或倒讚，並留下文字回饋。  
 
 
-This cookbook demonstrates both approaches:
-- **Section 2** shows the platform UI approach for manual prompt optimization
-- **Section 3** implements the fully automated API approach using LLM-as-a-judge
-
-_Note: The Evals platform does not yet provide an API to retrieve user feedback programmatically._
+2. **使用 LLM-as-a-Judge。** 通常用在開發階段，不需要佔用 SME 的時間就能快速取得回饋。**LLM-as-a-judge** 是讓 LLM 依預先定義的標準，自動評估並給 agent 的輸出打分。它也能用來監控模型漂移（例如在 production），或驗證模型版本間的變更（例如在 `gpt-5` 和 `gpt-5-mini` 之間切換）。
 
 
-## 2. Using the OpenAI Evals Platform
+這份 cookbook 兩種做法都會示範：
+- **第 2 節** 用平台 UI 做手動 prompt 優化
+- **第 3 節** 用 LLM-as-a-judge 實作完全自動化的 API 做法
 
-The OpenAI Evals platform provides an intuitive interface for prompt optimization and evaluation. This section demonstrates the complete workflow from dataset upload through iterative prompt improvement, showing how you can leverage the platform's visual interface to optimize your prompts before implementing automated solutions.
+_注意：Evals 平台目前還沒有可以用程式取得使用者回饋的 API。_
 
-### Step 1: Upload Dataset
 
-To begin using the OpenAI Evaluation platform, you'll first need to upload your dataset:
+## 2. 使用 OpenAI Evals 平台
 
-1. Click the **+ Create** button
-2. Define the dataset name
-3. Upload a CSV file and select the columns to keep
-4. Upload
+OpenAI Evals 平台提供直覺的介面來做 prompt 優化和評估。這一節示範從上傳資料集到反覆改進 prompt 的完整流程，讓你在實作自動化方案之前，先用視覺化介面優化 prompt。
 
-Your dataset should contain the documents or document sections that need to be summarized. Each row represents one input that will be processed by your system.
+### 步驟 1：上傳資料集
 
-### Step 2: Explore Your Data
+要開始使用 OpenAI Evaluation 平台，先上傳你的資料集：
 
-Once uploaded, you can explore your dataset. Click the dataset name to explore the uploaded data. This allows you to verify that your data is properly formatted and contains the expected content before proceeding with prompt configuration.
+1. 點 **+ Create** 按鈕
+2. 設定資料集名稱
+3. 上傳 CSV 檔，並選擇要保留的欄位
+4. 上傳
 
-### Step 3: Configure Initial Prompt
+資料集應該包含需要摘要的文件或文件段落，每一列代表一筆會交給你的系統處理的輸入。
 
-This is where you define your initial system prompt and configure how data flows through your model.  
+### 步驟 2：檢視資料
+
+上傳後就可以檢視資料集。點資料集名稱即可瀏覽上傳的資料。在設定 prompt 之前，先確認資料格式正確、內容符合預期。
+
+### 步驟 3：設定初始 Prompt
+
+在這裡定義初始的 system prompt，並設定資料如何流過模型。  
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt_input.png" alt="Platform Prompt Configuration" style="max-width:50%">
-<br><em>Figure 3 - The platform's "New prompt" interface showing model configuration, variables, and system message settings.</em>
+<br><em>圖 3：平台的 "New prompt" 介面，顯示模型設定、變數和 system message 設定。</em>
 
 
-#### Configuration Steps
+#### 設定步驟
 
-1. **System Prompt**: Add the system message that defines the model's task and behavior (this prompt will be optimized)
-2. **User Prompt Template**: Add the prompt message template for user messages, using variables such as `{{<column_name>}}` that get replaced with actual data from your dataset
-3. **Model Selection**: Choose the model for generation (e.g., gpt-4.1, gpt-5)
-4. **Temperature**: Configure creativity vs. determinism
+1. **System Prompt**：加入定義模型任務和行為的 system message（這份 prompt 之後會被優化）
+2. **User Prompt Template**：加入 user message 的 prompt 範本，用 `{{<column_name>}}` 這類變數，執行時會換成資料集的實際內容
+3. **Model Selection**：選擇生成用的模型（例如 gpt-4.1、gpt-5）
+4. **Temperature**：調整創意與確定性的平衡
 
-You can start with a very simple prompt to demonstrate the power of the optimization process. For example, beginning with just "summarize" shows how the system can evolve from a minimal starting point.
+你可以從很簡單的 prompt 開始，來展示優化流程的威力。例如只寫「summarize」，就能看到系統如何從極簡的起點一步步演進。
 
-### Step 4: Generate Outputs
+### 步驟 4：產生輸出
 
-Once your prompt is configured, you're ready to generate outputs across your dataset. The prompt will run once per row and output will be generated on a new **output** column.
+prompt 設定好之後，就可以對整個資料集產生輸出。prompt 會對每一列各跑一次，輸出會放在新的 **output** 欄位。
+1. 點 **"Generate Output"**
+2. 平台會對所有樣本執行你的 prompt
+3. 結果會出現在新的 **Output** 欄位
 
-1. Click **"Generate Output"**
-2. The platform runs your prompt against all samples
-3. Results appear in a new **Output** column
+平台會處理資料集的每一列，把範本變數換成實際值，再用你的 system prompt 呼叫模型。這樣就得到一組可以評估的 baseline 輸出。
 
-The platform will process each row in your dataset, replacing template variables with actual values and calling the model with your system prompt. This creates a baseline of outputs that you can evaluate.
+### 步驟 5：檢視與評估
 
-### Step 5: Review and Evaluate
+評估這一步要提供結構化回饋，來引導 prompt 改進。
 
-Evaluation is where you provide structured feedback to guide prompt improvement.
+#### 檢視輸出
 
-#### Review Outputs
+1. 如果沒有自動加入，就**新增評估欄位**：點 "Columns" → "Annotations" → "Add"：
+   - **Rating**：二元（好/壞）或數字評分
+   - **Feedback**：描述需要改進之處的文字
 
-1. **Add Evaluation Columns** if not automatically added - Click "Columns" → "Annotations" → "Add":
-   - **Rating** - Binary (good/bad) or numeric ratings
-   - **Feedback** - Text describing what needs improvement
+2. **提供評分和回饋**：對每筆輸出加上你的評估。   
 
-2. **Provide Rating and Feedback** - Add your assessment for each output.   
-
-   Depending on the quality of the output, you may select a good or bad rating and explain your score based on how you would like the answer to be improved. For example:
+   依輸出品質選擇好或壞的評分，並依你希望答案怎麼改進來說明理由。例如：
 
       > (Rating) | Feedback
       > - (Good) Good, but only the answer should be provided. The output should not include headers or any text other than the answer.
@@ -175,51 +187,51 @@ Evaluation is where you provide structured feedback to guide prompt improvement.
       > - (Good) Good summary; it is clear.
       > - (Bad)  Use bullet points when answering to improve readability. Summarize each sub-section individually.
 
-3. **Save Annotations** - Your feedback is saved with the evaluation run
+3. **儲存 Annotations**：你的回饋會跟著這次 evaluation run 一起儲存
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/feedback.png" alt="Platform Evaluation Interface" style="max-width:50%">
-<br><em>Figure 4 - The evaluation interface showing generated outputs with rating and feedback columns for annotation.</em>
+<br><em>圖 4：評估介面，顯示產生的輸出和供標註的 rating、feedback 欄位。</em>
 
-This structured feedback becomes the foundation for automatic prompt optimization.
+這些結構化回饋是自動 prompt 優化的基礎。
 
-### Step 6: Optimize Prompt
+### 步驟 6：優化 Prompt
 
-After collecting feedback, the platform can automatically generate an improved prompt.
+收集完回饋後，平台可以自動產生改進後的 prompt。
 
-1. Click **"Optimize"**
-2. A new prompt version is generated in a new tab
-3. Click **"View Prompt"** to see the improved version
+1. 點 **"Optimize"**
+2. 新版 prompt 會在新分頁產生
+3. 點 **"View Prompt"** 查看改進後的版本
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/updated_prompt.png" alt="Platform Optimized Prompt" style="max-width:50%">
-<br><em>Figure 5 - The improved prompt generated by the platform, showing detailed instructions and requirements.</em>
+<br><em>圖 5：平台產生的改進版 prompt，包含詳細的指示和要求。</em>
 
-### Step 7: Iterate and Compare
+### 步驟 7：迭代與比較
 
-With your improved prompt ready, start a new iteration to measure improvement.
+改進後的 prompt 準備好之後，開始新一輪迭代來量測進步幅度。
 
-1. Click **"Generate Output"**
-2. Review the new results and provide feedback on any remaining issues
-3. Click **"Optimize"** again if needed
-4. Repeat until satisfied
+1. 點 **"Generate Output"**
+2. 檢視新結果，對剩下的問題提供回饋
+3. 需要的話再點一次 **"Optimize"**
+4. 重複到你滿意為止
 
-The platform's tab structure allows you to compare performance across iterations. You can easily see how outputs evolved from your initial prompt to the optimized versions.
+平台的分頁結構讓你可以跨迭代比較表現，很容易看出輸出從最初的 prompt 到優化版本如何演變。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/updated_prompt_feedback.png" alt="Platform Updated Prompt Feedback" style="max-width:50%">
-<br><em>Figure 6 - Feedback and evaluation results for the optimized prompt, showing improvements in output quality.</em>
+<br><em>圖 6：優化後 prompt 的回饋和評估結果，顯示輸出品質有進步。</em>
 
-#### When to Stop Iterating
+#### 什麼時候停止迭代
 
-Continue the optimization cycle until:
-- **Quality threshold reached**: >80% of outputs receive positive feedback
-- **Diminishing returns**: New iterations show minimal improvement
-- **Specific issues resolved**: All identified failure modes are addressed
+優化迴圈跑到以下情況就可以停：
+- **達到品質門檻**：超過 80% 的輸出得到正面回饋
+- **邊際效益遞減**：新的迭代幾乎沒有進步
+- **特定問題已解決**：所有找到的失敗模式都處理了
 
-This platform-based approach provides an excellent foundation for understanding prompt optimization before moving to automated implementations. The visual interface makes it easy to see the impact of changes and understand the optimization process.
+這種平台式做法是理解 prompt 優化的好起點，之後再轉向自動化實作。視覺化介面讓你容易看出改動的影響，也容易理解優化過程。
 
 
-## 3. Self-evolving Loop with LLM-as-a-Judge
+## 3. 用 LLM-as-a-Judge 做 Self-evolving 迴圈
 
-This section introduces a fully automated evaluation workflow using an LLM-as-a-Judge through the OpenAI API, eliminating the need for any user interface. This approach enables scalable, programmatic assessment of agent performance, supporting rapid iteration and continuous model monitoring in production.
+這一節透過 OpenAI API，用 LLM-as-a-Judge 建立完全自動化的評估流程，完全不需要使用者介面。這種做法可以程式化、規模化地評估 agent 表現，支援快速迭代，也能在 production 持續監控模型。
 
 ```python
 # gepa and litellm are only required for the Section 4.b (prompt optimization with GEPA)
@@ -231,9 +243,9 @@ This section introduces a fully automated evaluation workflow using an LLM-as-a-
 # OPENAI_API_KEY=sk-...
 ```
 
-### Eval Creation
+### 建立 Eval
 
-To evaluate the baseline summarization agent, we use four complementary graders that balance deterministic checks with semantic judgment.
+為了評估 baseline 摘要 agent，我們用四個互補的 grader，兼顧確定性檢查和語意判斷。
 
 | Grader | Type | Pass threshold | What it checks | Why |
 |---|---|---:|---|---|
@@ -242,10 +254,10 @@ To evaluate the baseline summarization agent, we use four complementary graders 
 | Cosine similarity | `text_similarity` | 0.85 | Cosine similarity between section and summary texts. | Ensures the summary stays anchored to the source content rather than drifting semantically. |
 | LLM-as-judge | `score_model` | 0.85 | A rubric-driven score from a model acting as an evaluator. | Captures nuanced quality signals that rule-based metrics miss, improving overall robustness. |
 
-**Notes**
-- The two Python graders catch domain fidelity and length discipline early, which stabilizes optimization before semantic tuning.
-- Text similarity guards against superficial rephrasing that strays from the source.
-- The LLM judge provides a holistic failsafe when edge cases slip past deterministic checks.
+**備註**
+- 兩個 Python grader 及早抓出領域資訊的忠實度和長度控制，讓優化在進入語意調整前先穩定下來。
+- 文字相似度用來防止只是表面改寫、卻偏離原文的摘要。
+- 當邊界案例漏過確定性檢查時，LLM judge 提供整體的最後防線。
 
 ```python
 import os
@@ -364,17 +376,17 @@ eval = client.evals.create(
 print(f"Created Eval: {eval.id}")
 ```
 
-You should see an eval ID in the output, e.g. `eval_...`. This is the ID of the eval we just created (as shown below)
+輸出裡應該會看到一個 eval ID，例如 `eval_...`。這就是剛剛建立的 eval 的 ID（如下圖）
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/eval_set_config.png" alt="Platform Eval Configuration" style="max-width:50%">
-<br><em>Figure 7 - The platform's Eval interface showing data source configuration, and test criteria settings.</em>
+<br><em>圖 7：平台的 Eval 介面，顯示資料來源設定和測試標準設定。</em>
 
-### Grader Scoring and Parsing
+### Grader 評分與解析
 
-Next we'll need run the evals on the summarization agent's output and parse the results for the eval's grader scores. To do this we'll use a few helper functions:
-- `run_eval`: Simple runner to call the evals API with proper formatting
-- `poll_eval_run`: A polling utility to wait for the scheduled eval run to complete
-- `parse_eval_run_output`: Parses the eval run and returns a structured output for the feedback loop
+接下來要對摘要 agent 的輸出跑 eval，並解析出 eval 的 grader 分數。這裡會用到幾個輔助函式：
+- `run_eval`：簡單的 runner，用正確的格式呼叫 evals API
+- `poll_eval_run`：輪詢工具，等排程的 eval run 完成
+- `parse_eval_run_output`：解析 eval run，回傳給回饋迴圈用的結構化輸出
 
 ```python
 import time
@@ -460,11 +472,11 @@ def parse_eval_run_output(items):
     return all_results
 ```
 
-Now we can use the created eval ID from earlier and run the graders against an arbitrary input section and summary output. This forms the backbone of the feedback loop which will kick off the prompt optimization routine.
+現在可以用前面建立的 eval ID，對任意輸入段落和摘要輸出跑 grader。這是回饋迴圈的骨幹，會觸發 prompt 優化流程。
 
-### Eval execution run
+### 執行 Eval
 
-Let's test our evals by providing a section and a generated summary directly.
+我們直接提供一個段落和產生的摘要來測試 eval。
 
 ```python
 EVAL_ID = eval.id #Created eval ID from above cell
@@ -478,7 +490,7 @@ grader_scores = parse_eval_run_output(run_output)
 print(grader_scores)
 ```
 
-You should see a list of grader scores in the output, e.g.
+輸出裡應該會看到一串 grader 分數，例如：
 
 ```[{'grader_name': 'chemical_name_grader-<uuid>', 'score': 0.5, 'passed': False, 'reasoning': None}, {'grader_name': 'word_length_deviation_grader-<uuid>', 'score': 0.8, 'passed': True, 'reasoning': None}, {'grader_name': 'cosine_similarity-<uuid>', 'score': 0.9104484223477793, 'passed': True, 'reasoning': None}, {'grader_name': 'llm_as_judge-<uuid>', 'score': 0.8, 'passed': True, 'reasoning': 'The summary needs to include specific details from the section. Part of the essential information is captured. Key pieces of information are missing. Not all relevant structural information is included.'}]```
 
@@ -618,9 +630,9 @@ class VersionedPrompt:
         return self._versions[-1]
 ```
 
-Next we'll create the starting summarization and prompt optimization agents.
+接著建立起始的摘要 agent 和 prompt 優化 agent。
 
-_Note: We created a wrapper to track prompt changes in the summarization agent since it is expected to evolve in production, the metaprompt agent's prompt will stay static for the purposes of this cookbook._
+_注意：我們包了一層 wrapper 來追蹤摘要 agent 的 prompt 變動，因為 production 中 prompt 預期會持續演進。這份 cookbook 裡 metaprompt agent 的 prompt 保持固定。_
 
 ```python
 
@@ -682,22 +694,22 @@ best_candidate: dict[str, Any] = {
 aggregate_prompt_stats: dict[int, dict[str, Any]] = {}
 ```
 
-### Orchestration and Monitoring
+### 編排與監控
 
-This is what we've done so far - we've created:
-- Evals with 4 graders that will assess the outputs and produce a score for each grader
-- A summarization agent with a versioned prompt class to track changes to the prompt and model
-- A metaprompt optimization agent that will attempt to update the prompt based on a set of reasoning
+到目前為止，我們建好了：
+- 有 4 個 grader 的 Evals，會評估輸出並給每個 grader 一個分數
+- 一個摘要 agent，搭配有版本管理的 prompt class 來追蹤 prompt 和模型的變動
+- 一個 metaprompt 優化 agent，會根據一組推理嘗試更新 prompt
 
-Now these different functionalities can be composed to orchestrate the self-evolving loop with Agent tracing in the OpenAI dashboard.
+現在可以把這些功能組合起來，編排 self-evolving 迴圈，並在 OpenAI dashboard 用 Agent tracing 觀察。
 
-Keep in mind that this is a simplified example. In a real-world scenario, you'd want to ensure you have guardrails for optimization attempts and that an alert notifies a human when a guardrail is triggered.
+請記得這是簡化的範例。實際情境中，你要對優化嘗試設置 guardrail，並在 guardrail 被觸發時通知人類。
 
-_Note: Due to practical limitations of the cookbook we are simulating a stream of data by feeding in a static dataset and using `print` statements in place of true observability._
+_注意：受限於 cookbook 的條件，我們用靜態資料集來模擬資料流，並用 `print` 取代真正的 observability。_
 
-### Orchestration Utilities
+### 編排用的工具函式
 
-As in previous sections we'll create some utilities to manage the orchestration logic of the feedback loop.
+跟前面幾節一樣，我們建立一些工具函式來管理回饋迴圈的編排邏輯。
 
 ```python
 import asyncio
@@ -909,11 +921,11 @@ def collect_grader_feedback(grader_scores):
     return "".join(feedback_lines)
 ```
 
-### Self-evolving loop
+### Self-evolving 迴圈
 
-Now to simulate a stream of requests for summarization we'll feed in a prepared dataset and observe the optimization evolve from a naive prompt.
+現在我們用準備好的資料集來模擬一連串摘要請求，觀察 prompt 如何從一個天真的起點一步步演化。
 
-> The referenced dataset.csv can be found in the Github repository.
+> 文中的 dataset.csv 可以在 GitHub repo 找到。
 
 ```python
 import pandas as pd
@@ -1042,38 +1054,38 @@ async def self_evolving_loop(summarization_agent: Agent) -> Agent:
 summarization_agent = await self_evolving_loop(summarization_agent)
 ```
 
-**How the final prompt is chosen**
+**最後的 prompt 怎麼選**
 
-- Every evaluation logs the average grader score, the total score across graders, and whether the attempt passed the lenient criteria.
-- `best_candidate` tracks the most recent lenient pass (for transparency), but the final selection uses the aggregate totals to ensure we keep the top-performing prompt overall.
-- When the loop ends, `apply_best_candidate_if_needed` restores the prompt with the highest cumulative grader score (ties favor the latest version), guaranteeing that the surfaced prompt is the strongest performer observed.
+- 每次評估都會記錄平均 grader 分數、各 grader 的總分，以及這次嘗試有沒有通過寬鬆標準。
+- `best_candidate` 追蹤最近一次通過寬鬆標準的版本（為了透明度），但最後的選擇是看總分，確保保留整體表現最好的 prompt。
+- 迴圈結束時，`apply_best_candidate_if_needed` 會還原累計 grader 分數最高的 prompt（同分時選最新的版本），保證最後呈現的 prompt 是觀察到的最強版本。
 
 
-Here is an example (abridged) output for the code above.
+下面是上面程式碼的範例輸出（節錄）。
 
-Inspecting the output shows that the self evolving prompt worked. There are a few takeaways to account for:
-1. The optimization is not always successful, so being able to roll back the prompt version is important
-2. The fidelity of the information from the graders is crucially important to ensuring a quality optimization
+看輸出可以確認 self-evolving prompt 有效。有幾個重點要注意：
+1. 優化不一定每次都成功，所以能回滾 prompt 版本很重要
+2. grader 提供資訊的忠實度，對優化品質至關重要
 
-### Agent Logs & Tracing
+### Agent Log 與 Tracing
 
-We can view optimization workflow runs in the dashboard under logs:  
+我們可以在 dashboard 的 logs 底下查看優化 workflow 的執行紀錄：  
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent_log_traces.png" alt="Agent log traces" style="max-width:50%">
-<br><em>Figure 10 - Agent log traces showing optimization workflow runs in the dashboard.</em>
+<br><em>圖 10：Agent log traces，顯示 dashboard 裡的優化 workflow 執行紀錄。</em>
 
-And drill down into the different agent calls:  
+也可以往下查看各個 agent 呼叫：  
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent_trace_details.png" alt="Agent trace details" style="max-width:50%">
-<br><em>Figure 11 - Detailed agent trace showing individual agent calls and execution flow.</em>
+<br><em>圖 11：詳細的 agent trace，顯示各個 agent 呼叫和執行流程。</em>
 
-### Continuous Monitoring
+### 持續監控
 
-Once the evaluation loop is complete, the system should continue to monitor new incoming data and periodically re-evaluate model performance on blind datasets. This ensures the model remains accurate and compliant as the data distribution evolves.
+評估迴圈跑完後，系統應該繼續監控新進來的資料，並定期在 blind dataset 上重新評估模型表現。這樣在資料分布變動時，模型仍能保持準確和合規。
 
-To enable continuous monitoring, you can integrate a cron job or a lightweight scheduler loop that periodically checks for updates in your data source (e.g., new PDF uploads or database entries). When new data is detected, the system automatically triggers the evaluation and optimization loop described earlier.
+要做到持續監控，可以接 cron job 或輕量的排程迴圈，定期檢查資料來源有沒有更新（例如新上傳的 PDF 或新的資料庫紀錄）。偵測到新資料時，系統就自動觸發前面說的評估和優化迴圈。
 
-For example (pseudo code):
+範例（pseudo code）：
 
 ```python
 # this cell is pseudo-code and not meant to be run as-is
@@ -1094,30 +1106,27 @@ def continuous_monitoring(interval_hours=24):
 continuous_monitoring(interval_hours=24)
 ```
 
-This approach allows the model to continuously learn and adapt, improving over time as it processes fresh data — a key requirement for maintaining high-quality, real-world performance.
+這個做法讓模型能持續學習、適應，隨著處理新資料越來越好，這是在真實場景維持高品質表現的關鍵需求。
 
-## 4. Going Further
+## 4. 更進一步
 
-### a. Model Evaluation
+### a. 模型評估
 
-We now have a fully automated loop improving our prompt with **evals** and accepting the new prompt when the rating is over the defined threshold.  
+我們現在有一個完全自動化的迴圈，用 **evals** 改進 prompt，並在評分超過設定門檻時接受新 prompt。  
 
-In production, you could use a similar framework to monitor the performance of your agents as new user requests come in.
-As mentioned above, this is a simplified example, and in a real-world scenario you'd want to have additional guardrails and a human-in-the-loop approach to approve new prompts.  
+在 production 中，你可以用類似的框架，在新的使用者請求進來時監控 agent 的表現。如前面所說，這是簡化的範例，實際情境中你會想要有額外的 guardrail 和 human-in-the-loop，來核准新的 prompt。  
 
-Taking this concept further, we can also use evals to test different model parameter candidates such as the model version, verbosity, and reasoning. To see the full available set of parameters that could considered, check the [ModelSettings class in the Agents SDK](https://openai.github.io/openai-agents-python/ref/model_settings/#agents.model_settings.ModelSettings)
+把這個概念再推進一步，我們也可以用 evals 測試不同的模型參數組合，例如模型版本、verbosity 和 reasoning。想看可以考慮的完整參數，請參考 [Agents SDK 的 ModelSettings class](https://openai.github.io/openai-agents-python/ref/model_settings/#agents.model_settings.ModelSettings)
 
-The `compare_model_candidates` function is an example of how to:
-1. Optimize the prompt
-2. Generate candidate outputs from the optimized prompt using two or more different models
-3. Use evals to grade the candidate outputs and select the best candidate
+`compare_model_candidates` 函式示範怎麼：
+1. 優化 prompt
+2. 用優化後的 prompt，搭配兩個以上不同的模型產生候選輸出
+3. 用 evals 評分候選輸出並選出最佳者
 
-It can be worked into the `self_evolving_loop` function with minimal refactoring.
+只要小幅重構，就能把它整合進 `self_evolving_loop` 函式。
 
-> **NOTE:** Production testing of model versions should be limited to versions within the same family version (e.g. gpt-5, gpt-5-mini, gpt-5-nano). It is recommended to conduct cross family version selection pre-production deployment.
-
-
-And the final `self_evolving_loop` with model comparison code:
+> **注意：** 在 production 測試模型版本時，應該限制在同一個系列內的版本（例如 gpt-5、gpt-5-mini、gpt-5-nano）。跨系列的版本選擇建議在 production 部署前完成。
+這是加入模型比較程式碼的最終版 `self_evolving_loop`：
 
 ```python
 from agents import Agent, Runner
@@ -1355,13 +1364,13 @@ async def self_evolving_loop_with_model_comparison(summarization_agent: Agent) -
 summarization_agent = await self_evolving_loop_with_model_comparison(summarization_agent)
 ```
 
-Here we can see a very similar output with additional information on the model version scores:
+這裡可以看到類似的輸出，多了模型版本分數的資訊：
 
-### b. Prompt Optimization with Genetic-Pareto (GEPA)
+### b. 用 Genetic-Pareto (GEPA) 優化 Prompt
 
-We've demonstrated that the self-evolving loop works and that a prompt can be improved autonomously using Evals. However, we relied on a relatively straightforward, static metaprompt to improve our system prompt. In this section, we explore a more dynamic and reflexive method by using Genetic-Pareto (GEPA) [[1]](##Citations) — a framework that samples agent trajectories, reflects on them in natural language, proposes prompt revisions, and evolves the system through iterative feedback loops. 
+我們已經示範了 self-evolving 迴圈有效，prompt 可以透過 Evals 自主改進。不過我們用的是相對單純的靜態 metaprompt 來改進 system prompt。這一節要探索更動態、更會反思的方法：Genetic-Pareto (GEPA) [[1]](##Citations)。這個框架會取樣 agent 的軌跡、用自然語言反思、提出 prompt 修改，並透過迭代的回饋迴圈讓系統演化。 
 
-The GEPA method, described in the paper available [here](https://doi.org/10.48550/arXiv.2507.19457), offers an compelling blueprint for continuous, self-improving prompt optimization. The code below draws generously on the GEPA Github repository available [here](https://github.com/gepa-ai/gepa).
+GEPA 方法的論文在[這裡](https://doi.org/10.48550/arXiv.2507.19457)，為持續自我改進的 prompt 優化提供了很有吸引力的藍圖。下面的程式碼大量參考了 [GEPA 的 Github repo](https://github.com/gepa-ai/gepa)。
 
 ```python
 import pandas as pd
@@ -1380,10 +1389,10 @@ val_cut = max(1, int(0.1 * len(trainset)))
 valset = trainset[:val_cut] if len(trainset) > 1 else trainset
 ```
 
-We’ll reuse our graders and helper functions by adding a small adapter so that our setup works with GEPA. GEPA’s `GEPAAdapter` makes it easy to plug into our eval framework. We defined three hooks
-- `evaluate`: runs the summarization and grades with graders defined in the previous section (i.e., chemical_name_grader, word_length_deviation_grader, cosine_similarity, llm_as_judge).
-- `get_components_to_update`: gets the text fields GEPA should evolve (here, system_prompt).
-- `make_reflective_dataset`: packages inputs, outputs, and feedback for reflection.
+我們會加一個小的 adapter，重用前面的 grader 和輔助函式，讓我們的設定能搭配 GEPA。GEPA 的 `GEPAAdapter` 讓接上我們的 eval 框架很容易。我們定義了三個 hook
+- `evaluate`：執行摘要，並用前面定義的 grader（也就是 chemical_name_grader、word_length_deviation_grader、cosine_similarity、llm_as_judge）評分。
+- `get_components_to_update`：取得 GEPA 該演化的文字欄位（這裡是 system_prompt）。
+- `make_reflective_dataset`：把輸入、輸出和回饋打包起來供反思使用。
 
 ```python
 class EvalsBackedSummarizationAdapter:
@@ -1469,9 +1478,9 @@ class EvalsBackedSummarizationAdapter:
         return {"system_prompt": examples}
 ```
 
-Now that the adapter is ready, we can run GEPA using the same starting prompt (`"You are a summarization assistant. Given a section of text, produce a summary."`) and model (here, `gpt-5`) as in the earlier self-evolving loop for comparison. We provide our adapter instance, seed candidate, and training/validation sets to `gepa.optimize(...)`. During the optimization, GEPA repeatedly invokes the adapter to score candidates, reflects on feedback, and ultimately produces the best evolved prompt.
+adapter 準備好之後，就能跑 GEPA。為了比較，我們用跟前面 self-evolving 迴圈相同的起始 prompt（`"You are a summarization assistant. Given a section of text, produce a summary."`）和模型（這裡是 `gpt-5`）。把 adapter 實例、seed candidate 和訓練/驗證集交給 `gepa.optimize(...)`。優化過程中，GEPA 會反覆呼叫 adapter 給候選評分、根據回饋反思，最後產出演化後最好的 prompt。
 
-_Note: GEPA might take ~10-15 minutes to complete._
+_注意：GEPA 大約要花 10 到 15 分鐘跑完。_
 
 ```python
 seed_candidate = {"system_prompt": "You are a summarization assistant. Given a section of text, produce a summary."}
@@ -1500,25 +1509,25 @@ print("\n=== Best evolved instruction ===\n")
 print(best_prompt)
 ```
 
-Here is an example (abridged) output for the code above:
+下面是上面程式碼的範例輸出（節錄）：
 
-In this cookbook, we explored three distinct approaches to prompt optimization:
+這份 cookbook 探索了三種不同的 prompt 優化做法：
 
-- **OpenAI Platform Optimizer:** using the _Optimize_ button with a dataset containing manually entered human feedback (thumbs up/down and textual comments), we quickly produced a strong prompt with minimal configuration. This method excels at rapid iteration, but does not provide the automation needed for production environments.
+- **OpenAI Platform Optimizer：** 用 _Optimize_ 按鈕，搭配手動輸入人工回饋（讚/倒讚和文字評語）的資料集，用很少的設定就快速產出一個不錯的 prompt。這個方法擅長快速迭代，但缺少 production 環境需要的自動化。
 
-- **Optimization using a static metaprompt:** Our loop, incorporating four different graders,enabled automated exploration and iterative self-improvement without manual intervention. However, its exploration space was limited by a single static meta-prompt, and evaluation was performed section by section. Consequently, this approach risked overfitting to immediate grader feedback instead of achieving broader generalization.
+- **用靜態 metaprompt 優化：** 我們的迴圈加入四個 grader，不需要人工介入就能自動探索、迭代自我改進。不過它的探索空間受限於單一靜態 metaprompt，而且是逐段評估，因此容易過度擬合眼前的 grader 回饋，無法達到更廣的泛化。
 
-- **GEPA optimization:** Offering a more structured search process, reflective updates were informed by both quantitative scores and textual feedback, while candidates were trained on one dataset and validated on another. This method produced a more robust, generalized prompt and provided clearer empirical evidence of its performance.
+- **GEPA 優化：** 提供更有結構的搜尋流程，反思式更新同時參考量化分數和文字回饋，候選 prompt 在一個資料集上訓練、在另一個上驗證。這個方法產出更穩健、泛化更好的 prompt，也提供了更清楚的實證表現。
 
-_Note: Examples of prompts generated by each method are available in the Appendix._  
+_注意：每種方法產生的 prompt 範例都放在附錄。_  
 
-Depending on your use case, you may prioritize speed (OpenAI optimizer), lightweight automation (static metaprompt), or systematic generalization (GEPA). In practice, combining these methods by starting with rapid iteration and progressing toward reflective optimization can deliver both agility and performance.
+依使用情境，你可以優先考慮速度（OpenAI optimizer）、輕量自動化（靜態 metaprompt）或系統性的泛化（GEPA）。實務上，先快速迭代、再逐步走向反思式優化，可以同時兼顧靈活度和表現。
 
 Happy coding!
 
-## Contributors
+## 貢獻者
 
-This cookbook is based on a joint collaboration between [Bain](https://www.bain.com) and [OpenAI](https://openai.com). 
+這份 cookbook 是 [Bain](https://www.bain.com) 和 [OpenAI](https://openai.com) 合作的成果。
 
 [Calvin Maguranis](https://www.linkedin.com/in/calvin-maguranis-b9956045/)  
 [Fanny Perraudeau](https://www.linkedin.com/in/fanny-sabran-perraudeau-494b7573/)   
@@ -1526,20 +1535,20 @@ This cookbook is based on a joint collaboration between [Bain](https://www.bain.
 [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)    
 [Valentina Frenkel](https://www.linkedin.com/in/valentina-frenkel/)  
 
-## Citations
+## 引用
 
 [1] _GEPA: Reflective Prompt Evolution Can Outperform Reinforcement Learning_ by Lakshya A Agrawal, Shangyin Tan, Dilara Soylu, Noah Ziems, Rishi Khare, Krista Opsahl-Ong, Arnav Singhvi, Herumb Shandilya, Michael J Ryan, Meng Jiang, Christopher Potts, Koushik Sen, Alexandros G. Dimakis, Ion Stoica, Dan Klein, Matei Zaharia, Omar Khattab - https://arxiv.org/abs/2507.19457
 
-## Appendix
+## 附錄
 
-### Examples of output prompts:
+### 輸出 prompt 範例：
 
-- **Initial prompt:**  
+- **初始 prompt：**  
 ```pgsql 
 You are a summarization assistant. Given a section of text, produce a summary.
 ```
 
-- **OpenAI Platform Optimizer:** 
+- **OpenAI Platform Optimizer：** 
 ```pgsql 
 You are a summarization assistant.
 Task: Summarize the provided text concisely and accurately.
@@ -1558,7 +1567,7 @@ Output requirements:
 - If a section is explicitly marked "Not applicable," include that status; otherwise do not add it.
 ```
 
-- **Static metaprompt:** 
+- **靜態 metaprompt：** 
 ```pgsql 
 You are a technical summarization assistant for scientific and regulatory documentation. Your task is to generate a concise, comprehensive, and fully detailed summary of any scientific, technical, or regulatory text provided. Strictly adhere to the following instructions:
 
@@ -1602,7 +1611,7 @@ Produce a summary that delivers the full technical, factual, and regulatory cont
 *Apply these instructions rigorously to every provided document section to ensure scientific and regulatory accuracy and completeness.*
 ```
 
-- **GEPA optimizer**: 
+- **GEPA optimizer**： 
 ```pgsql 
 You are a domain-aware summarization assistant for technical pharmaceutical texts. Given a “section” of text, produce a concise, single-paragraph summary that preserves key technical facts and exact nomenclature.
 
@@ -1647,4 +1656,16 @@ Self-check before finalizing
 - Are the most critical process/regulatory/testing details and all key numbers preserved without unnecessary verbosity?`
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 自我改進迴圈的核心是「輸出、回饋、改 prompt、再評分」，分數過門檻就採用，超過重試上限就通知人類。
+- 人工回饋適合 production 和 SME 試行，LLM-as-judge 適合開發階段快速迭代，兩者可以搭配。
+- 混合 python grader 和 LLM judge，才能同時管住確定性規則和語意品質；grader 的資訊品質直接決定優化品質。
+- 優化不一定成功，所以 prompt 要有版本管理和回滾，最後選的是累計分數最高的版本。
+- 三種優化方式各有取捨：Platform Optimizer 最快、靜態 metaprompt 輕量自動化、GEPA 泛化最好。
+
+## 練習
+
+1. 把 Summarization length grader 的預期長度從 100 字改成 60 字，重跑 eval，看分數和最後選到的 prompt 有什麼變化。
+2. 調整 self-evolving 迴圈的通過門檻（例如 `0.8` 改 `0.9`）和 `max_retry`，觀察迴圈多常觸發重試上限。
+3. 用 `compare_model_candidates` 把候選模型換成 `gpt-5` 和 `gpt-5-mini`，比較哪個 grader 總分較高，再想想成本差異值不值得換。

@@ -1,18 +1,26 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/gpt-5_new_params_and_tools.ipynb
 ---
-
-# GPT-5 New Params and Tools
+# GPT-5 新參數與新工具
 
 > 原文：[examples/gpt-5/gpt-5_new_params_and_tools.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5_new_params_and_tools.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+GPT-5 系列多了幾個開發者可以調的控制項：輸出長度、自由格式的 tool call、用文法限制輸出，還有最低推理量。這篇一個一個跑範例，看每個參數實際對輸出有什麼影響。
+
+## 學完你會
+- 用 `verbosity` 參數在不改 prompt 的情況下控制回答長短和程式碼的詳細程度。
+- 用 `"type": "custom"` 的 tool 讓模型直接送出純文字（Python、SQL 等），再用 Lark 或 Regex 文法限制格式。
+- 用 `reasoning effort: "minimal"` 換取更快的第一個 token。
+
+## 開跑前
+需要設好環境變數 `OPENAI_API_KEY`，並把 OpenAI SDK 升級到支援這些新參數的版本。
 
 
-We’re introducing new developer controls in the GPT-5 series that give you greater control over model responses—from shaping output length and style to enforcing strict formatting. Below is a quick overview of the latest features:
+GPT-5 系列新增了幾個開發者控制項，讓你更能掌握模型的回應：從調整輸出長度與風格，到強制嚴格的格式。以下是最新功能的快速總覽：
 
 
 | #  | Feature | Overview | Values / Usage |
@@ -23,21 +31,21 @@ We’re introducing new developer controls in the GPT-5 series that give you gre
 | 4. | **Minimal Reasoning** | Runs GPT-5 with few or no reasoning tokens to minimize latency and speed time-to-first-token. Ideal for deterministic, lightweight tasks (extraction, formatting, short rewrites, simple classification) where explanations aren’t needed. If not specified, effort defaults to medium. | Set reasoning effort: "minimal". Avoid for multi-step planning or tool-heavy workflows. |
 
 
-**Supported Models:**  
+**支援的模型：**  
 - gpt-5  
 - gpt-5-mini  
 - gpt-5-nano  
 
-**Supported API Endpoints** 
+**支援的 API endpoint** 
 - Responses API 
 - Chat Completions API 
 
-Note: We recommend to use Responses API with GPT-5 series of model to get the most performance out of the models. 
+注意：建議搭配 GPT-5 系列使用 Responses API，才能發揮模型最好的表現。 
 
 
-## Prerequisites 
+## 事前準備 
 
-Let's begin with updating your OpenAI SDK that supports the new params and tools for GPT-5. Make sure you've set OPENAI_API_KEY as an environment variable. 
+先把 OpenAI SDK 更新到支援 GPT-5 新參數和新工具的版本。另外確認已經把 OPENAI_API_KEY 設成環境變數。 
 
 ```python
 !pip install --quiet --upgrade openai pandas && \
@@ -52,18 +60,18 @@ echo -n "pandas " && pip show pandas | grep '^Version:' | cut -d' ' -f2
     pandas 2.3.1
     ```
 
-## 1. Verbosity Parameter 
+## 1. Verbosity 參數 
 
-### 1.1 Overview 
-The verbosity parameter lets you hint the model to be more or less expansive in its replies.   
+### 1.1 概述 
+verbosity 參數可以提示模型回答要詳細還是簡短。   
 
-**Values:** "low", "medium", "high"
+**可用值：** "low"、"medium"、"high"
 
-- low → terse UX, minimal prose.
-- medium (default) → balanced detail.
-- high → verbose, great for audits, teaching, or hand-offs.
+- low：精簡的 UX，文字越少越好。
+- medium（預設）：詳細程度適中。
+- high：講得很完整，適合稽核、教學或交接。
 
-Keep prompts stable and use the param rather than re-writing.
+prompt 維持不變，用這個參數調整就好，不用重寫 prompt。
 
 
 ```python
@@ -120,11 +128,11 @@ display(styled_df)
     <pandas.io.formats.style.Styler at 0x10b50fa10>
     ```
 
-The output tokens scale roughly linearly with verbosity: low (560) → medium (849) → high (1288).
+輸出的 token 數大致隨 verbosity 線性增加：low（560）→ medium（849）→ high（1288）。
 
-### 2.3 Using Verbosity for Coding Use Cases 
+### 2.3 在寫程式的情境使用 Verbosity 
 
-The verbosity parameter also influences the length and complexity of generated code, as well as the depth of accompanying explanations. Here's an example, wherein we use various verboisty levels for a task to generate a Python program that sorts an array of 1000000 random numbers. 
+verbosity 參數也會影響產出程式碼的長度與複雜度，以及附帶說明的深度。下面這個例子用不同的 verbosity 等級，請模型寫一個 Python 程式，對 1000000 個隨機數字做排序。 
 
 ```python
 from openai import OpenAI
@@ -195,7 +203,7 @@ ask_with_verbosity("low", prompt)
     Tokens => input: 21 | output: 575
     ````
 
-Notice that the code output is a plain script. Now, lets run with 'medium' 
+注意這裡輸出的程式碼只是一支單純的 script。接著改用 'medium' 跑跑看。 
 
 ```python
 ask_with_verbosity("medium", prompt)
@@ -243,7 +251,7 @@ ask_with_verbosity("medium", prompt)
     Tokens => input: 21 | output: 943
     ````
 
-Medium verbosity generated richer code with additional explanations. Next, let's try high verbosity. 
+medium 的程式碼比較豐富，還附上額外說明。接著試試 high。 
 
 ```python
 ask_with_verbosity("high", prompt)
@@ -295,32 +303,32 @@ ask_with_verbosity("high", prompt)
     ... (省略 82 行)
     ```
 
-High verbosity yielded additional details and explanations. 
+high 給了更多細節和說明。 
 
-### 1.3 Takeaways 
+### 1.3 重點 
 
-The new verbosity parameter reliably scales both the length and depth of the model’s output while preserving correctness and reasoning quality - **without changing the underlying prompt**.
-In this example:
+新的 verbosity 參數可以穩定地調整輸出的長度與深度，同時維持正確性和推理品質，**完全不用改 prompt**。
+以這個例子來說：
 
-- **Low verbosity** produces a minimal, functional script with no extra comments or structure.
-- **Medium verbosity** adds explanatory comments, function structure, and reproducibility controls.
-- **High verbosity** yields a comprehensive, production-ready script with argument parsing, multiple sorting methods, timing/verification, usage notes, and best-practice tips.
+- **Low verbosity** 只給最精簡、能跑的 script，沒有多餘的註解或結構。
+- **Medium verbosity** 加上說明用的註解、函式結構，以及可重現的設定。
+- **High verbosity** 給出完整、接近 production 的 script，有參數解析、多種排序方法、計時與驗證、使用說明和最佳實務提示。
 
-## 2. Free‑Form Function Calling
+## 2. 自由格式 Function Calling
 
-### 2.1 Overview 
-GPT‑5 can now send raw text payloads - anything from Python scripts to SQL queries - to your custom tool without wrapping the data in JSON using the new tool `"type": "custom"`. This differs from classic structured function calls, giving you greater flexibility when interacting with external runtimes such as:
+### 2.1 概述 
+GPT‑5 現在可以用新的 tool 類型 `"type": "custom"`，把純文字 payload（從 Python script 到 SQL 查詢都行）直接送給你的自訂 tool，不用包成 JSON。這跟傳統的結構化 function call 不一樣，跟下面這些外部 runtime 互動時彈性更大：
 
-- code_exec with sandboxes (Python, C++, Java, …)
-- SQL databases
-- Shell environments
-- Configuration generators
+- code_exec 搭配 sandbox（Python、C++、Java 等）
+- SQL 資料庫
+- Shell 環境
+- 設定檔產生器
 
-**Note that custom tool type does NOT support parallel tool calling.**
+**注意：custom tool 類型不支援 parallel tool calling。**
 
-### 2.2 Quick Start Example - Compute the Area of a Circle
+### 2.2 快速範例：計算圓的面積
 
-The code below produces a simple python code to calculate area of a circle, and instruct the model to use the freeform tool call to output the result. 
+下面的程式碼會產生一段計算圓面積的 Python 程式，並指示模型用自由格式的 tool call 輸出結果。 
 
 ```python
 from openai import OpenAI
@@ -348,13 +356,13 @@ print(response.output)
     [ResponseReasoningItem(id='rs_6894e31b1f8081999d18325e5aeffcfe0861a2e1728d1664', summary=[], type='reasoning', content=[], encrypted_content=None, status=None), ResponseCustomToolCall(call_id='call_Gnqod2MwPvayp2JdNyA0z0Ah', input='# Counting \'r\'s in the word "strawberry" and computing circle area with that radius\nimport math\nr = "strawberry".count(\'r\')\narea = math.pi * r**2\n{"radius": r, "area": area, "area_exact": f"{r}*pi"}', name='code_exec', type='custom_tool_call', id='ctc_6894e31c66f08199abd622bb5ac3c4260861a2e1728d1664', status='completed')]
     ```
 
-The model emits a `tool call` containing raw Python. You execute that code server‑side, capture the printed result, and send it back in a follow‑up responses.create call.
+模型會送出一個 `tool call`，內容是純 Python。你在 server 端執行這段程式、取得印出的結果，再用另一次 responses.create 呼叫把結果送回去。
 
-### 2.3 Mini‑Benchmark – Sorting an Array in Three Languages
-To illustrate the use of free form tool calling, we will ask GPT‑5 to:
-- Generate Python, C++, and Java code that sorts a fixed array 10 times.
-- Print only the time (in ms) taken for each iteration in the code. 
-- Call all three functions, and then stop 
+### 2.3 小型 Benchmark：用三種語言排序陣列
+為了示範自由格式 tool call，我們請 GPT‑5：
+- 產生 Python、C++、Java 程式碼，對一個固定陣列排序 10 次。
+- 程式碼裡只印出每次迭代花的時間（ms）。
+- 三個函式都呼叫一次，然後停止 
 
 ```python
 from openai import OpenAI
@@ -513,32 +521,32 @@ run_conversation(messages)
     ... (省略 10 行)
     ```
 
-The model output three code blocks in Python, C++ and Java for the same algorithm. The output of the function call was chained back into the model as input to allow model to keep going until all the functions have been called exactly once. 
+模型針對同一個演算法輸出了 Python、C++、Java 三段程式碼。function call 的輸出會接回去當作模型的輸入，讓模型繼續往下做，直到三個函式各被呼叫一次。 
 
-### 2.4 Takeaways 
+### 2.4 重點 
 
-Freeform tool calling in GPT-5 lets you send raw text payloads—such as Python scripts, SQL queries, or config files—directly to custom tools without JSON wrapping. This provides greater flexibility for interacting with external runtimes and allows the model to generate code or text in the exact format your tool expects. It’s ideal when structured JSON is unnecessary and natural text output improves usability.
+GPT-5 的自由格式 tool calling 讓你把純文字 payload（例如 Python script、SQL 查詢、設定檔）直接送給自訂 tool，不用包 JSON。模型可以照你的 tool 要的格式產生程式碼或文字，跟外部 runtime 互動比較有彈性。不需要結構化 JSON 的時候，用純文字輸出會更順手。
 
 ## 3. Context‑Free Grammar (CFG)
 
-### 3.1 Overview 
-A context‑free grammar is a collection of production rules that define which strings belong to a language. Each rule rewrites a non‑terminal symbol into a sequence of terminals (literal tokens) and/or other non‑terminals, independent of surrounding context—hence context‑free. CFGs can capture the syntax of most programming languages and, in OpenAI custom tools, serve as contracts that force the model to emit only strings that the grammar accepts.
+### 3.1 概述 
+context‑free grammar（無上下文文法）是一組產生規則，用來定義哪些字串屬於某個語言。每條規則把一個 non‑terminal 符號改寫成一串 terminal（字面 token）和 / 或其他 non‑terminal，不受前後文影響，所以叫 context‑free。CFG 可以描述大部分程式語言的語法；在 OpenAI 的 custom tool 裡，它就像一份合約，強迫模型只能輸出符合文法的字串。
 
-### 3.2 Grammar Fundamentals
+### 3.2 文法基礎
 
-**Supported Grammar Syntax** 
+**支援的文法語法** 
 - Lark - https://lark-parser.readthedocs.io/en/stable/
 - Regex - https://docs.rs/regex/latest/regex/#syntax
 
-We use LLGuidance under the hood to constrain model sampling: https://github.com/guidance-ai/llguidance.
+底層用 LLGuidance 來限制模型的 sampling：https://github.com/guidance-ai/llguidance。
 
-**Unsupported Lark Features** 
-- Lookaround in regexes (`(?=...)`, `(?!...)`, etc.)
-- Lazy modifier (`*?`, `+?`, `??`) in regexes.
-- Terminal priorities, templates, %declares, %import (except %import common).
+**不支援的 Lark 功能** 
+- regex 裡的 lookaround（`(?=...)`、`(?!...)` 等）
+- regex 裡的 lazy modifier（`*?`、`+?`、`??`）。
+- Terminal priorities、templates、%declares、%import（%import common 除外）。
 
 
-**Terminals vs Rules & Greedy Lexing** 
+**Terminals vs Rules 與 Greedy Lexing** 
 
 | Concept          | Take-away                                                                    |
 |------------------|------------------------------------------------------------------------------|
@@ -546,28 +554,28 @@ We use LLGuidance under the hood to constrain model sampling: https://github.com
 | Rules (lower)    | Combine terminals; cannot influence how text is tokenised.                   |
 | Greedy lexer     | Never try to “shape” free text across multiple terminals – you’ll lose control. |
 
-**Correct vs Incorrect Pattern Design** 
+**正確與錯誤的 pattern 設計** 
 
-✅ **One bounded terminal handles free‑text between anchors**  
+✅ **用一個有界的 terminal 處理兩個錨點之間的自由文字**  
 ```
 start: SENTENCE
 SENTENCE: /[A-Za-z, ]*(the hero|a dragon)[A-Za-z, ]*(fought|saved)[A-Za-z, ]*(a treasure|the kingdom)[A-Za-z, ]*\./
 ```
-❌ **Don’t split free‑text across multiple terminals/rules**  
+❌ **不要把自由文字拆到多個 terminal / rule**  
 ```
 start: sentence
 sentence: /[A-Za-z, ]+/ subject /[A-Za-z, ]+/ verb /[A-Za-z, ]+/ object /[A-Za-z, ]+/
 ```
 
-### 3.3 Example - SQL Dialect — MS SQL vs PostgreSQL
+### 3.3 範例：SQL 方言，MS SQL vs PostgreSQL
 
-The following code example is now the canonical reference for building multi‑dialect SQL tools with CFGs. It demonstrates:
+下面的程式碼是用 CFG 建構多方言 SQL tool 的標準參考寫法。它示範了：
 
-- Two isolated grammar definitions (`mssql_grammar_definition`, `postgres_grammar_definition`) encoding TOP vs LIMIT semantics.
-- How to prompt, invoke, and inspect tool calls in a single script.
-- A side‑by‑side inspection of the assistant’s responses.
+- 兩份獨立的文法定義（`mssql_grammar_definition`、`postgres_grammar_definition`），分別對應 TOP 與 LIMIT 的語意。
+- 怎麼在同一支 script 裡寫 prompt、呼叫、檢查 tool call。
+- 並排比較 assistant 的回應。
 
-Define the LARK grammars for different SQL dialects
+先定義不同 SQL 方言的 LARK 文法
 
 ```python
 import textwrap
@@ -637,8 +645,8 @@ postgres_grammar = textwrap.dedent(r"""
     """)
 ```
 
-### 3.4 Generate specific SQL dialect 
-Let's define the prompt, and call the function to produce MS SQL dialect 
+### 3.4 產生特定的 SQL 方言 
+先定義 prompt，再呼叫函式產生 MS SQL 方言 
 
 ```python
 from openai import OpenAI
@@ -680,7 +688,7 @@ print(response_mssql.output[1].input)
     SELECT TOP 5 customer_id, order_id, order_date, total_amount FROM orders WHERE total_amount > 500 AND order_date > '2025-01-01' ORDER BY order_date DESC;
     ```
 
-The output SQL accurately uses "SELECT TOP" construct. 
+輸出的 SQL 正確使用了 "SELECT TOP" 語法。 
 
 ```python
 sql_prompt_pg = (
@@ -719,7 +727,7 @@ print(response_pg.output[1].input)
     SELECT customer_id, order_id, order_date, total_amount FROM orders WHERE total_amount > 500 AND order_date > '2025-01-01' ORDER BY order_date DESC LIMIT 5;
     ```
 
-Output highlights the same logical query - different physical syntax. Supply distinct grammars so the model can only produce valid statements for the chosen dialect.
+輸出是同一個邏輯查詢，只是實際語法不同。給不同的文法，模型就只能產生符合該方言的合法語句。
 
 | Dialect       | Generated Query                                              | Key Difference                          |
 |---------------|--------------------------------------------------------------|------------------------------------------|
@@ -728,9 +736,9 @@ Output highlights the same logical query - different physical syntax. Supply dis
 
 
 
-### 3.5 Example - Regex CFG Syntax
+### 3.5 範例：Regex CFG 語法
 
-The following code example demonstrates using the Regex CFG syntax to constrain the freeform tool call to a certain timestamp pattern.
+下面的程式碼示範用 Regex CFG 語法，把自由格式 tool call 限制成特定的時間戳記格式。
 
 ```python
 from openai import OpenAI
@@ -772,38 +780,38 @@ print(response_mssql.output[1].input)
     2025-08-07 10:00
     ```
 
-### 3.5 Best Practices
+### 3.5 最佳實務
 
-Lark grammars can be tricky to perfect. While simple grammars perform most reliably, complex grammars often require iteration on the grammar definition itself, the prompt, and the tool description to ensure that the model does not go out of distribution.
+Lark 文法很難一次寫到完美。簡單的文法通常最穩，複雜的文法往往得反覆調整文法定義、prompt 和 tool 描述，才能避免模型輸出偏離正常分佈。
 
-- Keep terminals bounded – use `/[^.\n]{0,10}*\./` rather than `/.*\./`. Limit matches both by content (negated character class) and by length (`{M,N}` quantifier). 
-- Prefer explicit char‑classes over `.` wildcards.
-- Thread whitespace explicitly, e.g. using `SP = " "`, instead of a global `%ignore`.
-- Describe your tool: tell the model exactly what the CFG accepts and instruct it to reason heavily about compliance.
+- terminal 要有界：用 `/[^.\n]{0,10}*\./`，不要用 `/.*\./`。同時用內容（排除字元集）和長度（`{M,N}` 量詞）限制比對範圍。 
+- 明確寫字元集，少用 `.` 萬用字元。
+- 空白要明確寫進去，例如用 `SP = " "`，不要用全域的 `%ignore`。
+- 描述好你的 tool：告訴模型這份 CFG 接受什麼，並要求它多花心思推理確保符合文法。
 
-**Troubleshooting**
-- API rejects the grammar because it is too complex ➜ Simplify rules and terminals, remove `%ignore.*`.
-- Unexpected tokens ➜ Confirm terminals aren’t overlapping; check greedy lexer.
-- When the model drifts "out‑of‑distribution" (shows up as the model producing excessively long or repetitive outputs, it is syntactically valid but is semantically wrong):
-    - Tighten the grammar.
-    - Iterate on the prompt (add few-shot examples) and tool description (explain the grammar and instruct the model to reason to conform to it).
-    - Experiment with a higher reasoning effort (e.g, bump from medium to high).
+**疑難排解**
+- API 因為文法太複雜而拒絕 ➜ 簡化 rule 和 terminal，拿掉 `%ignore.*`。
+- 出現非預期的 token ➜ 確認 terminal 沒有互相重疊，檢查 greedy lexer。
+- 模型偏離正常分佈時（表現為輸出過長或一直重複，語法合法但語意是錯的）：
+    - 把文法收緊。
+    - 調整 prompt（加 few-shot 範例）和 tool 描述（解釋文法，並要求模型推理以符合文法）。
+    - 試試更高的 reasoning effort（例如從 medium 調到 high）。
 
-**Resources:**  
+**參考資源：**  
 - Lark Docs – https://lark-parser.readthedocs.io/en/stable/
 - Lark IDE – https://www.lark-parser.org/ide/
 - LLGuidance Syntax – https://github.com/guidance-ai/llguidance/blob/main/docs/syntax.md
 - Regex (Rust crate) – https://docs.rs/regex/latest/regex/#syntax
 
-### 3.6 Takeaways 
+### 3.6 重點 
 
-Context-Free Grammar (CFG) support in GPT-5 lets you strictly constrain model output to match predefined syntax, ensuring only valid strings are generated. This is especially useful for enforcing programming language rules or custom formats, reducing post-processing and errors. By providing a precise grammar and clear tool description, you can make the model reliably stay within your target output structure.
+GPT-5 的 Context-Free Grammar (CFG) 支援讓你嚴格限制模型輸出符合預先定義的語法，只產生合法字串。這對強制遵守程式語言規則或自訂格式特別有用，可以減少後處理和錯誤。只要給精確的文法和清楚的 tool 描述，模型就能穩定地待在你要的輸出結構裡。
 
 ## 4. Minimal Reasoning 
 
-### 4.1 Overview 
+### 4.1 概述 
 
-GPT-5 now support for a new minimal reasoning effort. When using minimal reasoning effort, the model will output very few or no reasoning tokens. This is designed for use cases where developers want a very fast time-to-first-user-visible token. Note: If no reasoning effort is supplied, the default value is medium. 
+GPT-5 現在支援新的 minimal reasoning effort。使用 minimal 時，模型只會輸出很少甚至沒有 reasoning token，適合想要很快拿到第一個使用者看得到的 token 的情境。注意：如果沒有指定 reasoning effort，預設是 medium。 
 
 ```python
 from openai import OpenAI
@@ -846,8 +854,17 @@ print(output_text)
     positive
     ```
 
-### 4.2 Takeaways 
+### 4.2 重點 
+Minimal reasoning 讓 GPT-5 只用很少或不用 reasoning token，藉此降低延遲、加快第一個 token 出現的速度。適合用在確定性高、輕量的任務（擷取、格式轉換、短篇改寫、簡單分類），這類任務不需要解釋。沒指定 effort 的話預設是 medium，想要速度勝過深思就要明確設成 minimal。
 
-Minimal reasoning runs GPT-5 with few or no reasoning tokens to minimize latency and speed up time-to-first-token. Use it for deterministic, lightweight tasks (extraction, formatting, short rewrites, simple classification) where explanations aren’t needed. If you don’t specify effort, it defaults to medium—set minimal explicitly when you want speed over deliberation.
+## 重點整理
+- `verbosity` 可以不改 prompt 就調整輸出長度和深度，low、medium、high 三檔。
+- `"type": "custom"` 的 tool 讓模型直接送純文字給外部 runtime，不用包 JSON，但不支援 parallel tool calling。
+- CFG（Lark 或 Regex）像合約，讓模型只能輸出合法語法，不同 SQL 方言只要換文法就好。
+- 文法要簡單、terminal 要有界、tool 描述要寫清楚，模型才不容易跑偏。
+- minimal reasoning 犧牲推理換速度，適合輕量任務，不適合多步驟規劃或重度用 tool 的流程。
 
-<!-- tutor:summary -->
+## 練習
+1. 把 verbosity 範例裡的 `"low"` 改成 `"high"`，比較兩次輸出的 token 數，看看跟頁面上的 560 到 1288 差多少。
+2. 在 MS SQL 範例裡，把 prompt 的查詢改成「取最新 10 筆訂單」，確認產出的是 `TOP 10`，再換成 PostgreSQL 文法看是否變成 `LIMIT 10`。
+3. 修改 Regex CFG 範例的時間戳記 pattern（例如改成只接受日期、不含時間），看模型的輸出怎麼跟著變。

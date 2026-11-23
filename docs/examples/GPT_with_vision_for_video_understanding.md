@@ -1,21 +1,29 @@
 ---
-translated: false
+translated: true
 source: examples/GPT_with_vision_for_video_understanding.ipynb
 ---
 
-# Processing and narrating a video with GPT-4.1-mini's visual capabilities and GPT-4o TTS API
+# 用 GPT-4.1-mini 的視覺能力和 GPT-4o TTS API 處理並旁白影片
 
 > 原文：[examples/GPT_with_vision_for_video_understanding.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/GPT_with_vision_for_video_understanding.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇示範怎麼把 GPT 的視覺能力用在影片上。GPT-4.1-mini 不能直接吃影片當輸入，但我們可以用視覺能力加上 1M token 的 context window，一次描述整支影片的靜態畫格。
+有兩個範例：
 
+1. 用 GPT-4.1-mini 取得影片的描述
+2. 用 GPT-4o TTS API 為影片產生旁白
 
-This notebook demonstrates how to use GPT's visual capabilities with a video. Although GPT-4.1-mini doesn't take videos as input directly, we can use vision and the 1M token context window to describe the static frames of a whole video at once. We'll walk through two examples:
+## 學完你會
+- 用 OpenCV 把影片切成畫格，並顯示出來確認讀取正確。
+- 把畫格送給 GPT-4.1-mini，請它描述影片或寫出旁白腳本。
+- 用 GPT-4o TTS 搭配語氣指示，把腳本轉成旁白音檔。
 
-1. Using GPT-4.1-mini to get a description of a video
-2. Generating a voiceover for a video with GPT-4o TTS API
+## 開跑前
+- 需要 OpenAI API key，圖片輸入和 TTS 都會產生費用。
+- 需要安裝 OpenCV，並準備一支影片檔（範例用的是一支[自然紀錄片段](https://www.youtube.com/watch?v=kQ_7GtE529M)）。
 
 
 ```python
@@ -30,10 +38,10 @@ import os
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY", "<your OpenAI API key if not set as env var>"))
 ```
 
-## 1. Using GPT's visual capabilities to get a description of a video
+## 1. 用 GPT 的視覺能力取得影片描述
 
 
-First, we use OpenCV to extract frames from a nature [video](https://www.youtube.com/watch?v=kQ_7GtE529M) containing bisons and wolves:
+首先用 OpenCV 從一支有野牛和狼的自然[影片](https://www.youtube.com/watch?v=kQ_7GtE529M)中擷取畫格：
 
 
 ```python
@@ -57,7 +65,7 @@ print(len(base64Frames), "frames read.")
     618 frames read.
     ```
 
-Display frames to make sure we've read them in correctly:
+顯示畫格，確認有正確讀進來：
 
 
 ```python
@@ -67,7 +75,7 @@ for img in base64Frames:
     time.sleep(0.025)
 ```
 
-Once we have the video frames, we craft our prompt and send a request to GPT (Note that we don't need to send every frame for GPT to understand what's going on):
+拿到影片畫格後，寫好 prompt 並送出請求給 GPT（注意，不必送出每一個畫格，GPT 也能理解發生什麼事）：
 
 
 ```python
@@ -104,10 +112,10 @@ print(response.output_text)
     Witness the raw power and strategy of nature in this intense wildlife encounter captured in stunning detail. A determined pack of wolves surrounds a lone bison on a snowy plain, showcasing the relentless dynamics of predator and prey in the wild. As the wolves close in, the bison stands its ground amidst the swirling snow, illustrating a gripping battle for survival. This rare footage offers an up-close look at the resilience and instincts that govern life in the animal kingdom, making it a must-watch for nature enthusiasts and wildlife lovers alike. Experience the drama, tension, and beauty of this extraordinary moment frozen in time.
     ```
 
-## 2. Generating a voiceover for a video with GPT-4.1 and the GPT-4o TTS API
+## 2. 用 GPT-4.1 和 GPT-4o TTS API 為影片產生旁白
 
 
-Let's create a voiceover for this video in the style of David Attenborough. Using the same video frames we prompt GPT to give us a short script:
+我們來為這支影片做一段 David Attenborough 風格的旁白。用同一批影片畫格，請 GPT 給我們一份簡短腳本：
 
 
 ```python
@@ -144,7 +152,7 @@ print(result.output_text)
     In the frozen expanse of the winter landscape, a coordinated pack of wolves moves with calculated precision. Their target, a lone bison, is powerful but vulnerable when isolated. The wolves encircle their prey, their numbers overwhelming, displaying the brutal reality of survival in the wild. As the bison struggles to break free, reinforcements from the herd arrive just in time, charging into the pack. A dramatic clash unfolds, where strength meets strategy in the perpetual battle for life. Here, in the heart of nature’s harshest conditions, every moment is a testament to endurance and the delicate balance of predator and prey.
     ```
 
-Now, we can work with the GPT-4o TTS model and provide it a set of instructions on how the voice should sound. You can play around with the voice models and instructions at [OpenAI.fm](https://openai.fm). We can then pass in the script we generated above with GPT-4.1-mini and generate audio of the voiceover:
+接下來用 GPT-4o TTS 模型，提供一組指示說明聲音該是什麼樣子。你可以到 [OpenAI.fm](https://openai.fm) 試玩各種聲音模型和指示。然後把上面用 GPT-4.1-mini 產生的腳本丟進去，產生旁白音訊：
 
 
 ```python
@@ -176,4 +184,13 @@ audio_bytes = audio_response.content
 Audio(data=audio_bytes)
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 模型不吃影片時，把影片抽成畫格再當圖片輸入，是常見的替代做法。
+- 不用送出每一格，抽樣的畫格就足以讓模型理解內容，還能省 token。
+- 同一批畫格可以用不同 prompt 產生不同產出，例如描述或旁白腳本。
+- TTS 模型可以用文字指示控制語氣和風格，腳本內容和聲音風格是分開調整的。
+
+## 練習
+1. 調整畫格的抽樣間隔，看描述品質和 token 用量怎麼變。
+2. 把旁白的風格從 David Attenborough 換成別的（例如運動賽事轉播），重新產生腳本。
+3. 改 TTS 的指示和聲音，產生兩個版本的旁白，比較聽起來的差異。

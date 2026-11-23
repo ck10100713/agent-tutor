@@ -1,34 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/gpt-5_prompting_guide.ipynb
 ---
-
-# GPT-5 prompting guide
+# GPT-5 prompting 指南
 
 > 原文：[examples/gpt-5/gpt-5_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/gpt-5_prompting_guide.ipynb)
 
+## 這篇在做什麼
 
+這是 OpenAI 官方給 GPT-5 的 prompting 指南，整理了訓練和實際應用這個模型累積的 prompt 技巧，涵蓋 agent 任務、指令遵循、新的 API 參數，以及前端和軟體工程的寫程式場景，還有 Cursor 調 prompt 的實戰經驗。內容幾乎都是可以直接抄來改的 prompt 範本。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 `reasoning_effort`、tool call 預算和 persistence 提示，控制 agent 是要保守還是積極。
+- 用 `verbosity` 參數加上 prompt 覆寫，分別控制一般文字和程式碼輸出的長度，並寫出沒有互相矛盾的指令。
+- 用 Responses API 的 `previous_response_id` 重用 reasoning，並套用 minimal reasoning、Markdown 輸出和 metaprompting 的 prompt 模式。
 
-GPT-5, our newest flagship model, represents a substantial leap forward in agentic task performance, coding, raw intelligence, and steerability.
+## 開跑前
 
-While we trust it will perform excellently “out of the box” across a wide range of domains, in this guide we’ll cover prompting tips to maximize the quality of model outputs, derived from our experience training and applying the model to real-world tasks. We discuss concepts like improving agentic task performance, ensuring instruction adherence, making use of newly API features, and optimizing coding for frontend and software engineering tasks - with key insights into AI code editor Cursor’s prompt tuning work with GPT-5.
+這篇主要是 prompt 範本，沒有完整可跑的程式。要實際試的話需要 OpenAI API key 和 GPT-5 的使用權限。
 
-We’ve seen significant gains from applying these best practices and adopting our canonical tools whenever possible, and we hope that this guide, along with the [prompt optimizer tool](https://platform.openai.com/chat/edit?optimize=true) we’ve built, will serve as a launchpad for your use of GPT-5. But, as always, remember that prompting is not a one-size-fits-all exercise - we encourage you to run experiments and iterate on the foundation offered here to find the best solution for your problem.
+GPT-5 是我們最新的旗艦模型，在 agent 任務表現、寫程式、原始智力和可控性（steerability）上都有大幅進步。
 
-## Agentic workflow predictability 
+我們相信它在各種領域「開箱即用」就會表現很好，不過這份指南會根據我們訓練這個模型、把它用在真實任務的經驗，提供一些 prompting 技巧，幫你把輸出品質拉到最高。內容包含提升 agent 任務表現、確保指令遵循、善用新的 API 功能，以及優化前端與軟體工程的寫程式任務，並分享 AI 程式編輯器 Cursor 針對 GPT-5 調整 prompt 的重要心得。
 
-We trained GPT-5 with developers in mind: we’ve focused on improving tool calling, instruction following, and long-context understanding to serve as the best foundation model for agentic applications. If adopting GPT-5 for agentic and tool calling flows, we recommend upgrading to the [Responses API](https://platform.openai.com/docs/api-reference/responses), where reasoning is persisted between tool calls, leading to more efficient and intelligent outputs.
+只要套用這些最佳實務、盡可能採用我們的標準 tools，就看得到明顯的進步。我們希望這份指南，加上我們做的 [prompt optimizer 工具](https://platform.openai.com/chat/edit?optimize=true)，能成為你使用 GPT-5 的起點。不過 prompting 沒有放諸四海皆準的做法，建議你自己跑實驗，在這裡的基礎上反覆調整，找出適合你問題的解法。
 
-### Controlling agentic eagerness
-Agentic scaffolds can span a wide spectrum of control—some systems delegate the vast majority of decision-making to the underlying model, while others keep the model on a tight leash with heavy programmatic logical branching. GPT-5 is trained to operate anywhere along this spectrum, from making high-level decisions under ambiguous circumstances to handling focused, well-defined tasks. In this section we cover how to best calibrate GPT-5’s agentic eagerness: in other words, its balance between proactivity and awaiting explicit guidance.
+## Agent 工作流程的可預測性
 
-#### Prompting for less eagerness
-GPT-5 is, by default, thorough and comprehensive when trying to gather context in an agentic environment to ensure it will produce a correct answer. To reduce the scope of GPT-5’s agentic behavior—including limiting tangential tool-calling action and minimizing latency to reach a final answer—try the following:  
-- Switch to a lower `reasoning_effort`. This reduces exploration depth but improves efficiency and latency. Many workflows can be accomplished with consistent results at medium or even low `reasoning_effort`.
-- Define clear criteria in your prompt for how you want the model to explore the problem space. This reduces the model’s need to explore and reason about too many ideas:
+我們訓練 GPT-5 時就是以開發者為念：重點放在改善 tool calling、指令遵循和長 context 理解，希望它成為 agent 應用最好的基礎模型。如果你要把 GPT-5 用在 agent 和 tool calling 流程，建議升級到 [Responses API](https://platform.openai.com/docs/api-reference/responses)，reasoning 會在 tool calls 之間保留下來，輸出會更有效率也更聰明。
+
+### 控制 agent 的積極程度
+Agent 的架構控制程度差很多：有些系統把絕大部分決策交給底層模型，有些則用大量程式邏輯分支把模型管得很緊。GPT-5 被訓練成能在這整個範圍內運作，從在模糊情境下做高層決策，到處理聚焦、定義明確的任務都可以。這一節講怎麼校準 GPT-5 的 agentic eagerness（積極程度），也就是它在主動行動和等待明確指示之間的平衡。
+
+#### 讓它不那麼積極
+在 agent 環境中，GPT-5 預設會很徹底、很全面地收集 context，確保答案正確。想縮小 GPT-5 的 agent 行為範圍，包括減少離題的 tool calls、縮短到最終答案的延遲，可以試試：  
+- 調低 `reasoning_effort`。探索深度會變淺，但效率和延遲會變好。很多工作流程用 medium 甚至 low 的 `reasoning_effort`，結果也很穩定。
+- 在 prompt 裡清楚定義你希望模型怎麼探索問題空間，讓它不用去想太多可能性：
 
 ```
 <context_gathering>
@@ -55,7 +63,7 @@ Loop:
 </context_gathering>
 ```
 
-If you’re willing to be maximally prescriptive, you can even set fixed tool call budgets, like the one below. The budget can naturally vary based on your desired search depth.
+如果你願意講得極度明確，甚至可以設定固定的 tool call 預算，像下面這樣。預算可以依你想要的搜尋深度自然調整。
 ```
 <context_gathering>
 - Search depth: very low
@@ -65,10 +73,10 @@ If you’re willing to be maximally prescriptive, you can even set fixed tool ca
 </context_gathering>
 ```
 
-When limiting core context gathering behavior, it’s helpful to explicitly provide the model with an escape hatch that makes it easier to satisfy a shorter context gathering step. Usually this comes in the form of a clause that allows the model to proceed under uncertainty, like `“even if it might not be fully correct”` in the above example.
+限制核心的 context 收集行為時，最好明確給模型一個「逃生口」，讓它比較容易完成較短的收集步驟。通常做法是加一句允許它在不確定下繼續的子句，像上面範例裡的 `“even if it might not be fully correct”`。
 
-#### Prompting for more eagerness
-On the other hand, if you’d like to encourage model autonomy, increase tool-calling persistence, and reduce occurrences of clarifying questions or otherwise handing back to the user, we recommend increasing `reasoning_effort`, and using a prompt like the following to encourage persistence and thorough task completion:
+#### 讓它更積極
+反過來，如果你想鼓勵模型自主、提高 tool calling 的持續性，並減少反問釐清問題或把球丟回給使用者的情況，建議提高 `reasoning_effort`，並用像下面這樣的 prompt 鼓勵它堅持把任務徹底做完：
 
 ```
 <persistence>
@@ -79,12 +87,12 @@ On the other hand, if you’d like to encourage model autonomy, increase tool-ca
 </persistence>
 ```
 
-Generally, it can be helpful to clearly state the stop conditions of the agentic tasks, outline safe versus unsafe actions, and define when, if ever, it’s acceptable for the model to hand back to the user. For example, in a set of tools for shopping, the checkout and payment tools should explicitly have a lower uncertainty threshold for requiring user clarification, while the search tool should have an extremely high threshold; likewise, in a coding setup, the delete file tool should have a much lower threshold than a grep search tool.
+一般來說，明確寫出 agent 任務的停止條件、列出安全與不安全的動作，並定義什麼情況下（如果有的話）可以把球交回給使用者，都會有幫助。比如購物工具組裡，結帳和付款 tools 要求使用者釐清的不確定性門檻應該明確調低，搜尋 tool 的門檻則要非常高；同理，在寫程式的環境裡，刪檔 tool 的門檻要比 grep 搜尋 tool 低很多。
 
 ### Tool preambles
-We recognize that on agentic trajectories monitored by users, intermittent model updates on what it’s doing with its tool calls and why can provide for a much better interactive user experience - the longer the rollout, the bigger the difference these updates make. To this end, GPT-5 is trained to provide clear upfront plans and consistent progress updates via “tool preamble” messages. 
+我們知道，在有使用者盯著的 agent 軌跡中，模型隨時說明它正在對 tool calls 做什麼、為什麼這樣做，可以大幅改善互動體驗，rollout 越長，差別越大。因此 GPT-5 被訓練成會透過「tool preamble」訊息，先給出清楚的計畫，並持續更新進度。
 
-You can steer the frequency, style, and content of tool preambles in your prompt—from detailed explanations of every single tool call to a brief upfront plan and everything in between. This is an example of a high-quality preamble prompt:
+你可以在 prompt 裡調整 tool preambles 的頻率、風格和內容，從每個 tool call 都詳細解釋，到只有簡短的事前計畫，介於其間的都可以。以下是一個高品質的 preamble prompt 範例：
 
 ```
 <tool_preambles>
@@ -94,7 +102,7 @@ You can steer the frequency, style, and content of tool preambles in your prompt
 </tool_preambles>
 ```
 
-Here’s an example of a tool preamble that might be emitted in response to such a prompt—such preambles can drastically improve the user’s ability to follow along with your agent’s work as it grows more complicated:
+以下是針對這種 prompt 可能產生的 tool preamble 範例。agent 的工作越複雜，這種 preamble 越能大幅提升使用者跟上進度的能力：
 
 ```
 "output": [
@@ -131,17 +139,17 @@ Here’s an example of a tool preamble that might be emitted in response to such
 ```
 
 ### Reasoning effort
-We provide a `reasoning_effort` parameter to control how hard the model thinks and how willingly it calls tools; the default is `medium`, but you should scale up or down depending on the difficulty of your task. For complex, multi-step tasks, we recommend higher reasoning to ensure the best possible outputs. Moreover, we observe peak performance when distinct, separable tasks are broken up across multiple agent turns, with one turn for each task.
-### Reusing reasoning context with the Responses API
-We strongly recommend using the Responses API when using GPT-5 to unlock improved agentic flows, lower costs, and more efficient token usage in your applications.
+我們提供 `reasoning_effort` 參數，控制模型思考多用力、多願意呼叫 tools。預設是 `medium`，但你要依任務難度往上或往下調。複雜的多步驟任務，我們建議用較高的 reasoning，確保輸出最好。另外我們觀察到，把各自獨立、可分開的任務拆到多個 agent turn 裡，每個 turn 做一件事，效果最好。
+### 用 Responses API 重用 reasoning context
+使用 GPT-5 時，我們強烈建議用 Responses API，可以得到更好的 agent 流程、更低成本，以及更有效率的 token 使用。
 
-We’ve seen statistically significant improvements in evaluations when using the Responses API over Chat Completions—for example, we observed Tau-Bench Retail score increases from 73.9% to 78.2% just by switching to the Responses API and including `previous_response_id` to pass back previous reasoning items into subsequent requests. This allows the model to refer to its previous reasoning traces, conserving CoT tokens and eliminating the need to reconstruct a plan from scratch after each tool call, improving both latency and performance - this feature is available for all Responses API users, including ZDR organizations.
+我們看到用 Responses API 比 Chat Completions 在 evals 上有統計上顯著的進步。例如只要改用 Responses API，並帶上 `previous_response_id` 把先前的 reasoning items 傳回後續請求，Tau-Bench Retail 分數就從 73.9% 升到 78.2%。這讓模型能參考它先前的推理軌跡，省下 CoT tokens，也不用在每次 tool call 後從頭重建計畫，延遲和表現都會改善。所有 Responses API 使用者都能用這個功能，包含 ZDR 組織。
 
-## Maximizing coding performance, from planning to execution
-GPT-5 leads all frontier models in coding capabilities: it can work in large codebases to fix bugs, handle large diffs, and implement multi-file refactors or large new features. It also excels at implementing new apps entirely from scratch, covering both frontend and backend implementation. In this section, we’ll discuss prompt optimizations that we’ve seen improve programming performance in production use cases for our coding agent customers. 
+## 從規劃到執行，最大化寫程式表現
+GPT-5 在寫程式能力上領先所有前沿模型：它能在大型 codebase 裡修 bug、處理大型 diff、做多檔案重構或實作大型新功能。它也很擅長從零開始實作整個新 app，前端後端都包含。這一節會講我們在 coding agent 客戶的正式環境中，看到能提升寫程式表現的 prompt 優化。 
 
-### Frontend app development
-GPT-5 is trained to have excellent baseline aesthetic taste alongside its rigorous implementation abilities. We’re confident in its ability to use all types of web development frameworks and packages; however, for new apps, we recommend using the following frameworks and packages to get the most out of the model's frontend capabilities:
+### 前端 app 開發
+GPT-5 被訓練成除了嚴謹的實作能力之外，還有很好的基本美感。我們有信心它能使用各種網頁開發框架和套件；不過新 app 的話，建議用下面這些框架和套件，才能把模型的前端能力發揮到最好：
 
 - Frameworks: Next.js (TypeScript), React, HTML
 - Styling / UI: Tailwind CSS, shadcn/ui, Radix Themes
@@ -149,8 +157,8 @@ GPT-5 is trained to have excellent baseline aesthetic taste alongside its rigoro
 - Animation: Motion
 - Fonts: San Serif, Inter, Geist, Mona Sans, IBM Plex Sans, Manrope
 
-#### Zero-to-one app generation
-GPT-5 is excellent at building applications in one shot. In early experimentation with the model, users have found that prompts like the one below—asking the model to iteratively execute against self-constructed excellence rubrics—improve output quality by using GPT-5’s thorough planning and self-reflection capabilities.
+#### 從零到一生成 app
+GPT-5 很擅長一次生成完整應用。早期實驗中，使用者發現像下面這種 prompt，要求模型針對自己建立的卓越標準 rubric 反覆執行，可以利用 GPT-5 徹底的規劃和自我反思能力來提升輸出品質。
 
 ```
 <self_reflection>
@@ -160,8 +168,8 @@ GPT-5 is excellent at building applications in one shot. In early experimentatio
 </self_reflection>
 ```
 
-#### Matching codebase design standards
-When implementing incremental changes and refactors in existing apps, model-written code should adhere to existing style and design standards, and “blend in” to the codebase as neatly as possible.  Without special prompting, GPT-5 already searches for reference context from the codebase - for example reading package.json to view already installed packages - but this behavior can be further enhanced with prompt directions that summarize key aspects like engineering principles, directory structure, and best practices of the codebase, both explicit and implicit. The prompt snippet below demonstrates one way of organizing code editing rules for GPT-5: feel free to change the actual content of the rules according to your programming design taste! 
+#### 配合既有 codebase 的設計標準
+在既有 app 做漸進式修改和重構時，模型寫的程式要遵守現有的風格和設計標準，盡量「融入」codebase。沒有特別 prompt 的話，GPT-5 已經會去 codebase 找參考 context，例如讀 package.json 看已安裝的套件。不過你可以在 prompt 裡總結 codebase 的關鍵面向，像是工程原則、目錄結構和最佳實務（不管是明講的還是隱含的），進一步強化這個行為。下面的 prompt 片段示範了一種整理 GPT-5 程式編輯規則的方式，規則內容可以依你的設計品味自由修改！ 
 
 ```
 <code_editing_rules>
@@ -205,27 +213,27 @@ When implementing incremental changes and refactors in existing apps, model-writ
 <code_editing_rules>
 ```
 
-### Collaborative coding in production: Cursor’s GPT-5 prompt tuning
-We’re proud to have had AI code editor Cursor as a trusted alpha tester for GPT-5: below, we show a peek into how Cursor tuned their prompts to get the most out of the model’s capabilities. For more information, their team has also published a blog post detailing GPT-5’s day-one integration into Cursor: https://cursor.com/blog/gpt-5
+### 正式環境的協作寫程式：Cursor 的 GPT-5 prompt 調校
+我們很榮幸 AI 程式編輯器 Cursor 是 GPT-5 值得信賴的 alpha 測試者。下面讓你看看 Cursor 怎麼調整 prompt 來發揮模型的能力。想了解更多，他們團隊也發了一篇部落格，詳述 GPT-5 第一天就整合進 Cursor 的過程：https://cursor.com/blog/gpt-5
 
-#### System prompt and parameter tuning
-Cursor’s system prompt focuses on reliable tool calling, balancing verbosity and autonomous behavior while giving users the ability to configure custom instructions. Cursor’s goal for their system prompt is to allow the Agent to operate relatively autonomously during long horizon tasks, while still faithfully following user-provided instructions. 
+#### System prompt 和參數調校
+Cursor 的 system prompt 著重在穩定的 tool calling、平衡囉嗦程度和自主行為，同時讓使用者能設定自訂指示。他們的目標是讓 Agent 在長時程任務中相對自主地運作，又能忠實遵循使用者給的指示。 
 
-The team initially found that the model produced verbose outputs, often including status updates and post-task summaries that, while technically relevant, disrupted the natural flow of the user; at the same time, the code outputted in tool calls was high quality, but sometimes hard to read due to terseness, with single-letter variable names dominant. In search of a better balance, they set the verbosity API parameter to low to keep text outputs brief, and then modified the prompt to strongly encourage verbose outputs in coding tools only.
+團隊一開始發現，模型的輸出很囉嗦，常包含狀態更新和任務後總結，這些雖然技術上相關，卻打斷了使用者的自然節奏；同時，tool calls 裡輸出的程式碼品質很高，但有時因為太精簡而難讀，到處是單字母變數。為了找到更好的平衡，他們把 verbosity API 參數設為 low，讓文字輸出保持簡短，再修改 prompt，強烈鼓勵只在寫程式的 tools 裡輸出詳細內容。
 
 ```
 Write code for clarity first. Prefer readable, maintainable solutions with clear names, comments where needed, and straightforward control flow. Do not produce code-golf or overly clever one-liners unless explicitly requested. Use high verbosity for writing code and code tools.
 ```
 
-This dual usage of parameter and prompt resulted in a balanced format combining efficient, concise status updates and final work summary with much more readable code diffs.
+這種參數加 prompt 雙管齊下的做法，得到了平衡的格式：簡潔有效率的狀態更新和最終工作總結，加上可讀性高得多的程式碼 diff。
 
-Cursor also found that the model occasionally deferred to the user for clarification or next steps before taking action, which created unnecessary friction in the flow of longer tasks. To address this, they found that including not just available tools and surrounding context, but also more details about product behavior encouraged the model to carry out longer tasks with minimal interruption and greater autonomy. Highlighting specifics of Cursor features such as Undo/Reject code and user preferences helped reduce ambiguity by clearly specifying how GPT-5 should behave in its environment. For longer horizon tasks, they found this prompt improved performance:
+Cursor 還發現，模型偶爾會在動手前先向使用者確認或詢問下一步，讓長任務的流程出現不必要的卡頓。為了解決這個問題，他們發現除了提供可用的 tools 和周邊 context 之外，也提供更多產品行為的細節，能讓模型以最少的中斷、更高的自主性執行長任務。強調 Cursor 功能的細節，像是 Undo/Reject 程式碼和使用者偏好，明確說明 GPT-5 在這個環境裡該怎麼表現，減少了模糊空間。對長時程任務，他們發現這個 prompt 能提升表現：
 
 ```
 Be aware that the code edits you make will be displayed to the user as proposed changes, which means (a) your code edits can be quite proactive, as the user can always reject, and (b) your code should be well-written and easy to quickly review (e.g., appropriate variable names instead of single letters). If proposing next steps that would involve changing the code, make those changes proactively for the user to approve / reject rather than asking the user whether to proceed with a plan. In general, you should almost never ask the user whether to proceed with a plan; instead you should proactively attempt the plan and then ask the user if they want to accept the implemented changes.
 ```
 
-Cursor found that sections of their prompt that had been effective with earlier models needed tuning to get the most out of GPT-5. Here is one example below:
+Cursor 發現，他們 prompt 裡對舊模型有效的部分，需要調整才能把 GPT-5 發揮到最好。下面是一個例子：
 
 ```
 <maximize_context_understanding>
@@ -234,9 +242,8 @@ Be THOROUGH when gathering information. Make sure you have the FULL picture befo
 </maximize_context_understanding>
 ```
 
-While this worked well with older models that needed encouragement to analyze context thoroughly, they found it counterproductive with GPT-5, which is already naturally introspective and proactive at gathering context. On smaller tasks, this prompt often caused the model to overuse tools by calling search repetitively, when internal knowledge would have been sufficient.
-
-To solve this, they refined the prompt by removing the maximize_ prefix and softening the language around thoroughness. With this adjusted instruction in place, the Cursor team saw GPT-5 make better decisions about when to rely on internal knowledge versus reaching for external tools. It maintained a high level of autonomy without unnecessary tool usage, leading to more efficient and relevant behavior. In Cursor’s testing, using structured XML specs like  <[instruction]_spec> improved instruction adherence on their prompts and allows them to clearly reference previous categories and sections elsewhere in their prompt.
+這段對需要被鼓勵徹底分析 context 的舊模型很管用，但他們發現對 GPT-5 反而有反效果，因為 GPT-5 本來就很會內省，也很主動收集 context。在較小的任務上，這個 prompt 常讓模型過度使用 tools，重複呼叫搜尋，其實靠內部知識就夠了。
+為了解決這個問題，他們修改 prompt，拿掉 maximize_ 前綴，並放軟關於徹底程度的措辭。調整後，Cursor 團隊看到 GPT-5 更能判斷什麼時候該靠內部知識、什麼時候該用外部 tools。它維持高度自主，又沒有不必要的 tool 使用，行為更有效率也更貼切。在 Cursor 的測試中，使用像 <[instruction]_spec> 這種結構化的 XML 規格，提升了 prompt 的指令遵循度，也讓他們能在 prompt 的其他地方清楚引用先前的類別和段落。
 
 ```
 <context_understanding>
@@ -246,24 +253,24 @@ Bias towards not asking the user for help if you can find the answer yourself.
 </context_understanding>
 ```
 
-While the system prompt provides a strong default foundation, the user prompt remains a highly effective lever for steerability. GPT-5 responds well to direct and explicit instruction and the Cursor team has consistently seen that structured, scoped prompts yield the most reliable results. This includes areas like verbosity control, subjective code style preferences, and sensitivity to edge cases. Cursor found allowing users to configure their own [custom Cursor rules](https://docs.cursor.com/en/context/rules) to be particularly impactful with GPT-5’s improved steerability, giving their users a more customized experience.
+system prompt 提供了很好的預設基礎，不過 user prompt 仍然是很有效的操控手段。GPT-5 對直接、明確的指示反應很好，Cursor 團隊一直看到結構化、範圍明確的 prompt 結果最穩定，包括囉嗦程度控制、主觀的程式風格偏好，以及對邊界情況的敏感度。Cursor 發現，讓使用者設定自己的 [custom Cursor rules](https://docs.cursor.com/en/context/rules)，搭配 GPT-5 更好的可控性特別有效，使用者能得到更客製化的體驗。
 
 
 
-## Optimizing intelligence and instruction-following 
+## 優化智力和指令遵循 
 
 ### Steering
-As our most steerable model yet, GPT-5 is extraordinarily receptive to prompt instructions surrounding verbosity, tone, and tool calling behavior.
+作為我們目前最好控制的模型，GPT-5 對 prompt 中關於囉嗦程度、語氣和 tool calling 行為的指示特別敏感。
 
 #### Verbosity
-In addition to being able to control the reasoning_effort as in previous reasoning models, in GPT-5 we introduce a new API parameter called verbosity, which influences the length of the model’s final answer, as opposed to the length of its thinking. Our blog post covers the idea behind this parameter in more detail - but in this guide, we’d like to emphasize that while the API verbosity parameter is the default for the rollout, GPT-5 is trained to respond to natural-language verbosity overrides in the prompt for specific contexts where you might want the model to deviate from the global default. Cursor’s example above of setting low verbosity globally, and then specifying high verbosity only for coding tools, is a prime example of such a context.
+除了像先前 reasoning 模型一樣能控制 reasoning_effort，GPT-5 還新增了一個 API 參數叫 verbosity，影響的是模型最終答案的長度，而不是它思考的長度。我們的部落格有更詳細介紹這個參數背後的想法。這份指南想強調的是：API 的 verbosity 參數是 rollout 的預設值，但 GPT-5 也被訓練成能回應 prompt 裡的自然語言 verbosity 覆寫，用在你想偏離全域預設的特定情境。上面 Cursor 全域設 low verbosity、只對寫程式的 tools 指定 high verbosity，就是這類情境的最佳例子。
 
-### Instruction following
-Like GPT-4.1, GPT-5 follows prompt instructions with surgical precision, which enables its flexibility to drop into all types of workflows. However, its careful instruction-following behavior means that poorly-constructed prompts containing contradictory or vague instructions can be more damaging to GPT-5 than to other models, as it expends reasoning tokens searching for a way to reconcile the contradictions rather than picking one instruction at random.
+### 指令遵循
+跟 GPT-4.1 一樣，GPT-5 遵循 prompt 指示精準得像外科手術，所以能靈活套進各種工作流程。不過這種謹慎的指令遵循也代表，包含矛盾或模糊指示的 prompt，對 GPT-5 的傷害可能比其他模型更大，因為它會花 reasoning tokens 去找調和矛盾的辦法，而不是隨便挑一條指示。
 
-Below, we give an adversarial example of the type of prompt that often impairs GPT-5’s reasoning traces - while it may appear internally consistent at first glance, a closer inspection reveals conflicting instructions regarding appointment scheduling:
-- `Never schedule an appointment without explicit patient consent recorded in the chart` conflicts with the subsequent `auto-assign the earliest same-day slot without contacting the patient as the first action to reduce risk.`
-- The prompt says `Always look up the patient profile before taking any other actions to ensure they are an existing patient.` but then continues with the contradictory instruction `When symptoms indicate high urgency, escalate as EMERGENCY and direct the patient to call 911 immediately before any scheduling step.`
+下面是一個會損害 GPT-5 推理軌跡的對抗式 prompt 範例。乍看內部一致，仔細看就會發現預約排程的指示互相衝突：
+- `Never schedule an appointment without explicit patient consent recorded in the chart` 跟後面的 `auto-assign the earliest same-day slot without contacting the patient as the first action to reduce risk.` 衝突。
+- prompt 說 `Always look up the patient profile before taking any other actions to ensure they are an existing patient.`，但後面又接著矛盾的指示 `When symptoms indicate high urgency, escalate as EMERGENCY and direct the patient to call 911 immediately before any scheduling step.`
 
 ```
 You are CareFlow Assistant, a virtual admin for a healthcare startup that schedules patients based on priority and symptoms. Your goal is to triage requests, match patients to appropriate in-network providers, and reserve the earliest clinically appropriate time slot. Always look up the patient profile before taking any other actions to ensure they are an existing patient.
@@ -279,21 +286,21 @@ You are CareFlow Assistant, a virtual admin for a healthcare startup that schedu
 - For high-acuity Red and Orange cases, auto-assign the earliest same-day slot *after informing* the patient *of your actions.* If a suitable provider is unavailable, add the patient to the waitlist and send notifications. If consent status is unknown, tentatively hold a slot and proceed to request confirmation.
 ```
 
-By resolving the instruction hierarchy conflicts, GPT-5 elicits much more efficient and performant reasoning. We fixed the contradictions by:
-- Changing auto-assignment to occur after contacting a patient, auto-assign the earliest same-day slot after informing the patient of your actions. to be consistent with only scheduling with consent.
-- Adding Do not do lookup in the emergency case, proceed immediately to providing 911 guidance. to let the model know it is ok to not look up in case of emergency.
+解決指令層級的衝突後，GPT-5 的推理會有效率、表現好得多。我們這樣修正矛盾：
+- 把自動分配改成在聯絡病患之後進行，也就是 auto-assign the earliest same-day slot after informing the patient of your actions.，才跟「必須有同意才排程」一致。
+- 加上 Do not do lookup in the emergency case, proceed immediately to providing 911 guidance.，讓模型知道緊急情況下可以不用查詢。
 
-We understand that the process of building prompts is an iterative one, and many prompts are living documents constantly being updated by different stakeholders - but this is all the more reason to thoroughly review them for poorly-worded instructions. Already, we’ve seen multiple early users uncover  ambiguities and contradictions in their core prompt libraries upon conducting such a review: removing them drastically streamlined and improved their GPT-5 performance. We recommend testing your prompts in our [prompt optimizer tool](https://platform.openai.com/chat/edit?optimize=true) to help identify these types of issues.
+我們明白寫 prompt 是反覆修改的過程，很多 prompt 是由不同利害關係人持續更新的活文件，但這正是更需要徹底檢查措辭不佳的指示的原因。已經有多位早期使用者在做了這種檢查後，發現核心 prompt 庫裡的模糊和矛盾，把它們移除後，GPT-5 的表現大幅精簡又進步。建議你用我們的 [prompt optimizer 工具](https://platform.openai.com/chat/edit?optimize=true)測試 prompt，幫助找出這類問題。
 
 ### Minimal reasoning
-In GPT-5, we introduce minimal reasoning effort for the first time: our fastest option that still reaps the benefits of the reasoning model paradigm. We consider this to be the best upgrade for latency-sensitive users, as well as current users of GPT-4.1.
+GPT-5 首次推出 minimal reasoning effort：我們最快、同時又能享有 reasoning 模型範式好處的選項。我們認為這是對延遲敏感的使用者和現有 GPT-4.1 使用者最好的升級。
 
-Perhaps unsurprisingly, we recommend prompting patterns that are similar to [GPT-4.1 for best results](https://cookbook.openai.com/examples/gpt4-1_prompting_guide). minimal reasoning performance can vary more drastically depending on prompt than higher reasoning levels, so key points to emphasize include:
+不意外地，我們建議採用跟 [GPT-4.1 類似的 prompting 模式，效果最好](https://cookbook.openai.com/examples/gpt4-1_prompting_guide)。minimal reasoning 的表現會比較高的 reasoning 等級更受 prompt 影響，要強調的重點包括：
 
-1. Prompting the model to give a brief explanation summarizing its thought process at the start of the final answer, for example via a bullet point list, improves performance on tasks requiring higher intelligence.
-2. Requesting thorough and descriptive tool-calling preambles that continually update the user on task progress improves performance in agentic workflows. 
-3. Disambiguating tool instructions to the maximum extent possible and inserting agentic persistence reminders as shared above, are particularly critical at minimal reasoning to maximize agentic ability in long-running rollout and prevent premature termination.
-4. Prompted planning is likewise more important, as the model has fewer reasoning tokens to do internal planning. Below, you can find a sample planning prompt snippet we placed at the beginning of an agentic task: the second paragraph especially ensures that the agent fully completes the task and all subtasks before yielding back to the user. 
+1. 在最終答案開頭，prompt 模型簡短說明它的思考過程摘要，例如用條列方式，能提升需要較高智力的任務表現。
+2. 要求詳細、描述性的 tool-calling preambles，持續向使用者更新任務進度，能提升 agent 工作流程的表現。 
+3. 盡可能消除 tool 指示的歧義，並插入前面分享過的 agentic persistence 提醒。這在 minimal reasoning 下特別關鍵，能最大化長時間 rollout 中的 agent 能力，防止太早結束。
+4. Prompt 規劃同樣更重要，因為模型可用來內部規劃的 reasoning tokens 比較少。下面是我們放在 agent 任務開頭的規劃 prompt 片段範例，尤其第二段確保 agent 在把控制權交回使用者之前，完整做完任務和所有子任務。 
 
 ```
 Remember, you are an agent - please keep going until the user's query is completely resolved, before ending your turn and yielding back to the user. Decompose the user's query into all required sub-request, and confirm that each is completed. Do not stop after completing only part of the request. Only terminate your turn when you are sure that the problem is solved. You must be prepared to answer multiple queries and only finish the call once the user has confirmed they're done.
@@ -301,20 +308,20 @@ Remember, you are an agent - please keep going until the user's query is complet
 You must plan extensively in accordance with the workflow steps before making subsequent function calls, and reflect extensively on the outcomes each function call made, ensuring the user's query, and related sub-requests are completely resolved.
 ```
 
-### Markdown formatting
-By default, GPT-5 in the API does not format its final answers in Markdown, in order to preserve maximum compatibility with developers whose applications may not support Markdown rendering. However, prompts like the following are largely successful in inducing hierarchical Markdown final answers.
+### Markdown 格式
+預設情況下，API 中的 GPT-5 不會用 Markdown 格式化最終答案，這是為了最大程度相容於可能不支援 Markdown 渲染的開發者應用。不過像下面這樣的 prompt，大致上能成功讓它輸出有階層結構的 Markdown 最終答案。
 
 ```
 - Use Markdown **only where semantically correct** (e.g., `inline code`, ```code fences```, lists, tables).
 - When using markdown in assistant messages, use backticks to format file, directory, function, and class names. Use \( and \) for inline math, \[ and \] for block math.
 ```
 
-Occasionally, adherence to Markdown instructions specified in the system prompt can degrade over the course of a long conversation. In the event that you experience this, we’ve seen consistent adherence from appending a Markdown instruction every 3-5 user messages.
+偶爾，system prompt 裡指定的 Markdown 指示，遵循程度會在長對話中退化。如果你遇到這種情況，我們發現每 3 到 5 則使用者訊息就附加一次 Markdown 指示，能穩定維持遵循。
 
 ### Metaprompting
-Finally, to close with a meta-point, early testers have found great success using GPT-5 as a meta-prompter for itself. Already, several users have deployed prompt revisions to production that were generated simply by asking GPT-5 what elements could be added to an unsuccessful prompt to elicit a desired behavior, or removed to prevent an undesired one.
+最後用一個 meta 的重點收尾：早期測試者發現，把 GPT-5 當成自己的 meta-prompter 效果很好。已經有幾位使用者把 prompt 修訂版部署到正式環境，這些修訂版只是問 GPT-5：有什麼元素可以加進一個失敗的 prompt 來引出想要的行為，或是移除哪些來避免不想要的行為。
 
-Here is an example metaprompt template we liked:
+這是我們喜歡的一個 metaprompt 範本：
 ```
 When asked to optimize prompts, give answers from your own perspective - explain what specific phrases could be added to, or deleted from, this prompt to more consistently elicit the desired behavior or prevent the undesired behavior.
 
@@ -323,9 +330,9 @@ Here's a prompt: [PROMPT]
 The desired behavior from this prompt is for the agent to [DO DESIRED BEHAVIOR], but instead it [DOES UNDESIRED BEHAVIOR]. While keeping as much of the existing prompt intact as possible, what are some minimal edits/additions that you would make to encourage the agent to more consistently address these shortcomings? 
 ```
 
-## Appendix
+## 附錄
 
-### SWE-Bench verified developer instructions
+### SWE-Bench verified 開發者指示
 ```
 In this environment, you can run `bash -lc <apply_patch_command>` to execute a diff/patch against a file, where <apply_patch_command> is a specially formatted apply patch command representing the diff you wish to execute. A valid <apply_patch_command> looks like:
 
@@ -341,7 +348,7 @@ Always verify your changes extremely thoroughly. You can make as many tool calls
 IMPORTANT: not all tests are visible to you in the repository, so even on problems you think are relatively straightforward, you must double and triple check your solutions to ensure they pass any edge cases that are covered in the hidden tests, not just the visible ones.
 ```
 
-Agentic coding tool definitions 
+Agentic coding 的 tool 定義 
 ```
 ## Set 1: 4 functions, no terminal
 
@@ -384,9 +391,9 @@ wait_ms?: number, // default: 100
 }) => any;
 ```
 
-As shared in the GPT-4.1 prompting guide, [here](https://github.com/openai/openai-cookbook/tree/main/examples/gpt-5/apply_patch.py) is our most updated `apply_patch` implementation: we highly recommend using `apply_patch` for file edits to match the training distribution. The newest implementation should match the GPT-4.1 implementation in the overwhelming majority of cases.
+跟 GPT-4.1 prompting 指南分享的一樣，[這裡](https://github.com/openai/openai-cookbook/tree/main/examples/gpt-5/apply_patch.py)是我們最新的 `apply_patch` 實作。我們強烈建議用 `apply_patch` 做檔案編輯，以符合訓練分佈。最新實作在絕大多數情況下應該跟 GPT-4.1 的實作一致。
 
-### Taubench-Retail minimal reasoning instructions
+### Taubench-Retail minimal reasoning 指示
 ```
 As a retail agent, you can help users cancel or modify pending orders, return or exchange delivered orders, modify their default user address, or provide information about their own profile, orders, and related products.
 
@@ -550,6 +557,16 @@ Never use editor tools to edit files. Always use the \`apply_patch\` tool.
 </final_instructions>
 ```
 
+## 重點整理
 
+- `reasoning_effort` 控制思考深度和 tool 使用意願，再搭配明確的探索準則、tool call 預算或 persistence 提示，就能調整 agent 的積極程度。
+- 用 Responses API 並帶 `previous_response_id`，模型能重用先前的 reasoning，省 token 又提升表現。
+- GPT-5 指令遵循很精準，prompt 裡互相矛盾或模糊的指示會讓它浪費 reasoning tokens，寫完要檢查一遍。
+- `verbosity` 參數設全域預設，再用 prompt 對特定情境覆寫。Cursor 的做法是全域 low、只有程式碼輸出要詳細。
+- 舊模型有效的 prompt 不一定適用 GPT-5，像「maximize context」這類強硬措辭可能造成 tool 過度使用，要重新調校。
 
-<!-- tutor:summary -->
+## 練習
+
+1. 拿頁面上「減少積極程度」的 context 收集 prompt，把 tool call 預算改成更小的數字，並保留 "even if it might not be fully correct" 這類逃生口子句，觀察輸出差異。
+2. 把 Cursor 的 verbosity 設定改成：API 參數設 low，prompt 裡只對一個你指定的 tool 要求詳細輸出，比較改前後的輸出長度。
+3. 照頁面的預約排程矛盾範例，自己再寫一組互相衝突的指示，用 prompt optimizer 或 GPT-5 找出矛盾，並改寫成一致的版本。

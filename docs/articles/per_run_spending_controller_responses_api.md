@@ -1,28 +1,35 @@
 ---
-translated: false
+translated: true
 source: articles/per_run_spending_controller_responses_api.md
 ---
-
-# Build a per-run spending controller with the Responses API
+# 用 Responses API 做每次執行的花費控制器
 
 > 原文：[articles/per_run_spending_controller_responses_api.md](https://github.com/openai/openai-cookbook/blob/main/articles/per_run_spending_controller_responses_api.md)
 
-Enforce an application-owned model-token budget for each Responses API run using token counts, maximum-cost estimates, usage tracking, and safe error handling.
+用 token 計數、最高成本估算、用量追蹤和安全的錯誤處理，為每次 Responses API 執行設定由應用自己掌控的模型 token 預算。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 Responses API 的 agent 完成一個任務時，可能會呼叫模型好幾次。組織和專案層級的花費上限只管整體用量，管不到「這個任務還付不付得起下一次請求」。這篇做一個控制器，每次執行有自己的預算，送請求之前先預留最高可能花費，回應回來後記帳並把沒用到的退回，餘額不夠就停手。
 
-An agent using the Responses API may call a model several times to finish one task. Organization and project spending limits cover overall usage, but they cannot tell you whether that task can afford its next request.
+## 學完你會
 
-Give each run its own budget. Before each model request, count the input tokens and set aside the most its response could cost. When the response arrives, record its cost and return any unused money to the budget. Stop before a request would exceed the remaining balance.
+- 算出一次 Responses API 請求的最高可能成本（ordinary input、cached input、cache write、output）
+- 寫一個執行緒安全的 `RunBudget`，做預留、結算和退回
+- 在請求送出前擋下會超支的呼叫，並在請求中斷或成本不明時安全地停止整次執行
 
-Suppose support ticket #4821 asks when order ORD-42 will arrive. The order has shipped and is due Friday. Give the ticket a $0.02 budget. The first reply costs $0.01. Another reply could cost up to $0.0146. With only $0.01 left, the application stops.
+## 開跑前
 
-The controller handles synchronous, non-streaming Responses API requests on the default processing tier. Its budget covers model-token costs only; hosted tools and other charges are excluded. The prices, token counts, model names, and limits below are made up. They are not current OpenAI prices, real model limits, or a guarantee of your final bill.
+- Python 3.12 以上，`openai>=2.28.0`
+- 範例用離線 client，不需要 API key；要用真的 client 才需要 `OPENAI_API_KEY`，會產生費用
 
-## Estimate what a Responses API request could cost
+用一個情境來講。客服工單 #4821 問訂單 ORD-42 什麼時候到。訂單已出貨，週五送達。給這張工單 $0.02 的預算。第一次回覆花 $0.01。再回覆一次最高可能花 $0.0146，但只剩 $0.01，所以應用停止。
 
-The sample prices are in dollars per one million tokens:
+這個控制器處理的是預設處理層級（default processing tier）下，同步、非 streaming 的 Responses API 請求。預算只涵蓋模型 token 成本，hosted tools 和其他費用不算。下面的價格、token 數、模型名稱和上限都是編的，不是 OpenAI 目前的價格、真實的模型上限，也不保證你最後的帳單。
+
+## 估算 Responses API 請求最高可能花多少
+
+範例價格單位是每一百萬 token 的美元：
 
 | Token type | Example price (USD per 1 million tokens) |
 | --- | ---: |
@@ -31,23 +38,23 @@ The sample prices are in dollars per one million tokens:
 | Cache writes | $8.00 |
 | Output | $20.00 |
 
-Set the application limits to 10,000 input tokens and 250 output tokens per request. These numbers are sample settings, not the limits of a real model. A cache-write price applies only when the chosen model bills cache writes separately.
+應用的上限設成每次請求 10,000 個 input token 和 250 個 output token。這些數字是範例設定，不是真實模型的上限。只有所選模型把 cache write 另外計費時，才會用到 cache write 價格。
 
-Ticket #4821 uses 1,200 input tokens. To avoid underestimating the response cost, assume every input token uses the highest input price. Here, separately billed cache writes are the most expensive:
+工單 #4821 用了 1,200 個 input token。為了避免低估回應成本，假設每個 input token 都用最高的 input 價格。這裡單獨計費的 cache write 最貴：
 
 ```text
 (1,200 x $8.00 + 250 x $20.00) / 1,000,000 = $0.0146
 ```
 
-Use Python's built-in `Fraction` type to keep dollar amounts exact. Before making a real request, check the model, default processing tier, token limits, and prices. The `verified_at` date records when those prices were checked; it does not prove they are still current. See [current API pricing](https://developers.openai.com/api/docs/pricing) and [model documentation](https://developers.openai.com/api/docs/models).
+用 Python 內建的 `Fraction` 型別讓金額保持精確。真的送請求之前，要檢查模型、預設處理層級、token 上限和價格。`verified_at` 日期記錄的是這些價格何時查證過，不代表它們現在還是正確的。見[目前的 API 價格](https://developers.openai.com/api/docs/pricing)和[模型文件](https://developers.openai.com/api/docs/models)。
 
 ![Model spending control: count the input, set aside the highest possible cost, run the model, and record the actual cost.](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/per_run_spending_controller/decision_flow.svg)
 
-## Keep each run within its budget
+## 讓每次執行不超出預算
 
-### Define the model and prices
+### 定義模型和價格
 
-You need Python 3.12 or later and `openai>=2.28.0`. Configure the model, default processing tier, token prices, and request limits together. Use a fixed model ID that the API returns unchanged in `response.model`. This example does not support model aliases. Set `cache_write_usd_per_million` to `None` only when the model does not bill cache writes separately. The sample prices work only with the offline client.
+你需要 Python 3.12 或更新版本，以及 `openai>=2.28.0`。把模型、預設處理層級、token 價格和請求上限一起設定。用固定的模型 ID，API 會原樣回傳在 `response.model`。這個範例不支援 model alias。只有模型沒有另外計 cache write 時，才把 `cache_write_usd_per_million` 設成 `None`。範例價格只能搭配離線 client 使用。
 
 ```python
 from dataclasses import dataclass, field
@@ -120,9 +127,9 @@ EXAMPLE_RATE_CARD = RateCard(
 )
 ```
 
-### Track the run's budget
+### 追蹤這次執行的預算
 
-`RunBudget` tracks money already spent and money temporarily set aside. Its lock prevents two requests in the same Python process from reserving the same funds. When cache writes have a separate price, the response must include a cache-write token count.
+`RunBudget` 追蹤已經花掉的錢和暫時預留的錢。它的 lock 防止同一個 Python 行程裡的兩個請求預留到同一筆錢。當 cache write 有獨立價格時，回應必須包含 cache write 的 token 數。
 
 ```python
 class BudgetExceeded(RuntimeError):
@@ -220,9 +227,9 @@ def actual_cost(usage: Any, rates: RateCard) -> Fraction:
     ) / 1_000_000
 ```
 
-### Check the budget before each request
+### 每次請求前檢查預算
 
-Use the same `model` and `input` when counting tokens and generating a response. Instructions, tool schemas, images, files, and conversation history also use input tokens. If you add any of them, pass the same supported fields to both requests. Send `max_output_tokens`, `service_tier`, and `store` only with the response request.
+計算 token 和產生回應時，要用同一個 `model` 和 `input`。Instructions、tool schema、圖片、檔案和對話歷史也會用掉 input token。如果你加了這些，就要把相同的支援欄位同時傳給兩個請求。`max_output_tokens`、`service_tier` 和 `store` 只傳給產生回應的請求。
 
 ```python
 def response_with_budget(
@@ -284,31 +291,31 @@ def format_dollars(amount: Fraction) -> str:
     return "$" + f"{amount:.9f}".rstrip("0").rstrip(".")
 ```
 
-`response_with_budget` returns the full response, including `response.output_text` and `response.output`. It checks that the API used the configured model and processing tier. If a request is interrupted or its cost cannot be confirmed, the run stops permanently and its reserved budget remains unavailable. If an incomplete response reports its usage, the controller records that cost and keeps the run blocked.
+`response_with_budget` 回傳完整的 response，包括 `response.output_text` 和 `response.output`。它會檢查 API 用的是設定的模型和處理層級。如果請求被中斷或無法確認成本，這次執行會永久停止，預留的預算維持被占用。如果一個不完整的 response 有回報用量，控制器會記錄那筆成本，並讓這次執行維持封鎖。
 
-To use a real client, import `OpenAI` with `from openai import OpenAI`, check the current prices, and set `OPENAI_API_KEY`. Then create the client with `client = OpenAI(max_retries=0, timeout=60.0)`. A request may still run after its client times out, so keep its reservation in place.
+要用真的 client，用 `from openai import OpenAI` 匯入 `OpenAI`，檢查目前價格，並設定 `OPENAI_API_KEY`。然後用 `client = OpenAI(max_retries=0, timeout=60.0)` 建立 client。請求在 client timeout 之後仍可能繼續執行，所以預留要保留。
 
-## Example: set a budget for a support ticket
+## 範例：為客服工單設定預算
 
-The first response to ticket #4821 reports 1,200 input tokens: 400 cached and 500 separately billed cache-write tokens. The remaining 300 are ordinary input tokens. It also reports 200 output tokens:
+工單 #4821 的第一個回應回報 1,200 個 input token：400 個 cached、500 個單獨計費的 cache write token。剩下 300 個是 ordinary input token。它也回報 200 個 output token：
 
 ```text
 (300 x $4.00 + 400 x $2.00 + 500 x $8.00 + 200 x $20.00)
 / 1,000,000 = $0.0100
 ```
 
-The first response costs $0.01, leaving $0.01. The next response could cost $0.0146, so the controller stops before sending another model request.
+第一個回應花 $0.01，剩下 $0.01。下一個回應最高可能花 $0.0146，所以控制器在送出另一個模型請求之前就停下來。
 
 ![Support ticket budget: the first answer spends $0.01 and the second answer is blocked because $0.0146 exceeds the remaining $0.01.](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/per_run_spending_controller/support_ticket.svg)
 
-Save the three code blocks above and the offline example below, in order, as `controller.py`. Install the SDK and run:
+把上面三個程式碼區塊和下面的離線範例，依序存成 `controller.py`。安裝 SDK 並執行：
 
 ```bash
 python -m pip install "openai>=2.28.0"
 python controller.py
 ```
 
-The ticket and order are fictional, and the offline client sends no network requests:
+工單和訂單都是虛構的，離線 client 不會送出任何網路請求：
 
 ```python
 class OfflineClient:
@@ -363,7 +370,7 @@ if __name__ == "__main__":
     print(f"Model calls: {client.model_calls}")
 ```
 
-**Expected output:**
+**預期輸出：**
 
 ```text
 Order ORD-42 has shipped and should arrive Friday.
@@ -373,14 +380,26 @@ Reserved: $0
 Model calls: 1
 ```
 
-## Limits and other costs
+## 限制與其他成本
 
-Count ordinary input, cached input, separately billed cache writes, and output only once. When a model does not bill cache writes separately, charge non-cached input at the ordinary rate. Unexpected positive cache-write counts stop the run. Check the model's [prompt caching guidance](https://developers.openai.com/api/docs/guides/prompt-caching). Reasoning tokens are already included in the output total.
+Ordinary input、cached input、單獨計費的 cache write 和 output 都只算一次。模型沒有另外計 cache write 時，non-cached input 按一般價格收費。出現預期之外的正 cache write 數量，執行會停止。見模型的 [prompt caching 指南](https://developers.openai.com/api/docs/guides/prompt-caching)。Reasoning token 已經包含在 output 總數裡。
 
-The lock protects one Python process. When several workers share a budget, use a shared store that checks and reserves the budget in one operation, so they cannot reserve the same money. If a request's final cost is unknown, abandon that run and keep its reservation. Review [Python SDK retry behavior](https://github.com/openai/openai-python#retries) before enabling retries.
+這個 lock 只保護單一 Python 行程。多個 worker 共用一份預算時，要用共享儲存，並在同一個操作中檢查並預留預算，這樣它們才不會預留到同一筆錢。如果請求的最終成本不明，就放棄那次執行並保留預留。啟用 retry 之前，先看 [Python SDK 的 retry 行為](https://github.com/openai/openai-python#retries)。
 
-Hosted tools can add separate charges. Web search, for example, can charge for each call and for related model tokens. The budget also excludes storage, non-default processing tiers, regional prices, long-context rates, streaming, background requests, server-managed agent runs, and account-specific charges. A background request may first return `queued` or `in_progress`, so it needs separate rules for tracking final usage. Setting `store=False` does not guarantee Zero Data Retention; see [data controls](https://developers.openai.com/api/docs/guides/your-data).
+Hosted tools 可能產生另外的費用。例如 web search 可能每次呼叫都收費，相關的模型 token 也要錢。預算也不含儲存、非預設處理層級、區域價格、長 context 費率、streaming、background 請求、由伺服器管理的 agent 執行，以及帳號專屬的費用。Background 請求可能先回傳 `queued` 或 `in_progress`，所以需要另外的規則來追蹤最終用量。設定 `store=False` 不保證 Zero Data Retention，見[資料控制](https://developers.openai.com/api/docs/guides/your-data)。
 
-[Project spending limits](https://developers.openai.com/api/docs/guides/spend-limits) cover total project spending and may not take effect immediately. Alerts do not stop requests. The [Costs API reference](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs) shows daily totals; it cannot tell you whether one task can afford its next request.
+[專案花費上限](https://developers.openai.com/api/docs/guides/spend-limits)涵蓋專案總花費，而且不一定立刻生效。警示不會擋住請求。[Costs API 參考](https://developers.openai.com/api/reference/resources/admin/subresources/organization/subresources/usage/methods/costs)顯示每日總額，但它沒辦法告訴你某個任務付不付得起下一次請求。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 組織或專案層級的花費上限管整體，管不到單一任務，所以要在應用層替每次執行設自己的預算。
+- 送請求前用「最壞情況」預留成本（所有 input 都用最貴的價格，output 用上限），回應回來再按實際用量結算並退回差額。
+- 預算不夠就在送出前停手，比事後發現超支好。
+- 成本不明時（請求中斷、timeout）要保守：保留預留、永久封鎖這次執行，而不是假設沒花錢。
+- 單行程的 lock 擋不住多 worker，共享預算需要原子性的檢查加預留。
+
+## 練習
+
+1. 把每次請求的 `max_output_tokens` 從 250 改成 500，重新算工單 #4821 的最高可能成本，看第一次請求還過不過得了預算。
+2. 把工單預算從 $0.02 調成 $0.03，執行離線範例，看第二次請求會不會被放行。
+3. 改 `RunBudget`，讓它在被擋下時記一筆 log，內容包含剩餘預算和被拒絕那次請求的最高成本。

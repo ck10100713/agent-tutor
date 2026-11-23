@@ -1,38 +1,52 @@
 ---
-translated: false
+translated: true
 source: examples/agents_sdk/app_assistant_voice_agents.ipynb
 ---
 
-# Building a Voice Assistant with the Agents SDK
+# 用 Agents SDK 打造語音助理
 
 > 原文：[examples/agents_sdk/app_assistant_voice_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agents_sdk/app_assistant_voice_agents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Agents SDK 做一個 app 內的語音助理：一個 Triage Agent 判斷使用者意圖，再 handoff 給搜尋、知識庫、帳號三個專門的 agent。先用文字跑通流程，再用 Voice pipeline 轉成語音，最後調整 prompt 和 TTS 指令讓聲音更自然。
+
+## 學完你會
+
+- 用 `WebSearchTool`、`FileSearchTool` 和 `function_tool` 組出三個 agent，並用 triage agent 做 handoff。
+- 用 `VoicePipeline` 和 `SingleAgentVoiceWorkflow` 把同一套文字 workflow 變成語音版。
+- 用 `gpt-4o-mini-tts` 的 `instructions` 控制語氣、個性和語速，並用 tracing 除錯。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`。
+- Knowledge Agent 需要一個 OpenAI 管理的 vector store（網頁上建或用 API 建都行）。
+- 語音部分用 `sounddevice` 收發音訊，需要本機有麥克風和喇叭。
 
 
-Let's say you're an AI lead at a consumer tech company. You have the vision of deploying a single entry point digital voice assistant with the ability to help users with any query, regardless of whether they want to take action on their account, find product information, or receive real-time guidance.
+假設你是一家消費性科技公司的 AI 負責人，想做一個單一入口的數位語音助理，不管使用者是要操作帳號、查產品資訊，還是要即時指引，它都能幫忙。
 
-However, turning this vision into reality can be extremely difficult - it requires building and testing the capability to handle each individual use case through text first, integrating access to the wide range of tools and systems they require, and somehow orchestrating them into a coherent experience. Then, once you’ve achieved a satisfactory level of quality (and even evaluating this can be a struggle), you face the daunting task of refactoring the entire workflow for voice interaction.
+但要實現這個願景很難：你得先用文字把每個使用情境都做出來並測試好，接上各種需要的工具和系統，再想辦法把它們編排成連貫的體驗。好不容易品質夠了（光是評估就很吃力），還得把整個 workflow 重構成語音互動。
 
-Fortunately for you, three recent releases from OpenAI have made implementing this vision simpler than ever by providing the tools to build and orchestrate modular agentic workflows through voice with minimal configuration:
+好在 OpenAI 最近有三個發布，讓你可以用很少的設定，透過語音來建構和編排模組化的 agent workflow：
 
-- [**Responses API**](https://platform.openai.com/docs/api-reference/responses) - an agentic API for easy engagement with our frontier models through managed stateful conversations, tracing of responses to enable evaluation, and built-in tools for file search, web search, computer use, and more
-- [**Agents SDK**](https://openai.github.io/openai-agents-python/quickstart/) - a lightweight, customizable open-source framework for building and orchestrating workflows across many different agents, enabling your assistant to route inputs to the appropriate agent and to scale to support many use cases
-- [**Voice agents**](https://openai.github.io/openai-agents-python/voice/quickstart/) - an extension of the Agents SDK to support the use of voice pipelines, enabling your agents to go from being text-based to being able to interpret and produce audio in just a few lines of code
+- [**Responses API**](https://platform.openai.com/docs/api-reference/responses)：agent 導向的 API，用託管的有狀態對話跟前沿模型互動，能追蹤 response 方便做 eval，還內建 file search、web search、computer use 等 tool
+- [**Agents SDK**](https://openai.github.io/openai-agents-python/quickstart/)：輕量、可自訂的開源框架，用來建構和編排多個 agent 的 workflow，讓助理能把輸入導到合適的 agent，也容易擴充支援更多使用情境
+- [**Voice agents**](https://openai.github.io/openai-agents-python/voice/quickstart/)：Agents SDK 的延伸，加入 voice pipeline，幾行程式碼就能讓 agent 從文字變成能聽也能說
 
-This cookbook demonstrates how to build a simple in-app voice assistant for a fictitious consumer application using the tools above. We'll create a **Triage Agent** that greets the user, determines their intent, and routes requests to one of three specialised agents:
+這份 cookbook 用上面這些工具，為一個虛構的消費性 app 做簡單的 app 內語音助理。我們會建立一個 **Triage Agent**，負責打招呼、判斷使用者意圖，並把請求導到三個專門 agent 之一：
 
-- **Search Agent** - performs a web search via the built-in tooling of the Responses API to provide real-time information on the user's query
-- **Knowledge Agent** - utilises the file search tooling of the Responses API to retrieve information from an OpenAI managed vector database
-- **Account Agent** - uses function calling to provide the ability to trigger custom actions via API
+- **Search Agent**：用 Responses API 內建的 web search 提供使用者問題的即時資訊
+- **Knowledge Agent**：用 Responses API 的 file search，從 OpenAI 託管的向量資料庫取得資訊
+- **Account Agent**：用 function calling 透過 API 觸發自訂動作
 
-Finally, we'll convert this workflow into a live voice assistant using the Agents SDK's Voice functionality, capturing microphone input, performing speech‑to‑text, routing through our agents, and responding with text‑to‑speech.
+最後，我們用 Agents SDK 的 Voice 功能把 workflow 變成即時語音助理：收麥克風輸入、做 speech-to-text、經過各個 agent 路由，再用 text-to-speech 回覆。
 
-# Setup
+# 環境設定
 
-To execute this cookbook, you'll need to install the following packages providing access to OpenAI's API, the Agents SDK, and libraries for audio processing. Additionally, you can set your OpenAI API key for use by the agents via the `set_default_openai_key` function.
+要執行這份 cookbook，需要安裝能使用 OpenAI API、Agents SDK 和音訊處理的套件。另外可以用 `set_default_openai_key` 函式設定 agent 要用的 OpenAI API key。
 
 ```python
 %pip install openai
@@ -49,15 +63,15 @@ from agents.extensions.handoff_prompt import prompt_with_handoff_instructions
 set_default_openai_key("YOUR_API_KEY")
 ```
 
-# Define agents and tools
+# 定義 agent 和 tool
 
-Today we're going to be building an assistant for our fictitious consumer application, ACME shop, focused on initially supporting three key use cases:
+我們要為虛構的消費性 app「ACME shop」做助理，一開始支援三個主要情境：
 
-- Answering real-time questions to inform purchasing decisions using web search
-- Providing information on the available options in our product portfolio
-- Providing account information to enable the user to understand their budget and spending
+- 用 web search 回答即時問題，輔助購買決策
+- 提供產品組合裡有哪些選項的資訊
+- 提供帳號資訊，讓使用者了解自己的預算和花費
 
-To achieve this we'll be using an agentic architecture. This allows us to split the functionality for each use case into a separate agent, in turn reducing the complexity/range of tasks that a single agent could be asked to complete and increasing accuracy. Our agent architecture is relatively simple focussing on the three use cases above, but the beauty of the Agents SDK is that it is incredibly easy to extend and add additional agents to the workflow when you want to add new functionality:
+為此我們用 agent 架構，把每個情境的功能拆到獨立的 agent，降低單一 agent 要處理的任務複雜度和範圍，準確度也會比較高。目前的架構很簡單，只針對上面三個情境，但 Agents SDK 的好處是之後想加新功能，很容易就能在 workflow 裡加 agent：
 
 ![Agent Architecture](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/app_assistant_voice_agents_arch.png)
 
@@ -65,7 +79,7 @@ To achieve this we'll be using an agentic architecture. This allows us to split 
 
 ## Search Agent
 
-Our first agent is a simple web search agent that uses the `WebSearchTool` provided by the Responses API to find real-time information on the user's query. We'll be keeping the instruction prompts simple for each of these examples, but we'll iterate later to show how to optimise the response format for your use case.
+第一個 agent 是簡單的 web search agent，用 Responses API 提供的 `WebSearchTool` 找使用者問題的即時資訊。每個範例的 instruction prompt 都先保持簡單，後面會再迭代，示範怎麼針對你的情境優化回應格式。
 
 ```python
 # --- Agent: Search Agent ---
@@ -78,15 +92,15 @@ search_agent = Agent(
 )
 ```
 
-*For more information on web search and the Responses API, be sure to check out the [Web Search and States with Responses API](https://cookbook.openai.com/examples/responses_api/responses_example) cookbook*
+*更多 web search 和 Responses API 的資訊，可以看 [Web Search and States with Responses API](https://cookbook.openai.com/examples/responses_api/responses_example) 這份 cookbook*
 
 ## Knowledge Agent
 
-Our second agent needs to be able to answer questions on our product portfolio. To do this, we'll use the `FileSearchTool` to retrieve information from a vector store managed by OpenAI containing our company specific product information. For this, we have two options:
+第二個 agent 要能回答產品組合的問題。我們用 `FileSearchTool`，從 OpenAI 管理的 vector store 取得公司專屬的產品資訊。有兩種做法：
 
-1. Use the OpenAI Platform Website - go to [platform.openai.com/storage](https://platform.openai.com/storage) and create a vector store, uploading your documents of choice. Then, take the vector store ID and substitute it into the `FileSearchTool` initialisation below.
+1. 用 OpenAI Platform 網站：到 [platform.openai.com/storage](https://platform.openai.com/storage) 建立 vector store 並上傳你的文件，再把 vector store ID 填進下面 `FileSearchTool` 的初始化。
 
-2. Use the OpenAI API - use the `vector_stores.create` function from the OpenAI Python client to create a vector store and then the `vector_stores.files.create` function to add files to it. Once this is complete you can again use the `FileSearchTool` to search the vector store. Please see the code below for an example of how to do this, either using the example file provided or altering to your own local file path:
+2. 用 OpenAI API：用 OpenAI Python client 的 `vector_stores.create` 建立 vector store，再用 `vector_stores.files.create` 加入檔案。完成後同樣用 `FileSearchTool` 搜尋這個 vector store。下面的程式碼示範做法，可以用範例檔，也可以換成你自己的本機檔案路徑：
 
 ```python
 from openai import OpenAI
@@ -126,7 +140,7 @@ vector_store_id = create_vector_store("ACME Shop Product Knowledge Base")
 upload_file("voice_agents_knowledge/acme_product_catalogue.pdf", vector_store_id["id"])
 ```
 
-Having implemented your vector store, we can now enable the knowledge agent to use the `FileSearchTool` to search the given store ID.
+vector store 建好後，就可以讓 knowledge agent 用 `FileSearchTool` 搜尋指定的 store ID。
 
 ```python
 # --- Agent: Knowledge Agent ---
@@ -142,11 +156,11 @@ knowledge_agent = Agent(
 )
 ```
 
-*For more information on the power of file search and the Responses API, be sure to check out the excellent cookbook on the subject where the example code above was taken from: [Doing RAG on PDFs using File Search in the Responses API](https://cookbook.openai.com/examples/file_search_responses)*
+*想更了解 file search 搭配 Responses API 的威力，上面的範例程式碼取自這篇很棒的 cookbook：[Doing RAG on PDFs using File Search in the Responses API](https://cookbook.openai.com/examples/file_search_responses)*
 
 ## Account Agent
 
-Whilst so far we've been using the built-in tools provided by the Agents SDK, you can define your own tools to be used by the agents to integrate with your systems with the `function_tool` decorator. Here, we'll define a simple dummy function to return account information for a given user ID for our account agent. 
+前面用的都是 Agents SDK 內建的 tool，你也可以用 `function_tool` decorator 定義自己的 tool，接上自己的系統。這裡我們為 account agent 寫一個簡單的假函式，依 user ID 回傳帳號資訊。
 
 ```python
 # --- Tool 1: Fetch account information (dummy) ---
@@ -170,9 +184,9 @@ account_agent = Agent(
 )
 ```
 
-*For more information on function calling with the Agents SDK, see the [Agents SDK Documentation](https://openai.github.io/openai-agents-python/tools/#function-tools)*
+*更多 Agents SDK 的 function calling 資訊，請看 [Agents SDK 文件](https://openai.github.io/openai-agents-python/tools/#function-tools)*
 
-Finally, we'll define the triage agent that will route the user's query to the appropriate agent based on their intent. Here we're using the `prompt_with_handoff_instructions` function, which provides additional guidance on how to treat handoffs and is recommended to provide to any agent with a defined set of handoffs with a defined set of instructions.
+最後是 triage agent，它會依使用者意圖把問題導到合適的 agent。這裡用 `prompt_with_handoff_instructions` 函式，它提供如何處理 handoff 的額外指引，建議給任何有一組固定 handoff 的 agent 使用。
 
 ```python
 # --- Agent: Triage Agent ---
@@ -189,9 +203,9 @@ Based on the user's intent, route to:
 )
 ```
 
-# Run the workflow
+# 執行 workflow
 
-Now that we've defined our agents, we can run the workflow on a few example queries to see how it performs.
+agent 定義好之後，就可以拿幾個範例問題跑跑看效果。
 
 ```python
 # %%
@@ -262,24 +276,24 @@ await test_queries()
 
 # Tracing
 
-Above we can see the outputs appear to be in line with our expectations, but one key benefit of the Agents SDK is that it includes built-in tracing which enables tracking of the flow of events during an agent run across the LLM calls, handoffs, and tools. 
+上面的輸出看起來符合預期，不過 Agents SDK 有個重要好處是內建 tracing，可以追蹤一次 agent 執行中的事件流程，包括 LLM 呼叫、handoff 和 tool。
 
-Using the [Traces dashboard](https://platform.openai.com/traces), we can debug, visualize, and monitor our workflows during development and in production. As we can see below, each test query was correctly routed to the appropriate agent.
+用 [Traces dashboard](https://platform.openai.com/traces)，我們能在開發和正式環境中除錯、視覺化和監控 workflow。如下圖所示，每個測試問題都被正確導到對應的 agent。
 
 ![Traces Dashboard](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/app_assistant_voice_agents.png)
 
-# Enabling Voice
+# 啟用語音
 
-Having designed our workflow, here in reality we would spend time evaluating the traces and iterating on the workflow to ensure it is as effective as possible. But let's assume we're happy with the workflow, so we can now start thinking about how to convert our in-app assistant from text-based to voice-based interactions.
+workflow 設計好之後，實務上我們會花時間檢視 trace 並迭代，讓 workflow 盡量有效。不過這裡假設我們已經滿意了，可以開始想怎麼把 app 內的助理從文字互動變成語音互動。
 
-To do this, we can simply leverage the classes provided by the [Agents SDK](https://openai.github.io/openai-agents-python/voice/quickstart/) to convert our text-based workflow into a voice-based one. The `VoicePipeline` class provides an interface for transcribing audio input, executing a given agent workflow and generating a text-to-speech response for playback to the user, while the `SingleAgentVoiceWorkflow` class enables us to leverage the same agent workflow we used earlier for our text-based workflow. To provide and receive audio, we'll use the `sounddevice` library. 
+做法很簡單，用 [Agents SDK](https://openai.github.io/openai-agents-python/voice/quickstart/) 提供的 class 就能把文字 workflow 轉成語音版。`VoicePipeline` class 提供介面，負責把音訊輸入轉成文字、執行指定的 agent workflow，再產生 text-to-speech 回應播給使用者；`SingleAgentVoiceWorkflow` class 則讓我們沿用先前文字版的同一套 agent workflow。音訊的輸入輸出用 `sounddevice` 套件。
 
-End to end, the new workflow looks like this:
+整個流程變成這樣：
 
 ![Agent Architecture 2](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/app_assistant_voice_agents_arch_2.png)
 
 
-And the code to enable this is as follows:
+實作的程式碼如下：
 
 ```python
 # %%
@@ -341,7 +355,7 @@ await voice_assistant()
     Exiting...
     ```
 
-Executing the above code gives us the following responses which correctly provide the same functionality as the text-based workflow.
+執行上面的程式碼會得到下面的回應，功能和文字版 workflow 一致。
 
 ```python
 from IPython.display import display, Audio
@@ -356,18 +370,18 @@ display(Audio("voice_agents_audio/trending_items_response_base.mp3"))
     <IPython.lib.display.Audio object>
     ```
 
-*Tip: when using tracing with voice agents, you can playback audio in the traces dashboard*
+*提示：voice agent 搭配 tracing 時，可以在 traces dashboard 直接播放音訊*
 
 ![Audio trace](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/app_assistant_voice_agents_trace.png)
 
 
-# Optimizing Voice
+# 優化語音
 
-This is a great start, but we can do better. As we've simply converted our text-based agents into voice-based ones, the responses are not optimized in their output for either tone or format, meaning they feel robotic and unnatural.
+這是個好的開始，但還能更好。我們只是把文字 agent 直接轉成語音 agent，輸出的語氣和格式都沒有針對語音調整，所以聽起來很機械、不自然。
 
-To address this, we'll need to make a few changes to our prompts.
+要改善的話，需要調整幾個 prompt。
 
-Firstly, we can adapt our existing agents to include a common system prompt, providing instructions on how to optimise their text response for later conversion to the voice format
+首先，可以讓現有的 agent 都加入一段共用的 system prompt，指示它們怎麼優化文字回應，以便之後轉成語音
 
 
 
@@ -427,11 +441,11 @@ Based on the user's intent, route to:
 )
 ```
 
-Next, we can instruct the default OpenAI TTS model used by the Agents SDK, `gpt-4o-mini-tts`, on how to communicate the audio output of the agent generated text with the `instructions` field. 
+接著，我們可以用 `instructions` 欄位，指示 Agents SDK 預設的 OpenAI TTS 模型 `gpt-4o-mini-tts` 該怎麼說出 agent 產生的文字。
 
-Here we have a huge amount of control over the output, including the ability to specify the personality, pronunciation, speed and emotion of the output. 
+這裡能控制的範圍很大，包括指定輸出的個性、發音、速度和情緒。
 
-Below i've included a few examples on how to prompt the model for different applications.
+下面列了幾個例子，示範針對不同應用怎麼寫 prompt。
 
 ```python
 health_assistant= "Voice Affect: Calm, composed, and reassuring; project quiet authority and confidence."
@@ -449,7 +463,7 @@ themed_character_assistant="Affect: Deep, commanding, and slightly dramatic, wit
 "Pause: Pauses after important Olde English phrases such as \"Lo!\" or \"Hark!\" and between clauses like \"Choose thy path\" to add weight to the decision-making process and allow the listener to reflect on the seriousness of the quest."
 ```
 
-Our configuration is going to focus on creating a friendly, warm, and supportive tone that sounds natural when spoken aloud and guides the user through the conversation.
+我們的設定會著重在友善、溫暖、支持的語氣，聽起來自然，也能引導使用者完成對話。
 
 ```python
 from agents.voice import TTSModelSettings, VoicePipeline, VoicePipelineConfig, SingleAgentVoiceWorkflow, AudioInput
@@ -526,7 +540,7 @@ await voice_assistant_optimized()
     Assistant is responding...
     ```
 
-Running the above code gives us the following responses which are much more naturally worded and engaging in the delivery.
+執行上面的程式碼會得到下面的回應，用字自然很多，語音表現也更有吸引力。
 
 ```python
 display(Audio("voice_agents_audio/account_balance_response_opti.mp3"))
@@ -540,26 +554,37 @@ display(Audio("voice_agents_audio/trending_items_response_opti.mp3"))
     <IPython.lib.display.Audio object>
     ```
 
-...And for something less subtle, we can switch to the `themed_character_assistant` instructions and receive the following responses:
+...如果想要更誇張的效果，可以換成 `themed_character_assistant` 的 instructions，會得到下面的回應：
 
 ```python
 display(Audio("voice_agents_audio/product_info_character.wav"))
 display(Audio("voice_agents_audio/product_info_character_2.wav"))
 ```
 
-# Conclusion
+# 結論
 
-Voila! 
+大功告成！
 
-In this cookbook, we've demonstrated how to:
+這份 cookbook 示範了怎麼：
 
-- Define agents to provide specific use case functionality for our in-app voice assistant
-- Leverage in-built and custom tools with the Responses API to provide agents with a range of functionality and evaluate their performance with tracing
-- Orchestrate these agents using the Agents SDK
-- Convert agents from text-based to voice-based interactions using the Agents SDK's Voice functionality
+- 定義 agent，為 app 內語音助理提供特定情境的功能
+- 搭配 Responses API 的內建和自訂 tool，給 agent 各種功能，並用 tracing 評估表現
+- 用 Agents SDK 編排這些 agent
+- 用 Agents SDK 的 Voice 功能把 agent 從文字互動轉成語音互動
 
-The Agents SDK enables a modular approach to building your voice assistant, allowing you to work on a use case by use case basis, evaluating and iterating on each use case individually, before implementing the next and then converting the workflow from text to voice when you're ready.
+Agents SDK 讓你能用模組化的方式打造語音助理：一個情境一個情境地做，各自評估和迭代，做完再做下一個，準備好了再把 workflow 從文字轉成語音。
 
-We hope this cookbook has provided you with a useful guide to help you get started with building your own in-app voice assistant!
+希望這份 cookbook 對你開始打造自己的 app 內語音助理有幫助！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 把不同情境拆成專門的 agent，再用 triage agent 做 handoff，每個 agent 的任務比較單純，準確度也比較高。
+- 內建 tool（web search、file search）和自訂的 `function_tool` 可以混著用，接自己的系統。
+- 先用文字把 workflow 調好、用 tracing 檢查路由，再轉語音，因為 `VoicePipeline` 可以直接沿用同一套 workflow。
+- 直接轉語音聽起來會很機械，要另外調整文字回應的 prompt，並用 TTS 的 `instructions` 控制語氣。
+
+## 練習
+
+1. 改 Account Agent 那個假函式，多回傳一個欄位（例如會員等級），再問助理相關問題，看 triage 有沒有正確 handoff。
+2. 把 TTS 的 `instructions` 改成你自己的風格（例如冷靜的客服口吻、加快語速），比較聽起來的差別。
+3. 新增第四個 agent（例如處理退貨政策），加進 triage agent 的 handoff 清單，並到 Traces dashboard 確認測試問題有被導到它。

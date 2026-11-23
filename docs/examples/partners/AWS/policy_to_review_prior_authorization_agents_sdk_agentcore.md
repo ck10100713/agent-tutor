@@ -1,63 +1,72 @@
 ---
-translated: false
+translated: true
 source: examples/partners/AWS/policy_to_review_prior_authorization_agents_sdk_agentcore.ipynb
 ---
-
-# Build a prior authorization review assistant with the OpenAI Agents SDK and Amazon Bedrock AgentCore
+# 用 OpenAI Agents SDK 和 Amazon Bedrock AgentCore 打造事前授權審查助理
 
 > 原文：[examples/partners/AWS/policy_to_review_prior_authorization_agents_sdk_agentcore.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/policy_to_review_prior_authorization_agents_sdk_agentcore.ipynb)
 
-Build and deploy a prior authorization review assistant that retrieves public CMS policy documents with a Bedrock Managed Knowledge Base, maps submitted evidence to policy criteria with the OpenAI Agents SDK, validates citations and review routing in code, and runs on Amazon Bedrock AgentCore.
+建置並部署一個事前授權（prior authorization）審查助理：用 Bedrock Managed Knowledge Base 檢索公開的 CMS 政策文件，用 OpenAI Agents SDK 把送審的證據對應到政策條件，在程式碼裡驗證引用和審查路由，最後跑在 Amazon Bedrock AgentCore 上。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這份 notebook 示範怎麼把一份範例事前授權申請和公開的美國 Centers for Medicare & Medicaid Services（CMS）政策文件，變成給保險審查人員看的、附引用的評估。應用程式會逐條評估政策條件，並選出審查佇列（queue），但不會做出承保決定。
 
-This notebook shows how to turn a sample prior authorization submission and public Centers for Medicare & Medicaid Services (CMS) policy documents into a cited assessment for a human payer reviewer. The application assesses each policy criterion and selects a review queue. It does not issue a coverage decision.
+整套流程用 OpenAI Agents SDK 搭配 Amazon Bedrock 上的 OpenAI 模型，從 Bedrock Managed Knowledge Base 檢索政策文字，在應用程式程式碼裡驗證結果，再把同一個 Python 應用部署到 Amazon Bedrock AgentCore Runtime。
 
-You will use the OpenAI Agents SDK with OpenAI models on Amazon Bedrock, retrieve policy text from a Bedrock Managed Knowledge Base, validate the result in application code, and deploy the same Python application to Amazon Bedrock AgentCore Runtime. The notebook and its adjacent [`prior_authorization_agentcore`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/prior_authorization_agentcore) support folder do not require the companion workshop or its user interface.
+## 學完你會
 
-The member, submission, and clinical evidence are synthetic. The CMS pages are public sources, but their mapping to the sample payer policy is specific to this example and should not be used as coverage guidance. Only a qualified reviewer can record the final disposition.
+- 組出一個三個 agent 依序執行的 Agents SDK 流程，順序和每個 handoff 的驗證都由程式碼控制，不交給模型決定。
+- 用 Bedrock Managed Knowledge Base 做 hybrid search 加 reranking，並在呼叫模型前驗證檢索結果的政策身分、來源和分數。
+- 把應用程式打包部署到 AgentCore Runtime，並用 validator 和 regression 案例檢查輸出的引用與審查路由。
 
+## 開跑前
 
-## What you will build
+- 需要 Python 3.12、Node.js 20 以上、`npm`、`npx`，以及短期有效的 AWS 憑證。
+- AWS 身分要有 CloudFormation、Amazon S3、Bedrock Managed Knowledge Bases、Amazon Bedrock 上的 OpenAI 模型、AgentCore Runtime 的權限。
+- 建 Knowledge Base、呼叫模型、部署都會產生 AWS 費用，相關開關預設都是 `False`，只開你被授權的部分。
 
-A successful run returns `review_ready` with the selected CMS sources, an assessment of each policy criterion, and a queue for human review. The request follows these steps:
+這份 notebook 內容用的成員、申請和臨床證據都是合成資料。CMS 頁面是公開來源，但它們對應到範例保險政策的方式只屬於這個範例，不能當成承保指引。最終處置只能由合格的審查人員記錄。
 
-1. Extract text from the sample provider PDF and verify expected report fields.
-2. Resolve the request's policy ID and version to criteria stored in application configuration.
-3. Retrieve matching CMS policy text with managed hybrid search and reranking, then validate its identity, source, and score.
-4. Use Luna to inventory the submitted evidence, Terra to map that evidence to the policy criteria, and Sol to produce the final assessment.
-5. Validate citations and review routing in Python before returning the result.
+## 你會做出什麼
 
-The generated application creates three separate OpenAI Agents SDK `Agent` objects inside one AgentCore Runtime. It invokes them sequentially—not in parallel—and each agent uses its matching OpenAI GPT-5.6 model through Amazon Bedrock:
+成功執行會回傳 `review_ready`，附上選到的 CMS 來源、每條政策條件的評估，以及給人工審查的佇列。整個請求的步驟如下：
+
+1. 從範例的醫療提供者 PDF 抽出文字，並驗證預期的報告欄位。
+2. 把請求裡的政策 ID 和版本，對應到存在應用程式設定裡的條件。
+3. 用 managed hybrid search 加 reranking 檢索對應的 CMS 政策文字，再驗證它的身分、來源和分數。
+4. 用 Luna 盤點送審的證據，用 Terra 把證據對應到政策條件，用 Sol 產生最終評估。
+5. 回傳結果前，在 Python 裡驗證引用和審查路由。
+
+這個應用會在同一個 AgentCore Runtime 裡建立三個獨立的 OpenAI Agents SDK `Agent` 物件。它們是依序執行，不是平行，每個 agent 都透過 Amazon Bedrock 使用對應的 OpenAI GPT-5.6 模型：
 
 | Agent | Invocation in this notebook | Responsibility |
 | --- | --- | --- |
-| GPT-5.6 Luna | Required for the mixed note and PDF evidence | Inventory and normalize submitted evidence |
-| GPT-5.6 Terra | Required after Luna | Map evidence to every policy criterion |
-| GPT-5.6 Sol | Required after Terra | Recheck citations and produce the human-review queue |
+| GPT-5.6 Luna | 混合筆記與 PDF 證據時必跑 | 盤點並標準化送審的證據 |
+| GPT-5.6 Terra | Luna 之後必跑 | 把證據對應到每一條政策條件 |
+| GPT-5.6 Sol | Terra 之後必跑 | 重新檢查引用並產生人工審查佇列 |
 
-Application code fixes the order and validates every handoff; no agent selects the next stage. If you adapt this pattern for structured-only submissions, make the Luna bypass an application-owned rule rather than a model decision.
+階段順序由應用程式碼固定，每個 handoff 也都由程式碼驗證，沒有任何 agent 能決定下一個階段。如果你把這個模式改用在只有結構化資料的申請，要跳過 Luna 的話，請把它做成應用程式自己擁有的規則，不要讓模型來決定。
 
-The application has no local retrieval fallback. If the Knowledge Base returns no eligible policy, the application returns `policy_mapping_required` before it configures or calls a model. The local HTTP test and the managed AgentCore Runtime use the same generated application.
+這個應用沒有本地的檢索備援。如果 Knowledge Base 沒有回傳符合資格的政策，應用程式會在設定或呼叫任何模型之前，直接回傳 `policy_mapping_required`。本地 HTTP 測試和託管的 AgentCore Runtime 用的是同一個產生出來的應用。
 
 
-## 1. Configure the environment
+## 1. 設定環境
 
-You need Python 3.12, Node.js 20 or later, `npm`, `npx`, and short-lived AWS credentials. Clone the repository and run the notebook from the repository root or `examples/partners/AWS` so it can import the adjacent [`prior_authorization_agentcore`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/prior_authorization_agentcore) folder. The AWS identity must be able to use the services enabled in the cells you choose to run: CloudFormation, Amazon S3, Bedrock Managed Knowledge Bases, OpenAI models on Amazon Bedrock, and AgentCore Runtime. The setup cell installs the pinned Python dependencies, including `pypdf` for the sample attachment. Managed Knowledge Bases are not available in every AWS Region; this notebook defaults to `us-east-1`.
+你需要 Python 3.12、Node.js 20 以上、`npm`、`npx`，以及短期有效的 AWS 憑證。請 clone 這個 repo，並從 repo 根目錄或 `examples/partners/AWS` 執行 notebook，這樣才能 import 旁邊的 [`prior_authorization_agentcore`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/prior_authorization_agentcore) 資料夾。AWS 身分必須能使用你選擇執行的 cell 所啟用的服務：CloudFormation、Amazon S3、Bedrock Managed Knowledge Bases、Amazon Bedrock 上的 OpenAI 模型，以及 AgentCore Runtime。安裝步驟會裝好鎖定版本的 Python 相依套件，包括處理範例附件用的 `pypdf`。Managed Knowledge Bases 並非每個 AWS Region 都有，這份 notebook 預設用 `us-east-1`。
 
-Set `AWS_REGION` and, when needed, `AWS_PROFILE`. Then choose one Knowledge Base setup:
+設定 `AWS_REGION`，需要的話也設定 `AWS_PROFILE`。接著二選一決定 Knowledge Base 的做法：
 
-1. Set `BEDROCK_KNOWLEDGE_BASE_ID` to an existing Bedrock Managed Knowledge Base that already contains the CMS source set and metadata used by this notebook.
-2. Set `PROVISION_KB = True` in the configuration cell to create and populate a Bedrock Managed Knowledge Base.
+1. 把 `BEDROCK_KNOWLEDGE_BASE_ID` 設成一個既有的 Bedrock Managed Knowledge Base，裡面要已經有這份 notebook 用的 CMS 來源和 metadata。
+2. 在設定 cell 裡把 `PROVISION_KB = True`，建立並填入一個 Bedrock Managed Knowledge Base。
 
-Using an existing Knowledge Base requires `bedrock:GetKnowledgeBase` so the notebook can verify its type and `bedrock:Retrieve` for the retrieval checks.
+使用既有的 Knowledge Base 需要 `bedrock:GetKnowledgeBase` 權限，讓 notebook 能確認它的類型，另外檢索檢查需要 `bedrock:Retrieve`。
 
-Managed deployment also requires `AGENTCORE_EXECUTION_ROLE_ARN`. To invoke an existing Runtime instead, set `AGENTCORE_RUNTIME_ARN`. Optional role controls include `BEDROCK_KB_ROLE_ARN`, `BEDROCK_KB_ROLE_PATH`, and `BEDROCK_KB_PERMISSIONS_BOUNDARY_ARN`. You can also override `BEDROCK_KB_MIN_SCORE`, `BEDROCK_KB_RESULT_COUNT`, `BEDROCK_MODEL_STAGE_TIMEOUT_SECONDS`, `BEDROCK_KB_STACK_NAME`, `BEDROCK_KB_RESOURCE_PREFIX`, `AGENTCORE_RUNTIME_NAME`, and `AGENTCORE_ARTIFACT_BUCKET`.
+託管部署還需要 `AGENTCORE_EXECUTION_ROLE_ARN`。如果要改呼叫既有的 Runtime，就設定 `AGENTCORE_RUNTIME_ARN`。可選的角色控制有 `BEDROCK_KB_ROLE_ARN`、`BEDROCK_KB_ROLE_PATH` 和 `BEDROCK_KB_PERMISSIONS_BOUNDARY_ARN`。你也可以覆寫 `BEDROCK_KB_MIN_SCORE`、`BEDROCK_KB_RESULT_COUNT`、`BEDROCK_MODEL_STAGE_TIMEOUT_SECONDS`、`BEDROCK_KB_STACK_NAME`、`BEDROCK_KB_RESOURCE_PREFIX`、`AGENTCORE_RUNTIME_NAME` 和 `AGENTCORE_ARTIFACT_BUCKET`。
 
-`POLICY_REVIEW_DATA_CLASSIFICATION` defaults to `synthetic`. Set it to `customer-governed` only after the target environment and data handling controls have been approved.
+`POLICY_REVIEW_DATA_CLASSIFICATION` 預設是 `synthetic`。要等目標環境和資料處理控制都核准後，才把它設成 `customer-governed`。
 
-The creation, paid-call, deployment, and cleanup flags default to `False`. Enable only the cells that the target AWS account owner has authorized.
+建立資源、付費呼叫、部署和清理的開關預設都是 `False`。只開啟 AWS 帳號擁有者已授權的 cell。
 
 
 ```python
@@ -196,13 +205,13 @@ print({
 })
 ```
 
-## 2. Define the sample case and policy mapping
+## 2. 定義範例案件和政策對應
 
-The Knowledge Base contains two public CMS Medicare Coverage Database pages for home oxygen. Metadata maps both pages to the sample policy `NSH-DME-022` while retaining the CMS document ID, URL, checksum, authority, and retrieval score for each result. This mapping is part of the example; it does not establish coverage for a real payer or Medicare Administrative Contractor jurisdiction.
+Knowledge Base 裡有兩個公開的 CMS Medicare Coverage Database 頁面，主題是居家氧氣。Metadata 把兩個頁面都對應到範例政策 `NSH-DME-022`，同時保留每筆結果的 CMS 文件 ID、URL、checksum、authority 和檢索分數。這個對應是範例的一部分，不代表真實保險公司或 Medicare Administrative Contractor 轄區的承保範圍。
 
-The prior authorization case uses a sample payer named Northstar Health and a synthetic member. The request contains the policy ID and version but not the policy criteria. The generated application loads those criteria from its own configuration so that a caller cannot replace them.
+這個事前授權案件用的是一家名為 Northstar Health 的範例保險公司，以及一位合成的成員。請求裡有政策 ID 和版本，但沒有政策條件。產生出來的應用會從自己的設定載入這些條件，這樣呼叫端就不能替換它們。
 
-The repository includes a [sample room-air oximetry and arterial blood gas report](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/data/policy_to_review/PA-OXY-2088-room-air-oximetry-abg.pdf). The notebook extracts the text, checks expected report fields, records the file checksum, and adds the text to the case as `OXY-TEST-1`. The PDF is clinical evidence and is not uploaded to the policy Knowledge Base.
+repo 裡有一份[範例的室內空氣血氧與動脈血氣報告](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/data/policy_to_review/PA-OXY-2088-room-air-oximetry-abg.pdf)。notebook 會抽出文字、檢查預期的報告欄位、記錄檔案 checksum，然後把文字當成 `OXY-TEST-1` 加進案件。這份 PDF 是臨床證據，不會上傳到政策 Knowledge Base。
 
 
 ```python
@@ -445,13 +454,13 @@ print({
 })
 ```
 
-## 3. Create or select the Bedrock Managed Knowledge Base
+## 3. 建立或選擇 Bedrock Managed Knowledge Base
 
-When `PROVISION_KB = True`, the CloudFormation template creates a private encrypted S3 source bucket and a Bedrock Managed Knowledge Base with a service-managed embedding model, managed storage, and an S3 connector. Retrieval combines keyword and semantic matching and applies the service-managed reranker after the application supplies exact policy-applicability filters. When the flag is `False`, the notebook uses `BEDROCK_KNOWLEDGE_BASE_ID` and creates nothing.
+當 `PROVISION_KB = True` 時，CloudFormation template 會建立一個私有且加密的 S3 來源 bucket，以及一個 Bedrock Managed Knowledge Base，使用服務管理的 embedding 模型、託管儲存和 S3 connector。檢索結合關鍵字和語意比對，並在應用程式提供精確的政策適用性 filter 之後，套用服務管理的 reranker。當旗標是 `False` 時，notebook 會使用 `BEDROCK_KNOWLEDGE_BASE_ID`，不會建立任何東西。
 
-Set `BEDROCK_KB_ROLE_ARN` to reuse an existing service role. Otherwise, the stack creates a least-privilege role trusted by `bedrock.amazonaws.com`. Use `BEDROCK_KB_ROLE_PATH` and `BEDROCK_KB_PERMISSIONS_BOUNDARY_ARN` when your organization requires them. The managed stack name and source-bucket suffix differ from the earlier S3 Vectors version, so this notebook does not replace that architecture in place. If the managed stack already exists, the notebook may update it but will not treat it as eligible for cleanup.
+設定 `BEDROCK_KB_ROLE_ARN` 可以重用既有的 service role。否則 stack 會建立一個最小權限的 role，信任 `bedrock.amazonaws.com`。如果你的組織有要求，就用 `BEDROCK_KB_ROLE_PATH` 和 `BEDROCK_KB_PERMISSIONS_BOUNDARY_ARN`。託管 stack 的名稱和來源 bucket 後綴，跟先前的 S3 Vectors 版本不一樣，所以這份 notebook 不會就地取代那個架構。如果託管 stack 已經存在，notebook 可能會更新它，但不會把它視為可清理的對象。
 
-Hybrid retrieval improves recall for exact identifiers and related clinical language, but ranked passages do not prove that every dependency, exclusion, or cross-reference across a policy corpus has been found. A production adjudication system that must evaluate those relationships exhaustively should add a governed policy graph or formal rules layer and validate it separately.
+Hybrid retrieval 能提高精確識別碼和相關臨床用語的 recall，但排名出來的段落不能證明整個政策文件集裡每一個相依關係、排除條件或交叉引用都找到了。如果正式環境的裁決系統必須完整評估這些關係，就應該加上受治理的政策圖（policy graph）或正式規則層，並另外驗證。
 
 
 ```python
@@ -635,11 +644,11 @@ print({
 })
 ```
 
-## 4. Ingest the CMS documents
+## 4. 匯入 CMS 文件
 
-For a stack created during the current run, this cell downloads the CMS pages, checks expected page markers, calculates SHA-256 checksums, and uploads each HTML document with a `.metadata.json` sidecar. It then starts one ingestion job and waits for completion.
+如果是這次執行建立的 stack，這個 cell 會下載 CMS 頁面、檢查預期的頁面標記、計算 SHA-256 checksum，並把每份 HTML 文件連同一個 `.metadata.json` sidecar 檔上傳。接著啟動一個 ingestion job 並等它完成。
 
-The cell does not modify an existing Knowledge Base. A later retrieval check confirms whether that Knowledge Base contains the required source documents.
+這個 cell 不會修改既有的 Knowledge Base。之後的檢索檢查會確認那個 Knowledge Base 是否包含需要的來源文件。
 
 
 ```python
@@ -773,13 +782,13 @@ print({
 })
 ```
 
-## 5. Generate the AgentCore application
+## 5. 產生 AgentCore 應用
 
-The next cells load the application files from the adjacent [`prior_authorization_agentcore/runtime_source`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/prior_authorization_agentcore/runtime_source) folder and create a standalone Python project. The project contains Pydantic request and response models, an application-owned policy registry, Bedrock Managed Knowledge Base retrieval, the three-agent OpenAI Agents SDK workflow, and an AgentCore Runtime entry point.
+接下來的 cell 會從旁邊的 [`prior_authorization_agentcore/runtime_source`](https://github.com/openai/openai-cookbook/blob/main/examples/partners/AWS/prior_authorization_agentcore/runtime_source) 資料夾載入應用檔案，並建立一個獨立的 Python 專案。專案裡有 Pydantic 的請求與回應模型、應用自己擁有的政策 registry、Bedrock Managed Knowledge Base 檢索、三個 agent 的 OpenAI Agents SDK 流程，以及 AgentCore Runtime 的進入點。
 
-The request supplies only a policy ID and version. The application loads the corresponding criteria, retrieves CMS text with payer, plan, service-code, status, and effective-date filters, and checks the returned policy ID, version, authority, URL, and score before it configures a model. The models do not select the Knowledge Base, policy, source documents, agent order, or coverage disposition.
+請求只提供政策 ID 和版本。應用會載入對應的條件，用 payer、plan、service-code、status 和 effective-date 這些 filter 檢索 CMS 文字，並在設定模型之前，檢查回傳的政策 ID、版本、authority、URL 和分數。模型不會選擇 Knowledge Base、政策、來源文件、agent 順序或承保處置。
 
-The policy registry keeps this example self-contained. A production implementation should load the same normalized criteria from a governed policy-management system.
+政策 registry 讓這個範例能獨立運作。正式環境的實作應該從受治理的政策管理系統載入同樣的標準化條件。
 
 
 ```python
@@ -943,13 +952,13 @@ print({
 })
 ```
 
-## 6. Validate the application and retrieval order
+## 6. 驗證應用和檢索順序
 
-The local checks compile the generated Python files and run the pinned AgentCore CLI with `npx` (which may download that CLI version on first use). They also confirm that the request cannot supply policy criteria, unknown policy references are rejected, each agent returns the expected case and evidence IDs, citations quote their sources, criterion statuses agree with the selected review queue, and missing-information fields agree with unknown criteria.
+本地檢查會編譯產生出來的 Python 檔案，並用 `npx` 執行鎖定版本的 AgentCore CLI（第一次用時可能會下載該版本的 CLI）。它們也會確認：請求不能自帶政策條件、未知的政策參照會被拒絕、每個 agent 回傳預期的案件和證據 ID、引用確實引述了來源、條件狀態和選定的審查佇列一致，還有缺漏資訊欄位和未知條件一致。
 
-A controlled test replaces the Knowledge Base client with an empty result and confirms that the entry point uses managed search and managed reranking, then returns `policy_mapping_required` without configuring a model and with zero token usage. The live retrieval check makes one read-only `Retrieve` request and prints the selected policy, CMS source URLs, retrieval score, filters, and document IDs.
+一個受控測試會把 Knowledge Base client 換成空結果，確認進入點使用了 managed search 和 managed reranking，然後在沒有設定模型、token 用量為零的情況下回傳 `policy_mapping_required`。實際檢索檢查會發出一個唯讀的 `Retrieve` 請求，並印出選到的政策、CMS 來源 URL、檢索分數、filter 和文件 ID。
 
-No matching policy is a supported result. Missing configuration, AWS connection errors, multiple policy identities, non-CMS sources, and scores below `BEDROCK_KB_MIN_SCORE` raise errors.
+找不到符合的政策是一種被支援的結果。設定缺漏、AWS 連線錯誤、多個政策身分、非 CMS 來源，以及分數低於 `BEDROCK_KB_MIN_SCORE` 則會丟出錯誤。
 
 
 ```python
@@ -1398,9 +1407,9 @@ print(json.dumps({
 }, indent=2))
 ```
 
-## 7. Call the local AgentCore HTTP endpoint
+## 7. 呼叫本地 AgentCore HTTP endpoint
 
-Set `RUN_LOCAL_RUNTIME = True` to start the generated `BedrockAgentCoreApp` on loopback, wait for `/ping`, send the sample request to `/invocations`, and stop the process. This opt-in test performs one live Knowledge Base retrieval and three paid model calls.
+把 `RUN_LOCAL_RUNTIME = True` 後，會在 loopback 上啟動產生出來的 `BedrockAgentCoreApp`，等 `/ping` 回應，把範例請求送到 `/invocations`，然後停掉 process。這個要自己開啟的測試會做一次真實的 Knowledge Base 檢索和三次付費的模型呼叫。
 
 
 ```python
@@ -1483,11 +1492,10 @@ print(
 )
 ```
 
-## 8. Validate the review result
+## 8. 驗證審查結果
 
-The models return typed objects, and the application checks those objects before returning them. Clinical citations must quote the submitted evidence. Policy citations must name a selected CMS document and URL and quote text from one of its retrieved chunks. Paraphrased or unsupported policy citations are rejected.
-
-The final validator checks the Knowledge Base, case, policy, criteria, and citations. It derives the required status and review queue from the criterion statuses and checks whether missing information is required. It also rejects approval or denial labels and requires `expertReviewRequired` to be `true`.
+模型回傳的是有型別的物件，應用在回傳之前會先檢查這些物件。臨床引用必須引述送審的證據。政策引用必須指名一份選定的 CMS 文件和 URL，並引述它檢索到的某個 chunk 裡的文字。改寫過的或沒有依據的政策引用會被拒絕。
+最後的 validator 會檢查 Knowledge Base、案件、政策、條件和引用。它會根據各條件的狀態推導出必要的狀態和審查佇列，並檢查缺漏資訊是否為必填。它也會拒絕核准或拒絕的標籤，並要求 `expertReviewRequired` 必須是 `true`。
 
 
 ```python
@@ -1645,11 +1653,11 @@ else:
     print("Local result validation skipped because execution was disabled.")
 ```
 
-## 9. Run the prompt regression cases
+## 9. 執行 prompt regression 案例
 
-The optional regression set covers four versions of the sample case: complete evidence, a missing qualifying test, conflicting test results, and an instruction embedded in a clinical note. The graders check the expected criterion status and queue, citation support, Knowledge Base identity, model order, token usage, and the absence of a coverage disposition.
+可選的 regression 組合涵蓋範例案件的四個版本：證據完整、缺少合格的檢驗、檢驗結果互相矛盾，以及臨床筆記裡夾帶一段指令。grader 會檢查預期的條件狀態和佇列、引用是否有依據、Knowledge Base 身分、模型順序、token 用量，以及是否沒有出現承保處置。
 
-Set `RUN_PROMPT_EVALS = True` only for an authorized, billable run. One pass makes four Knowledge Base `Retrieve` requests and 12 model calls but creates no AWS resources. The expected outcomes are regression labels for this example, not clinically validated decisions. Have a payer utilization-management expert review the cases and graders before adapting them for production.
+只有在已授權、可以計費的情況下，才把 `RUN_PROMPT_EVALS = True`。跑一輪會發出四次 Knowledge Base `Retrieve` 請求和 12 次模型呼叫，但不會建立任何 AWS 資源。預期結果只是這個範例的 regression 標籤，不是經過臨床驗證的決定。要改用在正式環境前，請讓保險公司的 utilization-management 專家審閱這些案例和 grader。
 
 
 ```python
@@ -1948,19 +1956,19 @@ else:
     )
 ```
 
-## 10. Deploy to AgentCore Runtime
+## 10. 部署到 AgentCore Runtime
 
-Set `DEPLOY_AGENTCORE = True` only after you review the generated project and receive authorization for the target account. The deployment cell packages the Python 3.12 application and pinned dependencies for the AgentCore CodeZip runtime on ARM64 and Amazon Linux 2023, uploads the archive to a private S3 bucket, and calls the AgentCore control-plane API. AWS CDK bootstrap is not required for this path.
+要先檢視過產生出來的專案，並取得目標帳號的授權，才把 `DEPLOY_AGENTCORE = True`。部署 cell 會把 Python 3.12 應用和鎖定版本的相依套件，打包成適用於 ARM64 和 Amazon Linux 2023 上 AgentCore CodeZip runtime 的格式，上傳壓縮檔到私有的 S3 bucket，再呼叫 AgentCore control-plane API。這條路徑不需要 AWS CDK bootstrap。
 
-Set `AGENTCORE_EXECUTION_ROLE_ARN` to a pre-created role in the current AWS account. The role must:
+把 `AGENTCORE_EXECUTION_ROLE_ARN` 設成目前 AWS 帳號裡預先建好的 role。這個 role 必須：
 
-- Trust `bedrock-agentcore.amazonaws.com`.
-- Allow the logging, metrics, and tracing actions required by AgentCore Runtime.
-- Read the CodeZip object from S3.
-- Invoke the configured OpenAI models on Amazon Bedrock.
-- Call `bedrock:Retrieve` on the configured Knowledge Base.
+- 信任 `bedrock-agentcore.amazonaws.com`。
+- 允許 AgentCore Runtime 需要的 logging、metrics 和 tracing 動作。
+- 能從 S3 讀取 CodeZip 物件。
+- 能呼叫 Amazon Bedrock 上設定好的 OpenAI 模型。
+- 能對設定好的 Knowledge Base 呼叫 `bedrock:Retrieve`。
 
-Apply any role path or permissions boundary required by your organization. Restrict the trust policy with `aws:SourceAccount` and `aws:SourceArn` when those values are known. The notebook does not create an execution role or long-lived model credentials.
+套用你組織要求的 role path 或 permissions boundary。如果已知 `aws:SourceAccount` 和 `aws:SourceArn`，就用它們限制 trust policy。notebook 不會建立 execution role，也不會建立長期有效的模型憑證。
 
 
 ```python
@@ -2411,13 +2419,13 @@ else:
     print("Managed response validation skipped; no Runtime was invoked.")
 ```
 
-## 11. Inspect the Runtime and optionally clean up
+## 11. 檢查 Runtime 並視需要清理
 
-After a managed invocation, the inspection cell reads the Runtime version and status and checks for recent CloudWatch log streams. These checks confirm that the managed Runtime executed; the response validators are what confirm the selected policy, criteria, and citations.
+託管呼叫之後，檢查 cell 會讀取 Runtime 的版本和狀態，並檢查最近的 CloudWatch log stream。這些檢查只能確認託管的 Runtime 有執行過，真正確認選到的政策、條件和引用的是 response validator。
 
-Cleanup uses separate opt-in flags. Delete the Runtime before deleting its Knowledge Base. `CLEAN_UP_AGENTCORE` can delete only a Runtime created during the current notebook run, and `CLEAN_UP_KB` can delete only a stack created during the current run. Updating an existing resource does not make it eligible for cleanup.
+清理使用各自獨立、要自己開啟的旗標。要先刪 Runtime，才能刪它的 Knowledge Base。`CLEAN_UP_AGENTCORE` 只能刪除這次 notebook 執行中建立的 Runtime，`CLEAN_UP_KB` 只能刪除這次執行中建立的 stack。更新既有資源，並不會讓它變成可清理的對象。
 
-The notebook records ownership as soon as AWS accepts a create request and retains it across cell retries in the same kernel. Restarting the kernel clears that state; the notebook will not infer ownership of an existing resource.
+notebook 在 AWS 接受建立請求的當下就會記錄擁有權，並在同一個 kernel 裡 cell 重跑時保留這個記錄。重啟 kernel 會清掉這個狀態，notebook 不會去推測既有資源是不是它建立的。
 
 
 ```python
@@ -2502,19 +2510,19 @@ else:
     print("Knowledge Base cleanup skipped.")
 ```
 
-## Expected results
+## 預期結果
 
-Use these checkpoints to verify a run:
+用這些檢查點確認一次執行是否正確：
 
-- The Knowledge Base setup reports `knowledge_base_type="MANAGED"` and `retrieval="hybrid search with managed reranking"`.
-- The retrieval check prints policy `NSH-DME-022`, version `2026.1`, CMS source URLs, document IDs, and a score at or above `BEDROCK_KB_MIN_SCORE`.
-- A successful local or managed invocation returns `outcome="review_ready"`, four criterion assessments, a review queue, and `coverageDisposition="NOT_PERFORMED"`.
-- An empty Knowledge Base result returns `outcome="policy_mapping_required"` with no requested models and zero token usage.
-- The optional regression run reports whether each of its four cases passed every application-owned grader.
-- The managed invocation returns the same response contract as the local HTTP endpoint.
+- Knowledge Base 設定回報 `knowledge_base_type="MANAGED"` 和 `retrieval="hybrid search with managed reranking"`。
+- 檢索檢查印出政策 `NSH-DME-022`、版本 `2026.1`、CMS 來源 URL、文件 ID，以及不低於 `BEDROCK_KB_MIN_SCORE` 的分數。
+- 本地或託管呼叫成功時，會回傳 `outcome="review_ready"`、四個條件評估、一個審查佇列，以及 `coverageDisposition="NOT_PERFORMED"`。
+- Knowledge Base 結果為空時，會回傳 `outcome="policy_mapping_required"`，沒有請求任何模型，token 用量為零。
+- 可選的 regression 執行會回報四個案例各自是否通過所有應用自己擁有的 grader。
+- 託管呼叫回傳的 response contract 和本地 HTTP endpoint 一樣。
 
 
-## References
+## 參考資料
 
 - [OpenAI Agents SDK for Python](https://openai.github.io/openai-agents-python/)
 - [Evaluate agent workflows](https://developers.openai.com/api/docs/guides/agent-evals)
@@ -2528,4 +2536,16 @@ Use these checkpoints to verify a run:
 - [Medicare Coverage Database](https://www.cms.gov/medicare-coverage-database/)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 流程順序、handoff 驗證、政策條件和審查路由都由應用程式碼掌控，模型只負責每個階段內的推理。
+- 政策條件放在應用自己的設定裡，請求只帶政策 ID 和版本，呼叫端就沒辦法替換條件。
+- 檢索結果要先驗證身分、來源和分數才進模型。找不到政策時直接回 `policy_mapping_required`，不讓模型硬猜。
+- 引用要能在送審證據或檢索到的 chunk 裡找到原文，改寫過的引用一律拒絕。
+- 這個助理只產出附引用的評估，不做承保決定，最終處置一定要由人類審查人員來做。
+
+## 練習
+
+1. 跑完整個流程後，把 `BEDROCK_KB_MIN_SCORE` 調高一點，看看檢索驗證什麼時候開始失敗、回傳什麼結果。
+2. 在 prompt regression 案例裡，仿照那個「臨床筆記夾帶指令」的案例，再加一個你自己設計的 prompt injection 版本，確認 grader 能抓到。
+3. 修改 validator，讓它在某個條件狀態是 unknown 時，額外要求缺漏資訊欄位至少列出一項，並用 controlled test 驗證會被拒絕。

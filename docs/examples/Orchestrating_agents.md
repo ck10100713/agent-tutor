@@ -1,26 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/Orchestrating_agents.ipynb
 ---
-
 # Orchestrating Agents: Routines and Handoffs
 
 > 原文：[examples/Orchestrating_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Orchestrating_agents.ipynb)
 
-Cookbook for orchestrating agent workflows with routines and handoffs.
+用 routine 和 handoff 來編排 agent 工作流程的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+示範怎麼用 routine（一組自然語言步驟加上工具）寫出客服 agent，再用 handoff 讓多個 agent 把對話接力給彼此。全程只用 Python 跟 Chat Completions，不依賴框架。
+
+## 學完你會
+
+- 寫出一個跑 tool call 的迴圈，把 Python 函式轉成 function schema 丟給模型，並把結果回填到對話。
+- 做出 `Agent` class 跟 `transfer_to_XXX` 函式，讓 agent 自己決定什麼時候 handoff。
+- 理解函式回傳 `Agent` 物件就能切換目前 agent 的做法，也就是 Swarm 的核心想法。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY` 環境變數。
 
 
-When working with language models, quite often all you need for solid performance is a good prompt and the right tools. However, when dealing with many unique flows, things may get hairy. This cookbook will walk through one way to tackle this.
+用語言模型時，很多時候只要有好的 prompt 跟對的工具，表現就很穩。不過一旦流程種類很多，事情就會變複雜。這份 cookbook 會示範一種處理方式。
 
-We'll introduce the notion of **routines** and **handoffs**, then walk through the implementation and show how they can be used to orchestrate multiple agents in a simple, powerful, and controllable way.
+我們會介紹 **routine** 和 **handoff** 的概念，然後走過實作，看怎麼用它們以簡單、強大又可控的方式編排多個 agent。
 
-Finally, we provide a sample repo, [Swarm](https://github.com/openai/swarm), that implements these ideas along with examples.
+最後我們提供一個範例 repo [Swarm](https://github.com/openai/swarm)，裡面實作了這些想法，還有更多範例。
 
 
 
-Let's start by setting up our imports.
+先把 import 設定好。
 
 ```python
 from openai import OpenAI
@@ -34,11 +45,11 @@ client = OpenAI()
 
 # Routines
 
-The notion of a "routine" is not strictly defined, and instead meant to capture the idea of a set of steps. Concretely, let's define a routine to be a list of instructions in natural language (which we'll represent with a system prompt), along with the tools necessary to complete them.
+"routine" 沒有嚴格定義，它想表達的是「一組步驟」的概念。具體來說，我們把 routine 定義為一份自然語言的指令清單（用 system prompt 表示），加上完成這些指令需要的工具。
 
 
 
-Let's take a look at an example. Below, we've defined a routine for a customer service agent instructing it to triage the user issue, then either suggest a fix or provide a refund. We've also defined the necessary functions `execute_refund` and `look_up_item`. We can call this a customer service routine, agent, assistant, etc – however the idea itself is the same: a set of steps and the tools to execute them.
+看個例子。下面我們為客服 agent 定義了一個 routine，指示它先判斷使用者的問題，然後建議解法或是退款。我們也定義了需要的函式 `execute_refund` 和 `look_up_item`。你可以叫它客服 routine、agent、assistant 等等，概念都一樣：一組步驟，加上執行這些步驟的工具。
 
 ```python
 # Customer Service Routine
@@ -69,17 +80,17 @@ def execute_refund(item_id, reason="not provided"):
     return "success"
 ```
 
-The main power of routines is their simplicity and robustness. Notice that these instructions contain conditionals much like a state machine or branching in code. LLMs can actually handle these cases quite robustly for small and medium-sized routines, with the added benefit of "soft" adherence – the LLM can naturally steer the conversation without getting stuck in dead-ends.
+routine 的主要優勢是簡單又穩。注意這些指令裡有條件判斷，很像 state machine 或程式裡的分支。對於中小型的 routine，LLM 其實處理得很穩，還有「軟性」遵循的好處：LLM 可以自然地引導對話，不會卡進死路。
 
 
 
-## Executing Routines
+## 執行 routine
 
-To execute a routine, let's implement a simple loop that:
-1. Gets user input.
-1. Appends user message to `messages`.
-1. Calls the model.
-1. Appends model response to `messages`.
+要執行 routine，我們實作一個簡單的迴圈：
+1. 取得使用者輸入。
+1. 把使用者訊息加進 `messages`。
+1. 呼叫模型。
+1. 把模型回應加進 `messages`。
 
 
 ```python
@@ -104,9 +115,9 @@ while True:
     run_full_turn(system_message, messages)
 ```
 
-As you can see, this currently ignores function calls, so let's add that.
+可以看到，這版目前忽略了 function call，我們來補上。
 
-Models require functions to be formatted as a function schema. For convenience, we can define a helper function that turns python functions into the corresponding function schema.
+模型要求函式以 function schema 的格式提供。為了方便，我們定義一個 helper 函式，把 Python 函式轉成對應的 function schema。
 
 ```python
 import inspect
@@ -159,7 +170,7 @@ def function_to_schema(func) -> dict:
     }
 ```
 
-For example:
+例如：
 
 ```python
 def sample_function(param_1, param_2, the_third_one: int, some_optional="John Doe"):
@@ -206,7 +217,7 @@ print(json.dumps(schema, indent=2))
     }
     ```
 
-Now, we can use this function to pass the tools to the model when we call it.
+現在可以在呼叫模型時，用這個函式把 tools 傳進去。
 
 ```python
 messages = []
@@ -230,9 +241,9 @@ message.tool_calls[0].function
     Function(arguments='{"search_query":"black boot"}', name='look_up_item')
     ```
 
-Finally, when the model calls a tool we need to execute the corresponding function and provide the result back to the model.
+最後，模型呼叫 tool 時，我們要執行對應的函式，並把結果提供回給模型。
 
-We can do this by mapping the name of the tool to the python function in a `tool_map`, then looking it up in `execute_tool_call` and calling it. Finally we add the result to the conversation.
+做法是用一個 `tool_map` 把 tool 名稱對應到 Python 函式，在 `execute_tool_call` 裡查表並呼叫，最後把結果加進對話。
 
 ```python
 tools_map = {tool.__name__: tool for tool in tools}
@@ -264,9 +275,9 @@ for tool_call in message.tool_calls:
     Assistant: look_up_item({'search_query': 'black boot'})
     ```
 
-In practice, we'll also want to let the model use the result to produce another response. That response might _also_ contain a tool call, so we can just run this in a loop until there are no more tool calls.
+實務上，我們還會希望模型用這個結果產生另一個回應。那個回應可能「又」包含 tool call，所以直接跑迴圈，直到沒有 tool call 為止。
 
-If we put everything together, it will look something like this:
+全部組起來大概長這樣：
 
 ```python
 tools = [execute_refund, look_up_item]
@@ -333,15 +344,15 @@ while True:
     messages.extend(new_messages)
 ```
 
-Now that we have a routine, let's say we want to add more steps and more tools. We can up to a point, but eventually if we try growing the routine with too many different tasks it may start to struggle. This is where we can leverage the notion of multiple routines – given a user request, we can load the right routine with the appropriate steps and tools to address it.
+有了 routine 之後，假設我們想加更多步驟和工具。加到某個程度還行，但如果 routine 塞太多不同任務，模型就會開始吃力。這時可以用多個 routine：依使用者的請求，載入有對應步驟和工具的 routine 來處理。
 
-Dynamically swapping system instructions and tools may seem daunting. However, if we view "routines" as "agents", then this notion of **handoffs** allow us to represent these swaps simply – as one agent handing off a conversation to another.
+動態切換 system instruction 跟 tools 聽起來很嚇人。不過如果把「routine」看成「agent」，**handoff** 的概念就能簡單表達這種切換：一個 agent 把對話交給另一個 agent。
 
 # Handoffs
 
-Let's define a **handoff** as an agent (or routine) handing off an active conversation to another agent, much like when you get transferred to someone else on a phone call. Except in this case, the agents have complete knowledge of your prior conversation!
+我們把 **handoff** 定義為：一個 agent（或 routine）把進行中的對話交給另一個 agent，就像打電話被轉接給別人。差別是這裡的 agent 完全知道你之前的對話內容！
 
-To see handoffs in action, let's start by defining a basic class for an Agent.
+要看 handoff 怎麼運作，先定義一個基本的 Agent class。
 
 ```python
 class Agent(BaseModel):
@@ -351,7 +362,7 @@ class Agent(BaseModel):
     tools: list = []
 ```
 
-Now to make our code support it, we can change `run_full_turn` to take an `Agent` instead of separate `system_message` and `tools`:
+接著讓程式碼支援它，把 `run_full_turn` 改成接收 `Agent`，而不是分開的 `system_message` 和 `tools`：
 
 ```python
 def run_full_turn(agent, messages):
@@ -406,7 +417,7 @@ def execute_tool_call(tool_call, tools_map):
     return tools_map[name](**args)
 ```
 
-We can now run multiple agents easily:
+現在可以輕鬆跑多個 agent：
 
 ```python
 def execute_refund(item_name):
@@ -454,13 +465,13 @@ response = run_full_turn(refund_agent, messages) # refund agent
     Assistant: Your refund for the black boot has been successfully processed. If you need further assistance, just let me know!
     ```
 
-Great! But we did the handoff manually here – we want the agents themselves to decide when to perform a handoff. A simple, but surprisingly effective way to do this is by giving them a `transfer_to_XXX` function, where `XXX` is some agent. The model is smart enough to know to call this function when it makes sense to make a handoff!
+很好！不過這裡的 handoff 是我們手動做的，我們希望由 agent 自己決定什麼時候 handoff。一個簡單但出乎意料有效的做法，是給它們 `transfer_to_XXX` 函式，`XXX` 是某個 agent。模型夠聰明，知道什麼時候該呼叫這個函式來 handoff！
 
-### Handoff Functions
+### Handoff 函式
 
-Now that agent can express the _intent_ to make a handoff, we must make it actually happen. There's many ways to do this, but there's one particularly clean way.
+現在 agent 可以表達 handoff 的「意圖」，我們還得讓它真的發生。做法有很多種，其中有一種特別乾淨。
 
-For the agent functions we've defined so far, like `execute_refund` or `place_order` they return a string, which will be provided to the model. What if instead, we return an `Agent` object to indicate which agent we want to transfer to? Like so:
+我們目前定義的 agent 函式，像 `execute_refund` 或 `place_order`，都是回傳一個字串給模型。如果改成回傳一個 `Agent` 物件，用來表示我們想轉給哪個 agent，會怎樣？像這樣：
 
 ```python
 refund_agent = Agent(
@@ -479,7 +490,7 @@ sales_assistant = Agent(
 )
 ```
 
-We can then update our code to check the return type of a function response, and if it's an `Agent`, update the agent in use! Additionally, now `run_full_turn` will need to return the latest agent in use in case there are handoffs. (We can do this in a `Response` class to keep things neat.)
+接著更新程式碼，檢查函式回應的型別，如果是 `Agent`，就更新目前使用的 agent！另外，`run_full_turn` 現在需要回傳目前最新使用的 agent，因為可能發生了 handoff。（可以用一個 `Response` class 讓這部分整齊一點。）
 
 ```python
 class Response(BaseModel):
@@ -487,7 +498,7 @@ class Response(BaseModel):
     messages: list
 ```
 
-Now for the updated `run_full_turn`:
+接著是更新後的 `run_full_turn`：
 
 ```python
 def run_full_turn(agent, messages):
@@ -549,7 +560,7 @@ def execute_tool_call(tool_call, tools, agent_name):
     return tools[name](**args)  # call corresponding function with provided arguments
 ```
 
-Let's look at an example with more Agents.
+來看一個有更多 Agent 的例子。
 
 ```python
 def escalate_to_human(summary):
@@ -656,7 +667,7 @@ issues_and_repairs_agent = Agent(
 )
 ```
 
-Finally, we can run this in a loop (this won't run in python notebooks, so you can try this in a separate python file):
+最後，可以把它放進迴圈跑（這段在 Python notebook 裡跑不起來，建議另外存成 Python 檔來試）：
 
 ```python
 agent = triage_agent
@@ -673,6 +684,17 @@ while True:
 
 # Swarm
 
-As a proof of concept, we've packaged these ideas into a sample library called [Swarm](https://github.com/openai/swarm). It is meant as an example only, and should not be directly used in production. However, feel free to take the ideas and code to build your own!
+我們把這些想法打包成一個範例函式庫 [Swarm](https://github.com/openai/swarm)，作為概念驗證。它只是範例，不該直接用在 production。不過你可以拿這些想法和程式碼來建自己的版本！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- routine 就是「自然語言步驟加工具」，用 system prompt 寫條件分支，模型對中小型流程處理得很穩。
+- routine 塞太多任務會變差，這時拆成多個 agent，各自只管一小塊。
+- handoff 的本質是換掉 system instruction 和 tools，對話歷史保留不動。
+- 讓函式回傳 `Agent` 物件，就能用一般 tool call 的機制完成 handoff，不需要額外的流程控制。
+
+## 練習
+
+1. 在客服 routine 加一個新工具（例如查訂單狀態），並在 `tool_map` 註冊，跑跑看模型會不會用。
+2. 新增一個 agent（例如處理投訴），並替它加上 `transfer_to_XXX` 函式，讓現有 agent 可以轉給它。
+3. 在 `run_full_turn` 的 handoff 判斷處加一行 print，記錄每次切換前後的 agent 名稱，觀察多輪對話裡 handoff 的時機。

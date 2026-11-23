@@ -1,56 +1,67 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_gmail.ipynb
 ---
 
-# GPT Actions library - Gmail
+# GPT Actions 函式庫：Gmail
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_gmail.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_gmail.ipynb)
 
+## 這篇在做什麼
+
+教你替 Custom GPT 建一個連到 Gmail 的 GPT Action。這個 Action 接 Gmail API，可以在授權的帳號裡讀取、寄送、列出信件和建立草稿。內容包含 GPT 的 instructions、OpenAPI schema 和 Google OAuth 設定。
+
+## 學完你會
+
+- 在 Google Cloud 啟用 Gmail API 並建立 OAuth 憑證
+- 把 instructions 與 OpenAPI schema 貼進 Custom GPT 的 Actions
+- 在 ChatGPT 設定 OAuth，並把 callback URL 填回 Google Cloud
+
+## 開跑前
+
+- 需要 Google Cloud 帳號，並已啟用 Gmail API
+- 應用程式的 Publishing Status 若是 Testing，要把使用者加進測試名單
+- 需要 ChatGPT 能建立 Custom GPT 的方案
 
 
-<!-- tutor:goals -->
+## 簡介
 
+這一頁是給開發者的指南，說明怎麼替特定應用程式建立 GPT Action。開始前請先看過下面這些資料：
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions Library 簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零開始建立 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
+這個 GPT Action 說明怎麼連到 Google Gmail。它連接 Google Gmail API，可以在授權的帳號裡讀取、寄送、列出和起草電子郵件。
 
-## Introduction
+### 價值與商業使用範例
 
-This page provides an instruction & guide for developers building a GPT Action for a specific application. Before you proceed, make sure to first familiarize yourself with the following information: 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+**價值**：Gmail GPT 能精簡溝通流程、提升客戶互動，並讓資源配置更有效率。
 
-This GPT Action provides an overview of how to connect to Google Gmail, Google’s Private & Secure Email for Personal or Business. This Action is connected to the Google Gmail APIs that can read, send, list, and draft emails in the authorized account. 
+**使用範例**：
+- 管理內部溝通：摘要冗長的信件，並依先前的信件往來起草回覆。
+- 客服人員可以依公司的溝通準則、語氣和風格，即時回覆客戶。
+- 搭配其他 GPT（例如資料分析 GPT），再請它把彙整後的分析用 email 起草或寄出。
 
-### Value + Example Business Use Cases
+## 應用程式資訊
 
-**Value**: The Gmail GPT will serve as a powerful tool to streamline communication processes, improve customer engagement, and optimize resource allocation.
+### 應用程式重要連結
 
-**Example Use Cases**: 
-- Manage internal communications by summarizing lengthy emails and drafting responses based on previous email threads.
-- Support agents can provide customers with instant responses adhering to a company’s communication guidelines, tone, and style.
-- Reference other GPTs, such as a data analysis GPT, and then ask to draft or send the consolidated analysis by email.
+開始前先看看這些連結：
+- 應用程式網站：https://mail.google.com/mail/u/0/#inbox
+- 應用程式 API 文件：https://developers.google.com/gmail/api/guides
 
-## Application Information
+### 應用程式前置條件
 
-### Application Key Links
+開始前，請確認你有 Google Cloud 帳號，並已啟用 Gmail API：
+- 建立 Google Cloud 專案
+- 在 Google API Library 啟用 Gmail API
+- 如果應用程式的「Publishing Status」是「Testing」，要確認使用者已加入你的應用程式
 
-Check out these links from the application before you get started:
-- Application Website: https://mail.google.com/mail/u/0/#inbox
-- Application API Documentation: https://developers.google.com/gmail/api/guides
+## ChatGPT 步驟
 
-### Application Prerequisites
+### Custom GPT Instructions
 
-Before you get started, make sure you’ve a Google Cloud account and that the Gmail API is enabled:
-- Set up a Google Cloud project
-- Enable Gmail API from Google API Library
-- If application’s  “Publishing Status” is “Testing”, ensure users are added to your application
-
-## ChatGPT Steps
-
-### Custom GPT Instructions 
-
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建立好 Custom GPT 後，把下面的文字複製到 Instructions 欄位。有疑問可以看[入門範例](https://platform.openai.com/docs/actions/getting-started)，裡面更詳細說明這一步。
 
 ```python
 **Context**
@@ -71,9 +82,9 @@ Act as an email assistant designed to enhance user interaction with emails in va
 - Privacy and Security: Respect user privacy and handle all data securely.
 ```
 
-### OpenAPI Schema 
+### OpenAPI Schema
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建立好 Custom GPT 後，把下面的文字複製到 Actions 欄位。有疑問可以看[入門範例](https://platform.openai.com/docs/actions/getting-started)，裡面更詳細說明這一步。
 
 ```python
 openapi: 3.1.0
@@ -456,55 +467,67 @@ components:
           description: The user's email address. Use "me" to indicate the authenticated user.
 ```
 
-## Authentication Instructions
+## 認證設定
 
-Below are instructions on setting up authentication with this 3rd party application. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+下面說明怎麼設定這個第三方應用程式的認證。有疑問可以看[入門範例](https://platform.openai.com/docs/actions/getting-started)，裡面更詳細說明這一步。
 
-### Pre-Action Steps
+### Action 之前的步驟
 
-Before you set up authentication in ChatGPT, please take the following steps in the application.
+在 ChatGPT 設定認證之前，先在應用程式裡完成下列步驟。
 
 
-- Go to the Google Cloud Console
-- Navigate to API & Services > Credentials
+- 前往 Google Cloud Console
+- 進入 API & Services > Credentials
 
 ![gptactions_BigQuery_auth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_Gmail_enableAPIs.png)
 
 ![gptactions_BigQuery_auth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_Gmail_gmailApiTile.png)
 
-- Create new OAuth credentials (or use an existing one)
+- 建立新的 OAuth 憑證（或使用既有的）
 
 ![gptactions_BigQuery_auth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_Gmail_apikey.png)
 
-- Locate your OAuth Client ID & Client Secret and store both values securely (see screenshot below)
+- 找到你的 OAuth Client ID 與 Client Secret，並安全保存這兩個值（見下方截圖）
 
 ![gptactions_BigQuery_auth.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/gptactions_Gmail_clientidsecret.png)
 
-### In ChatGPT
+### 在 ChatGPT 裡設定
 
-In ChatGPT, click on "Authentication" and choose **"OAuth"**. Enter in the information below. 
+在 ChatGPT 點「Authentication」並選擇 **"OAuth"**，填入下面的資訊。
 
-- **Client ID**: use Client ID from steps above 
-- **Client Secret**: use Client Secret from steps above
-- **Authorization URL**: https://accounts.google.com/o/oauth2/auth
-- **Token URL**: https://oauth2.googleapis.com/token 
-- **Scope**: https://mail.google.com/
-- **Token**: Default (POST)
+- **Client ID**：用上面步驟取得的 Client ID
+- **Client Secret**：用上面步驟取得的 Client Secret
+- **Authorization URL**：https://accounts.google.com/o/oauth2/auth
+- **Token URL**：https://oauth2.googleapis.com/token
+- **Scope**：https://mail.google.com/
+- **Token**：Default (POST)
 
-### Post-Action Steps
+### Action 之後的步驟
 
-Once you've set up authentication in ChatGPT, follow the steps below in the application to finalize the Action. 
+在 ChatGPT 設好認證後，回到應用程式完成下面的步驟，Action 才算設定完成。
 
-- Copy the callback URL from the GPT Action
-- In the “Authorized redirect URIs” (see screenshot above), add your callback URL 
-
-
-### FAQ & Troubleshooting
-
-- *Callback URL Error:* If you get a callback URL error in ChatGPT, pay close attention to the screenshot above. You need to add the callback URL directly into GCP for the action to authenticate correctly
-- *Schema calls the wrong project or dataset:* If ChatGPT calls the wrong project or dataset, consider updating your instructions to make it more explicit either (a) which project / dataset should be called or (b) to require the user provide those exact details before it runs the query
-
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+- 從 GPT Action 複製 callback URL
+- 把你的 callback URL 加到「Authorized redirect URIs」（見上方截圖）
 
 
-<!-- tutor:summary -->
+### FAQ 與疑難排解
+
+- *Callback URL 錯誤：*如果 ChatGPT 出現 callback URL 錯誤，請仔細對照上面的截圖。你必須把 callback URL 直接加到 GCP，Action 才能正確認證
+- *Schema 呼叫到錯的專案或資料集：*如果 ChatGPT 呼叫了錯的專案或資料集，可以更新 instructions，更明確地（a）指定要呼叫哪個專案或資料集，或（b）要求使用者在執行查詢前先提供這些細節
+
+*有想要我們優先處理的整合嗎？我們的整合有錯誤嗎？歡迎到 GitHub 提 PR 或 issue，我們會處理。*
+
+
+## 重點整理
+
+- 一個 GPT Action 由三塊組成：Custom GPT instructions、OpenAPI schema、認證設定。
+- Gmail Action 走 OAuth，Client ID 和 Secret 來自 Google Cloud 的憑證頁。
+- callback URL 要從 ChatGPT 複製後貼回 GCP 的 Authorized redirect URIs，否則認證會失敗。
+- 應用程式若是 Testing 狀態，使用者要先加進測試名單。
+- instructions 寫得越明確，模型越不容易呼叫錯目標。
+
+## 練習
+
+1. 檢查 Scope 欄位，想想如果只需要讀信，能不能改成範圍更小的 Gmail scope，並試著替換。
+2. 在 Custom GPT instructions 加一條規則，要求寄信前一律先建立草稿並請使用者確認。
+3. 在 OpenAPI schema 裡找出列出信件的 operation，替它加上依寄件人過濾的查詢參數，並更新 instructions 讓 GPT 會用它。

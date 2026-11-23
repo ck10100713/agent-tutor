@@ -1,54 +1,62 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/neon/neon-postgres-vector-search-pgvector.ipynb
 ---
 
-# Vector similarity search using Neon Postgres
+# 用 Neon Postgres 做向量相似度搜尋
 
 > 原文：[examples/vector_databases/neon/neon-postgres-vector-search-pgvector.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/neon/neon-postgres-vector-search-pgvector.ipynb)
 
+## 這篇在做什麼
+示範把 [Neon Serverless Postgres](https://neon.tech/) 搭配 `pgvector` extension 當成 OpenAI embedding 的向量資料庫。你會建表、載入 25000 筆預先算好的 Wikipedia embedding，再用 SQL 做相似度搜尋。
 
+## 學完你會
+- 在 Neon 啟用 `pgvector`，建出有 title 和 content 向量欄位與 index 的表
+- 把 CSV 裡的 embedding 載入 Postgres
+- 寫一個 `query_neon` 函式，把文字轉成 embedding 並用 SQL 做最近鄰搜尋
 
-<!-- tutor:goals -->
+## 開跑前
+- 一個 Neon Postgres 資料庫與連線字串（`DATABASE_URL`）
+- 在資料庫執行 `CREATE EXTENSION vector;`
+- OpenAI API key（環境變數 `OPENAI_API_KEY`）
 
+這個 notebook 帶你用 [Neon Serverless Postgres](https://neon.tech/) 當 OpenAI embedding 的向量資料庫，內容包括：
 
-This notebook guides you through using [Neon Serverless Postgres](https://neon.tech/) as a vector database for OpenAI embeddings. It demonstrates how to:
+1. 使用 OpenAI API 產生的 embedding。
+2. 把 embedding 存到 Neon Serverless Postgres 資料庫。
+3. 用 OpenAI API 把文字 query 轉成 embedding。
+4. 用 Neon 搭配 `pgvector` extension 做向量相似度搜尋。
 
-1. Use embeddings created by OpenAI API.
-2. Store embeddings in a Neon Serverless Postgres database.
-3. Convert a raw text query to an embedding with OpenAI API.
-4. Use Neon with the `pgvector` extension to perform vector similarity search.
+## 前置條件
 
-## Prerequisites
+開始前請確認你已經有：
 
-Before you begin, ensure that you have the following:
+1. 一個 Neon Postgres 資料庫。你可以註冊帳號，幾個簡單步驟就能建好一個有現成 `neondb` 資料庫的 project。步驟看 [Sign up](https://neon.tech/docs/get-started-with-neon/signing-up) 和 [Create your first project](https://neon.tech/docs/get-started-with-neon/setting-up-a-project)。
+2. Neon 資料庫的連線字串。可以從 Neon **Dashboard** 的 **Connection Details** widget 複製。看 [Connect from any application](https://neon.tech/docs/connect/connect-from-any-app)。
+3. `pgvector` extension。在 Neon 執行 `CREATE EXTENSION vector;` 安裝。步驟看 [Enable the pgvector extension](https://neon.tech/docs/extensions/pgvector#enable-the-pgvector-extension)。
+4. 你的 [OpenAI API key](https://platform.openai.com/account/api-keys)。
+5. Python 和 `pip`。
 
-1. A Neon Postgres database. You can create an account and set up a project with a ready-to-use `neondb` database in a few simple steps. For instructions, see [Sign up](https://neon.tech/docs/get-started-with-neon/signing-up) and [Create your first project](https://neon.tech/docs/get-started-with-neon/setting-up-a-project).
-2. A connection string for your Neon database. You can copy it from the **Connection Details** widget on the Neon **Dashboard**. See [Connect from any application](https://neon.tech/docs/connect/connect-from-any-app).
-3. The `pgvector` extension. Install the extension in Neon by running `CREATE EXTENSION vector;`. For instructions, see [Enable the pgvector extension](https://neon.tech/docs/extensions/pgvector#enable-the-pgvector-extension). 
-4. Your [OpenAI API key](https://platform.openai.com/account/api-keys).
-5. Python and `pip`.
+### 安裝需要的模組
 
-### Install required modules
-
-This notebook requires the `openai`, `psycopg2`, `pandas`, `wget`, and `python-dotenv` packages. You can install them with `pip`:
+這個 notebook 需要 `openai`、`psycopg2`、`pandas`、`wget` 和 `python-dotenv`。可以用 `pip` 安裝：
 
 
 ```python
 ! pip install openai psycopg2 pandas wget python-dotenv
 ```
 
-### Prepare your OpenAI API key
+### 準備 OpenAI API key
 
-An OpenAI API key is required to generate vectors for documents and queries.
+需要 OpenAI API key 來為文件和 query 產生向量。
 
-If you do not have an OpenAI API key, obtain one from https://platform.openai.com/account/api-keys.
+沒有 OpenAI API key 的話，到 https://platform.openai.com/account/api-keys 取得。
 
-Add the OpenAI API key as an operating system environment variable or provide it for the session when prompted. If you define an environment variable, name the variable `OPENAI_API_KEY`.
+把 OpenAI API key 設成作業系統的環境變數，或在提示時為這個 session 輸入。如果要設環境變數，變數名稱用 `OPENAI_API_KEY`。
 
-For information about configuring your OpenAI API key as an environment variable, refer to [Best Practices for API Key Safety](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety).
+怎麼把 OpenAI API key 設成環境變數，可以參考 [Best Practices for API Key Safety](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)。
 
-### Test your OpenAPI key
+### 測試 OpenAI key
 
 ```python
 # Test to ensure that your OpenAI API key is defined as an environment variable or provide it when prompted
@@ -77,9 +85,9 @@ else:
     Your OPENAI_API_KEY is ready
     ```
 
-## Connect to your Neon database
+## 連線到 Neon 資料庫
 
-Provide your Neon database connection string below or define it in an `.env` file using a `DATABASE_URL` variable. For information about obtaining a Neon connection string, see [Connect from any application](https://neon.tech/docs/connect/connect-from-any-app).
+在下面提供 Neon 資料庫連線字串，或用 `DATABASE_URL` 變數定義在 `.env` 檔裡。怎麼取得 Neon 連線字串，看 [Connect from any application](https://neon.tech/docs/connect/connect-from-any-app)。
 
 ```python
 import os
@@ -109,7 +117,7 @@ connection = psycopg2.connect(connection_string)
 cursor = connection.cursor()
 ```
 
-Test the connection to your database:
+測試資料庫連線：
 
 ```python
 # Execute this query to test the database connection
@@ -129,9 +137,9 @@ else:
     Your database connection was successful!
     ```
 
-This guide uses pre-computed Wikipedia article embeddings available in the OpenAI Cookbook `examples` directory so that you do not have to compute embeddings with your own OpenAI credits. 
+這份指南使用 OpenAI Cookbook `examples` 目錄裡預先算好的 Wikipedia 文章 embedding，所以你不必花自己的 OpenAI 額度算 embedding。
 
-Import the pre-computed embeddings zip file:
+匯入預先算好的 embedding zip 檔：
 
 ```python
 import wget
@@ -148,7 +156,7 @@ wget.download(embeddings_url)
     'vector_database_wikipedia_articles_embedded.zip'
     ```
 
-Extract the downloaded zip file:
+解壓縮下載的 zip 檔：
 
 ```python
 import zipfile
@@ -182,11 +190,11 @@ else:
     The file vector_database_wikipedia_articles_embedded.csv exists in the data directory.
     ```
 
-## Create a table and add indexes for your vector embeddings
+## 建表並為向量 embedding 加 index
 
-The vector table created in your database is called **articles**. Each object has **title** and **content** vectors. 
+資料庫裡建出來的向量表叫 **articles**。每個物件有 **title** 和 **content** 向量。
 
-An index is defined on both the **title** and **content** vector columns.
+**title** 和 **content** 兩個向量欄位都定義了 index。
 
 ```python
 create_table_sql = '''
@@ -218,9 +226,9 @@ cursor.execute(create_indexes_sql)
 connection.commit()
 ```
 
-## Load the data
+## 載入資料
 
-Load the pre-computed vector data into your `articles` table from the `.csv` file. There are 25000 records, so expect the operation to take several minutes.
+把預先算好的向量資料從 `.csv` 檔載入 `articles` 表。共有 25000 筆，所以要預期這個操作需要幾分鐘。
 
 ```python
 import io
@@ -250,7 +258,7 @@ cursor.copy_expert(copy_command, modified_lines)
 connection.commit()
 ```
 
-Check the number of records to ensure the data has been loaded. There should be 25000 records.
+檢查筆數，確認資料已載入。應該有 25000 筆。
 
 ```python
 # Check the size of the data
@@ -266,13 +274,13 @@ print(f"Count:{result[0]}")
     Count:25000
     ```
 
-## Search your data
+## 搜尋資料
 
-After the data is stored in your Neon database, you can query the data for nearest neighbors. 
+資料存進 Neon 資料庫後，就能查詢最近鄰。
 
-Start by defining the `query_neon` function, which is executed when you run the vector similarity search. The function creates an embedding based on the user's query, prepares the SQL query, and runs the SQL query with the embedding. The pre-computed embeddings that you loaded into your database were created with `text-embedding-3-small` OpenAI model, so you must use the same model to create an embedding for the similarity search.
+先定義 `query_neon` 函式，向量相似度搜尋時會執行它。這個函式會依使用者的 query 產生 embedding、準備 SQL query，並帶著 embedding 執行。你載入資料庫的預先算好 embedding 是用 OpenAI 的 `text-embedding-3-small` 模型產生，所以做相似度搜尋時也必須用同一個模型產生 embedding。
 
-A `vector_name` parameter is provided that allows you to search based on "title" or "content".
+函式有 `vector_name` 參數，可以選擇依 "title" 或 "content" 搜尋。
 
 ```python
 def query_neon(query, collection_name, vector_name="title_vector", top_k=20):
@@ -300,7 +308,7 @@ def query_neon(query, collection_name, vector_name="title_vector", top_k=20):
     return results
 ```
 
-Run a similarity search based on `title_vector` embeddings:
+用 `title_vector` embedding 做相似度搜尋：
 
 ```python
 # Query based on `title_vector` embeddings
@@ -336,7 +344,7 @@ for i, result in enumerate(query_results):
     20. Athena (Score: 0.514)
     ```
 
-Run a similarity search based on `content_vector` embeddings:
+用 `content_vector` embedding 做相似度搜尋：
 
 ```python
 # Query based on `content_vector` embeddings
@@ -370,4 +378,13 @@ for i, result in enumerate(query_results):
     20. 323 (Score: 0.409)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 已經在用 Postgres 的話，`pgvector` 讓你不用另外架向量資料庫就能做相似度搜尋。
+- 向量欄位要建 index，資料量大時搜尋才快。
+- 搜尋用的 embedding 模型必須和存入資料時一致。
+- 流程都是同一個套路：query 轉 embedding，再丟進資料庫找最近鄰。
+
+## 練習
+1. 換一句自己的 query，用 `query_neon` 分別搜 title 和 content。
+2. 改函式裡回傳的筆數，看結果變化。
+3. 在 SQL 加上 WHERE 條件（例如 title 包含某個字），做一個混合過濾的搜尋。

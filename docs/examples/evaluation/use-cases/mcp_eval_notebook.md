@@ -1,28 +1,37 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/mcp_eval_notebook.ipynb
 ---
 
-# Evals API Use-case - MCP Evaluation
+# Evals API 使用案例：MCP 評估
 
 > 原文：[examples/evaluation/use-cases/mcp_eval_notebook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/mcp_eval_notebook.ipynb)
 
+## 這篇在做什麼
 
+用 OpenAI Evals 搭配自訂的 in-memory 資料集，評估模型回答 tiktoken repo 問題的能力。比較 `gpt-4.1` 和 `o4-mini` 兩個模型，看它們有沒有透過 MCP tool 取得正確答案，並同時用 LLM grader 和 Python grader 來打分。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 Evals API 建立有自訂 item schema 和多個 grader 的 eval，並對不同模型各跑一次 run。
+- 寫一個 Python grader 來稽核模型有沒有真的呼叫 MCP tool。
+- 看 eval 結果判斷問題出在哪，並用一句 system message 提示讓 `o4-mini` 每題都用 tool。
 
+## 開跑前
 
-This notebook evaluates a model's ability to answer questions about the [tiktoken](https://github.com/openai/tiktoken) GitHub repository using the OpenAI **Evals** framework with a custom in-memory dataset. 
+- 需要 `OPENAI_API_KEY`，eval run 會呼叫模型產生費用。
+- 需要能存取 MCP server（範例用的是 tiktoken repo 的 MCP）。
 
-We use a custom, in-memory dataset of Q&A pairs and compare two models: `gpt-4.1` and `o4-mini`, that leverage the **MCP** tool for repository-aware, contextually accurate answers.
+這份 notebook 用 OpenAI **Evals** 框架搭配自訂的 in-memory 資料集，評估模型回答 [tiktoken](https://github.com/openai/tiktoken) GitHub repo 相關問題的能力。 
 
-**Goals:**
-- Show how to set up and run an evaluation using OpenAI Evals with a custom dataset.
-- Compare the performance of different models leveraging MCP-based tools.
-- Provide best practices for professional, reproducible evaluation workflows.
+我們用一份自訂的 in-memory 問答資料集，比較 `gpt-4.1` 和 `o4-mini` 兩個模型，它們都利用 **MCP** tool 來得到了解 repo、脈絡準確的答案。
 
-_Next: We will set up our environment and import the necessary libraries._
+**目標：**
+- 示範怎麼用自訂資料集設定並執行 OpenAI Evals 的評估。
+- 比較不同模型利用 MCP tool 的表現。
+- 提供專業、可重現的評估流程最佳實踐。
+
+_接下來：我們會設定環境並 import 需要的函式庫。_
 
 ```python
 # Update OpenAI client
@@ -38,10 +47,10 @@ _Next: We will set up our environment and import the necessary libraries._
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-## Environment Setup
+## 環境設定
 
-We begin by importing the required libraries and configuring the OpenAI client.  
-This step ensures we have access to the OpenAI API and all necessary utilities for evaluation.
+先 import 需要的函式庫並設定 OpenAI client。  
+這一步確保我們能存取 OpenAI API 和評估需要的所有工具。
 
 ```python
 import os
@@ -55,13 +64,13 @@ client = OpenAI(
 )
 ```
 
-## Define the Custom Evaluation Dataset
+## 定義自訂的評估資料集
 
-We define a small, in-memory dataset of question-answer pairs about the `tiktoken` repository.  
-This dataset will be used to test the models' ability to provide accurate and relevant answers with the help of the MCP tool.
+我們定義一份小型的 in-memory 問答資料集，內容是關於 `tiktoken` repo。  
+這份資料集用來測試模型在 MCP tool 幫助下，提供準確且相關答案的能力。
 
-- Each item contains a `query` (the user’s question) and an `answer` (the expected ground truth).
-- You can modify or extend this dataset to suit your own use case or repository.
+- 每個 item 包含 `query`（使用者的問題）和 `answer`（預期的標準答案）。
+- 你可以依自己的使用情境或 repo 修改或擴充這份資料集。
 
 
 ```python
@@ -91,17 +100,17 @@ def get_dataset(limit=None):
     return items[:limit] if limit else items
 ```
 
-### Define Grading Logic
+### 定義評分邏輯
 
-To evaluate the model’s answers, we use two graders:
+為了評估模型的答案，我們用兩個 grader：
 
-- **Pass/Fail Grader (LLM-based):**  
-  An LLM-based grader that checks if the model’s answer matches the expected answer (ground truth) or conveys the same meaning.
-- **Python MCP Grader:**  
-  A Python function that checks whether the model actually used the MCP tool during its response (for auditing tool usage).
+- **Pass/Fail Grader（LLM 型）：**  
+  用 LLM 檢查模型的答案是否符合預期答案（ground truth），或傳達相同的意思。
+- **Python MCP Grader：**  
+  一個 Python function，檢查模型在回應過程中有沒有真的使用 MCP tool（用來稽核 tool 的使用）。
 
-  > **Best Practice:**  
-  > Using both LLM-based and programmatic graders provides a more robust and transparent evaluation.
+  > **最佳實踐：**  
+  > 同時使用 LLM 型和程式化的 grader，評估會更穩健也更透明。
 
 
 ```python
@@ -142,18 +151,18 @@ def grade(sample: dict, item: dict) -> float:
 }
 ```
 
-## Define the Evaluation Configuration
+## 定義評估設定
 
-We now configure the evaluation using the OpenAI Evals framework.  
+現在用 OpenAI Evals 框架設定評估。  
 
-This step specifies:
-- The evaluation name and dataset.
-- The schema for each item (what fields are present in each Q&A pair).
-- The grader(s) to use (LLM-based and/or Python-based).
-- The passing criteria and labels.
+這一步會指定：
+- 評估名稱和資料集。
+- 每個 item 的 schema（每筆問答有哪些欄位）。
+- 要用的 grader（LLM 型和 / 或 Python 型）。
+- 通過標準和 label。
 
-> **Best Practice:**  
-> Clearly defining your evaluation schema and grading logic up front ensures reproducibility and transparency.
+> **最佳實踐：**  
+> 事先清楚定義評估的 schema 和評分邏輯，能確保可重現性和透明度。
 
 ```python
 # Create the evaluation definition using the OpenAI Evals client.
@@ -187,17 +196,17 @@ logs_eval = client.evals.create(
 )
 ```
 
-## Run Evaluations for Each Model
+## 對每個模型執行評估
 
-We now run the evaluation for each model (`gpt-4.1` and `o4-mini`).  
+現在對每個模型（`gpt-4.1` 和 `o4-mini`）執行評估。  
 
-Each run is configured to:
-- Use the MCP tool for repository-aware answers.
-- Use the same dataset and evaluation configuration for fair comparison.
-- Specify model-specific parameters (such as max completions tokens, and allowed tools).
+每次 run 都設定成：
+- 使用 MCP tool 取得了解 repo 的答案。
+- 使用相同的資料集和評估設定，讓比較公平。
+- 指定各模型專屬的參數（例如 max completions tokens 和允許的 tool）。
 
-> **Best Practice:**  
-> Keeping the evaluation setup consistent across models ensures results are comparable and reliable.
+> **最佳實踐：**  
+> 各模型之間保持一致的評估設定，結果才有可比性也才可靠。
 
 ```python
 # Run 1: gpt-4.1 using MCP
@@ -307,14 +316,14 @@ gpt_o4_mini_responses_run = client.evals.runs.create(
 )
 ```
 
-## Poll for Completion and Retrieve Outputs
+## 輪詢完成狀態並取回輸出
 
-After launching the evaluation runs, we can poll the run until they are complete.
+啟動評估 run 之後，可以輪詢 run 直到全部完成。
 
-This step ensures that we are analyzing results only after all model responses have been processed.
+這一步確保我們是在所有模型回應都處理完之後才分析結果。
 
-> **Best Practice:**  
-> Polling with a delay avoids excessive API calls and ensures efficient resource usage.
+> **最佳實踐：**  
+> 輪詢時加上延遲，可以避免過多的 API 呼叫，也更有效率地使用資源。
 
 ```python
 def poll_runs(eval_id, run_ids):
@@ -337,24 +346,24 @@ poll_runs(logs_eval.id, [gpt_4one_responses_run.id, gpt_o4_mini_responses_run.id
     evalrun_684769c1ad9c8191affea5aa02ef1215 completed ResultCounts(errored=0, failed=3, passed=2, total=5)
     ```
 
-## Display and Interpret Model Outputs
+## 顯示並解讀模型輸出
 
-Finally, we display the outputs from each model for manual inspection and further analysis.
+最後，我們顯示每個模型的輸出，供人工檢查和進一步分析。
 
-- Each model's answers are printed for each question in the dataset.
-- You can compare the outputs side-by-side to assess quality, relevance, and correctness.
+- 資料集裡每個問題，都會印出各模型的答案。
+- 你可以並排比較輸出，評估品質、相關性和正確性。
 
-Below are screenshots from the OpenAI Evals Dashboard illustrating the evaluation outputs for both models:
+下面是 OpenAI Evals Dashboard 的截圖，顯示兩個模型的評估輸出：
 
 ![Evaluation Output](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/mcp_eval_output.png)
 
-For a comprehensive breakdown of the evaluation metrics and results, navigate to the "Data" tab in the dashboard:
+想看評估指標和結果的完整拆解，可以到 dashboard 的 "Data" 分頁：
 
 ![Evaluation Data Tab](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/mcp_eval_data.png)
 
-Note that the 4.1 model was constructed to never use its tools to answer the query thus it never called the MCP server. The o4-mini model wasn't explicitly instructed to use it's tools either but it wasn't forbidden, thus it called the MCP server 3 times. We can see that the 4.1 model performed worse than the o4 model. Also notable is the one example that the o4-mini model failed was one where the MCP tool was not used.
+注意 4.1 模型被設定成回答時絕不使用 tool，所以它從沒呼叫過 MCP server。o4-mini 模型也沒被明確指示要用 tool，但也沒被禁止，所以它呼叫了 MCP server 3 次。可以看到 4.1 模型的表現比 o4 模型差。另外值得注意的是，o4-mini 唯一答錯的那題，就是沒有使用 MCP tool 的那題。
 
-We can also check a detailed analysis of the outputs from each model for manual inspection and further analysis.
+我們也可以檢視每個模型輸出的詳細分析，供人工檢查和進一步分析。
 
 ```python
 four_one_output = client.evals.runs.output_items.list(
@@ -422,32 +431,43 @@ for item in o4_mini_output:
     ... (省略 274 行)
     ```
 
-## How can we improve?
+## 怎麼改進？
 
-If we add the phrase "Always use your tools since they are the way to get the right answer in this task." to the system message of the o4-mini model, what do you think will happen? (try it out)
+如果在 o4-mini 模型的 system message 加上這句 "Always use your tools since they are the way to get the right answer in this task."，你覺得會怎樣？（可以試試看）
 
 <br><br><br>
 
 
-If you guessed that the model would now call the MCP tool every time and get every answer correct, you are right!
+如果你猜模型現在每次都會呼叫 MCP tool 而且每題都答對，你猜對了！
 
 ![Evaluation Data Tab](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/mcp_eval_improved_output.png)
 ![Evaluation Data Tab](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/mcp_eval_improved_data.png)
 
-In this notebook, we demonstrated a sample workflow for evaluating the ability of LLMs to answer technical questions about the `tiktoken` repository using the OpenAI Evals framework leveraging MCP tooling.
+這份 notebook 示範了一個範例流程：用 OpenAI Evals 框架，搭配 MCP tool，評估 LLM 回答 `tiktoken` repo 技術問題的能力。
 
-**Key points covered:**
-- Defined a focused, custom dataset for evaluation.
-- Configured LLM-based and Python-based graders for robust assessment.
-- Compared two models (`gpt-4.1` and `o4-mini`) in a reproducible and transparent manner.
-- Retrieved and displayed model outputs for automated/manual inspection.
+**涵蓋的重點：**
+- 定義了聚焦的自訂評估資料集。
+- 設定 LLM 型和 Python 型 grader，做更穩健的評估。
+- 以可重現且透明的方式比較兩個模型（`gpt-4.1` 和 `o4-mini`）。
+- 取回並顯示模型輸出，供自動 / 人工檢查。
 
-**Next steps:**
-- **Expand the dataset:** Add more diverse and challenging questions to better assess model capabilities.
-- **Analyze results:** Summarize pass/fail rates, visualize performance, or perform error analysis to identify strengths and weaknesses.
-- **Experiment with models/tools:** Try additional models, adjust tool configurations, or test on other repositories.
-- **Automate reporting:** Generate summary tables or plots for easier sharing and decision-making.
+**後續步驟：**
+- **擴充資料集：** 加入更多樣、更有挑戰性的問題，更好地評估模型能力。
+- **分析結果：** 彙整通過 / 失敗率、視覺化表現，或做錯誤分析來找出優缺點。
+- **試驗模型 / tool：** 試其他模型、調整 tool 設定，或在其他 repo 上測試。
+- **自動化報告：** 產生彙總表或圖表，方便分享和做決策。
 
-For more information, check out the [OpenAI Evals documentation](https://platform.openai.com/docs/guides/evals).
+更多資訊請看 [OpenAI Evals 文件](https://platform.openai.com/docs/guides/evals)。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Evals 由資料集、item schema、grader 和 run 組成，設定一次就能對多個模型重複使用，比較才公平。
+- LLM grader 判斷答案對不對，Python grader 檢查行為（有沒有呼叫 tool），兩者搭配才看得出為什麼錯。
+- 模型沒被要求用 tool 就不一定會用，唯一答錯的題目正是沒呼叫 MCP tool 的那題。
+- 在 system message 明確要求使用 tool，是最便宜的改進手段，這個案例 o4-mini 因此每題都對。
+
+## 練習
+
+1. 在資料集裡多加兩題關於 tiktoken 的問答，重跑評估，確認 dashboard 上的題數有變。
+2. 把 o4-mini 的 system message 加上「Always use your tools...」那句，重跑一次，用 Python grader 的結果確認 MCP 呼叫次數是否變成每題都有。
+3. 改寫 Python MCP grader，讓它不只檢查有沒有呼叫 MCP tool，還要求呼叫次數至少一次且 tool 名稱符合你指定的值，再用兩個模型各跑一次比較。

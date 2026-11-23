@@ -1,36 +1,42 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/deeplake/deeplake_langchain_qa.ipynb
 ---
 
-# Question answering with LangChain, Deep Lake, & OpenAI
+# 用 LangChain、Deep Lake 和 OpenAI 做問答
 
 > 原文：[examples/vector_databases/deeplake/deeplake_langchain_qa.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/deeplake/deeplake_langchain_qa.ipynb)
 
+## 這篇在做什麼
+用 LangChain、當成 vector store 的 [Deep Lake](https://activeloop.ai/) 和 OpenAI embedding，做出一個問答系統。流程是載入文字資料集、建 vector store、加入文字，再對它問問題。
 
+## 學完你會
+- 載入 Deep Lake 的文字資料集
+- 用 LangChain 初始化 Deep Lake vector store，並用 `add_texts` 分批寫入
+- 以 GPT-3.5-Turbo 為 LLM，建立對 vector store 的問答
 
-<!-- tutor:goals -->
+## 開跑前
+需要 OpenAI API key。
 
+這個 notebook 示範怎麼用 LangChain、[Deep Lake](https://activeloop.ai/) 當 vector store，搭配 OpenAI embedding 實作問答系統。步驟如下：
 
-This notebook shows how to implement a question answering system with LangChain, [Deep Lake](https://activeloop.ai/) as a vector store and OpenAI embeddings. We will take the following steps to achieve this:
+1. 載入 Deep Lake 文字資料集
+2. 初始化 [LangChain 的 Deep Lake vector store](https://docs.activeloop.ai/tutorials/vector-store/deep-lake-vector-store-in-langchain)
+3. 把文字加進 vector store
+4. 對資料庫執行 query
+5. 完成！
 
-1. Load a Deep Lake text dataset
-2. Initialize a [Deep Lake vector store with LangChain](https://docs.activeloop.ai/tutorials/vector-store/deep-lake-vector-store-in-langchain)
-3. Add text to the vector store
-4. Run queries on the database
-5. Done!
+你也可以看其他教學，例如對任何類型資料（PDF、json、csv、文字）做問答：[和任何資料聊天](https://www.activeloop.ai/resources/data-chad-an-ai-app-with-lang-chain-deep-lake-to-chat-with-any-data/)（資料存在 Deep Lake）、[程式碼理解](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/)、[PDF 問答](https://www.activeloop.ai/resources/ultimate-guide-to-lang-chain-deep-lake-build-chat-gpt-to-answer-questions-on-your-financial-data/)，或是[推薦歌曲](https://www.activeloop.ai/resources/3-ways-to-build-a-recommendation-engine-for-songs-with-lang-chain/)。
 
-You can also follow other tutorials such as question answering over any type of data (PDFs, json, csv, text): [chatting with any data](https://www.activeloop.ai/resources/data-chad-an-ai-app-with-lang-chain-deep-lake-to-chat-with-any-data/) stored in Deep Lake, [code understanding](https://www.activeloop.ai/resources/lang-chain-gpt-4-for-code-understanding-twitter-algorithm/), or [question answering over PDFs](https://www.activeloop.ai/resources/ultimate-guide-to-lang-chain-deep-lake-build-chat-gpt-to-answer-questions-on-your-financial-data/), or [recommending songs](https://www.activeloop.ai/resources/3-ways-to-build-a-recommendation-engine-for-songs-with-lang-chain/).
-
-## Install requirements
-Let's install the following packages.
+## 安裝需要的套件
+先安裝下面的套件。
 
 ```python
 !pip install deeplake langchain openai tiktoken
 ```
 
-## Authentication
-Provide your OpenAI API key here:
+## 驗證
+在這裡提供你的 OpenAI API key：
 
 ```python
 import getpass
@@ -45,8 +51,8 @@ os.environ['OPENAI_API_KEY'] = getpass.getpass()
     ··········
     ```
 
-## Load a Deep Lake text dataset
-We will use a 20000 sample subset of the [cohere-wikipedia-22](https://app.activeloop.ai/davitbun/cohere-wikipedia-22) dataset for this example.
+## 載入 Deep Lake 文字資料集
+這個範例使用 [cohere-wikipedia-22](https://app.activeloop.ai/davitbun/cohere-wikipedia-22) 資料集中 20000 筆的子集。
 
 ```python
 import deeplake
@@ -89,7 +95,7 @@ ds.summary()
        text     text    (20000, 1)    str     None
     ```
 
-Let's take a look at a few samples:
+看幾個樣本：
 
 ```python
 ds[:3].text.data()["value"]
@@ -103,14 +109,14 @@ ds[:3].text.data()["value"]
      'However, the US military prefers not to say 24:00 - they do not like to have two names for the same thing, so they always say "23:59", which is one minute before midnight.']
     ```
 
-## LangChain's Deep Lake vector store
-Let's define a `dataset_path`, this is where your Deep Lake vector store will house the text embeddings.
+## LangChain 的 Deep Lake vector store
+先定義 `dataset_path`，這是你的 Deep Lake vector store 存放文字 embedding 的位置。
 
 ```python
 dataset_path = 'wikipedia-embeddings-deeplake'
 ```
 
-We will setup OpenAI's `text-embedding-3-small` as our embedding function and initialize a Deep Lake vector store at `dataset_path`...
+我們把 OpenAI 的 `text-embedding-3-small` 設成 embedding function，並在 `dataset_path` 初始化 Deep Lake vector store……
 
 ```python
 from langchain.embeddings.openai import OpenAIEmbeddings
@@ -120,7 +126,7 @@ embedding = OpenAIEmbeddings(model="text-embedding-3-small")
 db = DeepLake(dataset_path, embedding=embedding, overwrite=True)
 ```
 
-... and populate it with samples, one batch at a time, using the `add_texts` method.
+……然後用 `add_texts` 方法，一次一批把樣本填進去。
 
 ```python
 from tqdm.auto import tqdm
@@ -165,8 +171,8 @@ for i in tqdm(range(0, nsamples, batch_size)):
         id        text      (10, 1)      str     None
     ```
 
-## Run user queries on the database
-The underlying Deep Lake dataset object is accessible through `db.vectorstore.dataset`, and the data structure can be summarized using `db.vectorstore.summary()`, which shows 4 tensors with 10 samples:
+## 對資料庫執行使用者 query
+底層的 Deep Lake dataset 物件可以透過 `db.vectorstore.dataset` 取得，也可以用 `db.vectorstore.summary()` 摘要資料結構，它顯示 4 個 tensor、10 筆樣本：
 
 ```python
 db.vectorstore.summary()
@@ -185,7 +191,7 @@ db.vectorstore.summary()
         id        text      (10, 1)      str     None
     ```
 
-We will now setup QA on our vector store with GPT-3.5-Turbo as our LLM.
+現在在 vector store 上設定問答，LLM 用 GPT-3.5-Turbo。
 
 ```python
 from langchain.chains import RetrievalQA
@@ -197,7 +203,7 @@ from langchain.chat_models import ChatOpenAI
 qa = RetrievalQA.from_chain_type(llm=ChatOpenAI(model='gpt-3.5-turbo'), chain_type="stuff", retriever=db.as_retriever())
 ```
 
-Let's try running a prompt and check the output. Internally, this API performs an embedding search to find the most relevant data to feed into the LLM context.
+試著執行一個 prompt 並檢查輸出。這個 API 內部會做 embedding 搜尋，找出最相關的資料放進 LLM 的 context。
 
 ```python
 query = 'Why does the military not say 24:00?'
@@ -210,6 +216,15 @@ qa.run(query)
     'The military prefers not to say 24:00 because they do not like to have two names for the same thing. Instead, they always say "23:59", which is one minute before midnight.'
     ```
 
-Et voila!
+大功告成！
 
-<!-- tutor:summary -->
+## 重點整理
+- 問答系統的核心是檢索加生成：先用 embedding 搜尋找相關文字，再放進 LLM 的 context。
+- LangChain 把 Deep Lake 包成 vector store，用 `add_texts` 就能寫入資料。
+- 寫入和查詢要用同一個 embedding function（這裡是 `text-embedding-3-small`）。
+- vector store 的資料位置由 `dataset_path` 決定。
+
+## 練習
+1. 換一個自己的問題送進問答鏈，檢查答案是否來自資料集內容。
+2. 改檢索時取回的文件數量，看答案有什麼變化。
+3. 把 LLM 換成別的模型，比較同一個問題的回答。

@@ -1,54 +1,67 @@
 ---
-translated: false
+translated: true
 source: examples/building_w_rt_mini/building_w_rt_mini.ipynb
 ---
-
-# Building with Realtime Mini
+# 用 Realtime Mini 打造語音 Agent
 
 > 原文：[examples/building_w_rt_mini/building_w_rt_mini.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/building_w_rt_mini/building_w_rt_mini.ipynb)
 
+## 這篇在做什麼
 
+用 Agents SDK（TypeScript）和 GPT Realtime Mini，做一個航空客服語音 app。主 agent 負責判斷使用者意圖，再用 handoff 交給 QA agent（一般問題）或 Flight Status agent（需要驗證身分的個人問題）。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 用 `RealtimeAgent` 建立主 agent，讓它當意圖分類器並 handoff 給專門的 agent
+- 幫 agent 掛上 `documentLookupTool`，做出（mock 版）文件查詢的 QA agent
+- 用 tool 的 `needsApproval` 參數加上驗證關卡，並監聽 `tool_approval_requested` 事件更新 UI
 
-Growing up, I was fascinated by the idea of Jarvis—an intelligent assistant that could autonomously handle complex workflows. What I didn’t realize back then was that I was imagining the future of voice agents. OpenAI was the first to make this vision real with the launch of `4o-audio`, and more recently made it even more accessible—cutting costs by 70%—with the release of [GPT Realtime Mini](https://platform.openai.com/docs/models/gpt-realtime-mini), which offers lower latency and major improvements in tool calling.
+## 開跑前
 
-Building with speech models, however, is fundamentally different from working with text-only interfaces. In addition to prompt engineering, audio models bring new challenges: they’re more latency-sensitive, require managing a WebRTC session, and introduce additional variability through voice activity detection (VAD).
+- 需要 OpenAI API key
+- 需要 Node.js 環境，會 clone [openai-agents-js](https://github.com/openai/openai-agents-js/tree/main) repo 並跑裡面的 web demo
+- 要有麥克風，才能實際用語音測試
 
-To make this process easier, OpenAI has released the Agents SDK in both Python and TypeScript, along with detailed examples that showcase our recommended design patterns for building reliable voice agents.
+小時候我很迷 Jarvis 這種概念，一個能自己處理複雜工作流程的智慧助理。那時我沒意識到，我想像的其實是語音 agent 的未來。OpenAI 隨著 `4o-audio` 的推出，率先讓這個願景成真，最近又發布了 [GPT Realtime Mini](https://platform.openai.com/docs/models/gpt-realtime-mini)，成本降了 70%，更容易取得，延遲更低，tool calling 也有大幅進步。
 
-Before diving into code, let’s map out exactly what we’ll be building—and how it fits into the broader agent handoff architecture.
+不過，用語音模型開發跟純文字介面根本不同。除了 prompt engineering，音訊模型還帶來新的挑戰：對延遲更敏感、需要管理 WebRTC session，還有語音活動偵測（VAD）帶來的額外變數。
 
-## System Architecture
-For our application today we are going to be building an extremely simple customer support app using the **“handoff architecture”**. **“Handoff Architecture”** means a **primary agent** acts as the orchestrator for all incoming customer queries. Rather than handling every request directly, the primary agent analyzes the intent behind the user’s message and **categorizes it into one of 2 core pathways**:
+為了讓這件事更簡單，OpenAI 推出了 Python 和 TypeScript 版的 Agents SDK，並附上詳細範例，展示我們建議的、用來打造可靠語音 agent 的設計模式。
 
-1. General questions and basic support (no authenticator required).
-2. Specific questions (user authentication required before lookup is performed).
+動手寫程式之前，先搞清楚我們要做什麼，以及它在整個 agent handoff 架構裡的位置。
 
-Based on this categorization, the primary agent **hands off the conversation** to the appropriate specialist agent designed for that specific task.
+## 系統架構
+
+今天我們要做一個非常簡單的客服 app，用的是**「handoff 架構」**。**「Handoff 架構」**是指由一個**主 agent** 負責協調所有進來的客戶問題。它不直接處理每個請求，而是分析使用者訊息背後的意圖，並**歸類到兩條核心路徑之一**：
+
+1. 一般問題和基本支援（不需要驗證）。
+2. 特定問題（查詢前需要先驗證使用者身分）。
+
+依照分類結果，主 agent 會**把對話 handoff** 給專門處理該任務的 specialist agent。
 
 ![alt text](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/byo_realtime_diagram.png)
 
-## Setup
-Instead of starting from scratch we're going to be working from the [openai-agents-js](https://github.com/openai/openai-agents-js/tree/main) repo, so lets start by cloning, installing the necessary dependencies, and building the web demo
+## 設定
+
+我們不從零開始，而是從 [openai-agents-js](https://github.com/openai/openai-agents-js/tree/main) repo 改起，所以先 clone、安裝必要的相依套件，並 build web demo
 ```bash
 git clone https://github.com/openai/openai-agents-js/tree/main
 ```
 
-After cloning follow along with the steps in the readme to get started
+clone 完之後，照 readme 的步驟開始
 ```bash
 npm install @openai/agents zod@3
 pnpm examples:realtime-next
 ```
 
-If everything works as expected you should see a simple chat interface
+如果一切正常，你會看到一個簡單的聊天介面
 ![alt text](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/byo_realtime_starting.png)
 
-## Main Agent
-Great! Now that we've cloned the repo, we are going to be modifying `openai-agents-js/examples/realtime-next/src/app/page.tsx`, starting with the **Main Agent**. Our **Main Agent** is the point of entry for the application stack. It acts as an intent classifier for any user query choosing how to re-route between different layers.
+## 主 Agent
 
-The implementation is fairly straightforward
+好！repo 已經 clone 好了，接下來要修改 `openai-agents-js/examples/realtime-next/src/app/page.tsx`，先從**主 Agent** 開始。**主 Agent** 是整個應用的進入點，它是所有使用者問題的意圖分類器，決定要在不同層之間怎麼轉送。
+
+實作相當直接
 ```js
 const mainAgent = new RealtimeAgent({
   name: 'Main Agent',
@@ -63,9 +76,9 @@ const mainAgent = new RealtimeAgent({
 
 ## QA Agent
 
-Now that we’ve built the main agent, the next step is to add a specialized supporting agent to handle a specific class of customer queries. For general airline policy questions, this will be the QA Agent.
+主 agent 做好了，下一步是加一個專門的輔助 agent，處理某一類客戶問題。針對一般的航空公司政策問題，這個 agent 就是 QA Agent。
 
-In a real-world product, this agent would power a more sophisticated experience: it would ingest company-specific PDFs and other reference materials, embed them, and dynamically query those documents at runtime to provide accurate, policy-grounded answers.
+在真實產品裡，這個 agent 會支撐更完整的體驗：匯入公司專屬的 PDF 和其他參考資料、做 embedding，並在 runtime 動態查詢這些文件，提供準確、有政策依據的答案。
 
 ```
 ┌────────────┐      ┌────────────┐      ┌────────────────────────┐      ┌────────────┐
@@ -78,9 +91,9 @@ In a real-world product, this agent would power a more sophisticated experience:
 
 ```
 
-This would typically involve building a full vector database service that embeds the customer’s query and retrieves the most relevant results. For the sake of simplicity in this demo, we’ll mock that part of the pipeline.
+這通常需要建一整套 vector database 服務，把客戶的查詢做 embedding 並取回最相關的結果。為了讓 demo 簡單，我們把這部分流程 mock 掉。
 
-If you’re interested in learning how to implement a fully featured retrieval system, take a look at our other cookbooks on the topic [here](https://cookbook.openai.com/examples/vector_databases/pinecone/readme).
+如果你想學怎麼實作功能完整的檢索系統，可以看我們關於這個主題的其他 cookbook，在[這裡](https://cookbook.openai.com/examples/vector_databases/pinecone/readme)。
 
 ```js
 const documentLookupTool = tool({
@@ -107,7 +120,7 @@ const documentLookupTool = tool({
 });
 ```
 
-Like before when we defined the Main Agent we are going to create another instance of `RealtimeAgent` but this time we are going to supply a `documentLookupTool`.
+跟前面定義主 Agent 時一樣，我們要建立另一個 `RealtimeAgent` 實例，但這次要提供一個 `documentLookupTool`。
 
 ```js
 const qaAgent = new RealtimeAgent({
@@ -118,10 +131,11 @@ const qaAgent = new RealtimeAgent({
 });
 ```
 
-## Flight Status  Agent
-We’ve already built a powerful foundation: a main agent that can handle inbound customer queries, and a QA agent that searches our document store to provide accurate, policy-based answers.
+## Flight Status Agent
 
-What’s missing is a layer for customer-specific information—for example, queries like “What’s the status of my flight?” or “Which terminal should I go to?”. To support these kinds of personalized interactions, we need to embed an authentication layer into the workflow so the system can securely access and respond with user-specific data.
+我們已經打好很強的基礎：一個能處理進線客戶問題的主 agent，和一個搜尋文件庫、提供有政策依據答案的 QA agent。
+
+缺的是處理客戶專屬資訊的那一層，例如「我的航班狀態是什麼？」或「我該去哪個航廈？」。要支援這類個人化互動，必須在流程裡嵌入驗證層，系統才能安全地存取並回覆使用者專屬的資料。
 
 ```
 ┌────────────┐      ┌──────────────┐      ┌───────────────────────┐      ┌───────────────────────┐
@@ -132,7 +146,7 @@ What’s missing is a layer for customer-specific information—for example, que
                         ▼                          ▼
                 (token, SSO, OTP, etc.)   (e.g., flight status, profile info)
 ```
-Fortunately, the Agents SDK is designed to support this kind of use case. For customer support scenarios that involve sensitive, account-level information, we can ensure proper access control by using the `needsApproval` parameter within `tool`, which requires the user to authenticate before any protected data is accessed.
+還好，Agents SDK 就是為這種情境設計的。對涉及敏感、帳號層級資訊的客服情境，我們可以在 `tool` 裡使用 `needsApproval` 參數來確保適當的存取控制，它要求使用者在任何受保護資料被存取之前先通過驗證。
 
 ```js
 const checkFlightsTool = tool({
@@ -150,7 +164,7 @@ const checkFlightsTool = tool({
 });
 ```
 
-When a tool is registered with `needsApproval`, it automatically emits a `tool_approval_requested` event during the session. This allows us to add logic inside the `RealtimeAgent` instantiation block of our web application to listen for these events and update the UI accordingly—for example, by prompting the user to approve or authenticate before continuing.
+當 tool 註冊了 `needsApproval`，session 期間它會自動發出 `tool_approval_requested` 事件。這讓我們可以在網頁應用的 `RealtimeAgent` 實例化區塊裡加入邏輯，監聽這些事件並相應更新 UI，例如在繼續之前提示使用者核准或驗證。
 
 ```js
   const [credUsername, setCredUsername] = useState('');
@@ -182,13 +196,14 @@ When a tool is registered with `needsApproval`, it automatically emits a `tool_a
   )
 ```
 
-## Final Code Snippet
-And with that, we’re done! You’ve now built the core components of a customer support application:
+## 最終程式碼
 
-* A generalist agent capable of handling a wide range of customer support queries
-* An authentication workflow that verifies user identity and retrieves customer-specific information
+這樣就完成了！你已經做好客服應用的核心元件：
 
-With everything in place, the final version of `realtime-next/src/app/page.tsx` should look like this.
+* 一個能處理各種客服問題的通用 agent
+* 一個驗證使用者身分並取回客戶專屬資訊的驗證流程
+
+全部就位後，`realtime-next/src/app/page.tsx` 的最終版本應該長這樣。
 
 ```js
 'use client';
@@ -450,4 +465,16 @@ export default function Home() {
 }
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 語音 agent 跟文字不同，要多顧延遲、WebRTC session 和 VAD 帶來的變數。
+- Handoff 架構讓主 agent 只負責分類意圖，實際工作交給專門的 agent，各自單純好維護。
+- 每個 specialist agent 就是一個掛了自己 tool 的 `RealtimeAgent`。
+- 敏感資料的存取控制，用 tool 的 `needsApproval` 加上 `tool_approval_requested` 事件，在 UI 層做驗證關卡。
+- 範例裡的文件查詢是 mock，真實產品會換成 embedding 加 vector database 的檢索。
+
+## 練習
+
+1. 在 QA agent 的 mock 文件查詢裡多加一筆政策資料（例如行李規定），用語音問一個相關問題，確認它能答出來。
+2. 修改主 agent 的 instructions，讓它在使用者問題不明確時先追問一句，再決定 handoff 給誰。
+3. 新增第三個 specialist agent（例如改簽航班），給它一個同樣設了 `needsApproval` 的 tool，並在 `tool_approval_requested` 的監聽裡，依 tool 名稱顯示不同的驗證提示。

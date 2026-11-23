@@ -1,24 +1,33 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/EvalsAPI_Image_Inputs.ipynb
 ---
 
-# Using Evals API on Image Inputs
+# 對圖片輸入使用 Evals API
 
 > 原文：[examples/evaluation/use-cases/EvalsAPI_Image_Inputs.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/EvalsAPI_Image_Inputs.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 OpenAI Evals API 評估圖片相關任務。用 sampling 讓模型針對圖片和 prompt 產生回答，再用 model grader（LLM as a Judge）對照圖片、prompt 和參考答案打分數。
+
+## 學完你會
+- 從 Hugging Face 載入 VibeEval 資料集，整理成 Evals API 可用的 data source
+- 建立含 model grader 的 eval，並用圖片 URL 當輸入
+- 建立 run、輪詢結果、查看單筆 output item
+
+## 開跑前
+- OpenAI API key（要能用 Evals API）
 
 
-This cookbook demonstrates how to use OpenAI's Evals framework for image-based tasks. Leveraging the Evals API, we will grade model-generated responses to an image and prompt by using **sampling** to generate model responses and **model grading** (LLM as a Judge) to score the model responses against the image, prompt, and reference answer.
+這份 cookbook 示範怎麼用 OpenAI 的 Evals 框架處理圖片相關任務。我們用 Evals API 對模型針對圖片和 prompt 產生的回答評分：用 **sampling** 產生模型回答，用 **model grading**（LLM as a Judge）依圖片、prompt 和參考答案替回答打分數。
 
-In this example, we will evaluate how well our model can:
-1. **Generate appropriate responses** to user prompts about images
-3. **Align with reference answers** that represent high-quality responses
+這個範例會評估模型能不能：
+1. 針對使用者關於圖片的 prompt，**產生適當的回答**
+3. **對齊參考答案**，也就是高品質回答的代表
 
-## Installing Dependencies + Setup
+## 安裝相依套件與設定
 
 ```python
 # Install required packages
@@ -35,15 +44,15 @@ import time
 import pandas as pd
 ```
 
-## Dataset Preparation
+## 資料集準備
 
-We use the [VibeEval](https://huggingface.co/datasets/RekaAI/VibeEval) dataset that's hosted on Hugging Face. It contains a collection of user prompt, accompanying image, and reference answer data. First, we load the dataset.
+我們用 Hugging Face 上的 [VibeEval](https://huggingface.co/datasets/RekaAI/VibeEval) 資料集，裡面有使用者 prompt、對應的圖片和參考答案。先載入資料集。
 
 ```python
 dataset = load_dataset("RekaAI/VibeEval")
 ```
 
-We extract the relevant fields and put it in a json-like format to pass in as a data source in the Evals API. Input image data can be in the form of a web URL or a base64 encoded string. Here, we use the provided web URLs. 
+我們取出需要的欄位，整理成類似 json 的格式，作為 Evals API 的 data source。輸入圖片可以是網址，也可以是 base64 編碼字串。這裡用資料集提供的網址。 
 
 ```python
 evals_data_source = []
@@ -59,7 +68,7 @@ for example in dataset["test"].select(range(3)):
     })
 ```
 
-If you print the data source list, each item should be of a similar form to:
+印出 data source 清單，每個項目的格式應該類似：
 
 ```python
 {
@@ -71,9 +80,9 @@ If you print the data source list, each item should be of a similar form to:
 }
 ```
 
-## Eval Configuration
+## Eval 設定
 
-Now that we have our data source and task, we will create our evals. For the OpenAI Evals API docs, visit [API docs](https://platform.openai.com/docs/evals/overview).
+有了 data source 和任務，就可以建立 eval。OpenAI Evals API 的文件請看 [API docs](https://platform.openai.com/docs/evals/overview)。
 
 
 ```python
@@ -82,11 +91,11 @@ client = OpenAI(
 )
 ```
 
-Evals have two parts, the "Eval" and the "Run". In the "Eval", we define the expected structure of the data and the testing criteria (grader).
+Eval 分成兩個部分：「Eval」和「Run」。在「Eval」裡，我們定義資料的預期結構和測試標準（grader）。
 
 ### Data Source Config
 
-Based on the data that we have compiled, our data source config is as follows:
+依照我們整理好的資料，data source config 如下：
 
 ```python
 data_source_config = {
@@ -104,13 +113,13 @@ data_source_config = {
 }
 ```
 
-### Testing Criteria
+### 測試標準
 
-For our testing criteria, we set up our grader config. In this example, it is a model grader that takes in an image, reference answer, and sampled model response (in the `sample` namespace), and then outputs a score between 0 and 1 based on how closely the model response matches the reference answer and its general suitability for the conversation. For more info on model graders, visit [API Grader docs](https://platform.openai.com/docs/api-reference/graders). 
+測試標準的部分，我們設定 grader config。這個範例用的是 model grader，輸入包含圖片、參考答案和取樣得到的模型回答（在 `sample` namespace 裡），再依模型回答和參考答案的接近程度，以及回答對這段對話是否合適，輸出 0 到 1 的分數。更多 model grader 的資訊請看 [API Grader docs](https://platform.openai.com/docs/api-reference/graders)。 
 
-Getting the both the data and the grader right are key for an effective evaluation. So, you will likely want to iteratively refine the prompts for your graders. 
+資料和 grader 都做對，是評估有效的關鍵，所以你大概會需要反覆調整 grader 的 prompt。 
 
-**Note**: The image url field / templating need to be placed in an input image object to be interpreted as an image. Otherwise, the image will be interpreted as a text string. 
+**注意**：圖片 url 欄位或 template 要放在 input image 物件裡才會被當成圖片，不然會被當成文字字串。 
 
 ```python
 grader_config = {
@@ -135,7 +144,7 @@ grader_config = {
 	}
 ```
 
-Now, we create the eval object.
+接著建立 eval 物件。
 
 ```python
 eval_object = client.evals.create(
@@ -147,9 +156,9 @@ eval_object = client.evals.create(
 
 ## Eval Run
 
-To create the run, we pass in the eval object id, the data source (i.e., the data we compiled earlier), and the chat message input we will use for sampling to generate the model response. Note that EvalsAPI also supports stored completions and responses containing images as a data source. See the [Additional Info: Logs Data Source](#additional-info-logs-data-source) section for more info.
+建立 run 時，要傳入 eval 物件的 id、data source（就是前面整理的資料），以及取樣產生模型回答時使用的 chat message 輸入。注意 Evals API 也支援把含圖片的 stored completions 和 responses 當作 data source，詳見 [Additional Info: Logs Data Source](#additional-info-logs-data-source) 一節。
 
-Here's the sampling message input we'll use for this example.
+這個範例使用的 sampling message 輸入如下。
 
 ```python
 sampling_messages = [{
@@ -171,7 +180,7 @@ sampling_messages = [{
   }]
 ```
 
-We now kickoff an eval run.
+現在啟動 eval run。
 
 ```python
 eval_run = client.evals.runs.create(
@@ -191,9 +200,9 @@ eval_run = client.evals.runs.create(
     )
 ```
 
-## Poll and Display the Results
+## 輪詢並顯示結果
 
-When the run finishes, we can take a look at the result. You can also check in your org's OpenAI evals dashboard to see the progress and results. 
+run 結束後就可以看結果。你也可以在組織的 OpenAI evals dashboard 看進度和結果。 
 
 ```python
 while True:
@@ -239,9 +248,9 @@ while True:
     2  {"steps":[{"description":"Compare model respon...
     ````
 
-### Viewing Individual Output Items
+### 查看單筆 Output Item
 
-To see a full output item, we can do the following. The structure of an output item is specified in the API docs [here](https://platform.openai.com/docs/api-reference/evals/run-output-item-object).
+要看完整的 output item，可以這樣做。output item 的結構定義在 API 文件[這裡](https://platform.openai.com/docs/api-reference/evals/run-output-item-object)。
 
 ```python
 first_item = output_items[0]
@@ -295,21 +304,31 @@ print(json.dumps(dict(first_item), indent=2, default=str))
     ... (省略 15 行)
     ````
 
-## Additional Info: Logs Data Source
+## 補充：Logs Data Source
 
-As mentioned earlier, EvalsAPI supports logs (i.e., stored completions or responses) containing images as a data source. To use this functionality, change your eval configurations as follows: 
+如前面提到，Evals API 支援把含圖片的 logs（也就是 stored completions 或 responses）當作 data source。要使用這個功能，請這樣修改 eval 設定： 
 
-Eval Creation
-  - set `data_source_config = { "type": "logs" }`
-  - revise templating in `grader_config` to use `{{item.input}}` and/or `{{sample.output_text}}`, denoting the input and output of the log
+建立 Eval
+  - 設定 `data_source_config = { "type": "logs" }`
+  - 修改 `grader_config` 的 template，改用 `{{item.input}}` 和（或）`{{sample.output_text}}`，代表 log 的輸入和輸出
 
-Eval Run Creation
-  - specify the filters in the `data_source` field that will be used to obtain the corresponding logs for the eval run (see the [docs](https://platform.openai.com/docs/api-reference/evals/createRun) for more information)
+建立 Eval Run
+  - 在 `data_source` 欄位指定篩選條件，用來取得這次 eval run 對應的 logs（更多資訊請看[文件](https://platform.openai.com/docs/api-reference/evals/createRun)）
 
-## Conclusion
+## 結論
 
-In this cookbook, we covered a workflow for evaluating an image-based task using the OpenAI Evals API's. By using the image input functionality for both sampling and model grading, we were able to streamline our evals process for the task.
+這份 cookbook 介紹了用 OpenAI Evals API 評估圖片任務的流程。sampling 和 model grading 兩邊都用上圖片輸入功能，讓這個任務的評估流程更順。
 
-We're excited to see you extend this to your own image-based use cases, whether it's OCR accuracy, image generation grading, and more!
+期待你把它延伸到自己的圖片應用，不管是 OCR 準確度、圖片生成評分，還是其他任務！
 
-<!-- tutor:summary -->
+## 重點整理
+- Evals 分成「Eval」（資料結構加 grader）和「Run」（實際跑的資料與取樣設定）兩層。
+- 圖片可以用網址或 base64 傳入，但要放進 input image 物件，否則會被當成純文字。
+- model grader 讓 LLM 依圖片、參考答案和模型回答打分數，grader 的 prompt 值得反覆調整。
+- Evals API 也能直接拿含圖片的 logs（stored completions 或 responses）當 data source。
+- 資料和 grader 都做好，評估結果才可信。
+
+## 練習
+1. 只取資料集前 5 筆跑一次 run，確認整個流程通了，再放大筆數。
+2. 修改 grader 的 prompt，例如加上評分標準或改分數範圍，比較分數分布的變化。
+3. 把 data source 換成 `logs` 類型，改用 `{{item.input}}` 和 `{{sample.output_text}}` 做 template。

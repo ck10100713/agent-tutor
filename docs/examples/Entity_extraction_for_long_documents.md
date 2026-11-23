@@ -1,36 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/Entity_extraction_for_long_documents.ipynb
 ---
 
-# Long document content extraction
+# 長文件內容擷取
 
 > 原文：[examples/Entity_extraction_for_long_documents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Entity_extraction_for_long_documents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+文件太長、塞不進 context window 時，怎麼用 GPT 擷取其中的關鍵數字、日期等內容。做法是把文件切塊，每塊各自處理，再把答案合併成一份清單。範例文件是 F1 財務規章中關於 Power Units 的 PDF。
 
-GPT-3 can help us extract key figures, dates or other bits of important content from documents that are too big to fit into the context window. One approach for solving this is to chunk the document up and process each chunk separately, before combining into one list of answers. 
+## 學完你會
 
-In this notebook we'll run through this approach:
-- Load in a long PDF and pull the text out
-- Create a prompt to be used to extract key bits of information
-- Chunk up our document and process each chunk to pull any answers out
-- Combine them at the end
-- This simple approach will then be extended to three more difficult questions
+- 讀入長 PDF 並抽出文字
+- 寫一個擷取用的 prompt 模板，對每個 chunk 跑一次並收集答案
+- 把方法擴充到需要推理的較難問題，並知道出錯時怎麼調整
 
-## Approach
+## 開跑前
 
-- **Setup**: Take a PDF, a Formula 1 Financial Regulation document on Power Units, and extract the text from it for entity extraction. We'll use this to try to extract answers that are buried in the content.
-- **Simple Entity Extraction**: Extract key bits of information from chunks of a document by:
-    - Creating a template prompt with our questions and an example of the format it expects
-    - Create a function to take a chunk of text as input, combine with the prompt and get a response
-    - Run a script to chunk the text, extract answers and output them for parsing
-- **Complex Entity Extraction**: Ask some more difficult questions which require tougher reasoning to work out
+- OpenAI API key
+- 一份要處理的長 PDF（範例用 F1 Power Units 財務規章）
 
-## Setup
+GPT-3 可以幫我們從太大、塞不進 context window 的文件裡，擷取關鍵數字、日期或其他重要內容。解法之一是把文件切塊，每塊分別處理，最後再合併成一份答案清單。
+
+這份 notebook 會依序走過這個做法：
+- 讀入一份長 PDF 並抽出文字
+- 建立一個 prompt，用來擷取關鍵資訊
+- 把文件切塊，逐塊處理，取出任何答案
+- 最後合併起來
+- 再把這個簡單的做法延伸到另外三個比較難的問題
+
+## 做法
+
+- **設定**：拿一份 PDF（Formula 1 關於 Power Units 的財務規章），抽出文字來做 entity 擷取。我們會用它試著擷取埋在內容裡的答案。
+- **簡單 Entity 擷取**：從文件的各個 chunk 擷取關鍵資訊，步驟是：
+    - 建立 prompt 模板，裡面有我們的問題，以及預期格式的範例
+    - 寫一個函式，輸入一個文字 chunk，跟 prompt 結合後取得回應
+    - 執行腳本，把文字切塊、擷取答案，並輸出供解析
+- **複雜 Entity 擷取**：問一些需要更強推理才能解出的較難問題
+
+## 設定
 
 ```python
 !pip install textract
@@ -50,7 +62,7 @@ text = textract.process('data/fia_f1_power_unit_financial_regulations_issue_1_-_
 clean_text = text.replace("  ", " ").replace("\n", "; ").replace(';',' ')
 ```
 
-## Simple Entity Extraction
+## 簡單 Entity 擷取
 
 ```python
 # Example prompt - 
@@ -153,7 +165,7 @@ zipped
      '3. What is the Capital Expenditure Limit in USD: US Dollars 30,000,000 (Page 32)']
     ```
 
-## Complex Entity Extraction
+## 複雜 Entity 擷取
 
 ```python
 # Example prompt - 
@@ -227,15 +239,26 @@ zipped
      '3. Which years do these financial regulations apply to: 2022 (Page 16)']
     ```
 
-## Consolidation
+## 整合
 
-We've been able to extract the first two answers safely, while the third was confounded by the date that appeared on every page, though the correct answer is in there as well.
+前兩個答案我們都順利擷取到了，第三個被每頁都出現的日期干擾，不過正確答案其實也在結果裡。
 
-To tune this further you can consider experimenting with:
-- A more descriptive or specific prompt
-- If you have sufficient training data, fine-tuning a model to find a set of outputs very well
-- The way you chunk your data - we have gone for 1000 tokens with no overlap, but more intelligent chunking that breaks info into sections, cuts by tokens or similar may get better results
+想進一步調整，可以試試：
+- 更詳細或更具體的 prompt
+- 如果有足夠的訓練資料，fine-tuning 一個模型，讓它很擅長找出特定一組輸出
+- 資料切塊的方式：我們用 1000 個 token、不重疊，但更聰明的切法（例如依章節切、依 token 切等）也許能得到更好的結果
 
-However, with minimal tuning we have now answered 6 questions of varying difficulty using the contents of a long document, and have a reusable approach that we can apply to any long document requiring entity extraction. Look forward to seeing what you can do with this!
+不過，只靠最少的調整，我們已經用一份長文件的內容回答了 6 個難度不一的問題，也得到一個可重複使用的做法，能套用到任何需要 entity 擷取的長文件。期待看到你做出什麼！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 超出 context window 的文件，用「切塊、逐塊問、合併答案」處理。
+- prompt 裡附上預期的輸出格式範例，才方便後續程式解析。
+- 簡單的事實擷取容易，需要推理的問題比較容易被雜訊干擾（像每頁重複的日期）。
+- 可調整的三個方向：prompt、fine-tuning、切塊方式。
+
+## 練習
+
+1. 把 chunk 大小從 1000 token 改成 500 或 2000，比較擷取結果的差異。
+2. 改成讓相鄰 chunk 有重疊，看原本被切斷的資訊能不能被抓到。
+3. 修改 prompt，明確告訴模型忽略每頁重複的日期，重跑第三個問題。

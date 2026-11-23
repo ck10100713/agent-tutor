@@ -1,37 +1,47 @@
 ---
-translated: false
+translated: true
 source: examples/Build_a_coding_agent_with_GPT-5.1.ipynb
 ---
 
-# Build a coding agent with GPT 5.1
+# 用 GPT 5.1 打造 Coding Agent
 
 > 原文：[examples/Build_a_coding_agent_with_GPT-5.1.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Build_a_coding_agent_with_GPT-5.1.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Agents SDK 搭配 GPT-5.1，做一個能從一句 prompt 蓋出全新 app、再根據回饋持續修改的 coding agent。agent 配備 `shell`、`web_search`、`apply_patch` 和 Context7 MCP 四種 tool。
 
+## 學完你會
+- 用 Agents SDK 定義 agent，並自己實作 `ShellExecutor` 來執行模型提出的 shell 指令。
+- 加上 `apply_patch` tool 讓 agent 原地修改檔案，並接上 Context7 MCP server 取得最新文件。
+- 讓 agent 從零建出一個 NextJS dashboard，再改成呼叫 OpenAI Responses API 做摘要。
 
-GPT-5.1 is exceptionally strong at coding, and with the new code-editing and command-execution tools available in the [Responses API](https://platform.openai.com/docs/api-reference/responses), it’s now easier than ever to build coding agents that can work across full codebases and iterate quickly.
+## 開跑前
+- 需要 OpenAI API key，並能使用 `gpt-5.1`。
+- 本機要有 Node 環境，因為 agent 會用 shell 建立 NextJS 專案。
+- Context7 MCP 是外部服務，需要能連到 context7.com。
 
-In this guide, we’ll use the [Agents SDK](https://openai.github.io/openai-agents-python/) to build a **coding agent that can scaffold a brand-new app from a prompt and refine it through user feedback**. Our agent will be equipped with the following tools:
+GPT-5.1 的 coding 能力特別強，加上 [Responses API](https://platform.openai.com/docs/api-reference/responses) 新增的程式碼編輯和指令執行 tool，現在要做出能處理整個 codebase、快速迭代的 coding agent 比以前容易得多。
 
-- **apply_patch** — to edit files
-- **shell** — to run shell commands
-- **web_search** — to pull fresh information from the web
-- **Context7 MCP** — to access up-to-date documentation
+這份指南會用 [Agents SDK](https://openai.github.io/openai-agents-python/) 做一個 **能根據 prompt 蓋出全新 app，並依使用者回饋持續改進的 coding agent**。我們的 agent 會有這些 tool：
 
-We’ll begin by focusing on the `shell` and `web_search` tools to generate a new project with web-sourced context. Then we’ll add `apply_patch` so the agent can iterate on the codebase, and we’ll connect it to the [Context7 MCP server](https://context7.com/) so it can write code informed by the most recent docs.
+- **apply_patch**：編輯檔案
+- **shell**：執行 shell 指令
+- **web_search**：從網路取得最新資訊
+- **Context7 MCP**：取得最新文件
 
-## Set up the agent
+一開始先專注在 `shell` 和 `web_search`，用網路上取得的脈絡產生新專案。接著加入 `apply_patch`，讓 agent 能迭代修改 codebase，再接上 [Context7 MCP server](https://context7.com/)，讓它能依最新的文件寫程式。
 
-With the Agents SDK, defining an agent is as simple as providing instructions and a list of tools. In this example, we want to use the newest `gpt-5.1` model for its state-of-the-art coding abilities.
+## 設定 agent
 
-We’ll start by enabling `web_search`, which gives the agent the ability to look up up-to-date information online, and `shell`, which lets the agent propose shell commands for tasks like scaffolding, installing dependencies, and running build steps.
+有了 Agents SDK，定義 agent 只需要提供 instructions 和 tool 清單。這個例子我們要用最新的 `gpt-5.1` 模型，因為它的 coding 能力是目前最先進的。
 
-The shell tool works by letting the model propose commands it believes should be executed. Your environment is responsible for actually running those commands and returning the output.
+我們先啟用 `web_search`，讓 agent 能上網查最新資訊，以及 `shell`，讓 agent 能提出 shell 指令，處理建立專案骨架、安裝相依套件、執行 build 之類的工作。
 
-The Agents SDK automates most of this command-execution handshake for you—you only need to implement the shell executor, the environment in which those commands will run.
+shell tool 的運作方式是：模型提出它認為該執行的指令，實際執行並回傳輸出的是你的環境。
+
+Agents SDK 幫你自動處理大部分的指令執行流程，你只需要實作 shell executor，也就是那些指令實際執行的環境。
 
 ```python
 %pip install openai-agents openai asyncio
@@ -45,11 +55,11 @@ import os
 assert "OPENAI_API_KEY" in os.environ, "Please set OPENAI_API_KEY first."
 ```
 
-### Define a working environment and shell executor
+### 定義工作環境和 shell executor
 
-For simplicity, we'll run shell commands locally and isolate them in a dedicated workspace directory. This ensures the agent only interacts with files inside that folder.
+為了簡單，我們在本機執行 shell 指令，並把它們隔離在專屬的 workspace 目錄裡，確保 agent 只會碰到那個資料夾裡的檔案。
 
-**Note:** In production, **always execute shell commands in a sandboxed environment**. Arbitrary command execution is inherently risky and must be tightly controlled.
+**注意：** 正式環境一定要在 sandbox 裡執行 shell 指令。任意執行指令本來就有風險，必須嚴格控管。
 
 ```python
 # Create an isolated workspace for shell commands
@@ -67,14 +77,14 @@ print(f"Workspace directory: {workspace_dir}")
     Workspace directory: /Users/katia/dev/openai-cookbook/examples/coding-agent-workspace
     ```
 
-We’ll now define a small `ShellExecutor` class that:
+接著定義一個小的 `ShellExecutor` class，它會：
 
-- Receives a `ShellCommandRequest` from the agent
-- Optionally asks for approval before running commands
-- Runs them using `asyncio.create_subprocess_shell`
-- Returns a `ShellResult` with the outputs
+- 接收 agent 送來的 `ShellCommandRequest`
+- 視需要在執行指令前詢問核准
+- 用 `asyncio.create_subprocess_shell` 執行
+- 回傳包含輸出的 `ShellResult`
 
-All commands will run with `cwd=workspace_dir`, so they only affect files in that subfolder.
+所有指令都在 `cwd=workspace_dir` 下執行，所以只會影響那個子資料夾裡的檔案。
 
 ```python
 import asyncio
@@ -181,7 +191,7 @@ class ShellExecutor:
 shell_tool = ShellTool(executor=ShellExecutor(cwd=workspace_dir))
 ```
 
-### Define the agent
+### 定義 agent
 
 ```python
 # Define the agent's instructions
@@ -206,12 +216,12 @@ coding_agent = Agent(
 )
 ```
 
-## Start a new project
+## 開始一個新專案
 
-Let’s send a prompt to our coding agent and then inspect the files it created in the `workspace_dir`.
-In this example, we'll create a NextJS dashboard using the [shadcn](https://ui.shadcn.com/) library.
+我們送一個 prompt 給 coding agent，再檢查它在 `workspace_dir` 裡建出的檔案。
+這個例子會用 [shadcn](https://ui.shadcn.com/) 函式庫建一個 NextJS dashboard。
 
-**Note:** sometimes you might run into an `MaxTurnsExceeded` error, or the project might have a dependency error. Simply run the agent loop again. In a production environment, you would implement an external loop or user input handling to iterate if the project creation fails.
+**注意：** 有時候會遇到 `MaxTurnsExceeded` 錯誤，或是專案有相依套件的錯誤。重跑一次 agent loop 就好。正式環境裡，你會實作外部迴圈或使用者輸入處理，在建立專案失敗時重試。
 
 ```python
 prompt = "Create a new NextJS app that shows dashboard-01 from https://ui.shadcn.com/blocks on the home page"
@@ -332,24 +342,24 @@ await run_coding_agent_with_logs(prompt)
     ... (省略 313 行)
     ```
 
-Once the agent is done creating the initial project (you should see a "=== Run complete ===" log followed by the final answer), you can check the output with the following commands:
+Agent 建完初始專案後（你會看到 "=== Run complete ===" 的 log，接著是最終答案），可以用下面的指令檢查輸出：
 
 ```bash
 cd coding-agent-workspace/<name_of_the_project>
 npm run dev
 ```
 
-You should see something like this: 
+你應該會看到類似這樣的畫面： 
 ![dashboard screenshot](https://cdn.openai.com/cookbook/dashboard_screenshot1.jpg)
 
 
-## Iterate on the project 
+## 迭代專案 
 
-Now that we have an initial version of the app, we can start iterating using the apply_patch tool. We also want to include calls to the OpenAI Responses API, and for that, the model should have access to the most up-to-date documentation. To make this possible, we’ll connect the agent to the [Context7 MCP server](https://context7.com/), which provides up-to-date docs.
+現在有了 app 的初版，可以用 apply_patch tool 開始迭代。我們也想加入對 OpenAI Responses API 的呼叫，這需要模型能取得最新的文件。為此，我們把 agent 接到 [Context7 MCP server](https://context7.com/)，它提供最新的文件。
 
-### Set up the `apply_patch` tool for in-place edits
+### 設定 `apply_patch` tool 做原地編輯
 
-Note: in production you’ll typically want to run these edits in a sandboxed project workspace (e.g. ephemeral containers), and work with IDEs.
+注意：正式環境通常會想在 sandbox 的專案 workspace（例如暫時性的 container）裡執行這些編輯，並搭配 IDE 使用。
 
 ```python
 import hashlib
@@ -504,7 +514,7 @@ editor = WorkspaceEditor(root=workspace_dir, approvals=approvals, auto_approve=T
 apply_patch_tool = ApplyPatchTool(editor=editor)
 ```
 
-### Connect to the Context7 MCP server
+### 連接 Context7 MCP server
 
 ```python
 # Optional: set CONTEXT7_API_KEY in your environment for higher rate limits
@@ -530,10 +540,10 @@ context7_tool = HostedMCPTool(
 )
 ```
 
-### Update the agent
+### 更新 agent
 
-Let's create a new agent that also uses these two additional tools, and update the instructions accordingly.
-To avoid a context mismatch when applying the diffs, for this agent we'll specify not to edit files via a command.
+我們建立一個新的 agent，加上這兩個額外的 tool，並相應更新 instructions。
+為了避免套用 diff 時 context 對不上，這個 agent 會被指定不要用指令編輯檔案。
 
 ```python
 UPDATED_INSTRUCTIONS = """
@@ -565,7 +575,7 @@ updated_coding_agent = Agent(
 )
 ```
 
-### Run the agent to edit the project
+### 執行 agent 修改專案
 
 ```python
 import asyncio
@@ -735,16 +745,26 @@ await run_updated_coding_agent_with_logs(edit_prompt)
     ... (省略 537 行)
     ```
 
-Once the agent is done updating the project (you should see a "=== Run complete ===" log followed by the final answer), you will see the updated UI, with the OpenAI Responses API call to summarize what's on the dashboard.
+Agent 更新完專案後（你會看到 "=== Run complete ===" 的 log，接著是最終答案），就會看到更新後的 UI，裡面有呼叫 OpenAI Responses API 來摘要 dashboard 內容。
 
-**Note**: If this step fails, you can re-run the agent loop. In a production environment, you would implement an outer loop that handles errors or wait for user input and iterate.
+**注意**：如果這一步失敗，可以重跑 agent loop。正式環境裡，你會實作外層迴圈來處理錯誤，或等待使用者輸入再迭代。
 
 ![final dashboard screenshot](https://cdn.openai.com/cookbook/dashboard_screenshot2.jpg)
 
-## Wrapping up
+## 總結
 
-In this cookbook guide, we built a coding agent that can scaffold a project, refine it through patches, execute commands, and stay up to date with external documentation. By combining GPT 5.1 with the Agents SDK and tools like `shell`, `apply_patch`, `web_search`, and the Context7 MCP, you can create agents that don’t just generate code—they actively work with codebases: running commands, applying edits, pulling in fresh context, and evolving a project end-to-end.
+這份教學我們做了一個 coding agent：能建立專案骨架、用 patch 改進專案、執行指令，還能跟上外部文件的更新。把 GPT 5.1 跟 Agents SDK，以及 `shell`、`apply_patch`、`web_search`、Context7 MCP 這些 tool 組合起來，你可以做出不只是產生程式碼的 agent，而是真的會處理 codebase：執行指令、套用修改、拉進最新脈絡，把專案從頭到尾演進下去。
 
-This workflow is a powerful blueprint for building agents that feel less like tools and more like collaborators. You can extend this pattern to integrate agents into IDEs or code sandboxes, generate new apps from scratch, work across large codebases, or even collaborate with developers in real time.
+這個流程是打造 agent 的有力藍圖，讓 agent 更像協作夥伴而不是工具。你可以延伸這個模式，把 agent 整合進 IDE 或 code sandbox、從零產生新 app、處理大型 codebase，甚至即時跟開發者協作。
 
-<!-- tutor:summary -->
+## 重點整理
+- Agents SDK 定義 agent 只需要 instructions 加 tool 清單，shell 的指令往返流程 SDK 幫你處理。
+- shell tool 是模型提議指令、你的環境實際執行。這代表安全責任在你，正式環境一定要 sandbox。
+- `apply_patch` 讓 agent 精準改檔，比用 shell 指令改檔更不容易出現 context 對不上的問題。
+- MCP server（這裡是 Context7）能讓 agent 取得最新文件，寫出符合新 API 的程式。
+- 專案生成可能失敗或超過 turn 上限，正式環境要自己在外層加重試和使用者回饋。
+
+## 練習
+1. 把 workspace 目錄換成別的名字，並在 `ShellExecutor` 執行前加一個印出指令的 log，觀察 agent 實際跑了哪些指令。
+2. 修改初始 prompt，把 NextJS dashboard 換成別種 app（例如待辦清單），看 agent 怎麼調整。
+3. 在 `ShellExecutor` 加入核准機制，遇到 `rm` 之類的指令時要求人工確認才執行。

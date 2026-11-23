@@ -1,74 +1,86 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/oracle_db/deep_research_openai_agents.ipynb
 ---
-
-# Enabling Long-Term Agent Memory with Oracle AI Agent Memory
+# 用 Oracle AI Agent Memory 打造 Agent 的長期記憶
 
 > 原文：[examples/vector_databases/oracle_db/deep_research_openai_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/oracle_db/deep_research_openai_agents.ipynb)
 
-Build a deep-research agent with the OpenAI Agents SDK, Oracle-backed session persistence, durable memory, and Tavily web search.
+用 OpenAI Agents SDK 建一個 deep-research agent，搭配 Oracle 做 session 持久化、長期記憶，並用 Tavily 做網路搜尋。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+自己實作 Agents SDK 的 `Session` 協定，把短期的對話紀錄存進 Oracle AI Database，再另外用 tool 把研究結論存成長期記憶。範例是一個人類基因組的 deep-research agent，用 Tavily 查網路，並驗證新 session 也能想起之前存下的發現。
+
+## 學完你會
+
+- 對自訂後端（Oracle AI Agent Memory）實作 Agents SDK 的 `Session` 協定。
+- 把 Tavily 包成 `function_tool`，再加上 `save_research_finding` 和 `recall_research_findings` 兩個記憶 tool。
+- 用新的 `session_id` 驗證 agent 能接續前一次研究，而不是靠舊的對話紀錄。
+
+## 開跑前
+
+- 需要一個跑得到的 Oracle AI Database（本機 Docker 或遠端）。
+- 需要 `OPENAI_API_KEY` 和 `TAVILY_API_KEY`（Tavily 有免費額度）。
+- 用 Colab 的話，Oracle 資料庫要能從 Colab 連得到，Colab 連不到你筆電上的 `localhost`。
 
 [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/openai/openai-cookbook/blob/main/examples/vector_databases/oracle_db/deep_research_openai_agents.ipynb) [![Documentation](https://img.shields.io/badge/Documentation-Oracle%20AI%20Agent%20Memory-red?style=flat-square)](https://www.oracle.com/database/ai-agent-memory/)
 
-**Framework:** OpenAI Agents SDK | **Web search:** Tavily | **Memory:** Oracle AI Agent Memory on Oracle AI Database
+**框架：** OpenAI Agents SDK | **網路搜尋：** Tavily | **記憶：** Oracle AI Database 上的 Oracle AI Agent Memory
 
-Long-running agent workflows often need more than short-term conversation replay. They need a way to remember durable findings, decisions, and reusable context across sessions, so the agent can continue from prior work instead of starting from scratch each time.
+長時間運作的 agent 工作流程，需要的不只是短期的對話重播。它們要能跨 session 記住持久的發現、決定和可重用的 context，這樣 agent 才能從之前的成果繼續，不用每次從頭開始。
 
-This notebook demonstrates an **Oracle-backed Session pattern for the OpenAI Agents SDK**. It is not a general-purpose OpenAI memory implementation. The Agents SDK `Session` interface stores short-term conversation history for the current agent loop; durable research findings are saved separately through explicit memory tools backed by Oracle AI Agent Memory.
+這個 notebook 示範的是 **OpenAI Agents SDK 的 Oracle 後端 Session 模式**，它不是通用的 OpenAI 記憶實作。Agents SDK 的 `Session` 介面存的是目前 agent 迴圈的短期對話歷史，持久的研究發現則另外透過明確的記憶 tool 存進 Oracle AI Agent Memory。
 
-The example uses a **deep research agent** for human genome exploration, but the core pattern is broader: combine OpenAI Agents SDK session persistence with a durable memory layer for reusable findings. The agent uses Tavily for live web research, stores OpenAI Agents SDK session items in Oracle AI Database, and saves durable findings through a dedicated `save_research_finding` tool.
+範例用一個探索人類基因組的 **deep research agent**，但核心模式更廣：把 OpenAI Agents SDK 的 session 持久化，和一個存放可重用發現的長期記憶層結合。agent 用 Tavily 做即時的網路研究，把 OpenAI Agents SDK 的 session items 存在 Oracle AI Database，並透過專用的 `save_research_finding` tool 存下持久的發現。
 
-## Why Long-Term Memory Matters
+## 為什麼長期記憶重要
 
-Short-term session memory helps an agent keep the current conversation coherent. Long-term memory solves a different problem: it lets an agent preserve selected findings across sessions, resume prior work, and avoid rediscovering facts that were already researched.
+短期的 session 記憶幫 agent 維持當前對話的連貫。長期記憶解決的是另一個問題：讓 agent 跨 session 保留挑選過的發現、接續之前的工作，避免重新找一遍已經研究過的事實。
 
-For this example, session items and durable findings have different lifecycles. Session items are raw conversation state used for replay inside the agent loop. Durable findings are curated, searchable conclusions that the agent deliberately saves through a tool.
+在這個範例裡，session items 和持久的發現有不同的生命週期。Session items 是原始的對話狀態，用來在 agent 迴圈裡重播。持久的發現是經過整理、可搜尋的結論，由 agent 刻意透過 tool 存下來。
 
-Oracle AI Agent Memory fits this pattern when an application already operates on Oracle AI Database and needs governed durable memories, semantic search over saved findings, and scoped access to both short-term session replay and long-term memory on one database-backed substrate.
+如果應用已經跑在 Oracle AI Database 上，又需要受治理的持久記憶、對已存發現做語意搜尋，以及在同一個資料庫底層對短期 session 重播和長期記憶做範圍控管，Oracle AI Agent Memory 就適合這個模式。
 
 ---
 
-## Operational Modes in Agent Applications
+## Agent 應用的運作模式
 
-AI agent applications generally fall into three operational modes:
+AI agent 應用大致分成三種運作模式：
 
-| Mode | Shape | Typical use |
+| 模式 | 形式 | 典型用途 |
 |---|---|---|
-| **Assistant** | Turn-by-turn conversational | Customer support, coding copilot, chat UIs |
-| **Deep Research** | Multi-step autonomous investigation | Literature review, market research, technical scoping |
-| **Workflow** | Predetermined sequence of steps, often with conditional branches | Approval pipelines, compliance checks, structured triage |
+| **Assistant** | 一來一往的對話 | 客服、coding copilot、聊天介面 |
+| **Deep Research** | 多步驟的自主調查 | 文獻回顧、市場研究、技術範圍評估 |
+| **Workflow** | 預先決定好的步驟順序，常帶條件分支 | 簽核流程、合規檢查、結構化分流 |
 
-> **Note:** This notebook focuses on the Deep Research mode.
+> **注意：** 這個 notebook 聚焦在 Deep Research 模式。
 >
-> A deep-research agent plans, retrieves, synthesises, and accumulates findings over long-horizon investigations. Memory is central, but not all memory has the same lifecycle: session items support short-term continuity, while durable findings are curated facts the agent can reuse across sessions.
+> deep-research agent 會在長時間的調查中規劃、檢索、整合並累積發現。記憶是核心，但不是所有記憶的生命週期都一樣：session items 支援短期的連續性，持久的發現則是 agent 可以跨 session 重用、經過整理的事實。
 
 
-## What You'll Learn
+## 你會學到
 
-- How to implement the **OpenAI Agents SDK `Session` protocol** against a custom backend (Oracle AI Agent Memory)
-- How to wrap **Tavily** as a `function_tool` the agent can call
-- How to store long-lived research findings as durable **memories** (separate from short-term conversation history)
-- How to verify memory continuity across sessions — the agent can pick up where it left off
+- 如何針對自訂後端（Oracle AI Agent Memory）實作 **OpenAI Agents SDK 的 `Session` 協定**
+- 如何把 **Tavily** 包成 agent 可呼叫的 `function_tool`
+- 如何把長期的研究發現存成持久的 **memory**（和短期對話歷史分開）
+- 如何驗證跨 session 的記憶連續性，也就是 agent 能從上次中斷的地方接著做
 
-> **💡 Key insight:** Short-term memory (conversation history for the current run) and long-term memory (durable findings across runs) are different access patterns over the same store. We use `Session` for the former and `add_memory()` for the latter.
+> **💡 重點：** 短期記憶（當次執行的對話歷史）和長期記憶（跨次執行的持久發現）是對同一個儲存區的不同存取模式。前者用 `Session`，後者用 `add_memory()`。
 
-## Prerequisites
+## 前置條件
 
-- **Python 3.10 or 3.11** recommended for this notebook
-- **Oracle AI Database** running locally (Docker container) or reachable over the network
-- **`OPENAI_API_KEY`** for the agent's LLM and embeddings
-- **`TAVILY_API_KEY`** for web search (free tier available at [tavily.com](https://tavily.com))
-- The `oracleagentmemory`, `litellm`, `openai-agents`, `tavily-python`, `python-dotenv`, and `nest_asyncio` packages installed in the active kernel's environment
+- 這個 notebook 建議用 **Python 3.10 或 3.11**
+- **Oracle AI Database** 在本機執行（Docker container）或可透過網路連到
+- **`OPENAI_API_KEY`**，供 agent 的 LLM 和 embeddings 使用
+- **`TAVILY_API_KEY`**，供網路搜尋使用（[tavily.com](https://tavily.com) 有免費額度）
+- 目前 kernel 環境裡已安裝 `oracleagentmemory`、`litellm`、`openai-agents`、`tavily-python`、`python-dotenv` 和 `nest_asyncio`
 
-If you run this notebook in Colab, the Oracle database must be reachable from the Colab runtime. Colab cannot reach a Docker database on your laptop via `localhost`; expose the database through a reachable host/network path, or run the notebook locally next to the Docker container.
+如果在 Colab 跑這個 notebook，Oracle 資料庫必須能從 Colab 的 runtime 連到。Colab 沒辦法用 `localhost` 連到你筆電上的 Docker 資料庫，要嘛把資料庫開放到可連到的主機或網路路徑，要嘛在本機、跟 Docker container 同一台機器上跑 notebook。
 
-For a local Oracle Database Free Docker container with port `1521` exposed, the DSN usually looks like `localhost:1521/FREEPDB1`. If your container maps Oracle's listener to a different host port, use that host port in `ORACLE_DSN`. Wait until the container reports `DATABASE IS READY TO USE!` before running the connection cell.
+本機的 Oracle Database Free Docker container 如果有開放 `1521` 埠，DSN 通常長得像 `localhost:1521/FREEPDB1`。如果你的 container 把 Oracle listener 對應到別的主機埠，`ORACLE_DSN` 就要用那個主機埠。執行連線 cell 之前，先等 container 回報 `DATABASE IS READY TO USE!`。
 
-Create a `.env` file next to the notebook or set these variables in your shell:
+在 notebook 旁建一個 `.env` 檔，或在 shell 設定這些變數：
 
 ```env
 OPENAI_API_KEY=
@@ -80,14 +92,14 @@ ORACLE_DSN=
 # OPENAI_MODEL=
 ```
 
-The notebook also accepts the legacy aliases `DB_USER`, `DB_PASSWORD`, and `DB_CONNECT_STRING`, but the Oracle-style names above are preferred.
+這個 notebook 也接受舊的別名 `DB_USER`、`DB_PASSWORD` 和 `DB_CONNECT_STRING`，不過建議用上面 Oracle 風格的名稱。
 
 
-## 1. Install dependencies
+## 1. 安裝相依套件
 
-We install the notebook dependencies: `oracleagentmemory` for Oracle-backed memory, `litellm` for the embedding path used by Oracle AI Agent Memory, `openai-agents` for the Agents SDK runtime, `tavily-python` for web search, `python-dotenv` for environment variables, and `nest_asyncio` so `Runner.run` works cleanly inside a Jupyter event loop.
+安裝 notebook 需要的套件：`oracleagentmemory` 用於 Oracle 後端的記憶，`litellm` 是 Oracle AI Agent Memory 做 embedding 時用的路徑，`openai-agents` 是 Agents SDK 的 runtime，`tavily-python` 用於網路搜尋，`python-dotenv` 用於環境變數，`nest_asyncio` 則讓 `Runner.run` 能在 Jupyter 的 event loop 裡正常運作。
 
-Dependency boundary: `openai-agents` provides the Agents SDK runtime and session protocol, while `litellm` is used by Oracle AI Agent Memory for embeddings and semantic search over durable findings. A plain Agents SDK session implementation does not require Oracle's long-term memory path.
+相依性的分界：`openai-agents` 提供 Agents SDK 的 runtime 和 session 協定，`litellm` 則由 Oracle AI Agent Memory 用來對持久的發現做 embedding 和語意搜尋。單純實作 Agents SDK 的 session，並不需要 Oracle 的長期記憶這條路徑。
 
 
 ```python
@@ -95,17 +107,17 @@ Dependency boundary: `openai-agents` provides the Agents SDK runtime and session
 %pip install -q oracleagentmemory litellm openai-agents tavily-python nest_asyncio python-dotenv
 ```
 
-## 2. Configure API keys and Oracle connection
+## 2. 設定 API key 和 Oracle 連線
 
-Load configuration from `.env` or environment variables. This notebook intentionally does **not** provide default credentials. If a required value is missing, it prompts you for it rather than embedding secrets in the notebook.
+從 `.env` 或環境變數載入設定。這個 notebook 刻意**不**提供預設的帳密，缺少必要的值時會提示你輸入，而不是把機密寫進 notebook。
 
-Required values:
+必要的值：
 
 - `OPENAI_API_KEY`
 - `TAVILY_API_KEY`
-- `ORACLE_USER` or `DB_USER`
-- `ORACLE_PASSWORD` or `DB_PASSWORD`
-- `ORACLE_DSN` or `DB_CONNECT_STRING`
+- `ORACLE_USER` 或 `DB_USER`
+- `ORACLE_PASSWORD` 或 `DB_PASSWORD`
+- `ORACLE_DSN` 或 `DB_CONNECT_STRING`
 
 ```python
 import os
@@ -166,16 +178,16 @@ print("OpenAI model configured.")
     OpenAI model configured.
     ```
 
-## 3. Connect to Oracle AI Database and initialise the memory client
+## 3. 連到 Oracle AI Database 並初始化 memory client
 
-`OracleAgentMemory` is the governed memory client. In this notebook, automatic extraction is disabled so the separation is explicit:
+`OracleAgentMemory` 是受治理的記憶 client。這個 notebook 把自動擷取關掉，讓兩者的區隔很明確：
 
-- **Session items** are short-term OpenAI Agents SDK conversation state used for replay.
-- **Research findings** are durable memories written only through the `save_research_finding` tool.
+- **Session items** 是 OpenAI Agents SDK 的短期對話狀態，用來重播。
+- **Research findings** 是持久的記憶，只透過 `save_research_finding` tool 寫入。
 
-We use `text-embedding-3-small` for semantic search over durable findings.
+我們用 `text-embedding-3-small` 對持久的發現做語意搜尋。
 
-> **💡 Key insight:** `schema_policy` controls how the library interacts with the DB on startup. `REQUIRE_EXISTING` never issues DDL. `CREATE_IF_NECESSARY` fills in missing objects and is safer for demos and development. `RECREATE` drops and rebuilds objects and should not be the default in a shared schema.
+> **💡 重點：** `schema_policy` 控制函式庫啟動時怎麼操作資料庫。`REQUIRE_EXISTING` 絕不下 DDL。`CREATE_IF_NECESSARY` 會補上缺少的物件，對 demo 和開發比較安全。`RECREATE` 會刪掉重建物件，在共用的 schema 裡不該當預設值。
 
 ```python
 import oracledb
@@ -206,9 +218,9 @@ print("Memory client ready with safe schema policy:", SchemaPolicy.CREATE_IF_NEC
     Memory client ready with safe schema policy: create_if_necessary
     ```
 
-## 4. Register the research user and agent
+## 4. 註冊研究用的 user 和 agent
 
-Use a unique run scope so rerunning the notebook does not mix old demo memories with the current run. This keeps `CREATE_IF_NECESSARY` safe while avoiding stale long-term findings from previous executions.
+用獨一無二的執行範圍（run scope），這樣重跑 notebook 時，舊的 demo 記憶就不會和目前這次混在一起。這讓 `CREATE_IF_NECESSARY` 保持安全，也避免讀到前幾次執行留下來的過時長期發現。
 
 ```python
 from datetime import datetime, timezone
@@ -238,13 +250,13 @@ print(f"Run scope: {RUN_ID}")
     Run scope: 20260715083601
     ```
 
-## 5. Implement the `Session` protocol on top of Oracle AI Agent Memory
+## 5. 在 Oracle AI Agent Memory 上實作 `Session` 協定
 
-The OpenAI Agents SDK `Session` protocol handles **short-term session persistence**: the runner asks for previous items and appends new items during the agent loop.
+OpenAI Agents SDK 的 `Session` 協定處理的是**短期的 session 持久化**：runner 會取回之前的 items，並在 agent 迴圈中附加新的 items。
 
-In this implementation, session items are stored as Oracle Agent Memory `message` records with `metadata={"session_item": true}`. They are scoped by `session_id`, `user_id`, and `agent_id`, and they are used only for replaying the conversation. Durable long-term findings are stored separately as `memory` records through the `save_research_finding` tool.
+在這個實作裡，session items 以 Oracle Agent Memory 的 `message` 記錄儲存，帶 `metadata={"session_item": true}`。它們依 `session_id`、`user_id` 和 `agent_id` 分範圍，只用來重播對話。持久的長期發現則透過 `save_research_finding` tool，另外存成 `memory` 記錄。
 
-> **Important:** Raw model/tool messages can be large and noisy. They should not appear as long-term research findings unless a tool deliberately promotes a concise conclusion.
+> **重要：** 原始的模型和 tool 訊息可能很大又很雜，除非 tool 刻意把簡潔的結論提升上去，否則它們不該出現在長期的研究發現裡。
 
 ```python
 import json
@@ -370,17 +382,17 @@ class OracleAgentMemorySession(SessionABC):
         return "user"
 ```
 
-## 6. Define the agent's tools
+## 6. 定義 agent 的 tool
 
-The agent needs three tools:
+這個 agent 需要三個 tool：
 
-1. **`tavily_search`** — live web search for up-to-date genomics sources
-2. **`save_research_finding`** — persist a durable research note the agent can recall in future sessions
-3. **`recall_research_findings`** — search the long-term memory for prior findings on a topic
+1. **`tavily_search`**：即時網路搜尋，找最新的基因體學來源
+2. **`save_research_finding`**：保存一則持久的研究筆記，供 agent 在之後的 session 回想
+3. **`recall_research_findings`**：在長期記憶裡搜尋某個主題之前的發現
 
-Tools 2 and 3 are how the agent manages its **long-term** memory. They're distinct from the `Session` machinery, which handles short-term conversation history automatically.
+第 2 和第 3 個 tool 是 agent 管理**長期**記憶的方式，它們和 `Session` 機制是分開的，`Session` 會自動處理短期的對話歷史。
 
-> **📌 The `@function_tool` decorator** auto-generates the tool's JSON schema from Python type hints and parses the docstring for the description the LLM sees. Write informative docstrings — the LLM reads them.
+> **📌 `@function_tool` decorator** 會從 Python 的型別提示自動產生 tool 的 JSON schema，並解析 docstring 當成 LLM 看到的描述。docstring 要寫清楚，因為 LLM 會讀。
 
 ```python
 from agents import function_tool
@@ -468,15 +480,15 @@ print("Tools defined: tavily_search, save_research_finding, recall_research_find
     Tools defined: tavily_search, save_research_finding, recall_research_findings
     ```
 
-## 7. Construct the research agent
+## 7. 建立研究 agent
 
-The agent's `instructions` are its system prompt — the place to encode the behaviour you want. For a deep-research agent, the instructions should emphasise:
+agent 的 `instructions` 就是它的 system prompt，你想要的行為就寫在這裡。對 deep-research agent 來說，instructions 應該強調：
 
-1. **Recall before research** — check long-term memory before hitting the web
-2. **Cite sources** — so findings are traceable
-3. **Save what's worth remembering** — commit durable conclusions explicitly
+1. **先回想再研究**：上網之前先查長期記憶
+2. **引用來源**：讓發現可以追溯
+3. **存下值得記住的東西**：明確地把持久的結論存下來
 
-> **💡 Key insight:** A deep-research agent's output quality is largely determined by how well its instructions distinguish *research* (retrieve + synthesise) from *conversation* (respond + acknowledge). Encode that distinction in the system prompt.
+> **💡 重點：** deep-research agent 的輸出品質，很大程度取決於 instructions 有沒有分清楚*研究*（檢索加整合）和*對話*（回應加確認）。把這個區別寫進 system prompt。
 
 ```python
 from agents import Agent, Runner
@@ -509,16 +521,16 @@ print(f"Agent created: {research_agent.name}")
     Agent created: GenomeDeepResearcher
     ```
 
-## 8. Run a research session
+## 8. 執行一次研究 session
 
-We create a session (tied to a `thread_id` in the memory store) and run the agent over a sequence of research questions. Because we pass `session=session`, the SDK will automatically inject prior conversation items at the start of each turn and persist new items at the end.
+我們建立一個 session（綁定記憶儲存區裡的 `thread_id`），讓 agent 依序處理一連串研究問題。因為傳了 `session=session`，SDK 會在每一輪開始時自動帶入之前的對話 items，並在結束時保存新的 items。
 
-> **📌 Separation of concerns.**
-> - The `Session` persists the **raw conversation** (working memory).
-> - The agent's `save_research_finding` tool persists **durable findings** (long-term memory).
-> Both live in the same Oracle database but are accessed through different interfaces.
+> **📌 職責分離。**
+> - `Session` 保存**原始對話**（工作記憶）。
+> - agent 的 `save_research_finding` tool 保存**持久的發現**（長期記憶）。
+> 兩者都放在同一個 Oracle 資料庫，但透過不同的介面存取。
 
-Because this example uses live web search and model generation, exact wording, citations, and ranking may vary between runs. The important behavior to verify is that the agent recalls durable findings before researching, cites sources, and saves new findings explicitly through the memory tool.
+因為這個範例用即時網路搜尋和模型生成，每次執行的措辭、引用和排序可能不同。要驗證的重點行為是：agent 在研究之前先回想持久的發現、引用來源，並透過記憶 tool 明確地存下新的發現。
 
 
 ```python
@@ -564,14 +576,14 @@ display(Markdown("\n\n---\n\n".join(session_sections)))
     <IPython.core.display.Markdown object>
     ```
 
-## 9. Inspect what the agent remembered
+## 9. 檢查 agent 記住了什麼
 
-At this point the agent has accumulated two different kinds of records:
+到這裡，agent 已經累積了兩種不同的記錄：
 
-- **Short-term session items**: raw OpenAI Agents SDK items that replay the conversation for the current session.
-- **Durable research findings**: concise conclusions the agent deliberately saved through `save_research_finding`.
+- **短期 session items**：原始的 OpenAI Agents SDK items，用來重播目前 session 的對話。
+- **持久的研究發現**：agent 刻意透過 `save_research_finding` 存下的簡潔結論。
 
-The two lists should look different. Session items may include user messages, tool calls, and tool outputs. Durable findings should be short, factual, reusable research notes — not raw `call_id` JSON or full tool output.
+兩份清單看起來應該不一樣。Session items 可能包含使用者訊息、tool call 和 tool 輸出。持久的發現則應該是簡短、事實性、可重用的研究筆記，不是原始的 `call_id` JSON 或完整的 tool 輸出。
 
 ```python
 # Short-term: conversation items replayed each turn.
@@ -625,13 +637,13 @@ display(Markdown(summary + "\n" + "\n".join(rows)))
     <IPython.core.display.Markdown object>
     ```
 
-## 10. Verify continuity — resume a fresh session with the same memory store
+## 10. 驗證連續性：用同一個記憶儲存區開新的 session
 
-The real test of a memory-aware agent is whether it can pick up where a prior session left off. Let's create a *new* session (simulating a separate process or later day) and ask a question that builds on prior durable findings.
+判斷有記憶的 agent 好不好，真正的測試是它能不能從上次中斷的地方接著做。我們建一個*新的* session（模擬另一個程序或隔天），問一個建立在之前持久發現上的問題。
 
-If the agent recalls BRCA1 findings from the previous run without depending on the previous session transcript, we've demonstrated end-to-end durable memory continuity.
+如果 agent 不靠上次的 session 逐字稿，就能想起前一次執行的 BRCA1 發現，就證明了端到端的持久記憶連續性。
 
-This is an educational genomics example, not medical advice. The follow-up asks the agent to summarize guideline-backed discussion topics with citations, not to provide patient-specific clinical recommendations.
+這是教育性的基因體學範例，不是醫療建議。後續問題是請 agent 摘要有指引依據的討論主題並附上引用，不是提供針對特定病人的臨床建議。
 
 
 ```python
@@ -669,11 +681,11 @@ display(
     <IPython.core.display.Markdown object>
     ```
 
-## 11. Cleanup (optional)
+## 11. 清理（選用）
 
-Cleanup is intentionally commented out. Uncomment it only when you want to remove the current run's session items and durable findings from your demo schema.
+清理的程式碼刻意被註解掉。只有在你想把目前這次執行的 session items 和持久發現從 demo schema 移除時，才取消註解。
 
-The setup above uses `CREATE_IF_NECESSARY`, so rerunning the notebook should not drop and recreate the schema by default. Each run uses a unique `RUN_ID` to avoid mixing current results with stale demo memories.
+前面的設定用的是 `CREATE_IF_NECESSARY`，所以重跑 notebook 預設不會把 schema 刪掉重建。每次執行都用獨一無二的 `RUN_ID`，避免目前的結果和過時的 demo 記憶混在一起。
 
 ```python
 # await session.clear_session()
@@ -692,18 +704,30 @@ print("Connection closed.")
     Connection closed.
     ```
 
-## Key Takeaways
+## 重點回顧
 
-> **🎯 1. The `Session` protocol is the clean integration point.** Four async methods (`get_items`, `add_items`, `pop_item`, `clear_session`) is all the OpenAI Agents SDK needs to plug in a custom session backend. You don't have to modify the runner — you implement the protocol and pass an instance via `session=`.
+> **🎯 1. `Session` 協定是乾淨的整合點。** 四個 async 方法（`get_items`、`add_items`、`pop_item`、`clear_session`）就足以讓 OpenAI Agents SDK 接上自訂的 session 後端。你不用改 runner，只要實作協定，再用 `session=` 傳入實例。
 
-> **🎯 2. Session persistence is not the same as long-term memory.** The session handles short-term conversation replay for the current agent loop. Durable findings should be concise conclusions written through explicit tools, not raw conversation or tool output dumped into long-term memory.
+> **🎯 2. Session 持久化不等於長期記憶。** Session 處理的是當前 agent 迴圈的短期對話重播。持久的發現應該是透過明確 tool 寫入的簡潔結論，不是把原始對話或 tool 輸出整包倒進長期記憶。
 
-> **🎯 3. Instructions steer memory usage.** A deep-research agent must be explicitly told to *recall before researching* and *save durable conclusions*. Otherwise the LLM will treat memory as optional decoration and the store will fill up with low-value content.
+> **🎯 3. Instructions 決定記憶怎麼被使用。** deep-research agent 必須被明確告知要*先回想再研究*並*存下持久的結論*。否則 LLM 會把記憶當成可有可無的裝飾，儲存區就會被低價值的內容塞滿。
 
-> **🎯 4. Use safe schema defaults.** `CREATE_IF_NECESSARY` is safer for demos and development than a destructive recreate policy. Reserve destructive schema reset paths for isolated demo schemas.
+> **🎯 4. 使用安全的 schema 預設值。** 對 demo 和開發來說，`CREATE_IF_NECESSARY` 比破壞性的重建策略安全。破壞性的 schema 重置只留給獨立的 demo schema。
 
-> **🎯 5. Oracle AI Database gives you one governed substrate for both tiers.** Short-term session items and durable findings can live in one backend while remaining separate record types with different lifecycles.
+> **🎯 5. Oracle AI Database 讓兩個層級共用一個受治理的底層。** 短期 session items 和持久發現可以放在同一個後端，同時維持各自的記錄類型和不同的生命週期。
 
-> **🎯 6. Continuity is testable.** A new `session_id` with the same `user_id` / `agent_id` should produce an agent that reasons over prior durable findings. That's the simplest end-to-end test of a memory-aware agent.
+> **🎯 6. 連續性是可以測試的。** 用新的 `session_id`、同樣的 `user_id` 和 `agent_id`，應該能得到一個會根據先前持久發現推論的 agent。這是測有記憶 agent 最簡單的端到端測試。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 短期記憶（`Session`，重播對話）和長期記憶（持久的發現）生命週期不同，要分開存、分開存取。
+- 實作 `Session` 只要四個 async 方法，不用動 runner。
+- 持久記憶要由 tool 明確寫入簡潔的結論，不要把原始 tool 輸出倒進去。
+- Instructions 要寫明「先回想再研究、引用來源、存下結論」，agent 才會真的用記憶。
+- 用新的 `session_id` 搭配同樣的 user 和 agent，就能測記憶的連續性。
+
+## 練習
+
+1. 把 agent 的研究問題從 BRCA1 換成別的基因，重跑並用「檢查 agent 記住了什麼」那一節比較兩種記錄的內容。
+2. 修改 agent 的 `instructions`，拿掉「先回想再研究」那一點，看看新 session 還會不會用到之前的發現。
+3. 仿照 `save_research_finding` 再加一個 tool（例如依主題刪除某則發現），並把它加進 agent 的 tools 清單。

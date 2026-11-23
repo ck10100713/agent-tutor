@@ -1,32 +1,40 @@
 ---
-translated: false
+translated: true
 source: articles/techniques_to_improve_reliability.md
 ---
-
-# Techniques to improve reliability
+# 提升可靠度的技巧
 
 > 原文：[articles/techniques_to_improve_reliability.md](https://github.com/openai/openai-cookbook/blob/main/articles/techniques_to_improve_reliability.md)
 
+## 這篇在做什麼
 
+GPT-3 做不好某個任務時，不一定是模型不行，常常是 prompt 沒給它足夠的空間去想。這篇整理了一批研究出來的技巧，像是拆解任務、先解釋再回答、多採樣取多數決、用 verifier 挑答案，讓模型在需要推理的任務上更穩。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 知道為什麼模型會在複雜任務上亂猜，以及怎麼用 `Let's think step by step` 這類 prompt 讓它先推理再回答。
+- 會把一個複雜指令拆成幾個子任務（先辨識語言再摘要、先逐條檢查線索再下結論）。
+- 能分辨 self-consistency、verifier、selection-inference、least-to-most 這些技巧各自適合什麼情境、要付出什麼成本。
 
-When GPT-3 fails on a task, what should you do?
+## 開跑前
 
-- Search for a better prompt that elicits more reliable answers?
-- Invest in thousands of examples to fine-tune a custom model?
-- Assume the model is incapable of the task, and move on?
+這篇以概念為主，程式碼範例用的是 `gpt-3.5-turbo-instruct`，要自己跑的話需要 OpenAI API key。
 
-There is no simple answer - it depends. However, if your task involves logical reasoning or complexity, consider trying the techniques in this article to build more reliable, high-performing prompts.
+GPT-3 在複雜任務上失敗時，你會怎麼做？
 
-## Why GPT-3 fails on complex tasks
+- 找一個更好的 prompt，希望能引出更可靠的答案？
+- 花錢準備幾千筆範例去 fine-tune 一個客製模型？
+- 認定模型做不到，直接放棄？
 
-If you were asked to multiply 13 by 17, would the answer pop immediately into your mind? For most of us, probably not. Yet, that doesn't mean humans are incapable of two-digit multiplication. With a few seconds, and some pen and paper, it's not too taxing to work out that 13 x 17 = 130 + 70 + 21 = 221.
+沒有一個簡單的答案，要看情況。不過如果你的任務牽涉邏輯推理或比較複雜，可以試試這篇的技巧，做出更可靠、表現更好的 prompt。
 
-Similarly, if you give GPT-3 a task that's too complex to do in the time it takes to calculate its next token, it may confabulate an incorrect guess. Yet, akin to humans, that doesn't necessarily mean the model is incapable of the task. With some time and space to reason things out, the model still may be able to answer reliably.
+## 為什麼 GPT-3 在複雜任務上會失敗
 
-As an example, if you ask `gpt-3.5-turbo-instruct` the following math problem about juggling balls, it answers incorrectly:
+如果有人要你算 13 乘以 17，答案會馬上冒出來嗎？大多數人應該不會。但這不代表人類不會做兩位數乘法。給幾秒鐘，加上紙跟筆，不難算出 13 x 17 = 130 + 70 + 21 = 221。
+
+同樣的道理，如果你給 GPT-3 的任務複雜到它在算下一個 token 的那點時間內做不完，它可能會編一個錯的答案出來。但跟人一樣，這不代表模型做不到。只要給它一些時間和空間把事情推理出來，它還是有機會穩定地答對。
+
+舉個例子，如果你拿下面這題丟球的數學題問 `gpt-3.5-turbo-instruct`，它會答錯：
 
 ```gpt-3.5-turbo-instruct
 Q: A juggler has 16 balls. Half of the balls are golf balls and half of the golf balls are blue. How many blue golf balls are there?
@@ -37,7 +45,7 @@ A:
 There are 8 blue golf balls.
 ```
 
-Does this mean that GPT-3 cannot do simple math problems? No; in fact, it turns out that by prompting the model with `Let's think step by step`, the model solves the problem reliably:
+這是不是代表 GPT-3 連簡單數學題都不會？不是。其實只要在 prompt 裡加上 `Let's think step by step`，模型就能穩定地解出來：
 
 ```gpt-3.5-turbo-instruct
 Q: A juggler has 16 balls. Half of the balls are golf balls and half of the golf balls are blue. How many blue golf balls are there?
@@ -52,31 +60,31 @@ Half of the golf balls are blue.
 That means that there are 4 blue golf balls.
 ```
 
-Of course, it's hard to tell from only a single example whether this `Let's think step by step` trick actually works in general or just got lucky on this particular problem. But it really does work. On a benchmark of word math problems, the `Let's think step by step` trick raised GPT-3's solve rate massively, from a worthless 18% to a decent 79%!
+當然，光看一個例子，很難判斷 `Let's think step by step` 這招是真的有效，還是剛好這題運氣好。但它真的有效。在一組文字數學題的 benchmark 上，這招把 GPT-3 的解題率從沒什麼用的 18% 大幅拉到 79%。
 
-## Model capabilities depend on context
+## 模型的能力取決於 context
 
-When learning to work with GPT-3, one common conceptual mistake is to believe that its capabilities are fixed across all contexts. E.g., if GPT-3 gets a simple logic question wrong, then it must be incapable of simple logic.
+剛開始用 GPT-3 時，常見的觀念錯誤是以為它的能力在所有情境下都固定不變。例如 GPT-3 答錯一題簡單的邏輯題，就認為它不會簡單的邏輯。
 
-But as the `Let's think step by step` example illustrates, apparent failures of GPT-3 can sometimes be remedied with a better prompt that helps the model steer itself toward the correct output.
+但從 `Let's think step by step` 的例子可以看到，GPT-3 看起來的失敗，有時只要換個更好的 prompt，幫模型把自己導向正確的輸出，就能補救。
 
-## How to improve reliability on complex tasks
+## 怎麼提升複雜任務的可靠度
 
-The rest of this article shares techniques for improving reliability of large language models on complex tasks. Although some of the techniques are specific to certain types of problems, many of them are built upon general principles that can be applied to a wide range of tasks, e.g.:
+這篇接下來會介紹提升大型語言模型在複雜任務上可靠度的技巧。有些技巧只適用特定類型的問題，但很多都建立在可以廣泛套用的通用原則上，例如：
 
-- Give clearer instructions
-- Split complex tasks into simpler subtasks
-- Structure the instruction to keep the model on task
-- Prompt the model to explain before answering
-- Ask for justifications of many possible answers, and then synthesize
-- Generate many outputs, and then use the model to pick the best one
-- Fine-tune custom models to maximize performance
+- 給更清楚的指令
+- 把複雜任務拆成較簡單的子任務
+- 把指令組織好，讓模型不要跑題
+- 讓模型先解釋再回答
+- 針對多個可能的答案要求說明理由，再整合
+- 產生很多輸出，再用模型挑出最好的
+- Fine-tune 客製模型，把表現推到最高
 
-## Split complex tasks into simpler tasks
+## 把複雜任務拆成簡單任務
 
-One way to give a model more time and space to think is to break tasks into simpler pieces.
+要給模型更多時間和空間思考，一個方法是把任務拆成比較小的塊。
 
-As an example, consider a task where we ask the model a multiple-choice question about some text - in this case, a game of Clue. When asked directly, `gpt-3.5-turbo-instruct` isn't able to put clues 3 & 5 together, and answers incorrectly:
+舉例來說，假設我們針對一段文字問模型一題選擇題，這裡用的是一場 Clue（妙探尋兇）遊戲。直接問的話，`gpt-3.5-turbo-instruct` 沒辦法把線索 3 跟 5 湊在一起，答錯了：
 
 ```gpt-3.5-turbo-instruct
 Use the following clues to answer the following multiple-choice question.
@@ -100,13 +108,13 @@ Solution:
 (c) Unknown; there is not enough information to determine whether Colonel Mustard was in the observatory with the candlestick
 ```
 
-Although clues 3 and 5 establish that Colonel Mustard was the only person in the observatory and that the person in the observatory had the candlestick, the model fails to combine them into a correct answer of (a) Yes.
+線索 3 和 5 其實已經確定：只有 Colonel Mustard 一個人在 observatory，而在 observatory 的人拿著燭台。模型卻沒能把這兩點合起來，得到正確答案 (a) Yes。
 
-However, instead of asking for the answer directly, we can split the task into three pieces:
+不過，我們可以不要直接要答案，而是把任務拆成三塊：
 
-- First, go through the clues one by one and consider whether the clue is potentially relevant
-- Second, combine the relevant clues to reason out the answer to the question
-- Third, write the final answer: either (a), (b), or (c)
+- 第一，逐條看線索，判斷這條線索可能有沒有關係
+- 第二，把相關的線索合起來，推理出問題的答案
+- 第三，寫出最終答案：(a)、(b) 或 (c)
 
 ```gpt-3.5-turbo-instruct
 Use the following clues to answer the following multiple-choice question, using the following procedure:
@@ -144,11 +152,11 @@ Clue 3 and Clue 5 both say that the person with the candlestick was in the obser
 (a) Yes; Colonel Mustard was in the observatory with the candlestick
 ```
 
-By giving the model more time and space to think, and guiding it along a reasoning plan, it's able to figure out the correct answer of (a) Yes.
+給模型更多時間和空間思考，再用一個推理計畫帶著它走，它就能算出正確答案 (a) Yes。
 
-Another benefit of splitting complex instructions into smaller subtasks is that it can help keep the model focused on each subtask.
+把複雜指令拆成小任務還有另一個好處，就是能讓模型專注在每個子任務上。
 
-For example, if we ask `gpt-3.5-turbo-instruct` to summarize a text in its original language, the model can lapse back into English:
+例如，我們請 `gpt-3.5-turbo-instruct` 用原文的語言摘要一段文字，模型可能會不小心滑回英文：
 
 ```gpt-3.5-turbo-instruct
 Summarize the text using the original language of the text. The summary should be one sentence long.
@@ -165,7 +173,7 @@ Summary:
 The text explains that statistics is a science that studies the variability, collection, organization, analysis, interpretation, and presentation of data, as well as the random process that generates them following the laws of probability.
 ```
 
-However, if we first ask the model to identify the language of the text, and then summarize the text, it becomes more reliable:
+但如果先請模型辨識文字的語言，再做摘要，就會可靠很多：
 
 ```gpt-3.5-turbo-instruct
 First, identify the language of the text. Second, summarize the text using the original language of the text. The summary should be one sentence long.
@@ -184,36 +192,36 @@ Spanish
 La estadística es una ciencia que estudia la variabilidad, colección, organización, análisis, interpretación, y presentación de los datos, así como el proceso aleatorio que los genera siguiendo las leyes de la probabilidad.
 ```
 
-## Prompt the model to explain before answering
+## 讓模型先解釋再回答
 
-Another powerful technique for improving the reliability of answers is to prompt the model to gradually reason out the answer rather than jumping immediately to the final answer. By 'thinking aloud' the model can be far more likely to arrive at the correct answer.
+另一個很有效的技巧是 prompt 模型一步步把答案推理出來，而不是直接跳到最終答案。模型像是把想法說出來，答對的機率會高很多。
 
 ### Zero-shot
 
-#### Method
+#### 方法
 
-Published by [Takeshi Kojima et al. in 2022](https://arxiv.org/abs/2205.11916), the easiest way to prompt a model to reason out the answer is to simply prepend answers with `Let's think step by step.` Figure 2 illustrates an example:
+[Takeshi Kojima 等人在 2022 年發表](https://arxiv.org/abs/2205.11916)的研究指出，最簡單的做法是在答案前面加上 `Let's think step by step.`。圖 2 是一個例子：
 
 [![zero-shot reasoning example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/zero-shot_reasoners_fig2.png)
 <br>Source: _Large Language Models are Zero-Shot Reasoners_ by Takeshi Kojima et al. (2022).](https://arxiv.org/abs/2205.11916)
 
-#### Results
+#### 結果
 
-Applying this simple trick to the MultiArith math dataset, the authors found `Let's think step by step` quadrupled the accuracy, from 18% to 79%!
+作者把這個簡單的招數用在 MultiArith 數學資料集上，發現 `Let's think step by step` 讓準確率翻了四倍，從 18% 到 79%。
 
 [![zero-shot reasoning example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/zero-shot_reasoners_tab5.png)
 <br>Source: _Large Language Models are Zero-Shot Reasoners_ by Takeshi Kojima et al. (2022).](https://arxiv.org/abs/2205.11916)
 
-#### Implications
+#### 啟示
 
-Although the `Let's think step by step` trick works well on math problems, it's not effective on all tasks. The authors found that it was most helpful for multi-step arithmetic problems, symbolic reasoning problems, strategy problems, and other reasoning problems. It didn't help with simple math problems or common sense questions, and presumably wouldn't help with many other non-reasoning tasks either.
+雖然 `Let's think step by step` 在數學題上效果很好，但並不是對所有任務都有用。作者發現它對多步驟算術、符號推理、策略題和其他推理題幫助最大。對簡單數學題或常識題沒幫助，推測對很多非推理類的任務也不會有用。
 
 [![zero-shot reasoning example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/zero-shot_reasoners_tab1.png)
 <br>Source: _Large Language Models are Zero-Shot Reasoners_ by Takeshi Kojima et al. (2022).](https://arxiv.org/abs/2205.11916)
 
-To learn more, read the [full paper](https://arxiv.org/abs/2205.11916).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2205.11916)。
 
-If you apply this technique to your own tasks, don't be afraid to experiment with customizing the instruction. `Let's think step by step` is rather generic, so you may find better performance with instructions that hew to a stricter format customized to your use case. For example, you can try more structured variants like `First, think step by step about why X might be true. Second, think step by step about why Y might be true. Third, think step by step about whether X or Y makes more sense.`. And you can even give the model an example format to help keep it on track, e.g.:
+如果你把這招用在自己的任務上，不用怕改指令。`Let's think step by step` 算是很通用的說法，換成格式更嚴格、貼合你情境的指令，效果可能更好。例如你可以試比較有結構的版本：`First, think step by step about why X might be true. Second, think step by step about why Y might be true. Third, think step by step about whether X or Y makes more sense.`。你甚至可以給模型一個範例格式，幫它不要偏掉，例如：
 
 ```gpt-3.5-turbo-instruct
 Using the IRS guidance below, answer the following questions using this format:
@@ -254,114 +262,113 @@ Solution:
 Because the Toyota Prius Prime meets all of the criteria for a federal tax credit, the answer is likely yes.
 ```
 
-### Few-shot examples
+### Few-shot 範例
 
-#### Method
+#### 方法
 
-Prompting the model to reason out its answers can be done in many ways. One way is to demonstrate with a few examples ('few-shot'), as studied by [Jason Wei and Denny Zhou et al. from Google](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html). Here's an example few-shot chain-of-thought prompt:
+要讓模型把答案推理出來，有很多做法。其中一種是用幾個範例示範（few-shot），這是 [Google 的 Jason Wei 和 Denny Zhou 等人](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html)研究的。下面是一個 few-shot 的 chain-of-thought prompt 範例：
 
 [![chain of thought example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/chain_of_thought_fig1.png)
 <br>Source: _Chain of Thought Prompting Elicits Reasoning in Large Language Models_ Jason Wei and Denny Zhou et al. (2022)](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html)
 
-More demonstrations of reasoning chains written by human labelers:
+更多由人工標註者寫的推理鏈示範：
 
 [![chain of thought example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/chain_of_thought_fig3.png)
 <br>Source: _Chain of Thought Prompting Elicits Reasoning in Large Language Models_ Jason Wei and Denny Zhou et al. (2022)](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html)
 
-[(Note that it has been called into question whether pears actually float)](https://twitter.com/Meaningness/status/1561062170074370048?s=20&t=mpHt8f3RRboztXxdhLFnWQ)
+[（附註：梨子到底會不會浮在水上，其實有人質疑過）](https://twitter.com/Meaningness/status/1561062170074370048?s=20&t=mpHt8f3RRboztXxdhLFnWQ)
 
-#### Results
+#### 結果
 
-Testing on grade school math problems, the authors found that chain of thought prompting tripled the solve rate, from 18% to 57%.
+在小學程度的數學題上測試，作者發現 chain of thought prompting 讓解題率變成三倍，從 18% 到 57%。
 
 [![chain of thought example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/chain_of_thought_fig5.png)
 <br>Source: _Chain of Thought Prompting Elicits Reasoning in Large Language Models_ Jason Wei and Denny Zhou et al. (2022)](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html)
 
-In addition to math problems, chain of thought prompting also lifted performance on questions related to sports understanding, coin flip tracking, and last letter concatenation. In most cases, not many examples were need to saturate the performance gains (less than 8 or so).
+除了數學題，chain of thought prompting 在運動常識理解、拋硬幣追蹤、末字母串接這些題目上也提升了表現。大多數情況下不需要很多範例就能把效果推到頂（大約 8 個以內）。
 
 [![chain of thought example](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/chain_of_thought_fig11.png)
 <br>Source: _Chain of Thought Prompting Elicits Reasoning in Large Language Models_ Jason Wei and Denny Zhou et al. (2022)](https://ai.googleblog.com/2022/05/language-models-perform-reasoning-via.html)
 
-To learn more, read the [full paper](https://arxiv.org/abs/2201.11903).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2201.11903)。
 
-#### Implications
+#### 啟示
 
-One advantage of the few-shot example-based approach relative to the `Let's think step by step` technique is that you can more easily specify the format, length, and style of reasoning that you want the model to perform before landing on its final answer. This can be particularly helpful in cases where the model isn't initially reasoning in the right way or depth.
+相較於 `Let's think step by step`，few-shot 範例的好處是你比較容易指定模型在給出最終答案前要用什麼格式、多長、什麼風格的推理。當模型一開始的推理方式或深度不對時，這特別有用。
 
 ### Fine-tuned
 
-#### Method
+#### 方法
 
-In general, to eke out maximum performance on a task, you'll need to fine-tune a custom model. However, fine-tuning a model using explanations may take thousands of example explanations, which are costly to write.
+一般來說，想把一個任務的表現榨到最高，就得 fine-tune 一個客製模型。但用解釋來 fine-tune 模型可能需要幾千筆範例解釋，寫起來很貴。
 
-In 2022, Eric Zelikman and Yuhuai Wu et al. published a clever procedure for using a few-shot prompt to generate a dataset of explanations that could be used to fine-tune a model. The idea is to use a few-shot prompt to generate candidate explanations, and only keep the explanations that produce the correct answer. Then, to get additional explanations for some of the incorrect answers, retry the few-shot prompt but with correct answers given as part of the question. The authors called their procedure STaR (Self-taught Reasoner):
+2022 年，Eric Zelikman 和 Yuhuai Wu 等人發表了一個很聰明的做法：用 few-shot prompt 產生一個解釋資料集，拿來 fine-tune 模型。想法是先用 few-shot prompt 產生候選解釋，只留下能得到正確答案的那些。接著，對一部分答錯的題目，再試一次 few-shot prompt，但這次把正確答案放進題目裡，取得更多解釋。作者把這個流程叫做 STaR (Self-taught Reasoner)：
 
 [![STaR procedure](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/star_fig1.png)
 <br>Source: _STaR: Bootstrapping Reasoning With Reasoning_ by Eric Zelikman and Yujuai Wu et al. (2022)](https://arxiv.org/abs/2203.14465)
 
-With this technique, you can combine the benefits of fine-tuning with the benefits of chain-of-thought prompting without needing to write thousands of example explanations.
+用這個技巧，你可以同時拿到 fine-tuning 和 chain-of-thought prompting 的好處，又不用寫幾千筆範例解釋。
 
-#### Results
+#### 結果
 
-When the authors applied this technique to a Common Sense Q&A dataset, they found that STaR outperformed both chain-of-thought prompting alone (73% > 37%) and fine-tuning alone (73% > 60%):
+作者把這個技巧用在 Common Sense Q&A 資料集上，發現 STaR 同時贏過單用 chain-of-thought prompting（73% > 37%）和單用 fine-tuning（73% > 60%）：
 
 [![STaR results](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/star_tab1.png)
 <br>Source: _STaR: Bootstrapping Reasoning With Reasoning_ by Eric Zelikman and Yujuai Wu et al. (2022)](https://arxiv.org/abs/2203.14465)
 
-To learn more, read the [full paper](https://arxiv.org/abs/2203.14465).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2203.14465)。
 
-#### Implications
+#### 啟示
+用 few-shot prompt 來擴充或修改 fine-tuning 資料集，這個想法可以推廣到寫解釋以外的地方。例如你手上有大量非結構化的文字想拿來訓練，可以用 prompt 從這些文字抽出結構化資料集，再用結構化資料集去 fine-tune 一個客製模型。
 
-Using a few-shot prompt to extend or modify a fine-tuning dataset is an idea that can be generalized beyond explanation writing. For example, if you have large quantities of unstructured text that you want to train on, you may find opportunities to use a prompt to extract a structured dataset from your unstructured text, and then fine-tune a custom model on that structured dataset.
+## Chain-of-thought prompting 的延伸
 
-## Extensions to chain-of-thought prompting
-
-A number of extensions of chain-of-thought prompting have been published as well.
+chain-of-thought prompting 也有不少延伸做法被發表出來。
 
 ### Selection-inference prompting
 
-#### Method
+#### 方法
 
-Published by Antonia Creswell et al., one extension of the chain-of-thought technique is to split the single prompt for generating explanations and answers into smaller parts. First, a prompt selects a relevant subset of facts from the text ('selection prompt'). Then, a second prompt infers a conclusion from the selected facts ('inference prompt'). These prompts are then alternated in a loop to generate multiple steps of reasoning and eventually land on a final answer. The authors illustrate the idea in the following figure:
+這是 Antonia Creswell 等人發表的，chain-of-thought 的一個延伸做法，把原本同時產生解釋和答案的單一 prompt，拆成比較小的部分。首先，一個 prompt 從文字中選出相關的事實子集（selection prompt）。然後第二個 prompt 根據選出的事實推論出結論（inference prompt）。這兩個 prompt 會在迴圈裡輪流執行，產生多步推理，最後得到最終答案。作者用下面的圖說明這個想法：
 
 [![Selection-inference prompting](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/selection-inference_fig1.png)
 <br>Source: _Selection-Inference: Exploiting Large Language Models for Interpretable Logical Reasoning_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2205.09712)
 
-#### Results
+#### 結果
 
-When applied to a 7B-parameter model, the authors found that selection-inference prompting substantially improved performance relative to chain-of-thought prompting on the bAbi and Proof Writer benchmark tasks (both of which require longer sequences of reasoning steps). The best performance they achieved combined both selection-inference prompting with fine-tuning.
+用在 7B 參數的模型上，作者發現 selection-inference prompting 在 bAbi 和 Proof Writer 這兩個 benchmark 任務上，表現比 chain-of-thought prompting 好很多（這兩個任務都需要比較長的推理步驟）。他們達到的最佳表現是把 selection-inference prompting 和 fine-tuning 結合起來。
 
 [![Selection-inference prompting](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/selection-inference_fig4.png)
 <br>Source: _Selection-Inference: Exploiting Large Language Models for Interpretable Logical Reasoning_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2205.09712)
 
-#### Implications
+#### 啟示
 
-Although the gains on these benchmarks were large, these benchmarks were specifically chosen because they required longer sequences of reasoning. On problems that don't require reasoning with many steps, the gains are likely smaller.
+雖然在這些 benchmark 上提升很大，但這些 benchmark 是刻意挑的，因為它們需要比較長的推理序列。對不需要多步推理的問題，提升可能小很多。
 
-The results highlight a couple of general lessons for working with large language models. One, splitting up complex tasks into smaller tasks is a great way to improve reliability and performance; the more atomic the task, the less room there is for the model to err. Two, getting maximum performance often means combining fine-tuning with whatever approach you've chosen.
+這個結果帶出兩個使用大型語言模型的通則。一，把複雜任務拆成小任務，是提升可靠度和表現的好方法，任務越細，模型出錯的空間越小。二，要拿到最高表現，通常要把 fine-tuning 跟你選的方法結合起來。
 
-To learn more, read the [full paper](https://arxiv.org/abs/2205.09712).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2205.09712)。
 
 ### Faithful reasoning architecture
 
-A few months after publishing the selection-inference prompting technique, the authors extended the technique in a follow-up paper, with ideas for:
+發表 selection-inference prompting 幾個月後，作者在後續論文中擴充了這個技巧，加入幾個想法：
 
-- figuring out when the selection-inference cycle should stop or continue
-- adding a value function to help search over multiple reasoning paths
-- reducing hallucination of fake facts by fine-tuning a model to reason about sentence labels (e.g., sen1) rather than writing out the sentences themselves
+- 判斷 selection-inference 迴圈該停還是該繼續
+- 加一個 value function，幫忙在多條推理路徑上搜尋
+- 讓模型針對句子標籤（例如 sen1）做推理，而不是把整句寫出來，藉此減少編造假事實的 hallucination，這需要對模型做 fine-tuning
 
-#### Method
+#### 方法
 
-In the original selection-inference technique, specialized 'selection' and 'inference' prompts are alternated to select facts and make inferences from those facts, combining to generate a sequence of reasoning steps.
+在原本的 selection-inference 技巧裡，專門的 selection prompt 和 inference prompt 輪流執行，選事實、再從事實做推論，合起來產生一連串的推理步驟。
 
-The authors extend this technique with two additional components.
+作者在這個技巧上加了兩個元件。
 
-First, the authors add a 'halter' model that, after each inference step, is asked whether the inferences thus far are sufficient to answer the question. If yes, then the model generates a final answer.
+第一，他們加了一個「halter」模型，每次推論完之後，問它目前的推論夠不夠回答問題。如果夠，就由模型產生最終答案。
 
-The halter models brings a couple of advantages:
+halter 模型有幾個好處：
 
-- it can tell the selection-inference process to stop or keep going, as necessary.
-- if the process never halts, you'll get no answer, which is often preferable to a hallucinated guess
+- 它可以視需要告訴 selection-inference 流程該停還是該繼續。
+- 如果流程一直沒停，就不會有答案，這通常比一個 hallucinated 的猜測好。
 
 [![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_fig3.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
@@ -369,54 +376,54 @@ The halter models brings a couple of advantages:
 [![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_fig5.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
 
-Second, the authors add a value function, which is used to assess the quality of reasoning steps and search over multiple reasoning trajectories. This echoes a common theme for increasing reliability; instead of generating a single answer from the model, generate a set of answers and then use some type of value function / discriminator / verifier model to pick the best one.
+第二，他們加了 value function，用來評估推理步驟的品質，並在多條推理軌跡上搜尋。這呼應了提升可靠度的常見主題：不要只讓模型產生一個答案，而是產生一組答案，再用某種 value function、discriminator 或 verifier 模型挑出最好的。
 
 [![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_fig7.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
 
-In addition to these two extensions, the authors also use a trick to reduce hallucination of fake facts. Rather than asking the model to write out factual sentences, they fine-tune a model to work with sentence labels (e.g., sen1) instead. This helps prevent the model from hallucinating fake facts not mentioned in the prompt context.
+除了這兩個延伸，作者還用了一個技巧來減少編造假事實的 hallucination。他們不讓模型寫出事實句子，而是 fine-tune 模型去處理句子標籤（例如 sen1）。這樣可以避免模型編出 prompt context 裡沒提到的假事實。
 
 [![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_fig4.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
 
-#### Results
+#### 結果
 
-The authors evaluated their technique on two benchmarks: the ProofWriter task (not shown) and [EntailmentBankQA](https://allenai.org/data/entailmentbank) (shown). The technique increased accuracy substantially, especially on harder reasoning problems.
+作者在兩個 benchmark 上評估這個技巧：ProofWriter 任務（沒有附圖）和 [EntailmentBankQA](https://allenai.org/data/entailmentbank)（有附圖）。這個技巧大幅提升了準確率，尤其是在比較難的推理題上。
 
 ![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_tab2.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
 
-In addition, their sentence label manipulation trick essentially eliminated hallucination!
+而且，他們的句子標籤技巧幾乎消除了 hallucination。
 
 ![Faithful reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/faithful-reasoning_tab5.png)
 <br>Source: _Faithful Reasoning Using Large Language Models_ by Antonia Creswell et al. (2022)](https://arxiv.org/abs/2208.14271)
 
-#### Implications
+#### 啟示
 
-This paper illustrates a number of helpful lessons for improving the reliability of large language models:
+這篇論文帶出幾個提升大型語言模型可靠度的實用心得：
 
-- Split complex tasks into smaller, more reliable subtasks
-- Generate your answer in a step-by-step fashion, evaluating it along the way
-- Generate many possible answers and use another model or function to pick the ones that look best
-- Reduce hallucination by constraining what the model can say (e.g., by using sentence labels instead of sentences)
-- Maximize performance of models by fine-tuning them on specialized tasks
+- 把複雜任務拆成更小、更可靠的子任務
+- 一步一步產生答案，過程中就做評估
+- 產生很多可能的答案，再用另一個模型或函式挑出看起來最好的
+- 限制模型能說的內容來減少 hallucination（例如用句子標籤取代整個句子）
+- 針對特定任務 fine-tune 模型，把表現推到最高
 
-To learn more, read the [full paper](https://arxiv.org/abs/2205.09712).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2205.09712)。
 
 ### Least-to-most prompting
 
-In addition to doing poorly on long reasoning chains (where selection-inference shines), chain-of-thought prompting can especially struggle when the examples are short but the task is long.
+chain-of-thought prompting 除了在長推理鏈上表現不好（selection-inference 在這方面很強），在範例很短但任務很長的時候也特別吃力。
 
-#### Method
+#### 方法
 
-Least-to-most prompting is another technique that splits up reasoning tasks into smaller, more reliable subtasks. The idea is to elicit a subtask from the model by prompting it with something like `To solve {question}, we need to first solve: "`. Then, with that subtask in hand, the model can generate a solution. The solution is appended to the original question and the process is repeated until a final answer is produced.
+Least-to-most prompting 是另一個把推理任務拆成更小、更可靠子任務的技巧。做法是用類似 `To solve {question}, we need to first solve: "` 的 prompt，讓模型提出一個子任務。有了這個子任務，模型就能產生解答。解答會被接到原本的問題後面，然後重複這個流程，直到產生最終答案。
 
 [![Least-to-most prompting](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/least-to-most_fig1.png)
 <br>Source: _Least-to-most Prompting Enables Complex Reasoning in Large Language Models_ by Denny Zhou et al. (2022)](https://arxiv.org/abs/2205.10625)
 
-#### Results
+#### 結果
 
-When applied to benchmarks involving long reasoning chains using `code-davinci-002` (which is optimized for code but can still understand text), the authors measured gains as large as 16% -> 99.7%!
+用 `code-davinci-002`（針對程式碼優化，但仍能理解文字）在涉及長推理鏈的 benchmark 上測試，作者量到最高 16% -> 99.7% 的提升。
 
 [
 ![Least-to-most prompting results on last-letter-concatenation task](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/least-to-most_tab4.png)
@@ -424,119 +431,118 @@ When applied to benchmarks involving long reasoning chains using `code-davinci-0
 ![Least-to-most prompting results on DROP numerical reasoning](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/least-to-most_tab11.png)
 <br>Source: _Least-to-most Prompting Enables Complex Reasoning in Large Language Models_ by Denny Zhou et al. (2022)](https://arxiv.org/abs/2205.10625)
 
-#### Implications
+#### 啟示
 
-Although the above gains from least-to-most prompting are impressive, they are measured on a very narrow set of tasks that require long reasoning chains.
+least-to-most prompting 的提升很亮眼，但這些是在一小組需要長推理鏈的任務上量到的。
 
-Still, they illustrate a common theme: increase reliability by (a) breaking complex tasks into smaller subtasks and (b) giving the model more time and space to work out the answer.
+不過它們還是說明了一個共通的主題：提升可靠度的做法是 (a) 把複雜任務拆成較小的子任務，(b) 給模型更多時間和空間把答案算出來。
 
-To learn more, read the [full paper](https://arxiv.org/abs/2205.10625).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2205.10625)。
 
-## Related ideas
+## 相關的想法
 
 ### Maieutic prompting
 
-#### Method
+#### 方法
 
-In contrast to the previous techniques, which try to maximize the likelihood of correct answers, another approach is to use GPT-3 to generate a tree of possible explanations (both correct _and incorrect_), and then analyze their relationships to guess at which set is correct. This technique was coined maieutic prompting by [Jaehun Jung et al. in May 2022](https://arxiv.org/abs/2205.11822) (maieutic means relating to the Socratic method of asking questions to elicit ideas).
+前面的技巧都是想把答對的機率拉到最高，這個做法不太一樣：用 GPT-3 產生一棵可能解釋的樹（包含正確的_和錯誤的_），再分析它們之間的關係，猜哪一組是對的。這個技巧是 [Jaehun Jung 等人在 2022 年 5 月](https://arxiv.org/abs/2205.11822)提出，取名 maieutic prompting（maieutic 指的是蘇格拉底式的提問法，用問題引出想法）。
 
-The method is complicated, and works as follows:
+這個方法很複雜，流程如下：
 
-- First, build a maieutic tree, where each node is a statement that could be true or false:
-  - Start with a multiple-choice question or true/false statement (e.g. `War cannot have a tie`)
-  - For each possible answer to the question, use the model to generate a corresponding explanation (with a prompt like `War cannot have a tie? True, because`)
-  - Then, prompt the model with the question and the generated explanation, and ask it to produce the answer. If reversing the explanation (with a prefix like `It is wrong to say that {explanation}`) reverses the answer, then the explanation is considered 'logically integral.'
-  - If an explanation is not logically integral, then repeat the above process recursively, with each explanation turned into a True or False question, and generate more explanations for each new question.
-  - After all of the recursive explaining is done, you end up with a tree of explanations, where each leaf on the tree has the property that reversing the explanation reverses the model's answer.
-- Second, convert the tree into a graph of relations:
-  - For each node in the tree, calculate the model's relative belief in each node (inferred from the probability of getting an answer of `True` to given an explanation)
-  - For each pair of nodes in the tree, use the model to identify whether they are entailed (implied) or contradicted
-- Third, find the most consistent set of beliefs and take those to be true:
-  - Specifically, using the strength of belief in each node and the logical relationships between them, formulate the problem as a weighted maximum satisfiability problem (MAX-SAT)
-  - Use a solver to the find the most self-consistent set of beliefs, and take those as true
-
+- 第一，建一棵 maieutic tree，每個節點是一個可能為真或為假的陳述：
+  - 從一個選擇題或是非陳述開始（例如 `War cannot have a tie`）
+  - 針對這個問題的每個可能答案，用模型產生對應的解釋（prompt 像 `War cannot have a tie? True, because`）
+  - 接著，把問題和產生的解釋一起丟給模型，請它給出答案。如果把解釋反過來講（加上像 `It is wrong to say that {explanation}` 的前綴）答案就跟著反過來，這個解釋就算「邏輯完整」(logically integral)。
+  - 如果某個解釋不是邏輯完整的，就遞迴重複上面的流程，把每個解釋變成一個真或假的問題，再為每個新問題產生更多解釋。
+  - 所有遞迴解釋都做完後，你會得到一棵解釋樹，樹上每個葉節點都有一個性質：把解釋反過來，模型的答案也會反過來。
+- 第二，把這棵樹轉成關係圖：
+  - 對樹上每個節點，計算模型對它的相對信心（由給定解釋時回答 `True` 的機率推得）
+  - 對樹上每一對節點，用模型判斷它們是互相蘊含（implied）還是互相矛盾
+- 第三，找出最一致的一組信念，把它們當成真的：
+  - 具體來說，利用每個節點的信心強度和節點之間的邏輯關係，把問題寫成加權最大可滿足性問題 (MAX-SAT)
+  - 用 solver 找出最自洽的一組信念，把它們當成真的
 [
 ![Maieutic prompting](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/maieutic_fig2.png)
 ![Maieutic prompting](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/maieutic_fig6.png)
 <br>Source: _Maieutic Prompting: Logically Consistent Reasoning with Recursive Explanations_ by Jaehun Jung et al. (2022)](https://arxiv.org/abs/2205.11822)
 
-#### Results
+#### 結果
 
 [![Maieutic prompting results](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/maieutic_tab1.png)
 <br>Source: _Maieutic Prompting: Logically Consistent Reasoning with Recursive Explanations_ by Jaehun Jung et al. (2022)](https://arxiv.org/abs/2205.11822)
 
-#### Implications
+#### 啟示
 
-Beyond the complexity, one limitation of this method is that it appears to only apply to questions that can be posed as multiple-choice.
+除了複雜之外，這個方法還有一個限制：它似乎只適用於能寫成選擇題的問題。
 
-To learn more, read the [full paper](https://arxiv.org/abs/2205.11822).
+想了解更多，可以讀[完整論文](https://arxiv.org/abs/2205.11822)。
 
-## Extensions
+## 其他延伸
 
 ### Self-consistency
 
-#### Method
+#### 方法
 
-For tasks with a discrete set of answers, one simple way to improve reliability is to sample multiple explanations & answers from the model (using a positive temperature) and then pick the final answer that appears most often.
+對答案是離散集合的任務，有一個簡單的提升可靠度做法：從模型採樣多組解釋和答案（用大於 0 的 temperature），然後選出現最多次的那個當最終答案。
 
 [![Self-consistency method](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/self-consistency_fig1.png)
 <br>Source: _Self-Consistency Improves Chain of Thought Reasoning in Language Models_ by Xuezhi Wang et al. (2022)](https://arxiv.org/abs/2203.11171)
 
-#### Results
+#### 結果
 
-This technique lifted accuracies by anywhere from 1 to 24 percentage points on a suite of math and reasoning benchmarks. (Plotted below are results from Google's LaMDA model; using Google's larger PaLM model, the baselines were higher but the gains were a bit smaller.)
+這個技巧在一系列數學和推理 benchmark 上，讓準確率提升了 1 到 24 個百分點。（下圖是 Google LaMDA 模型的結果；用 Google 較大的 PaLM 模型時，基準線比較高，但提升幅度小一些。）
 
 [![Self-consistency results](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/self-consistency_fig3.png)
 <br>Source: _Self-Consistency Improves Chain of Thought Reasoning in Language Models_ by Xuezhi Wang et al. (2022)](https://arxiv.org/abs/2203.11171)
 
-#### Implications
+#### 啟示
 
-Although this technique is simple to implement, it can be costly. Generating a set of 10 answers will increase your costs by 10x.
+雖然這個技巧很好實作，但可能很貴。產生 10 個答案，成本就會變成 10 倍。
 
-Also, as with many of these techniques, it applies only to tasks with a limited set of answers. For open-ended tasks where each answer is unique (such as writing a poem), it's not obvious what it would mean to pick the most common answer.
+而且跟很多這類技巧一樣，它只適用於答案有限的任務。對每個答案都獨一無二的開放式任務（例如寫詩），挑最常見的答案根本沒意義。
 
-Lastly, this technique ought to be most beneficial when there are multiple paths or phrasings to reach an answer; if there's only one path, then the technique may not help at all. An extreme example: If the task was to generate a single token answer, then taking the most common token from 100 generations would be no different than taking the token with the highest logprobs (which you can get with a single generation at temperature=0).
+最後，這個技巧在有多條路徑或多種說法能得到答案時最有幫助；如果只有一條路，它可能完全沒用。極端的例子：如果任務是產生單一 token 的答案，從 100 次生成裡取最常見的 token，跟取 logprobs 最高的 token 沒有差別（後者用 temperature=0 生成一次就拿得到）。
 
 ### Verifiers
 
-Another key technique for improving task performance is to train a verifier or discriminator model to evaluate the outputs of the main generative model. If the discriminator rejects the output, then you can resample the generative model until you get an acceptable output. In many cases, it's easier to judge an answer than it is to create an answer, which helps explain the power of this method.
+另一個提升任務表現的關鍵技巧，是訓練一個 verifier（或 discriminator）模型，來評估主要生成模型的輸出。如果 discriminator 否決了輸出，就可以重新對生成模型採樣，直到拿到可接受的輸出。很多時候，判斷一個答案比創造一個答案容易，這也解釋了這個方法為什麼強。
 
-#### Method
+#### 方法
 
-In 2021, OpenAI researchers applied this technique to grade school math problems, using the following procedure:
+2021 年，OpenAI 的研究者把這個技巧用在小學數學題上，流程如下：
 
-- First, they fine-tuned a model on questions and solutions
-- For each problem in the training set, they generated 100 solutions
-- Each of those 100 solutions was automatically labeled as either correct or incorrect, based on whether the final answer was correct
-- Using those solutions, with some labeled correct and some labeled incorrect, they fine-tuned a verifier model to classify whether a question and candidate solution was correct or incorrect
-- Finally, at test time, the generative model creates 100 solutions to each problem, and the one with the highest score according to the verifier model is picked as the final answer
+- 首先，用題目和解答 fine-tune 一個模型
+- 對訓練集中的每一題，產生 100 個解答
+- 這 100 個解答各自根據最終答案是否正確，被自動標成正確或錯誤
+- 用這些解答（有些標正確、有些標錯誤）fine-tune 一個 verifier 模型，讓它判斷某個題目加候選解答是正確還是錯誤
+- 最後，在測試時，生成模型對每題產生 100 個解答，verifier 模型給分最高的那個被選為最終答案
 
 [![Verifier method](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/verifiers_fig3.png)
 <br>Source: _Training Verifiers to Solve Math Word Problems_ by Karl Cobbe et al. (2021)](https://arxiv.org/abs/2110.14168)
 
-#### Results
+#### 結果
 
-With a 175B GPT-3 model and 8,000 training examples, this technique substantially lifted grade school math accuracy from ~33% to ~55%.
+用 175B 的 GPT-3 模型和 8,000 筆訓練範例，這個技巧把小學數學的準確率從約 33% 大幅拉到約 55%。
 
 [![Verifier results](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/verifiers_fig5.png)
 <br>Source: _Training Verifiers to Solve Math Word Problems_ by Karl Cobbe et al. (2021)](https://arxiv.org/abs/2110.14168)
 
-#### Implications
+#### 啟示
 
-Similar to the self-consistency technique, this method can get expensive, as generating, say, 100 solutions per task will increase your costs by roughly ~100x.
+跟 self-consistency 一樣，這個方法可能很貴，每個任務產生 100 個解答，成本大約會變成 100 倍。
 
-## Theories of reliability
+## 可靠度的理論
 
-Although the techniques above vary in their approach, they all share the goal of improving reliability on complex tasks. Mainly they do this by:
+雖然上面的技巧做法各異，目標都一樣：提升複雜任務的可靠度。它們主要靠這幾種方式：
 
-- decomposing unreliable operations into smaller, more reliable operations (e.g., selection-inference prompting)
-- using multiple steps or multiple relationships to make the system's reliability greater than any individual component (e.g., maieutic prompting)
+- 把不可靠的操作拆成較小、較可靠的操作（例如 selection-inference prompting）
+- 用多個步驟或多重關係，讓整個系統的可靠度比任何單一元件都高（例如 maieutic prompting）
 
 ### Probabilistic graphical models
 
-This paradigm of trying to build a reliable system out of less reliable components is reminiscent of probabilistic programming, and many of the analysis techniques of that field can be applied to this one.
+這種用不太可靠的元件組出可靠系統的思路，讓人想到 probabilistic programming，那個領域的很多分析技巧都能拿來用在這裡。
 
-In the paper _Language Model Cascades_, David Dohan et al. interpret the above techniques in the paradigm of probabilistic graphical models:
+在 _Language Model Cascades_ 這篇論文裡，David Dohan 等人用 probabilistic graphical models 的框架來解讀上面這些技巧：
 
 #### Chain of thought prompting
 
@@ -558,17 +564,17 @@ In the paper _Language Model Cascades_, David Dohan et al. interpret the above t
 [![graphical model of verifiers](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/lm_cascades_fig5.png)
 <br>Source: _Language Model Cascades_ by David Dohan et al. (2022)](https://arxiv.org/abs/2207.10342)
 
-#### Implications
+#### 啟示
 
-Although formulating these techniques as probabilistic graphical models may not be immediately useful for solving any particular problem, the framework may be helpful in selecting, combining, and discovering new techniques.
+把這些技巧寫成 probabilistic graphical models，不一定能馬上幫你解決某個具體問題，但這個框架可能有助於挑選、組合，甚至發現新的技巧。
 
-## Closing thoughts
+## 結語
 
-Research into large language models is very active and evolving rapidly. Not only do researchers continue to improve the models, they also continue to improve our understanding of how to best employ the models. To underscore the pace of these developments, note that all of the papers shared above were published within the past 12 months (as I write in Sep 2022).
+大型語言模型的研究非常活躍，變化很快。研究者不只持續改進模型，也持續改進我們對如何用好模型的理解。要看出這個步調，可以注意上面分享的論文全部都是過去 12 個月內發表的（我寫這篇的時間是 2022 年 9 月）。
 
-In the future, expect better models and better techniques to be published. Even if the specific techniques here are eclipsed by future best practices, the general principles behind them will likely remain a key part of any expert user's toolkit.
+未來會有更好的模型和更好的技巧出現。就算這裡的具體技巧被未來的最佳實務取代，背後的通用原則大概仍會是任何進階使用者工具箱裡的重要部分。
 
-## Bibliography
+## 參考文獻
 
 | Lesson                                                                                                                         | Paper                                                                                                                                     | Date     |
 | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- | -------- |
@@ -584,4 +590,16 @@ In the future, expect better models and better techniques to be published. Even 
 | You can think about these techniques in terms of probabilistic programming, where systems comprise unreliable components       | [Language Model Cascades](https://arxiv.org/abs/2207.10342)                                                                               | 2022 Jul |
 | You can eliminate hallucination with sentence label manipulation, and you can reduce wrong answers with a 'halter' prompt      | [Faithful Reasoning Using Large Language Models](https://arxiv.org/abs/2208.14271)                                                        | 2022 Aug |
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 模型答錯，常常是因為沒有空間推理，不是它不會。先讓它一步步想（`Let's think step by step`、few-shot 範例）通常就能改善。
+- 把複雜任務拆成小子任務，是最通用的做法。任務越細，模型出錯的空間越小，也比較不會跑題。
+- 多生成、再挑選（self-consistency 取多數決、verifier 打分數）可以拉高準確率，但成本會變成 N 倍，而且只適用答案有限的任務。
+- 限制模型能說的內容（例如用句子標籤取代整句）和加一個 halter 判斷何時該停，可以減少 hallucination。
+- 要把表現推到最高，通常要把 fine-tuning 和這些 prompt 技巧結合。
+
+## 練習
+
+1. 拿頁面上丟球那題（或自己挑一題多步驟數學題），分別用有和沒有 `Let's think step by step` 的 prompt 各跑 5 次，數一下答對幾次。
+2. 把摘要任務改成兩段：先一個 prompt 辨識語言，再把辨識結果塞進第二個 prompt 做摘要，試試不同語言的文字，看會不會還滑回英文。
+3. 對同一題用 temperature=0.7 取樣 10 次，每次都用 chain-of-thought prompt，寫幾行程式抽出最終答案並做多數決（self-consistency），比較跟單次回答的準確率差多少，也算一下成本多了幾倍。

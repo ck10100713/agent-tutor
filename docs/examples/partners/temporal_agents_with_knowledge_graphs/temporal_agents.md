@@ -1,179 +1,193 @@
 ---
-translated: false
+translated: true
 source: examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.ipynb
 ---
 
-# Temporal Agents with Knowledge Graphs
+# Temporal Agents with Knowledge Graphs（帶時間感知的知識圖譜）
 
 > 原文：[examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇教你把財報電話會議逐字稿，一路處理成「每條事實都帶有效時間」的知識圖譜，再讓 agent 用 tool call 在圖譜上多步查詢。重點有兩塊：新資料進來時怎麼讓舊事實失效（invalidation），以及怎麼讓模型一跳接一跳地走圖譜回答複雜問題。最後還會講從 prototype 走到 production 要注意什麼。
+
+## 學完你會
+
+- 用 LLM 把文字拆成 statement、時間範圍、triplet 和 entity，存進 SQLite 並建出 NetworkX 圖譜
+- 寫出 Invalidation Agent，判斷新事實有沒有讓舊事實過期，並標上 `invalid_at` 和 `invalidated_by`
+- 做一個 planner + orchestrator 的 multi-step retrieval agent，用 `factual_qa`、`trend_analysis` 這類 tool 在圖譜上查資料
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY` 環境變數，會呼叫 GPT-4.1 系列和 o4-mini，是付費 API
+- Python 3.12 以上
+- 完整處理所有逐字稿要花好幾個小時，建議直接載入文中提供的預處理資料
 
 ---
 
-## 1.1. Purpose and Audience
+## 1.1. 目的與適合對象
 
-This notebook provides a hands-on guide for building **temporally-aware knowledge graphs** and performing **multi-hop retrieval directly over those graphs**. 
+這份 notebook 手把手帶你建出**具備時間感知的知識圖譜**，並直接在圖譜上做**多跳檢索（multi-hop retrieval）**。
 
-It's designed for engineers, architects, and analysts working on temporally-aware knowledge graphs. Whether you’re prototyping, deploying at scale, or exploring new ways to use structured data, you’ll find practical workflows, best practices, and decision frameworks to accelerate your work.
+它適合處理時間感知知識圖譜的工程師、架構師和分析師。不管你是在做 prototype、大規模部署，還是想找新的方式使用結構化資料，這裡都有實用的流程、最佳實務和決策框架可以參考。
 
-This cookbook presents two hands-on workflows you can use, extend, and deploy right away:
+這份 cookbook 提供兩個可以直接拿去用、擴充、部署的流程：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporally-aware knowledge graph (KG) construction</strong><br />
+    <strong>具時間感知的知識圖譜（KG）建構</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      A key challenge in developing knowledge-driven AI systems is maintaining a database that stays current and relevant. While much attention is given to boosting retrieval accuracy with techniques like semantic similarity and re-ranking, this guide focuses on a fundamental—yet frequently overlooked—aspect: <em>systematically updating and validating your knowledge base as new data arrives</em>.
+      開發知識驅動的 AI 系統，有個關鍵挑戰是讓資料庫保持最新、保持有用。大家常把心力放在用語意相似度、re-ranking 這類技巧提升檢索準確率，但這篇聚焦在一個根本卻常被忽略的環節：<em>新資料進來時，有系統地更新並驗證你的知識庫</em>。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      No matter how advanced your retrieval algorithms are, their effectiveness is limited by the quality and freshness of your database. This cookbook demonstrates how to routinely validate and update knowledge graph entries as new data arrives, helping ensure that your knowledge base remains accurate and up to date.
+      不管檢索演算法多先進，效果都受限於資料庫的品質和新鮮度。這份 cookbook 示範如何在新資料到來時，定期驗證並更新知識圖譜裡的條目，讓知識庫維持正確、保持最新。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Multi-hop retrieval using knowledge graphs</strong><br />
+    <strong>用知識圖譜做多跳檢索</strong><br />
 <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-  Learn how to combine OpenAI models (such as o3, o4-mini, GPT-4.1, and GPT-4.1-mini) with structured graph queries via tool calls, enabling the model to traverse your graph in multiple steps across entities and relationships.
+  學習怎麼把 OpenAI 模型（例如 o3、o4-mini、GPT-4.1 和 GPT-4.1-mini）和結構化圖譜查詢透過 tool call 結合，讓模型能跨實體和關係，分多步走訪你的圖譜。
 </p>
 <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-  This method lets your system answer complex, multi-faceted questions that require reasoning over several linked facts, going well beyond what single-hop retrieval can accomplish.
+  這個方法讓系統能回答需要串連多個事實才能推理的複雜問題，遠遠超過單跳檢索做得到的範圍。
 </p>
   </li>
 </ol>
 
-Inside, you'll discover:
+裡面你會看到：
 
-* **Practical decision frameworks** for choosing models and prompting techniques at each stage
-* **Plug-and-play code examples** for easy integration into your ML and data pipelines
-* **Links to in-depth resources** on OpenAI tool use, fine-tuning, graph backend selection, and more
-* **A clear path from prototype to production**, with actionable best practices for scaling and reliability
+* **實用的決策框架**，教你在每個階段挑模型和 prompt 技巧
+* **隨插即用的程式碼範例**，容易接進你的 ML 和資料 pipeline
+* **深入資源的連結**，涵蓋 OpenAI tool use、fine-tuning、圖譜後端選型等
+* **從 prototype 到 production 的清楚路徑**，附上可執行的擴展與可靠性最佳實務
 
-> **Note:** All benchmarks and recommendations are based on the best available models and practices as of June 2025. As the ecosystem evolves, periodically revisit your approach to stay current with new capabilities and improvements.
+> **注意：** 所有 benchmark 和建議，都是以 2025 年 6 月當時最好的模型和做法為準。生態系持續演進，建議定期回頭檢視你的做法，跟上新功能和改進。
 
-## 1.2. Key takeaways
+## 1.2. 重點摘要
 
-### Creating a Temporally-Aware Knowledge Graph with a Temporal Agent
+### 用 Temporal Agent 建立具時間感知的知識圖譜
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Why make your knowledge graph temporal?</strong><br />
+    <strong>為什麼要讓知識圖譜帶時間？</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-     Traditional knowledge graphs treat facts as static, but real-world information evolves constantly. What was true last quarter may be outdated today, risking errors or misinformed decisions if the graph does not capture change over time. Temporal knowledge graphs allow you to precisely answer questions like “What was true on a given date?” or analyse how facts and relationships have shifted, ensuring decisions are always based on the most relevant context.
+     傳統知識圖譜把事實當成靜態的，但真實世界的資訊一直在變。上一季為真的事，今天可能已經過時，圖譜如果沒記錄變化，就可能造成錯誤或誤導決策。時間感知的知識圖譜讓你能精準回答「某個日期當時什麼是真的？」，或分析事實與關係如何隨時間變動，確保決策永遠基於最相關的脈絡。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>What is a Temporal Agent?</strong><br />
+    <strong>什麼是 Temporal Agent？</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      A Temporal Agent is a pipeline component that ingests raw data and produces time-stamped triplets for your knowledge graph. This enables precise time-based querying, timeline construction, trend analysis, and more.
+      Temporal Agent 是 pipeline 裡的一個元件，吃進原始資料，產出帶時間戳的 triplet 給知識圖譜用。這讓你能做精準的時間查詢、建構時間軸、做趨勢分析等等。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>How does the pipeline work?</strong><br />
+    <strong>Pipeline 怎麼運作？</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The pipeline starts by semantically chunking your raw documents. These chunks are decomposed into statements ready for our Temporal Agent, which then creates time-aware triplets. An Invalidation Agent can then perform temporal validity checks, spotting and handling any statements that are invalidated by new statements that are incident on the graph.
+      Pipeline 先對原始文件做語意切塊（semantic chunking），再把 chunk 拆成一條條 statement 交給 Temporal Agent，由它產生帶時間的 triplet。接著 Invalidation Agent 做時間有效性檢查，找出被新進圖譜的 statement 推翻的舊 statement 並處理。
     </p>
   </li>
 </ol>
 
-### Multi-Step Retrieval Over a Knowledge Graph
+### 在知識圖譜上做多步檢索
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Why use multi-step retrieval?</strong><br />
+    <strong>為什麼要多步檢索？</strong><br />
 <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-  Direct, single-hop queries frequently miss salient facts distributed across a graph's topology. Multi-step (multi-hop) retrieval enables iterative traversal, following relationships and aggregating evidence across several hops. This methodology surfaces complex dependencies and latent connections that would remain hidden with one-shot lookups, providing more comprehensive and nuanced answers to sophisticated queries.
+  直接的單跳查詢常常漏掉分散在圖譜各處的重要事實。多步（multi-hop）檢索可以反覆走訪，沿著關係一路跟下去，跨好幾跳匯整證據。這樣能挖出單次查詢看不到的複雜依賴和隱藏關聯，給出更完整、更細緻的答案。
 </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Planners</strong><br />
+    <strong>Planner</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Planners orchestrate the retrieval process. <em>Task-orientated</em> planners decompose queries into concrete, sequential subtasks. <em>Hypothesis-orientated</em> planners, by contrast, propose claims to confirm, refute, or evolve. Choosing the optimal strategy depends on where the problem lies on the spectrum from deterministic reporting (well-defined paths) to exploratory research (open-ended inference).
+      Planner 負責統籌檢索流程。<em>任務導向（task-orientated）</em>的 planner 把問題拆成具體、有順序的子任務。<em>假設導向（hypothesis-orientated）</em>的 planner 則提出要驗證、推翻或修正的主張。該選哪種，取決於你的問題落在「確定性報表（路徑明確）」到「探索式研究（開放推論）」這條光譜的哪裡。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Tool Design Paradigms</strong><br />
+    <strong>Tool 設計典範</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Tool design spans a continuum: <em>Fixed tools</em> provide consistent, predictable outputs for specific queries (e.g., a service that always returns today’s weather for San Francisco). At the other end, <em>Free-form tools</em> offer broad flexibility, such as code execution or open-ended data retrieval. <em>Semi-structured tools</em> fall between these extremes, restricting certain actions while allowing tailored flexibility—specialized sub-agents are a typical example. Selecting the appropriate paradigm is a trade-off between control, adaptability, and complexity.
+      Tool 設計是一條連續的光譜：<em>固定 tool（Fixed tools）</em>對特定查詢給出一致、可預測的輸出（例如永遠回傳舊金山今天天氣的服務）。另一端是<em>自由形式 tool（Free-form tools）</em>，彈性很大，像程式碼執行或開放式資料檢索。<em>半結構化 tool（Semi-structured tools）</em>落在兩者之間，限制某些動作，同時保留量身調整的彈性，專門的 sub-agent 就是典型例子。選哪種典範，是在可控性、適應力和複雜度之間取捨。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Evaluating Retrieval Systems</strong><br />
+    <strong>評估檢索系統</strong><br />
 <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-  High-fidelity evaluation hinges on expert-curated "golden" answers, though these are costly and labor-intensive to produce. Automated judgments, such as those from LLMs or tool traces, can be quickly generated to supplement or pre-screen, but may lack the precision of human evaluation. As your system matures, transition towards leveraging real user feedback to measure and optimize retrieval quality in production.
+  高品質的評估要靠專家整理的「golden」答案，但這很貴又費工。LLM 或 tool trace 這類自動評分可以快速產生，拿來補充或初篩，只是精準度比不上人工評估。系統成熟之後，要逐步轉向用真實使用者回饋，來衡量並優化 production 的檢索品質。
 </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      A proven workflow: Start with synthetic tests, benchmark on your curated human-annotated "golden" dataset, and iteratively refine using live user feedback and ratings.
+      一個驗證過的流程：先用合成測試開始，再拿你整理好的人工標註 golden 資料集做 benchmark，最後依據線上使用者回饋和評分持續改進。
     </p>
   </li>
 </ol>
 
-### Prototype to Production
+### 從 Prototype 到 Production
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Keep the graph lean</strong><br />
+    <strong>讓圖譜保持精簡</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Established archival policies and assign numeric relevance scores to each edge (e.g., recency x trust x query-frequency). Automate the archival or sparsification of low-value nodes and edges, ensuring only the most critical and frequently accessed facts remain for rapid retrieval.
+      訂好封存政策，並給每條 edge 一個數值化的相關性分數（例如 新鮮度 x 可信度 x 查詢頻率）。自動封存或精簡低價值的 node 和 edge，只留下最關鍵、最常被存取的事實，讓檢索保持快速。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Parallelize the ingestion pipeline</strong><br />
+    <strong>讓 ingestion pipeline 平行化</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Transition from a linear document → chunk → extraction → resolution pipeline to a staged, asynchronous architecture. Assign each processing phase its own queue and dedicated worker pool. Apply clustering or network-based batching for invalidation jobs to maximize efficiency. Batch external API requests (e.g., OpenAI) and database writes wherever possible. This design increases throughput, introduces backpressure for reliability, and allows you to scale each pipeline stage independently.
+      把線性的 文件 → chunk → 抽取 → 解析 pipeline，改成分階段的非同步架構。每個處理階段有自己的 queue 和專屬 worker pool。invalidation 工作可以用分群或網路式的 batching 提高效率。外部 API 請求（例如 OpenAI）和資料庫寫入盡量批次化。這樣設計能提高吞吐量、帶來 backpressure 提升可靠性，還能讓每個階段獨立擴展。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Integrate Robust Production Safeguards</strong><br />
+    <strong>建立穩固的 production 防護</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Enforce rigorous output validation: standardise temporal fields (e.g., ISO-8601 date formatting), constrain entity types to your controlled vocabulary, and apply lightweight model-based sanity checks for output consistency. Employ structured logging with traceable identifiers and monitor real-time quality and performance metrics in real lime to proactively detect data drift, regressions, or pipeline anomalised before they impact downstream applications.
+      嚴格驗證輸出：統一時間欄位格式（例如 ISO-8601）、把 entity 類型限制在你控管的詞彙表內，並加上輕量的模型式 sanity check 確認輸出一致。用帶可追蹤 ID 的結構化 log，即時監控品質和效能指標，在資料漂移、退步或 pipeline 異常影響下游應用之前就先發現。
     </p>
   </li>
 </ol>
 
-# 2. How to Use This Cookbook
+# 2. 這份 Cookbook 怎麼用
 ---
 
-This cookbook is designed for flexible engagement:
+這份 cookbook 可以彈性使用：
 
-1. Use it as a comprehensive technical guide—read from start to finish for a deep understanding of temporally-aware knowledge graph systems.
-2. Skim for advanced concepts, methodologies, and implementation patterns if you prefer a high-level overview.
-3. Jump into any of the three modular sections; each is self-contained and directly applicable to real-world scenarios.
+1. 當成完整的技術指南，從頭讀到尾，深入理解時間感知知識圖譜系統。
+2. 想看高階概念、方法論和實作模式的話，可以快速瀏覽。
+3. 直接跳進三個模組化章節的任何一個，每個都獨立成篇，能直接套用到實際場景。
 
-Inside, you'll find:
+內容包括：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Creating a Temporally-Aware Knowledge Graph with a Temporal Agent</strong><br />
+    <strong>用 Temporal Agent 建立具時間感知的知識圖譜</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Build a pipeline that extracts entities and relations from unstructured text, resolves temporal conflicts, and keeps your graph up-to-date as new information arrives.
+      建一條 pipeline，從非結構化文字抽出 entity 和關係，解決時間上的衝突，並在新資訊到來時讓圖譜保持最新。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Multi-Step Retrieval Over a Knowledge Graph</strong><br />
+    <strong>在知識圖譜上做多步檢索</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Use structured queries and language model reasoning to chain multiple hops across your graph and answer complex questions.
+      用結構化查詢加語言模型的推理，把多跳串起來走過圖譜，回答複雜問題。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Prototype to Production</strong><br />
+    <strong>從 Prototype 到 Production</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Move from experimentation to deployment. This section covers architectural tips, integration patterns, and considerations for scaling reliably.
+      從實驗走到部署。這一節講架構建議、整合模式，以及穩定擴展要考慮的事。
     </p>
   </li>
 </ol>
 
 
-## 2.1. Pre-requisites
+## 2.1. 先決條件
 
-Before diving into building temporal agents and knowledge graphs, let's set up your environment. Install all required dependencies with pip, and set your OpenAI API key as an environment variable. Python 3.12 or later is required.
+在開始建 temporal agent 和知識圖譜之前，先把環境設好。用 pip 安裝所有需要的套件，並把 OpenAI API key 設成環境變數。需要 Python 3.12 以上。
 
 ```python
 !python -V
@@ -200,12 +214,11 @@ if "OPENAI_API_KEY" not in os.environ:
     os.environ["OPENAI_API_KEY"] = getpass.getpass("Paste your OpenAI API key here: ")
 ```
 
-# 3. Creating a Temporally-Aware Knowledge Graph with a Temporal Agent
+# 3. 用 Temporal Agent 建立具時間感知的知識圖譜
 ---
 
-**Accurate data is the foundation of any good business decision.** 
-OpenAI’s latest models like o3, o4-mini, and the GPT-4.1 family are enabling businesses to build state-of-the-art retrieval systems for their most important workflows. However, information evolves rapidly: facts ingested confidently yesterday may already be outdated today.
-
+**正確的資料是所有好商業決策的基礎。**
+OpenAI 最新的模型，像 o3、o4-mini 和 GPT-4.1 系列，讓企業能為最重要的工作流程打造頂尖的檢索系統。不過資訊變得很快：昨天還信心滿滿匯入的事實，今天可能已經過時了。
 <!-- ![Benefits of Temporal Knowledge Base](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/partners/temporal_agents_with_knowledge_graphs/images/01_benefit_of_temporal_kb.jpg) -->
 <img
   src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/01_benefit_of_temporal_kb.jpg"
@@ -214,52 +227,52 @@ OpenAI’s latest models like o3, o4-mini, and the GPT-4.1 family are enabling b
   style="height:auto;"
 />
 
-Without the ability to track when each fact was valid, retrieval systems risk returning answers that are outdated, non-compliant, or misleading. The consequences of missing temporal context can be severe in any industry, as illustrated by the following examples.
+如果沒辦法追蹤每個事實的有效期間，檢索系統就可能回傳過時、不合規或誤導的答案。缺少時間脈絡的後果在任何產業都可能很嚴重，下面的例子可以說明。
 
 <table>
   <thead>
     <tr>
-      <th>Industry</th>
-      <th>Example question</th>
-      <th>Risk if database is not temporal</th>
+      <th>產業</th>
+      <th>範例問題</th>
+      <th>資料庫沒有時間維度的風險</th>
     </tr>
   </thead>
   <tbody>
     <tr>
-      <td rowspan="3"><strong>Financial Services</strong></td>
-      <td><em>"How has Moody’s long‑term rating for Bank YY evolved since Feb 2023?"</em></td>
-      <td>Mispricing credit risk by mixing historical & current ratings</td>
+      <td rowspan="3"><strong>金融服務</strong></td>
+      <td><em>"How has Moody’s long‑term rating for Bank YY evolved since Feb 2023?"</em></td>
+      <td>把歷史評等和當前評等混在一起，導致信用風險定價錯誤</td>
     </tr>
     <tr>
-      <td><em>"Who was the CFO of Retailer ZZ when the FY‑22 guidance was issued?"</em></td>
-      <td>Governance/insider‑trading analysis may blame the wrong executive</td>
+      <td><em>"Who was the CFO of Retailer ZZ when the FY‑22 guidance was issued?"</em></td>
+      <td>治理或內線交易分析可能怪錯高階主管</td>
     </tr>
     <tr>
-      <td><em>"Was Fund AA sanctioned under Article BB at the time it bought Stock CC in Jan 2024?"</em></td>
-      <td>Compliance report could miss an infraction if rules changed later</td>
+      <td><em>"Was Fund AA sanctioned under Article BB at the time it bought Stock CC in Jan 2024?"</em></td>
+      <td>如果規則後來改了，合規報告可能漏掉違規行為</td>
     </tr>
     <tr>
-      <td rowspan="3"><strong>Manufacturing / Automotive</strong></td>
-      <td><em>"Which ECU firmware was deployed in model Q3 cars shipped between 2022‑05 and 2023‑03?"</em></td>
-      <td>Misdiagnosing field failures due to firmware drift</td>
+      <td rowspan="3"><strong>製造 / 汽車</strong></td>
+      <td><em>"Which ECU firmware was deployed in model Q3 cars shipped between 2022‑05 and 2023‑03?"</em></td>
+      <td>因為韌體版本漂移而誤判現場故障原因</td>
     </tr>
     <tr>
-      <td><em>"Which robot‑controller software revision ran on Assembly Line 7 during Lot 8421?"</em></td>
-      <td>Root‑cause analysis may blame the wrong software revision</td>
+      <td><em>"Which robot‑controller software revision ran on Assembly Line 7 during Lot 8421?"</em></td>
+      <td>根因分析可能怪錯軟體版本</td>
     </tr>
     <tr>
-      <td><em>"What torque specification applied to steering‑column bolts in builds produced in May 2024?"</em></td>
-      <td>Safety recall may miss affected vehicles</td>
+      <td><em>"What torque specification applied to steering‑column bolts in builds produced in May 2024?"</em></td>
+      <td>安全召回可能漏掉受影響的車輛</td>
     </tr>
   </tbody>
 </table>
 
 
-While we've called out some specific examples here, this theme is true across many industries including pharmaceuticals, law, consumer goods, and more.
+這裡只舉了幾個例子，同樣的情況在製藥、法律、消費品等許多產業都一樣。
 
-**Looking beyond standard retrieval**
+**不只是一般檢索**
 
-A temporally-aware knowledge graph allows you to go beyond static fact lookup. It enables richer retrieval workflows such as factual Q&A grounded in time, timeline generation, change tracking, counterfactual analysis, and more. We dive into these in more detail in our retrieval section later in the cookbook.
+時間感知的知識圖譜讓你超越靜態的事實查詢。它能支援更豐富的檢索流程，例如有時間依據的事實問答、時間軸生成、變更追蹤、反事實分析等。這些我們會在後面的檢索章節詳細講。
 
 <!-- ![Question types suitable for temporal knowledge bases](https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/partners/temporal_agents_with_knowledge_graphs/images/02_question_types_for_temporal_kbs.jpg) -->
 <img
@@ -268,58 +281,58 @@ A temporally-aware knowledge graph allows you to go beyond static fact lookup. I
   style="width:1091px; height:auto;"
 />
 
-## 3.1. Introducing our Temporal Agent
+## 3.1. 介紹 Temporal Agent
 ---
 
-A **temporal agent** is a specialized pipeline that converts raw, free-form statements into time-aware triplets ready for ingesting into a knowledge graph that can then be queried with the questions of the character *“What was true at time T?”*. 
+**Temporal agent** 是一條專門的 pipeline，把原始、自由形式的陳述轉成帶時間的 triplet，可以匯入知識圖譜，之後就能回答「在時間 T 當時什麼是真的？」這類問題。
 
-Triplets are the basic building blocks of knowledge graphs. It's a way to represent a single fact or piece of knowledge using three parts (hence, *"triplet"*): 
-- **Subject** - the entity you are talking about
-- **Predicate** - the type of relationship or property
-- **Object** - the value or other entity that the subject is connected to
+Triplet 是知識圖譜的基本單位。它用三個部分（所以叫 *triplet*）表示單一事實或知識：
+- **Subject（主詞）**：你在談論的實體
+- **Predicate（謂詞）**：關係或屬性的類型
+- **Object（受詞）**：主詞所連結的值或其他實體
 
-You can thinking of this like a sentence with a structure `[Subject] - [Predicate] - [Object]`. As a more clear example:
+你可以把它想成結構是 `[Subject] - [Predicate] - [Object]` 的一句話。看一個更清楚的例子：
 ```
 "London" - "isCapitalOf" - "United Kingdom"
 ```
 
-The Temporal Agent implemented in this cookbook draws inspiration from [Zep](https://arxiv.org/abs/2501.13956) and [Graphiti](https://github.com/getzep/graphiti), while introducing tighter control over fact invalidation and a more nuanced approach to episodic typing.
+這份 cookbook 實作的 Temporal Agent 參考了 [Zep](https://arxiv.org/abs/2501.13956) 和 [Graphiti](https://github.com/getzep/graphiti)，同時對事實失效加上更嚴謹的控制，並用更細緻的方式處理 episodic typing。
 
-### 3.1.1. Key enhancements introduced in this cookbook
+### 3.1.1. 這份 cookbook 的主要增強
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal validity extraction</strong><br />
+    <strong>時間有效性抽取</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Builds on Graphiti's prompt design to identify temporal spans and episodic context without requiring auxiliary reference statements.
+      以 Graphiti 的 prompt 設計為基礎，不需要額外的參照陳述，就能辨識時間區間和 episodic 脈絡。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Fact invalidation logic</strong><br />
+    <strong>事實失效邏輯</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Introduces bidirectionality checks and constrains comparisons by episodic type. This retains Zep's non-lossy approach while reducing unnecessary evaluations.
+      加入雙向檢查，並依 episodic 類型限制比對範圍。這保留了 Zep 不丟資料（non-lossy）的做法，同時減少不必要的評估。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal & episodic typing</strong><br />
+    <strong>時間與 episodic 類型</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Differentiates between <code>Fact</code>, <code>Opinion</code>, <code>Prediction</code>, as well as between temporal classes <code>Static</code>, <code>Dynamic</code>, <code>Atemporal</code>.
+      區分 <code>Fact</code>、<code>Opinion</code>、<code>Prediction</code>，也區分時間類別 <code>Static</code>、<code>Dynamic</code>、<code>Atemporal</code>。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Multi‑event extraction</strong><br />
+    <strong>多事件抽取</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Handles compound sentences and nested date references in a single pass.
+      一次處理就能搞定複合句和巢狀的日期參照。
     </p>
   </li>
 </ol>
 
 
 
-This process allows us to update our sources of truth efficiently and reliably:
+這個流程讓我們能有效率又可靠地更新真相來源（source of truth）：
 
 <br>
 
@@ -330,41 +343,41 @@ This process allows us to update our sources of truth efficiently and reliably:
   style="width:791px; height:auto;"
 />
 
-> **Note**: While the implementation in this cookbook is focused on a graph-based implementation, this approach is generalizable to other knowledge base structures e.g., pgvector-based systems.
+> **注意**：這份 cookbook 的實作以圖譜為主，但這個做法也可以套用到其他知識庫結構，例如基於 pgvector 的系統。
 ---
 
-### 3.1.2. The Temporal Agent Pipeline
+### 3.1.2. Temporal Agent Pipeline
 
-The Temporal Agent processes incoming statements through a three-stage pipeline:
+Temporal Agent 用三階段的 pipeline 處理進來的 statement：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Classification</strong><br />
+    <strong>時間分類（Temporal Classification）</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Labels each statement as <strong>Atemporal</strong>, <strong>Static</strong>, or <strong>Dynamic</strong>:
+      把每條 statement 標成 <strong>Atemporal</strong>、<strong>Static</strong> 或 <strong>Dynamic</strong>：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1em;">
-      <li style="margin-bottom: 0.5em;"><em>Atemporal</em> statements never change (e.g., “The speed of light in a vacuum is ≈3×10⁸ m s⁻¹”).</li>
-      <li style="margin-bottom: 0.5em;"><em>Static</em> statements are valid from a point in time but do not change afterwards (e.g., "Person YY was CEO of Company XX on October 23rd 2014.").</li>
-      <li><em>Dynamic</em> statements evolve (e.g., "Person YY is CEO of Company XX.").</li>
+      <li style="margin-bottom: 0.5em;"><em>Atemporal</em> statement 永遠不變（例如：「真空中的光速約為 3×10⁸ m s⁻¹」）。</li>
+      <li style="margin-bottom: 0.5em;"><em>Static</em> statement 從某個時間點起成立，之後不再改變（例如："Person YY was CEO of Company XX on October 23rd 2014."）。</li>
+      <li><em>Dynamic</em> statement 會隨時間演變（例如："Person YY is CEO of Company XX."）。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Event Extraction</strong><br />
+    <strong>時間事件抽取（Temporal Event Extraction）</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Identifies relative or partial dates (e.g., “Tuesday”, “three months ago”) and resolves them to an absolute date using the document timestamp or fallback heuristics (e.g., default to the 1st or last of the month if only the month is known).
+      找出相對或不完整的日期（例如「Tuesday」、「three months ago」），用文件時間戳或備用的啟發式規則（例如只知道月份時，預設取該月 1 號或最後一天）解析成絕對日期。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Validity Check</strong><br />
+    <strong>時間有效性檢查（Temporal Validity Check）</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Ensures every statement includes a <code>t_created</code> timestamp and, when applicable, a <code>t_expired</code> timestamp. The agent then compares the candidate triplet to existing knowledge graph entries to:
+      確保每條 statement 都有 <code>t_created</code> 時間戳，適用時還有 <code>t_expired</code> 時間戳。接著 agent 會把候選 triplet 和知識圖譜現有的條目比對，用來：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1em;">
-      <li style="margin-bottom: 0.5em;">Detect contradictions and mark outdated entries with <code>t_invalid</code></li>
-      <li style="margin-bottom: 0.5em;">Link newer statements to those they invalidate with <code>invalidated_by</code></li>
+      <li style="margin-bottom: 0.5em;">偵測矛盾，並用 <code>t_invalid</code> 把過時的條目標起來</li>
+      <li style="margin-bottom: 0.5em;">用 <code>invalidated_by</code> 把較新的 statement 連到被它推翻的舊 statement</li>
     </ul>
   </li>
 </ol>
@@ -379,80 +392,80 @@ The Temporal Agent processes incoming statements through a three-stage pipeline:
   style="width:809px; height:auto;"
 />
 
-### 3.1.3. Selecting the right model for a Temporal Agent
-When building systems with LLMs, it is a good practice to [start with larger models then later look to optimize and shrink](https://platform.openai.com/docs/guides/model-selection). 
+### 3.1.3. 幫 Temporal Agent 挑模型
+用 LLM 建系統時，好習慣是[先用大模型，之後再優化、縮小](https://platform.openai.com/docs/guides/model-selection)。
 
-The GPT-4.1 series is particularly well-suited for building Temporal Agents due to its strong instruction-following ability. On benchmarks like Scale’s MultiChallenge, [GPT-4.1 outperforms GPT-4o by $10.5\%_{abs}$](https://openai.com/index/gpt-4-1/), demonstrating superior ability to maintain context, reason in-conversation, and adhere to instructions - key traits for extracting time-stamped triplets. These capabilities make it an excellent choice for prototyping agents that rely on time-aware data extraction.
+GPT-4.1 系列的指令遵循能力很強，特別適合建 Temporal Agent。在 Scale 的 MultiChallenge 這類 benchmark 上，[GPT-4.1 比 GPT-4o 高出 $10.5\%_{abs}$](https://openai.com/index/gpt-4-1/)，顯示它在維持上下文、對話中推理和遵守指令上更強，這些正是抽取帶時間戳 triplet 的關鍵特質。所以拿來做依賴時間感知資料抽取的 agent prototype 很合適。
 
-#### Recommended development workflow
+#### 建議的開發流程
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Prototype with GPT-4.1</strong><br />
+    <strong>用 GPT-4.1 做 prototype</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Maximize correctness and reduce prompt-debug time while you build out the core pipeline logic.
+      建核心 pipeline 邏輯時，先把正確率拉到最高，也減少 debug prompt 的時間。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Swap to GPT-4.1-mini or GPT-4.1-nano</strong><br />
+    <strong>換成 GPT-4.1-mini 或 GPT-4.1-nano</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Once prompts and logic are stable, switch to smaller variants for lower latency and cost-effective inference.
+      prompt 和邏輯穩定之後，改用較小的版本，延遲更低、推論成本也更划算。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Distill onto GPT-4.1-mini or GPT-4.1-nano</strong><br />
+    <strong>蒸餾（distill）到 GPT-4.1-mini 或 GPT-4.1-nano</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Use <a href="https://platform.openai.com/docs/guides/distillation" target="_blank">OpenAI's Model Distillation</a> to train smaller models with high-quality outputs from a larger 'teacher' model such as GPT-4.1, preserving (or even improving) performance relative to GPT-4.1.
+      用 <a href="https://platform.openai.com/docs/guides/distillation" target="_blank">OpenAI 的 Model Distillation</a>，拿 GPT-4.1 這類大型「老師」模型的高品質輸出來訓練小模型，表現可以維持甚至超越原本的 GPT-4.1。
     </p>
   </li>
 </ol>
 
 
 
-| Model                    | Relative cost | Relative latency  | Intelligence | Ideal Role in Workflow                   |
+| Model                    | 相對成本 | 相對延遲  | 智能 | 在流程中的理想角色                   |
 | ----------------------- | ------ | -------- | - |------------------------------ |
 | *GPT-4.1*      | ★★★ | ★★ | ★★★ *(highest)* | Ground-truth prototyping, generating data for distillation |
 | *GPT-4.1-mini*             | ★★  | ★     | ★★ | Balanced cost-performance, mid to large scale production systems |
 | *GPT-4.1-nano*        | ★ *(lowest)*    | ★ *(fastest)*     | ★ | Cost-sensitive and ultra-large scale bulk processing |
 
-> In practice, this looks like: prototype with GPT-4.1 → measure quality → step down the ladder until the trade-offs no longer meet your needs.
+> 實務上就是：用 GPT-4.1 做 prototype → 量測品質 → 一階一階往下換，直到取捨不再符合你的需求為止。
 
-## 3.2. Building our Temporal Agent Pipeline
+## 3.2. 建立我們的 Temporal Agent Pipeline
 ---
-Before diving into the implementation details, it's useful to understand the ingestion pipeline at a high level:
+在深入實作細節之前，先從高層看一下 ingestion pipeline：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Load transcripts</strong><br />
+    <strong>載入逐字稿</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Creating a Semantic Chunker</strong><br />
+    <strong>建立 Semantic Chunker</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Laying the Foundations for our Temporal Agent</strong><br />
+    <strong>替 Temporal Agent 打好基礎</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Statement Extraction</strong><br />
+    <strong>Statement 抽取</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Range Extraction</strong><br />
+    <strong>時間範圍抽取</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Creating our Triplets</strong><br />
+    <strong>建立 Triplet</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Events</strong><br />
+    <strong>時間事件（Temporal Events）</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Defining our Temporal Agent</strong><br />
+    <strong>定義 Temporal Agent</strong><br />
   </li>
 
   <li style="margin-bottom: 1.2em;">
@@ -464,11 +477,11 @@ Before diving into the implementation details, it's useful to understand the ing
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Building our pipeline</strong><br />
+    <strong>組裝 pipeline</strong><br />
   </li>
 </ol>
 
-### Architecture diagram
+### 架構圖
 
 <!-- ![Screenshot 2025-06-23 at 11.43.34.png](temporal_agents_files/290fc94d-2358-44d9-829c-220cd96a8b34.png) -->
 <img
@@ -477,16 +490,16 @@ Before diving into the implementation details, it's useful to understand the ing
   style="width:791px; height:auto;"
 />
 
-### 3.2.1. Load transcripts
-For the purposes of this cookbook, we have selected the ["Earnings Calls Dataset" (jlh-ibm/earnings_call)](https://huggingface.co/datasets/jlh-ibm/earnings_call) which is made available under the Creative Commons Zero v1.0 license. This dataset contains a collection of 188 earnings call transcripts originating in the period 2016-2020 in relation to the NASDAQ stock market. We believe this dataset is a good choice for this cookbook as extracting information from - and subsequently querying information from - earnings call transcripts is a common problem in many financial institutions around the world. 
+### 3.2.1. 載入逐字稿
+這份 cookbook 選用 ["Earnings Calls Dataset" (jlh-ibm/earnings_call)](https://huggingface.co/datasets/jlh-ibm/earnings_call)，以 Creative Commons Zero v1.0 授權公開。資料集收錄 188 份 2016 到 2020 年間、和 NASDAQ 股市相關的財報電話會議逐字稿。我們認為這個資料集很適合，因為從財報逐字稿抽取資訊、再從中查詢資訊，是全球許多金融機構都會遇到的常見問題。
 
-Moreover, the often variable character of statements and topics from the same company across multiple earnings calls provides a useful vector through which to demonstrate the temporal knowledge graph concept. 
+另外，同一間公司在多場財報會議上的說法和主題常常會變，正好可以用來示範時間感知知識圖譜的概念。
 
-Despite this dataset's focus on the financial world, we build up the Temporal Agent in a general structure, so it will be quick to adapt to similar problems in other industries such as pharmaceuticals, law, automotive, and more. 
+雖然資料集偏金融領域，我們把 Temporal Agent 做成通用結構，所以很容易改去處理製藥、法律、汽車等其他產業的類似問題。
 
-For the purposes of this cookbook we are limiting the processing to two companies - AMD and Nvidia - though in practice this pipeline can easily be scaled to any company. 
+這份 cookbook 只處理兩間公司，AMD 和 Nvidia，不過這條 pipeline 其實可以輕鬆擴展到任何公司。
 
-Let’s start by loading the dataset from HuggingFace.
+先從 HuggingFace 載入資料集。
 
 ```python
 from datasets import load_dataset
@@ -523,23 +536,23 @@ company_counts = Counter(my_dataset["company"])
 company_counts
 ```
 
-**Database Set-up**
+**資料庫設定**
 
 
-Before we get to processing this data, let’s set up our database. 
+在處理資料之前，先把資料庫架好。
 
-For convenience within a notebook format, we've chosen SQLite as our database for this implementation. In the "Prototype to Production" section and [Appendix section A.1, "Storing and Retrieving High-Volume Graph Data"](#a1-storing-and-retrieving-high-volume-graph-data), we discuss considerations for different dataset choices in a production environment. 
+為了在 notebook 裡方便使用，這個實作選了 SQLite。在「Prototype to Production」章節和[附錄 A.1「Storing and Retrieving High-Volume Graph Data」](#a1-storing-and-retrieving-high-volume-graph-data)裡，我們會討論 production 環境下資料庫選擇的考量。
 
-If you are running this cookbook locally, you may choose to set `memory = False` to save the database to storage. The default file path, `my_database.db`, will be used, or you may pass your own `db_path` argument to `make_connection`.
+如果你是在本機執行這份 cookbook，可以把 `memory = False` 設起來，把資料庫存到磁碟。預設檔案路徑是 `my_database.db`，你也可以傳自己的 `db_path` 參數給 `make_connection`。
 
-We will set up several tables to store the following information:
+我們會建好幾張 table 來存放這些資訊：
 - Transcripts
 - Chunks
 - Temporal Events
 - Triplets
-- Entities (including canonical mappings)
+- Entities（包含 canonical 對應）
 
-This code is abstracted behind a `make_connection` method which creates the new SQLite database. The details of this method can be found in the `db_interface.py` script in the GitHub repository for this cookbook.
+這段程式碼包在 `make_connection` 方法後面，由它建立新的 SQLite 資料庫。這個方法的細節可以在這份 cookbook 的 GitHub repository 裡的 `db_interface.py` 找到。
 
 ```python
 from db_interface import make_connection
@@ -547,17 +560,17 @@ from db_interface import make_connection
 sqlite_conn = make_connection(memory=False, refresh=True)
 ```
 
-### 3.2.2. Creating a Semantic Chunker
+### 3.2.2. 建立 Semantic Chunker
 
-Before diving into building the `Chunker` class itself, we begin by defining our first data models. As is generally considered good practice when working with Python, [Pydantic](https://docs.pydantic.dev/latest/) is used to ensure type safety and clarity in our model definitions. Pydantic provides a clean, declarative way to define data structures whilst automatically validating and parsing input data, making our data models both robust and easy to work with.
+在開始建 `Chunker` 類別之前，先定義我們的第一批 data model。依照 Python 的慣用做法，我們用 [Pydantic](https://docs.pydantic.dev/latest/) 來確保型別安全，也讓 model 定義清楚。Pydantic 用乾淨、宣告式的方式定義資料結構，同時自動驗證並解析輸入資料，讓 data model 既穩固又好用。
 
 #### Chunk model
-This is a core data model that we'll use to store individual segments of text extracted from transcripts, along with any associated metadata. As we process the transcripts by breaking them into semantically meaningful chunks, each piece will be saved as a separate `Chunk`.
+這是核心的 data model，用來存從逐字稿切出來的一段段文字，以及相關 metadata。我們把逐字稿切成有語意的 chunk 之後，每一段都會存成一個 `Chunk`。
 
-Each `Chunk` contains:
-- `id`: A unique identifier automatically generated for each chunk. This helps us identify and track chunks of text throughout
-- `text`: A string field that contains the text content of the chunk
-- `metadata`: A dictionary to allow for flexible metadata storage
+每個 `Chunk` 包含：
+- `id`：自動為每個 chunk 產生的唯一識別碼，讓我們能在整個流程中識別、追蹤 chunk
+- `text`：字串欄位，放 chunk 的文字內容
+- `metadata`：字典，用來彈性存放 metadata
 
 ```python
 import uuid
@@ -575,15 +588,15 @@ class Chunk(BaseModel):
 ```
 
 #### Transcript model
-As the name suggests, we will use the `Transcript` model to represent the full content of an earnings call transcript. It captures several key pieces of information:
-- `id`: Analogous to `Chunk`, this gives us a unique identifier
-- `text`: The full text of the transcript
-- `company`: The name of the company that the earnings call was about
-- `date`: The date of the earnings call
-- `quarter`: The fiscal quarter that the earnings call was in
-- `chunks`: A list of `Chunk` objects, each representing a meaningful segment of the full transcript
+顧名思義，`Transcript` model 代表一份完整的財報電話會議逐字稿。它記錄幾項關鍵資訊：
+- `id`：和 `Chunk` 一樣，提供唯一識別碼
+- `text`：逐字稿全文
+- `company`：這場財報會議對應的公司名稱
+- `date`：財報會議的日期
+- `quarter`：財報會議所屬的會計季度
+- `chunks`：`Chunk` 物件的列表，每個代表完整逐字稿裡一段有意義的片段
 
-To ensure the `date` field is handled correctly, the `to_datetime` validator is used to convert the value to datetime format. 
+為了確保 `date` 欄位處理正確，我們用 `to_datetime` validator 把值轉成 datetime 格式。
 
 ```python
 from datetime import datetime
@@ -612,27 +625,27 @@ class Transcript(BaseModel):
         return datetime.fromisoformat(str(d))
 ```
 
-#### Chunker class
+#### Chunker 類別
 
-Now, we define the `Chunker` class to split each transcript into semantically meaningful chunks. Instead of relying on arbitrary rules like character count or line break, we apply semantic chunking to preserve more of the contextual integrity of the original transcript. This ensures that each chunk is a self-contained unit that keeps contextually linked ideas together. This is particularly helpful for downstream tasks like statement extraction, where context heavily influences accuracy.
+接著定義 `Chunker` 類別，把每份逐字稿切成有語意的 chunk。我們不靠字元數或換行這類任意規則，而是用 semantic chunking，盡量保留原始逐字稿的上下文完整性。這能確保每個 chunk 是自成一體的單元，把有關聯的想法放在一起。這對 statement 抽取這類下游任務特別有幫助，因為上下文對準確度影響很大。
 
-The chunker class contains two methods:
+Chunker 類別有兩個方法：
 
 - `find_quarter`
 
-  This method attempts to extract the fiscal quarter (e.g., "Q1 2023") directly from the transcript text using a simple regular expression. In this case, this is straightforward as the data format of quarters in the transcripts is consistent and well defined.
+  這個方法用簡單的 regular expression，直接從逐字稿文字抽出會計季度（例如 "Q1 2023"）。這份資料裡季度的格式一致、定義明確，所以做起來很直接。
 
-  However, in real world scenarios, detecting the quarter reliably may require more work. Across multiple sources or document types the detailing of the quarter is likely to be different. LLMs are great tools to help alleviate this issue. Try using GPT-4.1-mini with a prompt specifically to extract the quarter given wider context from the document. 
+  不過在真實場景中，要可靠地偵測季度可能得多花功夫。不同來源或文件類型對季度的寫法大概都不同。LLM 很適合用來解決這個問題。可以試試用 GPT-4.1-mini 配上專門的 prompt，根據文件更廣的上下文抽出季度。
 
 - `generate_transcripts_and_chunks`
 
-  This is the core method that takes in a dataset (as an iterable of dictionaries) and returns a list of `Transcript` objects each populated with semantically derived `Chunk`s. It performs the following steps:
+  這是核心方法，吃進資料集（字典的 iterable），回傳 `Transcript` 物件的列表，每個都帶有語意切出來的 `Chunk`。它做這幾步：
 
-  1. *Transcript creation*: Initializes `Transcript` objects using the provided text, company, and date fields
-  2. *Filtering*: Uses the `SemanticChunker` from [chonkie](https://chonkie.ai/) along with OpenAI's text-embedding-3-small model to split the transcript into logical segments
-  3. *Chunk assignment*: Wraps each semantic segment into a `Chunk` model, attaching relevant metadata like start and end indices
+  1. *建立 Transcript*：用提供的 text、company、date 欄位初始化 `Transcript` 物件
+  2. *切分*：用 [chonkie](https://chonkie.ai/) 的 `SemanticChunker` 搭配 OpenAI 的 text-embedding-3-small model，把逐字稿切成有邏輯的片段
+  3. *指派 chunk*：把每個語意片段包成 `Chunk` model，附上起訖 index 這類相關 metadata
 
-The chunker falls in to this part of our pipeline:
+Chunker 在我們 pipeline 裡的位置如下：
 
 <!-- ![Screenshot 2025-06-23 at 11.44.13.png](temporal_agents_files/5463dc6a-17fc-4f35-adde-5a77dc191925.png) -->
 <img
@@ -740,7 +753,7 @@ chunker = Chunker()
 transcripts = chunker.generate_transcripts_and_chunks(raw_data)
 ```
 
-Alternatively, we can load just the `AMD` and `NVDA` pre-chunked transcripts from pre-processed files in `transcripts/`
+或者，我們也可以直接從 `transcripts/` 裡預先處理好的檔案，只載入 `AMD` 和 `NVDA` 已切好 chunk 的逐字稿
 
 ```python
 import pickle
@@ -772,7 +785,7 @@ def load_transcripts_from_pickle(directory_path: str = "transcripts/") -> list[T
 # transcripts = load_transcripts_from_pickle()
 ```
 
-Now we can inspect a couple of chunks:
+現在來看幾個 chunk：
 
 ```python
 chunks = transcripts[0].chunks
@@ -787,36 +800,36 @@ else:
     print("No chunks found for the first transcript.")
 ```
 
-With this, we have successfully split our transcripts into semantically sectioned chunks. We can now move onto the next steps in our pipeline.
+這樣我們就成功把逐字稿切成語意分段的 chunk 了，可以進到 pipeline 的下一步。
 
-### 3.2.3. Laying the Foundations for our Temporal Agent
+### 3.2.3. 替 Temporal Agent 打好基礎
 
-Before we move onto defining the `TemporalAgent` class, we will first define the prompts and data models that are needed for it to function.
+在定義 `TemporalAgent` 類別之前，先定義它運作需要的 prompt 和 data model。
 
-#### Formalizing our label definitions 
+#### 把 label 的定義正式化
 
-For our temporal agent to be able to accurately extract the statement and temporal types we need to provide it with sufficiently detailed and specific context. For convenience, we define these within a structured format below. 
+要讓 temporal agent 準確抽出 statement 類型和時間類型，我們得給它足夠詳細、具體的上下文。為了方便，我們把這些定義放在下面的結構化格式裡。
 
-Each label contains three crucial pieces of information that we will later pass to our LLMs in prompts.
+每個 label 包含三項關鍵資訊，之後會在 prompt 裡傳給 LLM：
 <ul style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
     <code>definition</code><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Provides a concise description of what the label represents. It establishes the conceptual boundaries of the statement or temporal type and ensures consistency in interpretation across examples.
+      簡明描述這個 label 代表什麼。它劃定 statement 或時間類型的概念邊界，確保不同範例間的詮釋一致。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
     <code>date_handling_guidance</code><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Explains how to interpret the temporal validity of a statement associated with the label. It describes how the <code>valid_at</code> and <code>invalid_at</code> dates should be derived when processing instances of that label.
+      說明如何解讀與這個 label 相關的 statement 的時間有效性。它描述處理這個 label 的實例時，<code>valid_at</code> 和 <code>invalid_at</code> 日期該怎麼推導。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
     <code>date_handling_examples</code><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Includes illustrative examples of how real-world statements would be labelled and temporally annotated under this label. These will be used as few-shot examples to the LLMs downstream.
+      舉例說明真實世界的 statement 在這個 label 下會怎麼標註、怎麼加上時間註記。這些會當成 few-shot 範例傳給下游的 LLM。
     </p>
   </li>
 </ul>
@@ -929,43 +942,43 @@ LABEL_DEFINITIONS: dict[str, dict[str, dict[str, str]]] = {
 }
 ```
 
-### 3.2.4. Statement Extraction 
+### 3.2.4. Statement 抽取
 
-"Statement Extraction" refers to the process of splitting our semantic chunks into the smallest possible "atomic" facts. Within our Temporal Agent, this is achieved by: 
+「Statement 抽取」是把我們的語意 chunk 拆成最小的「原子」事實的過程。在 Temporal Agent 裡，這是靠以下做法達成：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Finding every standalone, declarative claim</strong><br />
+    <strong>找出每一條獨立的陳述性主張</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Extract statements that can stand on their own as complete subject-predicate-object expressions without relying on surrounding context.
+      抽出能自成完整 subject-predicate-object 表達、不用靠前後文的 statement。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Ensuring atomicity</strong><br />
+    <strong>確保原子性</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Break down complex or compound sentences into minimal, indivisible factual units, each expressing a single relationship.
+      把複雜句或複合句拆成最小、不可再分的事實單元，每個只表達一個關係。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Resolving references</strong><br />
+    <strong>解析指代</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Replace pronouns or abstract references (e.g., "he" or "The Company") with specific entities (e.g., "John Smith", "AMD") using the main subject for disambiguation.
+      把代名詞或抽象指稱（例如 "he" 或 "The Company"）換成具體實體（例如 "John Smith"、"AMD"），並以主要主詞來消除歧義。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Preserving temporal and quantitative precision</strong><br />
+    <strong>保留時間與數量的精確度</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Retain explicit dates, durations, and quantities to anchor each fact precisely in time and scale.
+      保留明確的日期、期間和數量，把每個事實精準地定在時間和規模上。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Labelling each extracted statement</strong><br />
+    <strong>替每條抽出的 statement 加標籤</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Every statement is annotated with a <code>StatementType</code> and a <code>TemporalType</code>.
+      每條 statement 都標上 <code>StatementType</code> 和 <code>TemporalType</code>。
     </p>
   </li>
 </ol>
@@ -973,13 +986,13 @@ LABEL_DEFINITIONS: dict[str, dict[str, dict[str, str]]] = {
 
 #### Temporal Types
 
-The `TemporalType` enum provides a standardized set of temporal categories that make it easier to classify and work with statements extracted from earnings call transcripts.
+`TemporalType` enum 提供一組標準化的時間類別，讓我們更容易分類、處理從財報逐字稿抽出的 statement。
 
-Each category captures a different kind of temporal reference:
+每個類別對應一種不同的時間參照：
 
-* **Atemporal**: Statements that are universally true and invariant over time (e.g., “The speed of light in a vacuum is ≈3×10⁸ m s⁻¹.”).
-* **Static**: Statements that became true at a specific point in time and remain unchanged thereafter (e.g., “Person YY was CEO of Company XX on October 23rd, 2014.”).
-* **Dynamic**: Statements that may change over time and require temporal context to interpret accurately (e.g., “Person YY is CEO of Company XX.”).
+* **Atemporal**：普遍為真、不隨時間改變的 statement（例如：「真空中的光速約為 3×10⁸ m s⁻¹。」）。
+* **Static**：在某個特定時間點變成真、之後維持不變的 statement（例如：「Person YY was CEO of Company XX on October 23rd, 2014.」）。
+* **Dynamic**：可能隨時間改變、需要時間脈絡才能正確解讀的 statement（例如：「Person YY is CEO of Company XX.」）。
 
 ```python
 from enum import StrEnum
@@ -995,11 +1008,11 @@ class TemporalType(StrEnum):
 
 #### Statement Types
 
-Similarly, the `StatementType` enum classifies the nature of each extracted statement, capturing its epistemic characteristics.
+同樣地，`StatementType` enum 把每條抽出的 statement 依性質分類，反映它的認識論特徵（epistemic characteristics）。
 
-* **Fact**: A statement that asserts a verifiable claim considered true at the time it was made. However, it may later be superseded or contradicted by other facts (e.g., updated information or corrections).
-* **Opinion**: A subjective statement reflecting a speaker’s belief, sentiment, or judgment. By nature, opinions are considered temporally true at the moment they are expressed.
-* **Prediction**: A forward-looking or hypothetical statement about a potential future event or outcome. Temporally, a prediction is assumed to hold true from the time of utterance until the conclusion of the inferred prediction window.
+* **Fact**：斷言一個可驗證的主張，在說出當下被認為是真的。不過之後可能被其他事實取代或推翻（例如更新的資訊或更正）。
+* **Opinion**：反映說話者信念、情緒或判斷的主觀陳述。就性質而言，opinion 在被表達的那一刻就視為時間上為真。
+* **Prediction**：關於未來可能事件或結果的前瞻性或假設性陳述。在時間上，prediction 被假定從說出的當下起成立，直到推論出的預測期間結束。
 
 ```python
 class StatementType(StrEnum):
@@ -1012,16 +1025,16 @@ class StatementType(StrEnum):
 
 #### Raw Statement
 
-The `RawStatement` model represents an individual statement extracted by an LLM, annotated with both its semantic type (`StatementType`) and temporal classification (`TemporalType`). These raw statements serve as intermediate representations and are intended to be transformed into `TemporalEvent` objects in later processing stages.
+`RawStatement` model 代表 LLM 抽出的單一 statement，同時標有語意類型（`StatementType`）和時間分類（`TemporalType`）。這些 raw statement 是中間表示，之後會在處理階段被轉成 `TemporalEvent` 物件。
 
-Core fields:
-- `statement`: The textual content of the extracted statement
-- `statement_type`: The type of statement (Fact, Opinion, Prediction), based on the `StatementType` enum
-- `temporal_type`: The temporal classification of the statement (Static, Dynamic, Atemporal), drawn from the `TemporalType` enum
+核心欄位：
+- `statement`：抽出的 statement 的文字內容
+- `statement_type`：statement 的類型（Fact、Opinion、Prediction），依據 `StatementType` enum
+- `temporal_type`：statement 的時間分類（Static、Dynamic、Atemporal），取自 `TemporalType` enum
 
-The model includes field-level validators to ensure that all type annotations conform to their respective enums, providing a layer of robustness against invalid input.
+這個 model 包含欄位層級的 validator，確保所有型別註記都符合各自的 enum，防範無效輸入。
 
-The companion model `RawStatementList` contains the output of the statement extraction step: a list of `RawStatement` instances.
+配套的 `RawStatementList` model 放 statement 抽取這一步的輸出：一串 `RawStatement` 實例。
 
 ```python
 from pydantic import field_validator
@@ -1062,44 +1075,44 @@ class RawStatementList(BaseModel):
     statements: list[RawStatement]
 ```
 
-#### Statement Extraction Prompt
+#### Statement 抽取 Prompt
 
-This is the core prompt that powers our Temporal Agent's ability to extract and label atomic statements. It is written in [Jinja](https://jinja.palletsprojects.com/en/stable/) allowing us to modularly compose dynamic inputs without rewriting the core logic.
+這是驅動 Temporal Agent 抽取並標註原子 statement 的核心 prompt。它用 [Jinja](https://jinja.palletsprojects.com/en/stable/) 寫成，讓我們能模組化地組合動態輸入，不用重寫核心邏輯。
 
-##### Anatomy of the prompt
+##### Prompt 的結構
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Set up the extraction task</strong><br />
+    <strong>設定抽取任務</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      We instruct the assistant to behave like a domain expert in finance and clearly define the two subtasks: (i) extracting atomic, declarative statements, and (ii) labelling each with a <code>statement_type</code> and a <code>temporal_type</code>.
+      我們指示 assistant 表現得像金融領域的專家，並清楚定義兩個子任務：(i) 抽出原子的陳述性 statement，(ii) 替每條標上 <code>statement_type</code> 和 <code>temporal_type</code>。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Enforces strict extraction guidelines</strong><br />
+    <strong>強制執行嚴格的抽取準則</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The rules for extraction help to enforce consistency and clarity. Statements must:
+      抽取規則有助於維持一致與清晰。Statement 必須：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1em;">
-      <li style="margin-bottom: 0.5em;">Be structured as clean subject-predicate-object triplets</li>
-      <li style="margin-bottom: 0.5em;">Be self-contained and context-independent</li>
-      <li style="margin-bottom: 0.5em;">Resolve co-references (e.g., "he" → "John Smith")</li>
-      <li style="margin-bottom: 0.5em;">Include temporal/quantitative qualifiers where present</li>
-      <li>Be split when multiple events or temporalities are described</li>
+      <li style="margin-bottom: 0.5em;">結構上是乾淨的 subject-predicate-object triplet</li>
+      <li style="margin-bottom: 0.5em;">自成一體、不依賴上下文</li>
+      <li style="margin-bottom: 0.5em;">解析 co-reference（例如 "he" → "John Smith"）</li>
+      <li style="margin-bottom: 0.5em;">有時間或數量限定詞時要帶上</li>
+      <li>描述多個事件或多種時間性時要拆開</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Supports plug-and-play definitions</strong><br />
+    <strong>支援隨插即用的定義</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The <code>{% if definitions %}</code> block makes it easy to inject structured definitions such as statement categories, temporal types, and domain-specific terms.
+      <code>{% if definitions %}</code> 區塊讓你很容易注入結構化的定義，例如 statement 類別、時間類型和領域專有術語。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Includes few-shot examples</strong><br />
+    <strong>包含 few-shot 範例</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      We provide an annotated example chunk and the corresponding JSON output to demonstrate to the model how it should behave.
+      我們提供一個標註過的範例 chunk 和對應的 JSON 輸出，向模型示範該有的行為。
     </p>
   </li>
 </ol>
@@ -1289,14 +1302,14 @@ Return only a list of extracted labelled statements in the JSON ARRAY of objects
 '''
 ```
 
-### 3.2.5. Temporal Range Extraction
+### 3.2.5. 時間範圍抽取
 
 #### Raw temporal range
 
-The `RawTemporalRange` model holds the raw extraction of `valid_at` and `invalid_at` date strings for a statement. These both use the date-time [supported string property](https://platform.openai.com/docs/guides/structured-outputs?api-mode=responses ).
+`RawTemporalRange` model 存放一條 statement 的 `valid_at` 和 `invalid_at` 日期字串的原始抽取結果。兩者都使用 date-time 的[支援字串屬性](https://platform.openai.com/docs/guides/structured-outputs?api-mode=responses )。
 
-- `valid_at` represents the start of the validity period for a statement
-- `invalid_at` represents the end of the validity period for a statement
+- `valid_at` 代表 statement 有效期間的起點
+- `invalid_at` 代表 statement 有效期間的終點
 
 ```python
 class RawTemporalRange(BaseModel):
@@ -1308,9 +1321,9 @@ class RawTemporalRange(BaseModel):
 
 #### Temporal validity range
 
-While the `RawTemporalRange` model preserves the originally extracted date strings, the `TemporalValidityRange` model transforms these into standardized `datetime` objects for downstream processing. 
+`RawTemporalRange` model 保留最初抽出的日期字串，而 `TemporalValidityRange` model 則把它們轉成標準化的 `datetime` 物件，供下游處理。
 
-It parses the raw `valid_at` and `invalid_at` values, converting them from strings into timezone-aware `datetime` instances. This is handled through a field-level validator.
+它會解析原始的 `valid_at` 和 `invalid_at` 值，把字串轉成帶時區的 `datetime` 實例。這是透過欄位層級的 validator 處理的。
 
 ```python
 from utils import parse_date_str
@@ -1330,47 +1343,47 @@ class TemporalValidityRange(BaseModel):
         return parse_date_str(value)
 ```
 
-#### Date extraction prompt
+#### 日期抽取 Prompt
 
-Let's now create the prompt that guides our Temporal Agent in accurately determining the temporal validity of statements.
+現在來建立 prompt，引導 Temporal Agent 準確判斷 statement 的時間有效性。
 
-##### Anatomy of the prompt
+##### Prompt 的結構
 
-This prompt helps the Temporal Agent precisely understand and extract temporal validity ranges.
+這個 prompt 幫助 Temporal Agent 精確理解並抽出時間有效區間。
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Clearly Defines the Extraction Task</strong><br />
+    <strong>清楚定義抽取任務</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The prompt instructs our model to determine when a statement became true (<code>valid_at</code>) and optionally when it stopped being true (<code>invalid_at</code>).
+      這個 prompt 指示模型判斷一條 statement 何時變成真（<code>valid_at</code>），以及選擇性地判斷何時不再為真（<code>invalid_at</code>）。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Uses Contextual Guidance</strong><br />
+    <strong>使用上下文引導</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      By dynamically incorporating <code>{{ inputs.temporal_type }}</code> and <code>{{ inputs.statement_type }}</code>, the prompt guides the model in interpreting temporal nuances based on the nature of each statement (like distinguishing facts from predictions or static from dynamic contexts).
+      透過動態帶入 <code>{{ inputs.temporal_type }}</code> 和 <code>{{ inputs.statement_type }}</code>，prompt 會依每條 statement 的性質引導模型解讀時間上的細微差異（例如區分事實和預測，或 static 和 dynamic 情境）。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Ensures Consistency with Clear Formatting Rules</strong><br />
+    <strong>用清楚的格式規則確保一致</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      To maintain clarity and consistency, the prompt requires all dates to be converted into standardized ISO 8601 date-time formats, normalized to UTC. It explicitly anchors relative expressions (like "last quarter") to known publication dates, making temporal information precise and reliable.
+      為了維持清晰一致，prompt 要求所有日期都轉成標準化的 ISO 8601 date-time 格式，並正規化到 UTC。它也明確把相對說法（像 "last quarter"）錨定在已知的發布日期上，讓時間資訊精確可靠。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Aligns with Business Reporting Cycles</strong><br />
+    <strong>對齊企業的報告週期</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Recognizing the practical need for quarter-based reasoning common in business and financial contexts, the prompt can interpret and calculate temporal ranges based on business quarters, minimizing ambiguity.
+      考量商業和金融情境中常見的季度推理需求，prompt 能依企業季度來解讀、計算時間範圍，減少模糊空間。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Adapts to Statement Types for Semantic Accuracy</strong><br />
+    <strong>配合 statement 類型維持語意準確</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Specific rules ensure the semantic integrity of statements—for example, opinions might only have a start date (<code>valid_at</code>) reflecting the moment they were expressed, while predictions will clearly define their forecast window using an end date (<code>invalid_at</code>).
+      特定規則確保 statement 的語意完整，例如 opinion 可能只有起始日期（<code>valid_at</code>），反映它被表達的時刻，而 prediction 則會用結束日期（<code>invalid_at</code>）清楚界定預測期間。
     </p>
   </li>
 </ol>
@@ -1444,21 +1457,20 @@ Return only the validity range in the JSON ARRAY of objects that match the schem
 """
 ```
 
-### 3.2.6. Creating our Triplets
+### 3.2.6. 建立 Triplet
 
-We will now build up the definitions and prompts to create the our triplets. As discussed above, these are a combination of:
-- **Subject** - the entity you are talking about
-- **Predicate** - the type of relationship or property
-- **Object** - the value or other entity that the subject is connected to
+接著我們要建立定義和 prompt 來產生 triplet。如前所述，triplet 由這三個部分組成：
+- **Subject（主詞）**：你在談論的實體
+- **Predicate（謂詞）**：關係或屬性的類型
+- **Object（受詞）**：主詞所連結的值或其他實體
 
-Let's start with our predicate.
+先從 predicate 開始。
 
 #### Predicate
 
-The `Predicate` enum provides a standard set of predicates that clearly describe relationships extracted from text. 
+`Predicate` enum 提供一組標準的 predicate，清楚描述從文字抽出的關係。
 
-We've defined the set of predicates below to be appropriate for earnings call transcripts. Here are some examples for how each of these predicates could fit into a triplet in our knowledge graph: 
-Here are more anonymized, generalized examples following your template:
+我們定義的這組 predicate 適用於財報電話會議逐字稿。下面是每個 predicate 放進知識圖譜 triplet 的範例：
 
 * `IS_A`: \[Company ABC]-\[IS\_A]-\[Software Provider]
 * `HAS_A`: \[Corporation XYZ]-\[HAS\_A]-\[Innovation Division]
@@ -1508,7 +1520,7 @@ class Predicate(StrEnum):
     SECURED = "SECURED"
 ```
 
-We also assign a definition to each predicate, which we will then pass to the extraction prompt downstream.
+我們也替每個 predicate 指定一個定義，之後會傳給下游的抽取 prompt。
 
 ```python
 PREDICATE_DEFINITIONS = {
@@ -1535,29 +1547,29 @@ PREDICATE_DEFINITIONS = {
 }
 ```
 
-#### Defining your own predicates
+#### 定義你自己的 predicate
 
-When working with different data sources, you'll want to define your own predicates that are specific to your use case. 
+處理不同資料來源時，你會想定義符合自己情境的 predicate。
 
-To define your own predicates:
-1. First, run your pipeline with `PREDICATE_DEFINITIONS = {}` on a representative sample of your documents. This initial run will derive a noisy graph with many non-standardized and overlapping predicates
-2. Next, drop some of your initial results into [ChatGPT](https://chatgpt.com/) or manually review them to merge similar predicate classes. This process helps to eliminate duplicates such as `IS_CEO` and `IS_CEO_OF`
-3. Finally, carefully review and refine this list of predicates to ensure clarity and precision. These finalized predicate definitions will then guide your extraction process and ensure a consistent extraction pipeline
+定義自己的 predicate 可以這樣做：
+1. 先用 `PREDICATE_DEFINITIONS = {}` 在一批有代表性的文件樣本上跑你的 pipeline。這次初跑會得到一張雜亂的圖譜，裡面有很多不標準、互相重疊的 predicate
+2. 接著把初步結果的一部分貼到 [ChatGPT](https://chatgpt.com/)，或手動檢視，把相近的 predicate 類別合併。這樣能消除像 `IS_CEO` 和 `IS_CEO_OF` 這種重複
+3. 最後仔細檢查並精修這份 predicate 清單，確保清楚、精確。這些定稿的 predicate 定義之後會引導你的抽取流程，讓抽取 pipeline 保持一致
 
 #### Raw triplet
 
-With predicates now well-defined, we can begin building up the data models for our triplets. 
+predicate 定義清楚之後，就可以開始建 triplet 的 data model。
 
-The `RawTriplet` model represents a basic subject-predicate-object relationship that is extracted directly from textual data. This serves as a precursor for the more detailed triplet representation in `Triplet` which we introduce later. 
+`RawTriplet` model 代表直接從文字資料抽出來的基本 subject-predicate-object 關係。它是後面會介紹的、更詳細的 `Triplet` 表示法的前身。
 
-Core fields: 
-- `subject_name`: The textual representation of the subject entity
-- `subject_id`: Numeric identifier for the subject entity
-- `predicate`: The relationship type, specified by the `Predicate` enum
-- `object_name`: The textual representation of the object entity
-- `object_id`: Numeric identifier for the object entity
-- `value`: Numeric value associated to relationship, may be None e.g. `Company` -> `HAS_A` -> `Revenue` with `value='$100 mill'`
-  
+核心欄位：
+- `subject_name`：主詞實體的文字表示
+- `subject_id`：主詞實體的數字識別碼
+- `predicate`：關係類型，由 `Predicate` enum 指定
+- `object_name`：受詞實體的文字表示
+- `object_id`：受詞實體的數字識別碼
+- `value`：與關係相關的數值，可能是 None，例如 `Company` -> `HAS_A` -> `Revenue` 搭配 `value='$100 mill'`
+
 
 ```python
 class RawTriplet(BaseModel):
@@ -1573,7 +1585,7 @@ class RawTriplet(BaseModel):
 
 #### Triplet
 
-The `Triplet` model extends the `RawTriplet` by incorporating unique identifiers and optionally linking each triplet to a specific event. These identifiers help with integration into structured knowledge bases like our temporal knowledge graph.
+`Triplet` model 在 `RawTriplet` 之上加入唯一識別碼，並可選擇性地把每個 triplet 連到特定事件。這些識別碼有助於整合進像我們這種時間知識圖譜的結構化知識庫。
 
 ```python
 class Triplet(BaseModel):
@@ -1605,13 +1617,13 @@ class Triplet(BaseModel):
 
 #### RawEntity
 
-The `RawEntity` model represents an Entity as extracted from the `Statement`. This serves as a precursor for the more detailed triplet representation in `Entity` which we introduce next. 
+`RawEntity` model 代表從 `Statement` 抽出的一個 Entity。它是下一段會介紹的、更詳細的 `Entity` 表示法的前身。
 
-Core fields: 
-- `entity_idx`: An integer to differentiate extracted entities from the statement (links to `RawTriplet`)
-- `name`: The name of the entity extracted e.g. `AMD`
-- `type`: The type of entity extracted e.g. `Company`
-- `description`: The textual description of the entity e.g. `Technology company know for manufacturing semiconductors`
+核心欄位：
+- `entity_idx`：整數，用來區分從 statement 抽出的各個 entity（連到 `RawTriplet`）
+- `name`：抽出的 entity 名稱，例如 `AMD`
+- `type`：抽出的 entity 類型，例如 `Company`
+- `description`：entity 的文字描述，例如 `Technology company know for manufacturing semiconductors`
 
 ```python
 class RawEntity(BaseModel):
@@ -1625,9 +1637,9 @@ class RawEntity(BaseModel):
 
 #### Entity
 
-The `Entity` model extends the `RawEntity` by incorporating unique identifiers and optionally linking each entity to a specific event. 
-Additionally, it contains `resolved_id` which will be populated during entity resolution with the canonical entity's id to remove duplicate naming of entities in the database.
-These updated identifiers help with integration and linking of entities to events and triplets .
+`Entity` model 在 `RawEntity` 之上加入唯一識別碼，並可選擇性地把每個 entity 連到特定事件。
+此外它還有 `resolved_id` 欄位，會在 entity resolution 時填入 canonical entity 的 id，用來消除資料庫裡 entity 名稱重複的問題。
+這些更新後的識別碼有助於把 entity 連到事件和 triplet。
 
 ```python
 class Entity(BaseModel):
@@ -1659,7 +1671,7 @@ class Entity(BaseModel):
 
 #### Raw extraction
 
-Both `RawTriplet` and `RawEntity` are extracted at the same time per `Statement` to reduce LLM calls and to allow easy referencing of Entities through Triplets.
+每條 `Statement` 會同時抽出 `RawTriplet` 和 `RawEntity`，這樣能減少 LLM 呼叫次數，也方便透過 triplet 引用 entity。
 
 ```python
 class RawExtraction(BaseModel):
@@ -1669,30 +1681,30 @@ class RawExtraction(BaseModel):
     entities: list[RawEntity]
 ```
 
-#### Triplet Extraction Prompt
+#### Triplet 抽取 Prompt
 
-The prompt below guides our Temporal Agent to effectively extract triplets and entities from provided statements.
+下面的 prompt 引導我們的 Temporal Agent 從給定的 statement 有效抽出 triplet 和 entity。
 
-##### Anatomy of the prompt
+##### Prompt 的結構
 <ul style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Avoids temporal details</strong><br />
+    <strong>避開時間細節</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The agent is specifically instructed to ignore temporal relationships, as these are captured separately within the <code>TemporalValidityRange</code>.
-      Defined <code>Predicates</code> are deliberately designed to be time-neutral—for instance, <code>HAS_A</code> covers both present (<code>HAS_A</code>) and past (<code>HAD_A</code>) contexts.
+      agent 被明確指示忽略時間關係，因為這些已經另外記錄在 <code>TemporalValidityRange</code> 裡。
+      定義好的 <code>Predicates</code> 刻意設計成與時間無關，例如 <code>HAS_A</code> 同時涵蓋現在（<code>HAS_A</code>）和過去（<code>HAD_A</code>）的情境。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Maintains structured outputs</strong><br />
+    <strong>維持結構化輸出</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The prompt yields structured <code>RawExtraction</code> outputs, supported by detailed examples that clearly illustrate:
+      這個 prompt 產出結構化的 <code>RawExtraction</code>，並搭配詳細範例，清楚說明：
     </p>
     <ul style="margin-left: 1.5em; margin-top: 0.5em; margin-bottom: 0.5em;">
-      <li>How to extract information from a given <code>Statement</code></li>
-      <li>How to link <code>Entities</code> with corresponding <code>Triplets</code></li>
-      <li>How to handle extracted <code>values</code></li>
-      <li>How to manage multiple <code>Triplets</code> involving the same <code>Entity</code></li>
+      <li>如何從給定的 <code>Statement</code> 抽取資訊</li>
+      <li>如何把 <code>Entities</code> 和對應的 <code>Triplets</code> 連起來</li>
+      <li>如何處理抽出的 <code>values</code></li>
+      <li>如何處理多個 <code>Triplets</code> 涉及同一個 <code>Entity</code> 的情況</li>
     </ul>
   </li>
 </ul>
@@ -1836,21 +1848,21 @@ Example 4 Output: {
 
 ### 3.2.7. Temporal Event
 
-The `TemporalEvent` model brings together the `Statement` and all related information into one handy class. It's a primary output of the `TemporalAgent` and plays an important role within the `InvalidationAgent`. 
+`TemporalEvent` model 把 `Statement` 和所有相關資訊整合在同一個好用的類別裡。它是 `TemporalAgent` 的主要輸出，在 `InvalidationAgent` 裡也扮演重要角色。
 
-Main fields include: 
-- `id`: A unique identifier for the event
-- `chunk_id`: Points to the specific `Chunk` associated with the event
-- `statement`: The specific `RawStatement` extracted from the `Chunk` detailing a relationship or event
-- `embedding`: A representation of the `statement` used by the `InvalidationAgent` to gauge event similarity
-- `triplets`: Unique identifiers for the individual `Triplets` extracted from the `Statement`
-- `valid_at`: Timestamp indicating when the event becomes valid
-- `invalid_at`: Timestamp indicating when the event becomes invalid
-- `temporal_type`: Describes temporal characteristics from the `RawStatement`
-- `statement_type`: Categorizes the statement according to the original `RawStatement`
-- `created_at`: Date the event was first created.
-- `expired_at`: Date the event was marked invalid (set to `created_at` if `invalid_at` is already set when building the `TemporalEvent`)
-- `invalidated_by`: ID of the `TemporalEvent` responsible for invalidating this event, if applicable
+主要欄位：
+- `id`：事件的唯一識別碼
+- `chunk_id`：指向與事件相關的特定 `Chunk`
+- `statement`：從 `Chunk` 抽出、描述某個關係或事件的 `RawStatement`
+- `embedding`：`statement` 的向量表示，`InvalidationAgent` 用它來衡量事件相似度
+- `triplets`：從 `Statement` 抽出的各個 `Triplets` 的唯一識別碼
+- `valid_at`：時間戳，表示事件何時開始有效
+- `invalid_at`：時間戳，表示事件何時失效
+- `temporal_type`：描述 `RawStatement` 的時間特性
+- `statement_type`：依原始 `RawStatement` 對 statement 分類
+- `created_at`：事件首次建立的日期
+- `expired_at`：事件被標為失效的日期（如果建立 `TemporalEvent` 時 `invalid_at` 已經有值，就設成 `created_at`）
+- `invalidated_by`：使這個事件失效的 `TemporalEvent` 的 ID（如果有的話）
 
 ```python
 import json
@@ -1893,24 +1905,24 @@ class TemporalEvent(BaseModel):
         return self
 ```
 
-### 3.2.8. Defining our Temporal Agent
+### 3.2.8. 定義 Temporal Agent
 
-Now we arrive at a central point in our pipeline: The `TemporalAgent` class. This brings together the steps we've built up above - chunking, data models, and prompts. Let's take a closer look at how this works.
+現在來到 pipeline 的核心：`TemporalAgent` 類別。它把我們前面建好的步驟整合起來，包括切 chunk、data model 和 prompt。來仔細看它怎麼運作。
 
-The core function, `extract_transcript_events`, handles all key processes:
+核心函式 `extract_transcript_events` 處理所有關鍵流程：
 
-1. It extracts a `RawStatement` from each `Chunk`.
-2. From each `RawStatement`, it identifies the `TemporalValidityRange` along with lists of related `Triplet` and `Entity` objects.
-3. Finally, it bundles all this information neatly into a `TemporalEvent` for each `RawStatement`.
+1. 從每個 `Chunk` 抽出 `RawStatement`。
+2. 從每個 `RawStatement` 找出 `TemporalValidityRange`，以及相關的 `Triplet` 和 `Entity` 物件列表。
+3. 最後為每個 `RawStatement` 把這些資訊整理成一個 `TemporalEvent`。
 
-Here's what you'll get:
+你會得到：
 
-* `transcript`: The transcript currently being analyzed.
-* `all_events`: A comprehensive list of all generated `TemporalEvent` objects.
-* `all_triplets`: A complete collection of `Triplet` objects extracted across all events.
-* `all_entities`: A detailed list of all `Entity` objects pulled from the events, which will be further refined in subsequent steps.
+* `transcript`：目前分析的逐字稿。
+* `all_events`：所有產生的 `TemporalEvent` 物件的完整列表。
+* `all_triplets`：跨所有事件抽出的 `Triplet` 物件的完整集合。
+* `all_entities`：從事件中取出的所有 `Entity` 物件的詳細列表，後續步驟會再進一步精煉。
 
-The diagram below visualizes this portion of our pipeline:
+下圖把 pipeline 的這個部分視覺化：
 
 
 <!-- ![Screenshot 2025-06-23 at 12.10.06.png](temporal_agents_files/79ba1c3c-35e6-406a-aff4-24ab9b8fe9e4.png) -->
@@ -2190,26 +2202,26 @@ for i, entity in enumerate(entities[:5]):  # Show first 5 entities
 
 ### 3.2.9. Entity Resolution
 
-Before diving into Temporal Invalidation, we need to first tackle entity resolution. This process is crucial to ensure that each real-world entity has a single, authoritative representation, eliminating duplicates and maintaining data consistency. For instance, `AMD` and `Advanced Micro Devices` clearly refer to the same entity, so they should be represented under a unified canonical entity.
+在進入 Temporal Invalidation 之前，要先處理 entity resolution。這個流程很重要，能確保每個真實世界的實體只有一個權威表示，消除重複並維持資料一致。例如 `AMD` 和 `Advanced Micro Devices` 顯然指同一個實體，所以應該歸到同一個 canonical entity 底下。
 
-Here's our approach to entity resolution:
+我們的 entity resolution 做法如下：
 
-* We use the `EntityResolution` class to batch entities by type (`Entity.type`), which helps us make context-specific comparisons—like distinguishing companies from individuals.
+* 用 `EntityResolution` 類別依類型（`Entity.type`）把 entity 分批，這樣可以做有情境的比對，例如區分公司和個人。
 
-* To address noisy data effectively, we leverage [RapidFuzz](https://rapidfuzz.github.io/RapidFuzz/) to cluster entities based on name similarity. This method involves a simple, case-insensitive, punctuation-free comparison using a partial match ratio, allowing tolerance for minor typos and substring matches.
+* 為了有效處理雜訊資料，我們用 [RapidFuzz](https://rapidfuzz.github.io/RapidFuzz/) 依名稱相似度把 entity 分群。方法是用 partial match ratio 做簡單、不分大小寫、忽略標點的比較，可以容忍小錯字和子字串比對。
 
-* Within each fuzzy-matched cluster, we select the medoid—the entity most representative of the cluster based on overall similarity. This prevents bias toward the most frequently occurring or earliest listed entity. The medoid then serves as the initial canonical entity, providing a semantically meaningful representation of the group.
+* 在每個模糊比對出來的群裡，我們選 medoid，也就是依整體相似度最能代表該群的 entity。這樣可以避免偏向出現最多次或最早列出的 entity。這個 medoid 會成為初始的 canonical entity，為整群提供有語意意義的代表。
 
-* Before adding a new canonical entity, we cross-check the medoid against existing canonicals, considering both fuzzy matching and acronyms. For example, `Advanced Micro Devices Inc.` may yield `AMDI`, closely matching the acronym `AMD`. This step helps prevent unnecessary creation of duplicate canonical entities.
+* 在新增 canonical entity 之前，我們會把 medoid 和現有的 canonical 交叉檢查，同時考慮模糊比對和縮寫。例如 `Advanced Micro Devices Inc.` 可能產生 `AMDI`，和縮寫 `AMD` 很接近。這一步有助於避免不必要地建立重複的 canonical entity。
 
-* If a global match isn't found, the medoid becomes a new canonical entity, with all entities in the cluster linked to it via a resolved ID.
+* 如果找不到全域比對，medoid 就成為新的 canonical entity，群內所有 entity 都透過 resolved ID 連到它。
 
-* Finally, we perform an additional safeguard check to resolve potential acronym duplication across all canonical entities, ensuring thorough cleanup.
+* 最後，我們再做一次額外的保險檢查，解決所有 canonical entity 之間可能的縮寫重複，確保清理徹底。
 
-To further enhance entity resolution, you could consider advanced techniques such as:
+要進一步強化 entity resolution，可以考慮這些進階技巧：
 
-* Using embedding-based similarity on `Entity.description` alongside `Entity.name`, improving disambiguation beyond simple text similarity.
-* Employing a large language model (LLM) to intelligently group entities under their canonical forms, enhancing accuracy through semantic understanding.
+* 除了 `Entity.name`，也對 `Entity.description` 做 embedding 相似度比對，比單純文字相似度更能消除歧義。
+* 用大型語言模型（LLM）把 entity 智慧地歸到各自的 canonical 形式，靠語意理解提升準確度。
 
 
 ```python
@@ -2392,28 +2404,28 @@ class EntityResolution:
 
 ### 3.2.10. Invalidation agent
 
-##### Understanding the Invalidation Process
+##### 理解失效流程
 
-To effectively invalidate temporal events, the agent performs checks in both directions:
+要有效地讓時間事件失效，agent 會雙向進行檢查：
 
-> 1. **Incoming vs. Existing**: Are incoming events invalidated by events already present?
-> 2. **Existing vs. Incoming**: Are current events invalidated by the new incoming events?
+> 1. **Incoming vs. Existing**：進來的事件有沒有被已存在的事件推翻？
+> 2. **Existing vs. Incoming**：現有事件有沒有被新進來的事件推翻？
 
-This bi-directional assessment results in a clear True/False decision.
+這種雙向評估會得出明確的 True/False 判斷。
 
-#### Event Invalidation Prompt
+#### 事件失效 Prompt
 
-The prompt has three key components:
+這個 prompt 有三個關鍵部分：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
-<li style="margin-bottom: 1.2em;"><strong>Task Setup</strong><br />
-Defines two roles—<code>primary</code> and <code>secondary</code>—for event comparison. The assessment checks if the <code>primary</code> event is invalidated by the <code>secondary</code> event.</li>
+<li style="margin-bottom: 1.2em;"><strong>任務設定</strong><br />
+定義兩個角色，<code>primary</code> 和 <code>secondary</code>，用來比較事件。評估的是 <code>primary</code> 事件有沒有被 <code>secondary</code> 事件推翻。</li>
 
-<li style="margin-bottom: 1.2em;"><strong>Guidelines</strong><br />
-Provides clear criteria on interpreting temporal metadata. Importantly, invalidation must rely solely on the relationships explicitly stated between events. External information cannot influence the decision.</li>
+<li style="margin-bottom: 1.2em;"><strong>準則</strong><br />
+提供解讀時間 metadata 的清楚標準。重點是，失效判斷只能依據事件之間明確陳述的關係，外部資訊不能影響判斷。</li>
 
-<li style="margin-bottom: 1.2em;"><strong>Event Information</strong><br />
-Both events (<code>primary</code> and <code>secondary</code>) include timestamp details (<code>valid_at</code> and <code>invalid_at</code>) along with semantic context through either <code>Statement</code>, <code>Triplet</code>, or both. This context ensures accurate and relevant comparisons.</li>
+<li style="margin-bottom: 1.2em;"><strong>事件資訊</strong><br />
+兩個事件（<code>primary</code> 和 <code>secondary</code>）都包含時間戳細節（<code>valid_at</code> 和 <code>invalid_at</code>），以及透過 <code>Statement</code>、<code>Triplet</code> 或兩者提供的語意脈絡。這些脈絡確保比較準確且相關。</li>
 </ol>
 
 
@@ -2460,17 +2472,17 @@ Return: "True" if the primary event is invalidated or its invalid_at is refined 
 """
 ```
 
-#### Requirements to be compared for Invalidation
-We can only invalidate dynamic facts that haven't been marked invalid yet. These facts serve as our primary events, while potential candidates for invalidation are our secondary events. To streamline the invalidation process, consider these guidelines when evaluating secondary events:
+#### 納入失效比對的條件
+我們只能讓還沒被標成失效的 dynamic fact 失效。這些事實是我們的 primary 事件，而可能使它失效的候選就是 secondary 事件。為了精簡失效流程，評估 secondary 事件時可以參考這些準則：
 
-1. Must be a *FACT* type and not *Atemporal*
-2. Share at least one canonical entity at the triplet level
-3. Belong to the same semantic predicate group at the triplet level (defined below)
-4. Temporally overlap and be currently ongoing
-5. Have a statement cosine similarity above the threshold (currently set to 0.5)
-6. The similarity threshold (0.5) helps us filter noise effectively by selecting only the `top_k` most relevant results. Low-level semantic similarities are acceptable since our goal is refining the data sent to the LLM for further assessment
+1. 必須是 *FACT* 類型，且不是 *Atemporal*
+2. 在 triplet 層級至少共用一個 canonical entity
+3. 在 triplet 層級屬於同一個語意 predicate 群組（定義見下方）
+4. 時間上有重疊，且目前仍在進行中
+5. statement 的 cosine similarity 高於門檻（目前設為 0.5）
+6. 相似度門檻（0.5）透過只挑出最相關的 `top_k` 個結果，有效過濾雜訊。低程度的語意相似度是可以接受的，因為我們的目標是縮小送給 LLM 進一步評估的資料範圍
 
-When invalidation occurs, we annotate the affected events with `expired_at` and `invalidated_by` to clearly indicate cause-and-effect relationships. 
+發生失效時，我們會在受影響的事件上標註 `expired_at` 和 `invalidated_by`，清楚標示因果關係。
 
 ```python
 PREDICATE_GROUPS: list[list[str]] = [
@@ -2481,93 +2493,93 @@ PREDICATE_GROUPS: list[list[str]] = [
 ]
 ```
 
-When we put all of this together, the workflow for our `InvalidationAgent` looks like this:
+把這一切組合起來，我們的 `InvalidationAgent` 工作流程長這樣：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Range Detection</strong><br />
+    <strong>時間範圍偵測</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      We start by identifying when events happen with <code>get_incoming_temporal_bounds()</code>. This function checks the event's <code>valid_at</code> and, if it's dynamic, its <code>invalid_at</code>. Atemporal events aren't included here.
+      先用 <code>get_incoming_temporal_bounds()</code> 找出事件發生的時間。這個函式檢查事件的 <code>valid_at</code>，如果是 dynamic，還會檢查它的 <code>invalid_at</code>。Atemporal 事件不包含在內。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Temporal Event Selection</strong><br />
+    <strong>時間事件篩選</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      We use <code>select_events_temporally()</code> to filter events by:
+      我們用 <code>select_events_temporally()</code> 依以下條件篩選事件：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>Checking if they're static or dynamic.</li>
-      <li>Determining if their time ranges overlap with our incoming event.</li>
-      <li>Handling dynamic events carefully, especially "ongoing" ones without an <code>invalid_at</code>, or events with various overlaps.</li>
+      <li>檢查它們是 static 還是 dynamic。</li>
+      <li>判斷它們的時間範圍是否和進來的事件重疊。</li>
+      <li>小心處理 dynamic 事件，尤其是沒有 <code>invalid_at</code> 的「進行中」事件，或各種不同重疊情況的事件。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Embedding Similarity Filtering</strong><br />
+    <strong>Embedding 相似度過濾</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Then, <code>filter_by_embedding_similarity()</code> compares events based on semantic similarity:
+      接著 <code>filter_by_embedding_similarity()</code> 依語意相似度比較事件：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>It calculates cosine similarity between embeddings.</li>
-      <li>Events below a similarity threshold (<code>_similarity_threshold = 0.5</code>) are filtered out.</li>
-      <li>We keep only the top-K most similar events (<code>_top_k = 10</code>).</li>
+      <li>計算 embedding 之間的 cosine similarity。</li>
+      <li>低於相似度門檻（<code>_similarity_threshold = 0.5</code>）的事件會被濾掉。</li>
+      <li>只保留最相似的前 K 個事件（<code>_top_k = 10</code>）。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Combining Temporal and Semantic Filters</strong><br />
+    <strong>結合時間與語意過濾</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      With <code>select_temporally_relevant_events_for_invalidation()</code>, we:
+      透過 <code>select_temporally_relevant_events_for_invalidation()</code>，我們會：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>Apply temporal filters first.</li>
-      <li>Then apply embedding similarity filters.</li>
-      <li>This gives us a refined list of events most likely interacting or conflicting with the incoming one.</li>
+      <li>先套用時間過濾。</li>
+      <li>再套用 embedding 相似度過濾。</li>
+      <li>這樣得到一份精煉過的清單，裡面是最可能和進來的事件互動或衝突的事件。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Event Invalidation Decision (LLM-based)</strong><br />
+    <strong>事件失效判斷（LLM 驅動）</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The LLM-based <code>invalidation_step()</code> (powered by GPT-4.1-mini) determines whether the incoming event invalidates another event:
+      由 LLM 驅動的 <code>invalidation_step()</code>（用 GPT-4.1-mini）判斷進來的事件是否使另一個事件失效：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>If it does, we update:
+      <li>如果是，我們會更新：
         <ul style="margin-left: 1.5em;">
-          <li><code>invalid_at</code> to match the secondary event's <code>valid_at</code>.</li>
-          <li><code>expired_at</code> with the current timestamp.</li>
-          <li><code>invalidated_by</code> with the ID of the secondary event.</li>
+          <li><code>invalid_at</code> 改成 secondary 事件的 <code>valid_at</code>。</li>
+          <li><code>expired_at</code> 設成目前時間戳。</li>
+          <li><code>invalidated_by</code> 設成 secondary 事件的 ID。</li>
         </ul>
       </li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Bidirectional Event Check</strong><br />
+    <strong>雙向事件檢查</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      We use <code>bi_directional_event_invalidation()</code> to check:
+      我們用 <code>bi_directional_event_invalidation()</code> 檢查：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>If the incoming event invalidates existing events.</li>
-      <li>If existing, later events invalidate the incoming event, especially if the incoming one is dynamic and currently valid.</li>
+      <li>進來的事件是否使現有事件失效。</li>
+      <li>現有的較晚事件是否使進來的事件失效，特別是進來的事件是 dynamic 且目前仍有效的時候。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Deduplication Logic</strong><br />
+    <strong>去重邏輯</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Lastly, <code>resolve_duplicate_invalidations()</code> ensures clean invalidation:
+      最後，<code>resolve_duplicate_invalidations()</code> 確保失效結果乾淨：
     </p>
     <ul style="margin-left: 1.5em; margin-bottom: 0.5em;">
-      <li>It allows only one invalidation per event.</li>
-      <li>Picks the earliest invalidation time to avoid conflicts.</li>
-      <li>This helps manage batch processing effectively.</li>
+      <li>每個事件只允許一次失效。</li>
+      <li>挑最早的失效時間以避免衝突。</li>
+      <li>這有助於有效管理批次處理。</li>
     </ul>
   </li>
 </ol>
 
-The invalidation below represents this part of our pipeline:
+下圖呈現 pipeline 中的 invalidation 這個部分：
 
 <!-- ![Screenshot 2025-06-23 at 11.45.20.png](temporal_agents_files/aa62bb3c-d497-4027-ac15-51649e4d9c4d.png) -->
 <img
@@ -3123,7 +3135,7 @@ class InvalidationAgent:
         return triplets, events
 ```
 
-We can create a batch processing function for invalidation for a set of Temporal Events. This is where we filter our Statements to type FACT before passing into the invalidation agent to process.
+我們可以建一個批次處理函式，對一組 Temporal Event 做 invalidation。這裡會先把 Statement 過濾成 FACT 類型，再傳進 invalidation agent 處理。
 
 ```python
 
@@ -3205,17 +3217,17 @@ async def batch_process_invalidation(
     return final_events, changed_existing_events
 ```
 
-### 3.2.11. Putting it all together
+### 3.2.11. 全部串起來
 
-Now that we have built out each individual component of the Temporal Knowledge Graph workflow, we can integrate them into a cohesive workflow.
+現在 Temporal Knowledge Graph 工作流程的每個元件都建好了，可以把它們整合成一套完整的流程。
 
-Given a chunked transcript, the Temporal Agent sequentially processes each chunk, initially extracting relevant statements. These statements are then classified and enriched through subsequent extraction phases, resulting in Temporal Events, structured Triplets, and identified Entities.
+給定一份切好 chunk 的逐字稿，Temporal Agent 會依序處理每個 chunk，先抽出相關的 statement。接著這些 statement 經過後續的抽取階段分類並充實，產出 Temporal Event、結構化的 Triplet 和辨識出的 Entity。
 
-The extracted Entities are cross-referenced with existing records in the database, ensuring accurate resolution and avoiding redundancy. Following entity resolution, the Dynamic Facts undergo validation via the Invalidation Agent to verify temporal consistency and validity.
+抽出的 Entity 會和資料庫現有紀錄交叉比對，確保解析準確、避免冗餘。Entity resolution 之後，Dynamic Fact 會經過 Invalidation Agent 驗證，確認時間上的一致與有效。
 
-After successful processing and validation, the refined data is systematically stored into their respective tables within the SQLite database, maintaining an organized and temporally accurate knowledge graph.
+處理並驗證成功之後，精煉過的資料會有系統地存進 SQLite 資料庫裡各自的 table，維持一張有條理、時間正確的知識圖譜。
 
-To help visually ground the code presented below, we can look again at the pipeline diagram: 
+為了幫助你對照下面的程式碼，我們再看一次 pipeline 圖：
 
 <!-- ![Screenshot 2025-06-23 at 11.45.46.png](temporal_agents_files/826322ef-4eb8-4c3b-a1a1-f4c8b0d435e8.png) -->
 <img
@@ -3367,7 +3379,7 @@ triplets_df = view_db_table(sqlite_conn, "triplets", max_rows=10)
 display(triplets_df)
 ```
 
-We can then ingest the rest of the Transcripts. Note that this code has not been optimised to be production ready and on average takes 2-5 mins per Transcript. This bulk ingestion using the data in /transcripts (~30 files) will take up to 2 hours to run. Optimizing this is a critical step in scaling to production. We outline some methods you can use to approach this in Appendix section [A.3, "Implementing Concurrency in the Ingestion Pipeline"](#a3-implementing-concurrency-in-the-ingestion-pipeline), including batch chunking, entity clustering, and more. 
+接著可以匯入其餘的逐字稿。注意這段程式碼還沒有優化到能上 production，平均每份逐字稿要 2 到 5 分鐘。用 /transcripts 裡的資料（約 30 個檔案）做批次匯入，最多要跑 2 小時。優化這部分是擴展到 production 的關鍵一步。我們在附錄 [A.3「Implementing Concurrency in the Ingestion Pipeline」](#a3-implementing-concurrency-in-the-ingestion-pipeline)裡列出了幾個做法，包括 batch chunking、entity clustering 等。
 
 ```python
 import time
@@ -3413,7 +3425,7 @@ async def bulk_transcript_ingestion(transcripts: list[Transcript], sqlite_conn: 
     pbar.close()
 ```
 
-> Note: Running the below cell for all transcripts in this dataset can take approximately 1 hour
+> 注意：對這個資料集的所有逐字稿跑下面的 cell，大約需要 1 小時
 
 ```python
 # Bulk ingestion (not recommended)
@@ -3422,9 +3434,9 @@ transcripts = load_transcripts_from_pickle()
 # await bulk_transcript_ingestion(transcripts, sqlite_conn)
 ```
 
-We recommend loading the pre-processed AMD and NVDA data from file by creating a new SQLite connection using the code below. This will create the database needed for building the graph and retriever. 
+我們建議用下面的程式碼建立新的 SQLite 連線，從檔案載入預先處理好的 AMD 和 NVDA 資料。這會建出建圖譜和 retriever 所需的資料庫。
 
-You can find this data on [HuggingFace](https://huggingface.co/datasets/TomoroAI/temporal_cookbook_db).
+這份資料可以在 [HuggingFace](https://huggingface.co/datasets/TomoroAI/temporal_cookbook_db) 找到。
 
 ```python
 from cb_functions import load_db_from_hf
@@ -3496,20 +3508,20 @@ display(transcript_df)
     ... (省略 64 行)
     ```
 
-## 3.3. Knowledge Graphs
+## 3.3. 知識圖譜
 
-### 3.3.1 Building our Knowledge Graph with NetworkX
+### 3.3.1 用 NetworkX 建立知識圖譜
 
-When constructing the knowledge graph, canonical entity identifiers derived from triplets ensure accurate mapping of entity names, allowing storage of detailed temporal metadata directly on edges. Specifically, the implementation utilizes attributes:
+建構知識圖譜時，從 triplet 取得的 canonical entity 識別碼能確保 entity 名稱正確對應，讓我們直接把詳細的時間 metadata 存在 edge 上。具體來說，這個實作用了這些屬性：
 
-* **valid\_at**, **invalid\_at**, and **temporal\_type** for **Temporal Validity**, representing real-world accuracy at specific historical moments—critical for analysis of historical facts.
-* Optionally, attributes **created\_at** and **expired\_at** may also be used for **Transactional Validity**, enabling audit trails and source attribution by tracking when information was recorded, updated, or corrected.
+* **valid\_at**、**invalid\_at** 和 **temporal\_type** 用於 **Temporal Validity（時間有效性）**，代表特定歷史時刻的真實世界正確性，對分析歷史事實很關鍵。
+* 另外也可以選擇用 **created\_at** 和 **expired\_at** 屬性做 **Transactional Validity（交易有效性）**，透過追蹤資訊何時被記錄、更新或更正，支援稽核軌跡和來源歸屬。
 
-Transactional validity is particularly beneficial in scenarios such as:
+Transactional validity 在這些情境特別有用：
 
-* **Finance**: Determining the accepted financial facts about Company X’s balance sheet on a specific historical date, based on contemporaneously accepted knowledge.
-* **Law**: Identifying applicable legal frameworks as understood at a contract signing date, or compliance obligations recognized at past dates.
-* **Journalism**: Assessing if previously reported information has become outdated, ensuring press releases and reporting remain accurate and credible over time.
+* **金融**：依據當時被接受的知識，判斷某個歷史日期下，Company X 資產負債表上被公認的財務事實。
+* **法律**：找出簽約日當時理解的適用法律框架，或過去某些日期認定的合規義務。
+* **新聞**：評估先前報導的資訊是否已經過時，確保新聞稿和報導長期維持準確可信。
 
 
 ```python
@@ -3799,45 +3811,45 @@ else:
     print("NVIDIA node not found in the graph.")
 ```
 
-### 3.3.2 NetworkX versus Neo4j in Production
+### 3.3.2 Production 中的 NetworkX 與 Neo4j
 
-To effectively implement and utilize the knowledge graph we utilise [NetworkX](https://networkx.org/) for the purposes of this cookbook for several reasons. 
-1. **Python integration**: NetworkX seamlessly integrates with Python, facilitating rapid prototyping and iterative development
-2. **Ease of setup**: It requires minimal initial setup, not requiring a client-server setup featured in alternatives. This makes it ideal for users who wish to run this cookbook themselves
-3. **Compatibility with In-Memory Databases**: NetworkX can efficiently manage graphs with fewer than c.100,000 nodes, which is appropriate for this cookbook's data scale
+這份 cookbook 用 [NetworkX](https://networkx.org/) 來實作並使用知識圖譜，原因有幾個。
+1. **Python 整合**：NetworkX 和 Python 無縫整合，方便快速 prototype 和迭代開發
+2. **容易設定**：只需要極少的初始設定，不用像其他方案那樣架 client-server。這讓想自己跑這份 cookbook 的人很方便
+3. **相容於記憶體內資料庫**：NetworkX 能有效管理少於約 100,000 個 node 的圖，符合這份 cookbook 的資料規模
 
-However, it should be noted that NetworkX lacks built-in data persistence and is therefore not typically recommended for production builds.
+不過要注意，NetworkX 沒有內建資料持久化，所以一般不建議用在 production。
 
-For production builds, [Neo4j](https://neo4j.com/) emerges as a more optimal choice due to a wider set of production-centric features, including:
-- **Native Graph Storage and Processing**: Optimized for graph data with high-performance and efficient handling
-- **Optimized Query Engine**: Leverages the Cypher query language, explicitly designed for efficient graph traversal
-- **Scalability and Persistence**: Effectively manages extensive graph datasets, ensuring data persistence, reliability, and durability
-- **Production Tooling**: Offers integrated tooling such as Neo4j Bloom for vislualization and Neo4j Browser for exploration, enhancing user interaction and analysis
-- **Advanced Access Control**: Provides granular security options to control data access
+Production 建議用 [Neo4j](https://neo4j.com/)，它有更多面向 production 的功能，包括：
+- **原生圖儲存與處理**：針對圖資料優化，效能高、處理有效率
+- **優化的查詢引擎**：使用 Cypher 查詢語言，專為高效的圖走訪設計
+- **擴展性與持久化**：能有效管理龐大的圖資料集，確保資料持久、可靠、耐用
+- **Production 工具**：提供整合工具，例如視覺化用的 Neo4j Bloom 和探索用的 Neo4j Browser，增強使用者互動和分析
+- **進階存取控制**：提供細緻的安全選項，控管資料存取
 
-## 3.4. Evaluation and Suggested Feature Additions
+## 3.4. 評估與建議新增的功能
 
-The approach presented above offers a foundational implementation of a Temporal Agent for knowledge graph construction. However, it does not fully address complexities or all possible edge cases encountered in real-world applications. Below, we outline several possible enhancements that could be used to further improve the robustness and applicability of this implementation. In the later "Prototype to Production" section, we expand on these enhancements by suggesting additional considerations essential for deploying such agents effectively in production environments. Further details on scaling to production are included in the [Appendix](#appendix).
+上面介紹的做法是 Temporal Agent 建構知識圖譜的基礎實作，但沒有完整處理真實應用會遇到的所有複雜情況和邊緣案例。下面列出幾個可行的增強，可以進一步提高這個實作的穩健性和適用性。後面的「Prototype to Production」章節會針對這些增強，補充部署這類 agent 到 production 的其他重要考量。更多關於擴展到 production 的細節在[附錄](#appendix)。
 
 ### 3.4.1. Temporal Agent
 
-#### Statement Extraction and Temporal Events
-##### Duplicate Temporal Events
-In this cookbook, the Temporal Agent does not identify or merge duplicate Temporal Events arising from statements referring to the same event, especially when originating from different sources. These events are saved separately rather than unified into a single, consolidated event. 
+#### Statement 抽取與 Temporal Event
+##### 重複的 Temporal Event
+這份 cookbook 裡，Temporal Agent 不會辨識或合併重複的 Temporal Event，也就是多條 statement 指向同一個事件、尤其來自不同來源的情況。這些事件會分開儲存，不會被統一成單一整合事件。
 
-##### Static and Dynamic Representation
-There's an opportunity to enrich the dataset by consistently capturing both Static and Dynamic representations of events, even when explicit statements aren't available. 
+##### Static 與 Dynamic 表示
+即使沒有明確的 statement，如果能一致地同時捕捉事件的 Static 和 Dynamic 兩種表示，資料集會更豐富。
 
-For Dynamic events without corresponding Static statements, creating explicit Static entries marking the start (`valid_at`) and end (`invalid_at`) can enhance temporal clarity, particularly for the purposes of retrieval tasks. 
+對沒有對應 Static statement 的 Dynamic 事件，可以建立明確的 Static 條目，標出起點（`valid_at`）和終點（`invalid_at`），這樣能讓時間更清楚，對檢索任務特別有幫助。
 
-Conversely, Static events lacking Dynamic counterparts can have Dynamic relationships inferred, though this would require careful checks for potential invalidation within statement cohorts. 
+反過來，缺少 Dynamic 對應項的 Static 事件，可以推論出 Dynamic 關係，不過這需要在 statement 群組內仔細檢查可能的失效情況。
 
-#### Date Extraction
-The implementation in this cookbook does not explicitly record assumptions made during date disambiguation. 
+#### 日期抽取
+這份 cookbook 的實作沒有明確記錄日期消歧時所做的假設。
 
-In the absence of an explicit publication date, the present date is used implicitly as a reference. For some workflows, this assumption may have to be changed to meet the needs of the end users. 
+如果沒有明確的發布日期，會隱含地拿現在的日期當參考。有些工作流程可能得調整這個假設，才能滿足最終使用者的需求。
 
-Abstract dates (e.g., "until next year") are resolved into explicit dates, however the vagueness is not represented in the stored data structure. The inclusion of more granular metadata can capture more abstract date ranges:
+抽象日期（例如 "until next year"）會被解析成明確日期，但這種模糊性不會表現在儲存的資料結構裡。加入更細緻的 metadata，就能捕捉更抽象的日期範圍：
 ```python
 temporal_event = {
   "summary": "The event ran from April to September",
@@ -3854,31 +3866,31 @@ temporal_event = {
   }
 }
 ```
-This structure permits the explicit representation of both literal and abstract date interpretations.
+這個結構能同時明確表示字面和抽象兩種日期詮釋。
 
-#### Triplet Extraction
-There are several possible avenues for improving the Triplet Extraction presented in this cookbook. These include:
-- Utilising a larger model and optimizing the extraction prompts further
-- Running the extraction process multiple times and consolidating results via e.g., a modal pooling mechanism to improve the accuracy and confidence in a prediction
-- Incorporating entity extraction tools (e.g., [Spacy](https://spacy.io/) and leveraging predefined ontologies tailored to specific use cases for improved consistency and reliability
+#### Triplet 抽取
+這份 cookbook 的 Triplet 抽取有幾個可能的改進方向，包括：
+- 用更大的模型，並進一步優化抽取 prompt
+- 把抽取流程跑多次，再用像 modal pooling 這樣的機制整合結果，提高預測的準確度和信心
+- 結合 entity 抽取工具（例如 [Spacy](https://spacy.io/)），並針對特定情境使用預先定義的 ontology，提高一致性和可靠性
 
 ### 3.4.2. Invalidation Agent
-The presented Invalidation Agent does not refine temporal validity ranges, but one could extend its functionality to perform said refinement as well as intra-cohort invalidation checks to identify temporal conflicts among incoming statements.
+目前的 Invalidation Agent 不會精修時間有效區間，不過你可以擴充它的功能來做這件事，也可以加上群組內（intra-cohort）失效檢查，找出進來的 statement 之間的時間衝突。
 
-There are also several opportunities for efficiency enhancements. 
-- Transitioning from individual (1:1) comparisons to omni-directional (1:many) invalidation checks would reduce the number of LLM calls required
-- Applying network analysis techniques to cluster related statements could enable batching of invalidation checks. Clusters can be derived from several properties including semantic similarity, temporal proximity, or more advanced techniques. This would significantly reduce bottlenecks arising from sequential processing, which is particularly important when ingesting large volumes of data
+效率上也有幾個可以強化的地方。
+- 從一對一（1:1）比對改成全向（1:many）的失效檢查，可以減少需要的 LLM 呼叫次數
+- 用網路分析技巧把相關的 statement 分群，就能對失效檢查做 batching。分群可以依語意相似度、時間接近程度或更進階的技術。這能大幅減輕循序處理造成的瓶頸，在匯入大量資料時特別重要
 
-# 4. Multi-Step Retrieval Over a Knowledge Graph
+# 4. 在知識圖譜上做多步檢索
 ---
 
-Simple retrieval systems can often handle straightforward "look-up" queries with a single search against a vector store or document index. In practice, though, agents deployed in real-world settings frequently need more. User questions often require LLMs to synthesise information from multiple parts of a knowledge base or across several endpoints.
+簡單的檢索系統通常用單次向量庫或文件索引搜尋，就能處理直接的「查詢」型問題。但實務上，部署在真實場景的 agent 常常需要更多。使用者的問題往往要求 LLM 綜合知識庫多個部分、或跨多個 endpoint 的資訊。
 
-The temporal knowledge graphs introduced earlier provide a natural foundation for this, explicitly encoding entities (nodes), relationships (edges), and their evolution over time.
+前面介紹的時間知識圖譜正好是這件事的天然基礎，它明確編碼了實體（node）、關係（edge）和它們隨時間的演變。
 
-Multi-step retrieval allows us to fully harness the capabilities of these graphs. It involves iteratively traversing the graph through a series of targeted queries, enabling the agent to gather all necessary context before forming a response.
+多步檢索讓我們能充分發揮這些圖譜的能力。它透過一連串有針對性的查詢反覆走訪圖譜，讓 agent 在形成回答之前蒐集到所有必要的上下文。
 
-We can see the power of multi-step retrieval below:
+下圖可以看出多步檢索的威力：
 
 <!-- ![Screenshot 2025-06-23 at 11.46.52.png](temporal_agents_files/55e196a3-2d42-469c-8b7d-938a56b47f38.png) -->
 <img
@@ -3887,30 +3899,30 @@ We can see the power of multi-step retrieval below:
   style="width:891px; height:auto;"
 />
 
-In this case, the initial query to the knowledge graph returned no information on some competitors’ R&D activities. Rather than failing silently, the system pivoted to an alternative source—the strategy content—and successfully located the missing information. This multi-step approach allowed it to navigate sparse data and deliver a complete response to the user.
+這個例子裡，對知識圖譜的第一次查詢沒有回傳某些競爭對手 R&D 活動的資訊。系統沒有默默失敗，而是轉向另一個來源，也就是策略內容，成功找到缺少的資訊。這種多步做法讓它能在資料稀疏的情況下順利找路，給使用者完整的回答。
 
-## 4.1. Building our Retrieval Agent
+## 4.1. 建立 Retrieval Agent
 
-At a high level, we will build out the following structure:
+從高層來看，我們要建出這樣的結構：
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>User question → Planner → Orchestrator</strong><br />
+    <strong>使用者問題 → Planner → Orchestrator</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      A planner utilising GPT 4.1 will decompose the user's question into a small sequence of proposed graph operations. This is then passed to the orchestrator to execute
+      用 GPT 4.1 的 planner 把使用者的問題拆成一小串建議的圖操作，再交給 orchestrator 執行
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Tool calls to retrieve information from the Temporal Knowledge Graph</strong><br />
+    <strong>用 tool call 從 Temporal Knowledge Graph 取回資訊</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Considering the user query and the plan, the Orchestrator (o4-mini) makes a series of initial tool calls to retrieve information from the knowledge graph
+      Orchestrator（o4-mini）參考使用者的查詢和計畫，先做一系列 tool call 從知識圖譜取回資訊
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Loop until done → Generate answer</strong><br />
+    <strong>迴圈直到完成 → 產生答案</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The responses to the tool calls are fed back to the Orchestrator which can then decide to either make more queries to the graph or answer the user's question
+      tool call 的回應會餵回 Orchestrator，由它決定要再查圖譜，還是直接回答使用者的問題
     </p>
   </li>
 </ol>
@@ -3929,7 +3941,7 @@ At a high level, we will build out the following structure:
 %pip install --upgrade openai
 ```
 
-### 4.1.2. (Re-)Initialise OpenAI Client
+### 4.1.2. （重新）初始化 OpenAI Client
 
 ```python
 from openai import AsyncOpenAI
@@ -3937,7 +3949,7 @@ from openai import AsyncOpenAI
 client = AsyncOpenAI()
 ```
 
-### 4.1.3. (Re-)Load our Temporal Knowledge Graph
+### 4.1.3. （重新）載入 Temporal Knowledge Graph
 
 ```python
 from cb_functions import build_graph, load_db_from_hf
@@ -3949,57 +3961,57 @@ print(G.number_of_nodes(), "nodes,", G.number_of_edges(), "edges")
 ```
 
 ### 4.1.4. Planner
-Planning steps are incorporated in many modern LLM applications. 
+很多現代 LLM 應用都有加入規劃（planning）步驟。
 
-The explicit inclusion of a planning step improves overall performance by having the system consider the full scope of the problem before acting.
+明確加入規劃步驟，能讓系統在動手前先考慮問題的完整範圍，進而提升整體表現。
 
-In this implementation, the plan remains static. In longer-horizon agentic pipelines, however, it's common to include mechanisms for replanning or updating the plan as the system progresses. 
+這個實作裡計畫是靜態的。不過在更長時間跨度的 agent pipeline 中，常會加入重新規劃或隨系統進展更新計畫的機制。
 
-Broadly, planners take two forms:
+大致上，planner 有兩種形式：
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Task-orientated (used in this cookbook)</strong><br />
+    <strong>任務導向（這份 cookbook 使用的）</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The planner outlines the concrete subtasks the downstream agentic blocks should execute. The tasks are phrased in an action-orientated sense such as "1. Extract information on R&amp;D activities of Company IJK between 2018–2020." These planners are typically preferred when the goal is mostly deterministic and the primary risk is skipping or duplicating work.
+      planner 列出下游 agent 區塊該執行的具體子任務。任務用動作導向的方式描述，例如 "1. Extract information on R&amp;D activities of Company IJK between 2018–2020."。當目標大致是確定性的、主要風險是漏做或重複做時，通常偏好這種 planner。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Example tasks where this approach is useful:
+      這個做法適用的範例任務：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li><strong>Law</strong>: <em>"Extract and tabulate termination-notice periods from every master service agreement executed in FY24"</em></li>
-      <li><strong>Finance</strong>: <em>"Fetch every 10-K filed by S&amp;P 500 banks for FY24, extract tier-1 capital and liquidity coverage ratios, and output a ranked table of institutions by capital adequacy"</em></li>
-      <li><strong>Automotive</strong>: <em>"Compile warranty-claim counts by component for Model XYZ vehicles sold in Europe since the new emissions regulation came into force"</em></li>
-      <li><strong>Manufacturing</strong>: <em>"Analyse downtime logs from each CNC machine for Q1 2025, classify the root-cause codes, and generate a Pareto chart of the top five failure drivers"</em></li>
+      <li><strong>法律</strong>：<em>"Extract and tabulate termination-notice periods from every master service agreement executed in FY24"</em></li>
+      <li><strong>金融</strong>：<em>"Fetch every 10-K filed by S&amp;P 500 banks for FY24, extract tier-1 capital and liquidity coverage ratios, and output a ranked table of institutions by capital adequacy"</em></li>
+      <li><strong>汽車</strong>：<em>"Compile warranty-claim counts by component for Model XYZ vehicles sold in Europe since the new emissions regulation came into force"</em></li>
+      <li><strong>製造</strong>：<em>"Analyse downtime logs from each CNC machine for Q1 2025, classify the root-cause codes, and generate a Pareto chart of the top five failure drivers"</em></li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Hypothesis-orientated</strong><br />
+    <strong>假設導向</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The plan is framed as a set of hypotheses the system can confirm, reject, or refine in response to the user's question. Each step represents a testable claim, optionally paired with suggested actions. This approach excels in open-ended research tasks where new information can significantly reshape the solution space.
+      計畫被表述成一組假設，系統可以針對使用者的問題去確認、推翻或修正。每個步驟代表一個可測試的主張，也可以搭配建議的動作。這個做法在開放式研究任務特別強，因為新資訊可能大幅改變解空間。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Example tasks where this approach is useful:
+      這個做法適用的範例任務：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li><strong>Law</strong>: <em>"Does the supplied evidence satisfy all four prongs of the fair-use doctrine? Evaluate each prong against relevant case law"</em></li>
-      <li><strong>Pharmaceuticals</strong>: <em>"What emerging mRNA delivery methods could be used to target the IRS1 gene to treat obesity?"</em></li>
-      <li><strong>Finance</strong>: <em>"Is Bank Alpha facing a liquidity risk? Compare its LCR trend, interbank borrowing costs, and deposit-outflow and anything else you find that is interesting"</em></li>
+      <li><strong>法律</strong>：<em>"Does the supplied evidence satisfy all four prongs of the fair-use doctrine? Evaluate each prong against relevant case law"</em></li>
+      <li><strong>製藥</strong>：<em>"What emerging mRNA delivery methods could be used to target the IRS1 gene to treat obesity?"</em></li>
+      <li><strong>金融</strong>：<em>"Is Bank Alpha facing a liquidity risk? Compare its LCR trend, interbank borrowing costs, and deposit-outflow and anything else you find that is interesting"</em></li>
     </ul>
   </li>
 </ol>
 
 
-#### Prompting our planner
-We will define two prompts (one `system` and one `user`) for the initial planner. 
+#### 替 planner 寫 prompt
+我們要為初始 planner 定義兩個 prompt（一個 `system`、一個 `user`）。
 
-The most notable characteristic of our system prompt below is the use of 'persona-based' prompting. We prompt the LLM giving it a persona of an internal company expert. This helps to frame the tone of the model's response to the behaviour that we want - a direct, action-orientated task list that is fit for the financial industry. 
+下面 system prompt 最值得注意的特點，是用了「persona」式 prompting。我們給 LLM 一個公司內部專家的角色，這有助於把模型回應的語氣定調成我們要的行為：直接、動作導向的任務清單，適合金融業。
 
-This is then extended in the user prompt, where we prepend the `user_question` with information on this specific situation and how the planner should handle it. 
+接著在 user prompt 裡延伸，我們在 `user_question` 前面加上這個特定情境的資訊，以及 planner 該如何處理。
 
-In production settings you can super-charge this template by dynamically enriching the prompt before each call. You can inject information on the user's profile —sector, role, preferred writing style, prior conversation context—so the planner tailors its actions to their environment. You can also perform a quick “question-building” loop: have the assistant propose clarifying questions, gather the answers, and merge them back into the prompt so the planner starts with a well-scoped, information-rich request rather than a vague one. 
+在 production 環境，你可以在每次呼叫前動態充實這個模板來強化它。可以注入使用者的檔案資訊，例如產業、角色、偏好的寫作風格、先前的對話脈絡，讓 planner 的行動貼合他們的環境。也可以做一個快速的「問題建構」迴圈：讓 assistant 提出釐清問題，收集答案後合併回 prompt，這樣 planner 一開始拿到的是範圍明確、資訊豐富的請求，而不是模糊的需求。
 
-Another flow that can work well is to allow users to view the plan and optionally edit it before it is executed. This is particularly effective when your AI system is acting in more of an assistant role. Giving domain experts such as lawyers or pharmaceutical researchers the flexibility to steer and incorporate their ideas and research directions deeper into the system often has the dual benefit of improving both system performance and end user satisfaction.
+另一個效果不錯的流程，是讓使用者在計畫執行前看到計畫，並可選擇性地編輯。當你的 AI 系統扮演助理角色時，這特別有效。讓律師或製藥研究人員這類領域專家有彈性去引導、並把他們的想法和研究方向更深地帶進系統，通常對系統表現和終端使用者滿意度都有好處。
 
 ```python
 async def initial_planner(user_question: str) -> str:
@@ -4054,16 +4066,16 @@ print(plan)
 ```
 
 ### 4.1.5. Function calling
-[OpenAI function calling](https://platform.openai.com/docs/guides/function-calling?api-mode=responses) (otherwise known as tools) enable models to perform specific external actions by calling predefined functions. Some of the tools provided on the OpenAI platform include:
-- **Code interpreter**: Executes code for data analysis, math, plotting, and file manipulation
-- **Web search**: Include data from the internet in model response generation
-- **File search**: Search the contents of uploaded files for context
-- **Image generation**: Generate or edit images using GPT image
-- **Remote MCP servers**: Give the model access to new capabilities via Model Context Protocol (MCP) servers
+[OpenAI function calling](https://platform.openai.com/docs/guides/function-calling?api-mode=responses)（也叫 tools）讓模型能透過呼叫預先定義的函式來執行特定的外部動作。OpenAI 平台提供的一些 tool 包括：
+- **Code interpreter**：執行程式碼，做資料分析、數學、繪圖和檔案處理
+- **Web search**：把網路上的資料納入模型回應的生成
+- **File search**：在上傳的檔案內容裡搜尋上下文
+- **Image generation**：用 GPT image 生成或編輯圖片
+- **Remote MCP servers**：透過 Model Context Protocol (MCP) server 讓模型取得新能力
 
-Other cookbooks cover how to build tools for use with LLMs. In this example, we’ll develop several tools designed to efficiently explore the temporal knowledge graph and help answer the user’s question.
+其他 cookbook 會講怎麼建給 LLM 用的 tool。這個範例裡，我們要開發幾個 tool，用來有效探索時間知識圖譜，幫助回答使用者的問題。
 
-There are several schools of thought on tool design, and the best choice depends on the application at hand.
+關於 tool 設計有好幾種思路，最好的選擇取決於手上的應用。
 
 <!-- ![Screenshot 2025-06-23 at 11.52.01.png](temporal_agents_files/150d9cc4-9989-4e8e-bfcf-f1223a7959ee.png) -->
 <img
@@ -4072,64 +4084,63 @@ There are several schools of thought on tool design, and the best choice depends
   style="width:891px; height:auto;"
 />
 
-#### Fixed Tools
+#### Fixed Tools（固定 tool）
 
-In this context, 'fixed' tools refer to those with a rigid, well-defined functionality. Typically, these tools accept a limited number of specific arguments and perform clearly outlined tasks. For instance, a fixed tool might execute a simple query such as "Get today's weather for the user's location." Due to their structured nature, these tools excel at performing consistent lookups or monitoring values within structured environments like ERP systems, regulatory frameworks, or dashboards. However, their rigidity limits flexibility, prompting users to often replace them with more dynamic, traditional data pipelines, particularly for continuous data streaming.
+在這個脈絡下，「固定」tool 指的是功能死板、定義明確的 tool。它們通常只接受少數幾個特定參數，執行清楚界定的任務。例如固定 tool 可能執行像「取得使用者所在位置今天的天氣」這種簡單查詢。因為結構化的特性，這類 tool 很擅長在 ERP 系統、法規框架或儀表板這類結構化環境中，做一致的查詢或監控數值。不過它們缺乏彈性，所以使用者常常改用更動態的傳統資料 pipeline 取代，特別是連續資料串流的情況。
 
-Examples of fixed tools in various industries include:
+各產業的固定 tool 範例：
 
-* **Finance**: *"What's the current exchange rate from USD to EUR?"*
-* **Pharmaceuticals**: *"Retrieve the known adverse effects for Drug ABC."*
-* **Manufacturing**: *"What was the defect rate for batch #42?"*
+* **金融**：*"What's the current exchange rate from USD to EUR?"*
+* **製藥**：*"Retrieve the known adverse effects for Drug ABC."*
+* **製造**：*"What was the defect rate for batch #42?"*
 
-#### Free-form
+#### Free-form（自由形式）
 
-Free-form tools represent the most flexible end of the tool spectrum. These tools are capable of executing complex, open-ended tasks with minimal constraints on input structure. A common example is a code interpreter, capable of handling diverse analytical tasks. Although their flexibility offers substantial advantages, they can also introduce unpredictability and can be more challenging to optimize for consistent reliability.
+自由形式 tool 是 tool 光譜上最有彈性的一端。它們能執行複雜、開放式的任務，對輸入結構幾乎沒有限制。常見的例子是 code interpreter，能處理各式各樣的分析任務。雖然彈性帶來很大的優勢，也會引入不可預測性，而且要優化到穩定可靠比較難。
 
-In industry applications, free-form tools can look like:
+在產業應用中，自由形式 tool 可能長這樣：
 
-* **Finance**: *"Backtest this momentum trading strategy using ETF price data over the past 10 years, and plot the Sharpe ratio distribution."*
-* **Automotive**: *"Given this raw telemetry log, identify patterns that indicate early brake failure and simulate outcomes under various terrain conditions."*
-* **Pharmaceuticals**: *"Create a pipeline that filters for statistically significant gene upregulation from this dataset, then run gene set enrichment analysis and generate a publication-ready figure."*
+* **金融**：*"Backtest this momentum trading strategy using ETF price data over the past 10 years, and plot the Sharpe ratio distribution."*
+* **汽車**：*"Given this raw telemetry log, identify patterns that indicate early brake failure and simulate outcomes under various terrain conditions."*
+* **製藥**：*"Create a pipeline that filters for statistically significant gene upregulation from this dataset, then run gene set enrichment analysis and generate a publication-ready figure."*
+
+#### Semi-structured Tools（半結構化 tool，這份 cookbook 使用的）
+
+現代 agent 工作流程常常需要在結構和彈性之間取得平衡的 tool。半結構化 tool 就是專門處理這個中間地帶。它們接受中等複雜度的輸入格式，例如文字片段、類 JSON 的參數或小段程式碼，通常還內建基本的推理、檢索或決策能力。當任務定義明確但不完全一致時，這類 tool 很理想，例如已知需要哪個資料集或服務，但查詢或預期輸出會變動。
+
+半結構化 tool 有兩種常見的典範：
+
+* **Extended Capabilities（擴充能力）**：本身就像專門 agent 的 tool，內含內部邏輯和分析流程
+* **Flexible Argument Interfaces（彈性參數介面）**：讓 LLM 傳入有表達力又有結構的參數，例如詳細查詢、過濾條件或內嵌函式
+
+半結構化 tool 在這些情況特別有價值：
+
+* 把具體但不簡單的任務（像搜尋、轉換或摘要）委派給專門的 tool
+* 資料來源或 API 已知，但回傳結果難以預測
+
+在 production 環境，這類 tool 因為可靠度和效能更好，常比 code interpreter 這類自由形式 tool 更受青睞。例如對大型 Neo4j 知識圖譜執行複雜的多步查詢，用半結構化 tool 裡模板化的、優化過的 Cypher 查詢，比每次從頭生成查詢更可靠也更有效率。
+
+半結構化 tool 的產業應用包括：
+
+* **金融**：*"Extract all forward-looking risk factors from company filings for Q2 2023."*
+* **汽車**：*"Identify recurring electrical faults from maintenance logs across EV models launched after 2020."*
+* **製藥**：*"Locate omics data supporting the hypothesis that a specific mRNA treatment effectively upregulates the IRS1 gene."*
 
 
-#### Semi-structured Tools (used in this cookbook)
-
-Modern agentic workflows frequently require tools that effectively balance structure and flexibility. Semi-structured tools are designed specifically to manage this middle ground. They accept inputs in moderately complex formats—such as text fragments, JSON-like arguments, or small code snippets—and often embed basic reasoning, retrieval, or decision-making capabilities. These tools are ideal when tasks are well-defined but not entirely uniform, such as when the required dataset or service is known, but the query or expected output varies.
-
-Two common paradigms of semi-structured tools are:
-
-* **Extended Capabilities**: Tools that function as specialized agents themselves, incorporating internal logic and analysis routines
-* **Flexible Argument Interfaces**: Tools permitting the LLM to pass expressive yet structured arguments, such as detailed queries, filters, or embedded functions
-
-Semi-structured tools are particularly valuable when:
-
-* Delegating specific yet non-trivial tasks (like searches, transformations, or summarizations) to specialized tools
-* The source data or APIs are known, but the results returned can be unpredictable
-
-In production environments, these tools are often preferable to free-form tools, like code interpreters, due to their enhanced reliability and performance. For instance, executing complex, multi-step queries against large Neo4j knowledge graphs is more reliable and efficient using optimized Cypher queries templated within semi-structured tools rather than generating each query from scratch.
-
-Industry applications of semi-structured tools include:
-
-* **Finance**: *"Extract all forward-looking risk factors from company filings for Q2 2023."*
-* **Automotive**: *"Identify recurring electrical faults from maintenance logs across EV models launched after 2020."*
-* **Pharmaceuticals**: *"Locate omics data supporting the hypothesis that a specific mRNA treatment effectively upregulates the IRS1 gene."*
-
-
-#### Creating tools for our retriever to use
+#### 建立給 retriever 用的 tool
 
 ##### Factual Q&A
-The `factual_qa` tool provides an efficient way for our agent to retrieve information from our temporal knowledge graph pertaining to a particular company, topic, and date range. This will help the agent answer questions about the data such as "What were AMD's earnings in Q3 2017?"
+`factual_qa` tool 讓我們的 agent 能有效從時間知識圖譜取回與特定公司、主題和日期範圍相關的資訊。這能幫助 agent 回答像「AMD 在 2017 年第三季的獲利是多少？」這類關於資料的問題。
 
-This tool sits somewhere in the middle of the fixed and semi-structured tools we introduced earlier. This is generally quite a rigid tool in that it restricts the agent to a small number of parameters. However, the degrees of freedom in the input are large and the tool is still flexible in what information it can retrieve from the knowledge graph. This helps avoid the need for the core agent to write new queries for networkx from scratch on each query, improving accuracy and latency.
+這個 tool 落在前面介紹的固定 tool 和半結構化 tool 之間。整體上它相當死板，因為限制 agent 只能用少數幾個參數。不過輸入的自由度很大，tool 能取回的知識圖譜資訊仍然很有彈性。這樣核心 agent 就不必每次查詢都從頭寫新的 networkx 查詢，提升準確度和延遲表現。
 
-The tool has the following arguments:
-- `entity`: This is the entity (or object with respect to triplet ontology) that the tool should retrieve information for
-- `start_date_range`: This is the lower bound of the date range that the tool should retrieve over
-- `end_date_range`: This is the upper bound of the date range that the tool should retrieve over
-- `predicate`: This is the name of the predicate that the tool will connect the `entity` to perform a retrieval
+這個 tool 的參數如下：
+- `entity`：tool 要取回資訊的 entity（以 triplet ontology 來說是 object）
+- `start_date_range`：tool 要檢索的日期範圍下界
+- `end_date_range`：tool 要檢索的日期範圍上界
+- `predicate`：tool 用來連接 `entity` 並執行檢索的 predicate 名稱
 
-We begin by loading the predicate definitions. We will use these to improve error tolerance in the tool, using a GPT-4.1-nano to normalize the predicate passed in the argument to a valid predicate name. 
+我們先載入 predicate 定義。這些定義用來提升 tool 的容錯能力，由 GPT-4.1-nano 把參數裡傳進來的 predicate 正規化成有效的 predicate 名稱。
 
 ```python
 # Redefine the predicate definitions as we will need them here
@@ -4157,11 +4168,11 @@ PREDICATE_DEFINITIONS = {
 }
 ```
 
-We define several helper functions for the factual QA tool.
+我們為 factual QA tool 定義幾個 helper 函式。
 
-First is `_as_datetime`. This tool is used to coerce the arguments that define the date range to the correct datetime format.
+第一個是 `_as_datetime`。這個函式用來把定義日期範圍的參數強制轉成正確的 datetime 格式。
 
-Next, we introduce two new data models: `PredicateMatching` and `PredicateMatchValidation`. `PredicateMatching` defines the output format for the GPT-4.1-nano call that matches the predicate in the function arguments to valid predicate names. `PredicateMatchValidation` then performs a secondary validation step to assert that this output from GPT-4.1-nano is a valid predicate name, leveraging a Pydantic field validator. This process helps to ensure that the tool runs smoothly and helps to eliminate some of the rare edge cases which would lead to an unsuccessful graph query.
+接著引入兩個新的 data model：`PredicateMatching` 和 `PredicateMatchValidation`。`PredicateMatching` 定義 GPT-4.1-nano 呼叫的輸出格式，這個呼叫負責把函式參數裡的 predicate 對應到有效的 predicate 名稱。`PredicateMatchValidation` 再做第二層驗證，利用 Pydantic 的 field validator 斷言 GPT-4.1-nano 的輸出是有效的 predicate 名稱。這個流程能確保 tool 順利運作，也消除一些罕見、會導致圖查詢失敗的邊緣案例。
 
 ```python
 # Helper functions and models
@@ -4202,33 +4213,33 @@ class PredicateMatchValidation(BaseModel):
         return v
 ```
 
-Our factual QA tool can be decomposed into four steps.
+我們的 factual QA tool 可以拆成四個步驟。
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Predicate coercion</strong><br />
+    <strong>Predicate 強制轉換</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      If the provided predicate is not found in the <code>PREDICATE_DEFINITIONS</code> dictionary, this step uses GPT-4.1-nano to coerce it into a valid predicate
+      如果提供的 predicate 不在 <code>PREDICATE_DEFINITIONS</code> 字典裡，這一步會用 GPT-4.1-nano 把它轉成有效的 predicate
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Entity location</strong><br />
+    <strong>Entity 定位</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Performs fuzzy matching to identify the corresponding entity nodes within the networkx graph
+      用 fuzzy matching 找出 networkx 圖裡對應的 entity node
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Edge collection</strong><br />
+    <strong>Edge 蒐集</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Retrieves both inbound and outbound edges associated with the identified entity nodes
+      取回與找到的 entity node 相關的入向和出向 edge
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Response formatting</strong><br />
+    <strong>回應格式化</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Structures the collected information into a well-formatted response that is easy for the orchestrator to consume
+      把蒐集到的資訊整理成格式良好、方便 orchestrator 使用的回應
     </p>
   </li>
 </ol>
@@ -4445,9 +4456,9 @@ factual_qa_schema = {
 ```
 
 ##### Trend analysis
-The `trend_analysis` tool is designed to compare how specific metrics or signals evolve over time—often across multiple companies and/or topics. It exposes a structured interface that lets the agent specify the time window, subject set, and target metric, then delegates the comparison logic to a specialised agent for handling this analysis. In this case we utilised o4-mini with high reasoning effort as this is a 'harder' analysis task.
+`trend_analysis` tool 用來比較特定指標或訊號隨時間的演變，通常橫跨多間公司和（或）多個主題。它提供結構化介面，讓 agent 指定時間視窗、主體集合和目標指標，再把比較邏輯委派給專門處理這類分析的 agent。這裡我們用 o4-mini 搭配 high reasoning effort，因為這是比較「難」的分析任務。
 
-This allows us to build a highly focused and optimised pipeline for dealing with comparison-style tasks. Whilst this could be built into the core orchestrator itself, it's often more manageable to split this into specialised tools so they can be more easily swapped out or updated later without much concern for impact on the wider system.
+這讓我們能為比較型任務建一條高度專注、優化過的 pipeline。雖然也可以直接做進核心 orchestrator，但通常拆成專門的 tool 更好管理，之後更容易替換或更新，不必太擔心影響整個系統。
 
 ```python
 import asyncio
@@ -4595,7 +4606,7 @@ tools = [
 
 ### 4.1.6. Retriever
 
-We design a simple retriever containing only a run method which encompasses the planning step and a while loop to execute each tool call that the orchestrator makes before returning a final answer.
+我們設計一個簡單的 retriever，只有一個 run 方法，裡面包含規劃步驟，以及一個 while 迴圈，執行 orchestrator 做的每個 tool call，最後才回傳最終答案。
 
 ```python
 import json
@@ -4686,9 +4697,9 @@ class MultiStepRetriever:
         return response.output_text, tools_used
 ```
 
-We can now run our MultiStepRetriever. 
+現在可以執行我們的 MultiStepRetriever 了。
 
-We observe that the answer returned is detailed, and includes a detailed walkthrough of how AMD's research priorities evolved from 2016 to 2020, with references to the underlying quotes that were used to derive these answers.
+我們觀察到回傳的答案很詳細，包含 AMD 的研究重點從 2016 到 2020 年如何演變的完整說明，並引用了推導這些答案所用的原始引文。
 
 ```python
 retriever = MultiStepRetriever(client=client)
@@ -4698,7 +4709,7 @@ answer, tools_used = await retriever.run(user_question="How have AMD's research 
 print(answer)
 ```
 
-We can also inspect the tools used by our MultiStepRetriever to answer this query.
+我們也可以檢視 MultiStepRetriever 為了回答這個查詢用了哪些 tool。
 
 ```python
 for key, value in tools_used.items():
@@ -4708,214 +4719,210 @@ for key, value in tools_used.items():
         print(f"{key}: [empty list]")
 ```
 
-[Appendix section A.5, "Scaling and Productionizing our Retrieval Agent"](#a5-scaling-and-productionizing-our-retrieval-agent) outlines guidelines for taking the Retrieval Agent we've built into production.
+[附錄 A.5「Scaling and Productionizing our Retrieval Agent」](#a5-scaling-and-productionizing-our-retrieval-agent)列出了把我們建好的 Retrieval Agent 推上 production 的指引。
 
-### 4.1.7. Selecting the right model for Multi-Step Knowledge-Graph Retrieval
+### 4.1.7. 為多步知識圖譜檢索挑選合適的模型
 
-Multi-step retrieval agents need strong reasoning to hop through entities and relations, verify answers, and decide what to do next.  Latency still matters to users, but usually *less* than raw accuracy. Hence, this is one of the domains where OpenAI's o3 and o4-mini reasoning models shine.
+多步檢索 agent 需要很強的推理能力，才能在 entity 和關係之間一跳一跳地走、驗證答案，並決定下一步。延遲對使用者仍然重要，但通常比純粹的準確度*不那麼*重要。因此這是 OpenAI 的 o3 和 o4-mini 推理模型發揮所長的領域之一。
 
-Once again, for development we recommend a “start big, then specialise” ladder:
+開發時我們同樣建議「先用大的，再專門化」的階梯：
 
-1. **Start with o3** – ensure your retrieval logic (chaining, re-ranking, fallback prompts) is sound. o3 may also be the best choice for production if your retrieval system is working with particularly complex data such as pharmaceutical or legal data. You can test this by looking at the severity of performance degradation with smaller models. If the drop off in performance is large, consider sticking with o3
-2. **Move to o4-mini**
-   * **Prompt enhancement** - optimise your prompts to push the performance of the o4-mini system as close to that of the full o3 model
-   * **Reinforcement fine-tuning (RFT)** - [OpenAI's Reinforcement Fine-Tuning](https://platform.openai.com/docs/guides/reinforcement-fine-tuning) offering enables you to fine-tune OpenAI's o-series models to improve their performance on hard reasoning tasks. With as little as ~50 golden answers you can leverage the power of reinforcement learning to fine-tune o4-mini which can help it come close or even exceed the base o3's performance on the same task
-4. **Fallback to GPT 4.1 when latency dominates** – for cases when latency is particularly important or you've tuned your prompts well enough that performance drop-off is minimal, consider moving to the GPT 4.1 series
+1. **從 o3 開始**：確認你的檢索邏輯（串接、re-ranking、備援 prompt）是否健全。如果你的檢索系統處理的是特別複雜的資料（像製藥或法律資料），o3 也可能是 production 的最佳選擇。你可以看換成小模型後效能下降的嚴重程度來測試。如果掉得很多，就考慮繼續用 o3
+2. **改用 o4-mini**
+   * **Prompt 強化**：優化 prompt，讓 o4-mini 系統的表現盡量逼近完整的 o3
+   * **Reinforcement fine-tuning (RFT)**：[OpenAI 的 Reinforcement Fine-Tuning](https://platform.openai.com/docs/guides/reinforcement-fine-tuning) 讓你能 fine-tune OpenAI 的 o-series 模型，提升它們在困難推理任務的表現。只要大約 50 個 golden answer，就能用強化學習的力量 fine-tune o4-mini，讓它在同樣任務上接近甚至超越基礎 o3 的表現
+4. **延遲為主時退回 GPT 4.1**：如果延遲特別重要，或你的 prompt 調得夠好、效能落差很小，可以考慮改用 GPT 4.1 系列
 
-| Model       | Relative cost | Relative latency | Intelligence | Ideal role in workflow                               |
+| Model       | 相對成本 | 相對延遲 | 智能 | 在流程中的理想角色                               |
 | ----------- | ------------- | ---------------- | - | ---------------------------------------------------- |
 | *o3* | ★★★           | ★★               | ★★★ *(highest)* | Initial prototyping, working with complex data, golden dataset generation |
 | *o4-mini*   | ★★            | ★               | ★★ | Main production engine, can push performance with RFT      |
 | *GPT 4.1 series*   | ★ *(lowest)*          | ★ *(fastest)* | ★  | Latency-critical or large-scale background scoring   |
 
-#### Why is Reinforcement Fine-Tuning powerful for long horizon, multi-step retrieval tasks?
-RFT has a number of benefits over [Supervised Fine-Tuning](https://platform.openai.com/docs/guides/supervised-fine-tuning) or [Direct Preference Optimization](https://platform.openai.com/docs/guides/direct-preference-optimization) for this use case. 
+#### 為什麼 Reinforcement Fine-Tuning 對長時間跨度的多步檢索任務很強？
+針對這個用途，RFT 比 [Supervised Fine-Tuning](https://platform.openai.com/docs/guides/supervised-fine-tuning) 或 [Direct Preference Optimization](https://platform.openai.com/docs/guides/direct-preference-optimization) 有幾個優勢。
 
-Firstly, reinforcement fine-tuning can be performed with a far small number of examples, sometimes requiring as little as 50 training examples.
+首先，reinforcement fine-tuning 需要的範例少得多，有時只要 50 個訓練範例。
 
-Additionally, RFT eliminates the necessity of providing labeled step-by-step trajectories. By supplying only the final correct answer, the system learns implicitly how to navigate the knowledge graph effectively. This feature is particularly valuable in real-world contexts where end users typically face time constraints and may struggle to curate the extensive sets of labeled examples (often numbering in the hundreds or thousands) required by traditional SFT methods.
+此外，RFT 不需要提供標註好的逐步軌跡。只要提供最終的正確答案，系統就會隱式學會如何有效地走訪知識圖譜。這在真實場景特別有價值，因為終端使用者通常有時間壓力，很難整理出傳統 SFT 方法需要的大量標註範例（常常要成百上千筆）。
 
-## 4.2 Evaluating your Retrieval System
+## 4.2 評估你的檢索系統
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
 
   <!-- 1. Human-annotated “Golden Answers” -->
   <li style="margin-bottom: 1.2em;">
-    <strong>Human-annotated “Golden Answers”</strong><br />
+    <strong>人工標註的「Golden Answers」</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      The traditional baseline for retrieval evaluation: a curated set of <em>query → gold answer</em> pairs,
-      vetted by domain experts.  
-      Metrics such as precision@k or recall@k are computed by matching retrieved passages
-      against these gold spans.
+      檢索評估的傳統基準：一組由領域專家審核過的 <em>query → gold answer</em> 配對。
+      像 precision@k 或 recall@k 這類指標，是把檢索到的段落和這些 gold span 比對算出來的。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      <strong>Pros:  </strong> Highest reliability, clear pass/fail thresholds, excellent for regression testing<br />
-      <strong>Cons:  </strong> Expensive to create, slow to update, narrow coverage (quickly becomes stale
-      when the knowledge base evolves)
+      <strong>優點：</strong> 可靠度最高，有清楚的通過/失敗門檻，很適合做 regression 測試<br />
+      <strong>缺點：</strong> 建立成本高、更新慢、涵蓋範圍窄（知識庫一演變就很快過時）
     </p>
   </li>
 
   <!-- 2. Synthetically generated answers -->
   <li style="margin-bottom: 1.2em;">
-    <strong>Synthetically generated answers</strong><br />
+    <strong>合成產生的答案</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Use an LLM to generate reference answers or judgments, enabling rapid, low-cost expansion
-      of the evaluation set.  Three common pathways:
+      用 LLM 產生參考答案或判斷，快速又低成本地擴充評估集。
+      常見的有三條路徑：
     </p>
     <ul style="list-style: disc; padding-left: 1em; margin-top: 0.25em; margin-bottom: 0.5em;">
-      <li><strong>LLM-as-judge</strong>: Feed the query, retrieved passages, and candidate answer to a
-          judge model that outputs a graded score or e.g., “yes / partial / no”</li>
-      <li><strong>Tool-use pathway</strong>: For different question types you can either manually or synthetically generate the 'correct' tool-use pathways and score responses against this</li>
+      <li><strong>LLM-as-judge</strong>：把查詢、檢索到的段落和候選答案餵給 judge 模型，輸出分級分數或像「yes / partial / no」這類判斷</li>
+      <li><strong>Tool-use 路徑</strong>：針對不同類型的問題，手動或合成產生「正確」的 tool 使用路徑，再拿回應對照這個路徑評分</li>
     </ul>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      <strong>Pros: </strong> Fast, infinitely scalable, easier to keep pace with a dynamic application specification<br />
-      <strong>Cons: </strong> Judgement quality is typically of lower quality than expert human-annotated solutions
+      <strong>優點：</strong> 快速、可無限擴展、更容易跟上動態變化的應用規格<br />
+      <strong>缺點：</strong> 判斷品質通常不如專家人工標註的解答
     </p>
   </li>
 
   <!-- 3. Human feedback -->
   <li style="margin-bottom: 1.2em;">
-    <strong>Human feedback</strong><br />
+    <strong>人工回饋</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Collect ratings directly from end-users or domain reviewers (thumbs-up/down, five-star scores, pairwise
-      comparisons).  Can be <em>in-the-loop</em> (model trains continuously on live feedback) or
-      <em>offline</em> (periodic eval rounds).
+      直接從終端使用者或領域審核者收集評分（讚/倒讚、五星評分、成對比較）。
+      可以是 <em>in-the-loop</em>（模型持續根據線上回饋訓練），也可以是
+      <em>offline</em>（定期評估輪次）。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      <strong>Pros: </strong> Captures real-world utility, surfaces edge-cases synthetic tests miss<br />
-      <strong>Cons: </strong> Noisy and subjective; requires thoughtful aggregation (e.g., ELO
-      scoring), risk of user biases becoming incorporated in the model
+      <strong>優點：</strong> 反映真實世界的實用性，找出合成測試漏掉的邊緣案例<br />
+      <strong>缺點：</strong> 雜訊多又主觀；需要仔細的彙整方式（例如 ELO
+      評分），而且使用者偏見有可能被帶進模型
     </p>
   </li>
 
 </ol>
 
-### Which is the best evaluation method?
-There is no single best method. However, a workflow that we have found that works well on projects is:
-1. Start building and iterate synthetic evaluations
-2. Test with your golden human set of evaluations before deployment
-3. Make it easy for end-users to annotate good and bad answers, and use this feedback to continue to develop your application over time
+### 哪種評估方法最好？
+沒有單一最佳的方法。不過我們在專案中發現效果不錯的流程是：
+1. 先開始建，並迭代合成評估
+2. 部署前，用人工整理的 golden 評估集測試
+3. 讓終端使用者容易標註好答案和壞答案，並用這些回饋持續發展你的應用
 
 
-# 5. Prototype to Production
+# 5. 從 Prototype 到 Production
 ---
 
-Transitioning your knowledge graph system from a proof-of-concept to a robust, production-grade pipeline requires you to address several key points:
-- **Storing and retrieving high-volume graph data**
-- **Managing and pruning datasets**
-- **Implementing concurrency in the ingestion pipeline**
-- **Minimizing token cost**
-- **Scaling retrieval agents**
-- **Safeguards**
+要把知識圖譜系統從概念驗證變成穩健、production 等級的 pipeline，你需要處理幾個關鍵問題：
+- **儲存與檢索大量圖資料**
+- **管理與修剪資料集**
+- **在 ingestion pipeline 實作並行處理**
+- **降低 token 成本**
+- **擴展檢索 agent**
+- **防護機制**
 
-This section serves as a walkthrough of key considerations and best practices to ensure your temporally-aware knowledge graph can operate reliably in a real-world environment. A more detailed [Prototype to Production Appendix section](#a-prototype-to-production) can be found towards the end of this cookbook.
+這一節走過幾個關鍵考量和最佳實務，確保你的時間感知知識圖譜能在真實環境穩定運作。更詳細的 [Prototype to Production 附錄章節](#a-prototype-to-production)在這份 cookbook 後段。
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Storing and Retrieving High-Volume Graph Data</strong><br />
+  <strong>儲存與檢索大量圖資料</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a1-storing-and-retrieving-high-volume-graph-data">Appendix section A.1. "Storing and Retrieving High-Volume Graph Data"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Manage scalability through thoughtful schema design, sharding, and partitioning. Clearly define entities, relationships, and ensure schema flexibility for future evolution. Use high-cardinality fields like timestamps for efficient data partitioning.
+    透過周全的 schema 設計、sharding 和 partitioning 來管理擴展性。清楚定義 entity 和關係，並保留 schema 彈性以便未來演進。用 timestamp 這類高基數（high-cardinality）欄位來有效分割資料。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Temporal Validity & Versioning</strong><br />
+  <strong>時間有效性與版本管理</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a12-temporal-validity-versioning">Appendix section A.1.2. "Temporal Validity & Versioning"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Include temporal markers (valid_from, valid_to) for each statement. Maintain historical records non-destructively by marking outdated facts as inactive and indexing temporal fields for efficient queries.
+    每條 statement 都加上時間標記（valid_from、valid_to）。把過時的事實標成 inactive，以非破壞性的方式保留歷史紀錄，並替時間欄位建索引以加速查詢。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Indexing & Semantic Search</strong><br />
+  <strong>索引與語意搜尋</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a13-indexing-semantic-search">Appendix section A.1.3. "Indexing & Semantic Search"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Utilize B-tree indexes for efficient temporal querying. Leverage PostgreSQL’s pgvector extension for semantic search with approximate nearest-neighbor algorithms like ivfflat, ivfpq, and hnsw to optimize query speed and memory usage.
+    用 B-tree 索引做有效率的時間查詢。利用 PostgreSQL 的 pgvector extension，搭配 ivfflat、ivfpq 和 hnsw 這類近似最近鄰（approximate nearest-neighbor）演算法做語意搜尋，優化查詢速度和記憶體使用。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Managing and Pruning Datasets</strong><br />
+  <strong>管理與修剪資料集</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a2-managing-and-pruning-datasets">Appendix section A.2. "Managing and Pruning Datasets"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Establish TTL and archival policies for data retention based on source reliability and relevance. Implement automated archival tasks and intelligent pruning with relevance scoring to optimize graph size.
+    依來源可靠度和相關性，訂立資料保留的 TTL 和封存政策。實作自動封存任務，並用相關性分數做智慧修剪，優化圖的大小。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Concurrent Ingestion Pipeline</strong><br />
+  <strong>並行 ingestion pipeline</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a3-implementing-concurrency-in-the-ingestion-pipeline">Appendix section A.3. "Implementing Concurrency in the Ingestion Pipeline"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Implement batch processing with separate, scalable pipeline stages for chunking, extraction, invalidation, and entity resolution. Optimize throughput and parallelism to manage ingestion bottlenecks.
+    對 chunking、抽取、invalidation 和 entity resolution 實作批次處理，各階段獨立、可擴展。優化吞吐量和平行度，處理 ingestion 的瓶頸。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Minimizing Token Costs</strong><br />
+  <strong>降低 Token 成本</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a4-minimizing-token-cost">Appendix section A.4. "Minimizing Token Cost"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Use caching strategies to avoid redundant API calls. Adopt service tiers like OpenAI's flex option to reduce costs and replace expensive model queries with efficient embedding and nearest-neighbor search.
+    用快取策略避免重複的 API 呼叫。採用像 OpenAI 的 flex 這類服務層級來降低成本，並用有效率的 embedding 和最近鄰搜尋取代昂貴的模型查詢。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Scaling Retrieval Agents</strong><br />
+  <strong>擴展檢索 Agent</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a5-scaling-and-productionizing-our-retrieval-agent">Appendix section A.5. "Scaling and Productionizing our Retrieval Agent"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Use a controller and traversal workers architecture to handle multi-hop queries. Implement parallel subgraph extraction, dynamic traversal with chained reasoning, caching, and autoscaling for high performance.
+    用 controller 加 traversal worker 的架構處理多跳查詢。實作平行子圖抽取、搭配串接推理的動態走訪、快取和 autoscaling，達到高效能。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Safeguards & Verification</strong><br />
+  <strong>防護與驗證</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a6-safeguards">Appendix section A.6. "Safeguards"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Deploy multi-layered output verification, structured logging, and monitoring to ensure data integrity and operational reliability. Track critical metrics and perform regular audits.
+    部署多層輸出驗證、結構化 log 和監控，確保資料完整性和營運可靠度。追蹤關鍵指標並定期稽核。
   </p>
 </li>
 
 <li style="margin-bottom: 1.2em;">
-  <strong>Prompt Optimization</strong><br />
+  <strong>Prompt 優化</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
     <a href="#a7-prompt-optimization">Appendix section A.7. "Prompt Optimization"</a>
   </p>
   <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-    Optimize LLM interactions with personas, few-shot prompts, chain-of-thought methods, dynamic context management, and automated A/B testing of prompt variations for continuous performance improvement.
+    用 persona、few-shot prompt、chain-of-thought 方法、動態上下文管理，以及 prompt 變體的自動化 A/B 測試，優化與 LLM 的互動，持續改進效能。
   </p>
 </li>
 
 </ol>
 
-## Closing thoughts
+## 結語
 
-This cookbook equips you with foundational techniques and concrete workflows to effectively build and deploy temporally-aware knowledge graphs coupled with powerful multi-hop retrieval capabilities. 
+這份 cookbook 提供基礎技巧和具體的工作流程，幫助你有效建構並部署具時間感知的知識圖譜，搭配強大的多跳檢索能力。
 
-Whether you're starting from a prototype or refining a production system, leveraging structured graph data with OpenAI models can unlock richer, more nuanced interactions with your data. As these technologies evolve rapidly, look out for updates in OpenAI's model lineup and keep experimenting with indexing methods and retrieval strategies to continuously enhance your knowledge-centric AI solutions.
+不管你是從 prototype 起步，還是在精進 production 系統，結合結構化圖資料與 OpenAI 模型，都能讓你和資料之間的互動更豐富、更細緻。這些技術演進很快，請多留意 OpenAI 模型陣容的更新，並持續嘗試各種索引方法和檢索策略，不斷強化你以知識為核心的 AI 方案。
 
-You can easily adapt the frameworks presented in this cookbook to your respective domain by customizing the provided ontologies and refining the extraction prompts. Swapping in Neo4j as the graph database takes you well on the way to an MVP level application, providing data persistence out of the box. It also opens the door to levelling up your retriever's tools with Cypher queries. 
+你可以輕鬆把這份 cookbook 的框架調整到你自己的領域，方法是客製提供的 ontology，並精修抽取 prompt。把圖資料庫換成 Neo4j，能讓你離 MVP 等級的應用更近一步，因為它直接提供資料持久化，也讓你能用 Cypher 查詢升級 retriever 的 tool。
 
-Iterively develop your solution by making use of synthetic evals, and then test your solution against "golden" expert-human annotated solutions. Once in production, you can quickly iterate from human feedback to push your application to new heights. 
+用合成 eval 迭代開發你的方案，再拿專家人工標註的「golden」解答來測試。上線之後，可以根據人工回饋快速迭代，把你的應用推上新高度。
 
-## Contributors
-This cookbook serves as a joint collaboration between OpenAI and [Tomoro](https://tomoro.ai/).
+## 貢獻者
+這份 cookbook 是 OpenAI 和 [Tomoro](https://tomoro.ai/) 的共同合作成果。
 
 - [Alex Heald](https://www.linkedin.com/in/alexandra-heald/)
 - [Douglas Adams](https://www.linkedin.com/in/douglas-adams99/)
@@ -4923,31 +4930,31 @@ This cookbook serves as a joint collaboration between OpenAI and [Tomoro](https:
 - [Danny Wigg](https://www.linkedin.com/in/dannywigg/)
 - [Shikhar Kwatra](https://www.linkedin.com/in/shikharkwatra/)
 
-# Appendix
+# 附錄
 ---
 
-Within this appendix, you'll find a more in-depth *Prototype to Production* section.
+這份附錄裡有更深入的 *Prototype to Production* 內容。
 
 ## A. Prototype to Production
 
-### A.1. Storing and Retrieving High-Volume Graph Data
+### A.1. 儲存與檢索大量圖資料
 
-#### A.1.1. Data Volume & Schema Complexity
+#### A.1.1. 資料量與 Schema 複雜度
 
-As your dataset scales to millions or even billions of nodes and edges, managing performance and maintainability becomes critical. This requires thoughtful approaches to both schema design and data partitioning:
+當資料集成長到數百萬甚至數十億個 node 和 edge，管理效能和可維護性就變得很關鍵。這需要在 schema 設計和資料分割兩方面都有周全的做法：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Schema design for growth and change</strong><br />
+    <strong>為成長與變化設計 schema</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Clearly define core entity types (e.g., <code>Person</code>, <code>Organization</code>, <code>Event</code>) and relationships. Design the schema with versioning and flexibility in mind, enabling future schema evolution with minimal downtime.
+      清楚定義核心 entity 類型（例如 <code>Person</code>、<code>Organization</code>、<code>Event</code>）和關係。設計 schema 時要考慮版本管理和彈性，讓未來 schema 演進時停機時間降到最低。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
     <strong>Sharding &amp; partitioning</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Use high-cardinality fields (such as timestamps or unique entity IDs) for partitioning to preserve query performance as data volume grows. This is particularly important for temporally-aware data. For example:
+      用高基數欄位（例如 timestamp 或唯一 entity ID）做 partitioning，在資料量成長時維持查詢效能。這對時間感知資料特別重要。例如：
     </p>
   
   ```sql  
@@ -4965,30 +4972,30 @@ As your dataset scales to millions or even billions of nodes and edges, managing
   </li>
 </ol>
 
-#### A.1.2. Temporal Validity & Versioning
+#### A.1.2. 時間有效性與版本管理
 
-In our temporal knowledge graph, each statement includes temporal markers (e.g., `valid_from`, `valid_to`). 
+在我們的時間知識圖譜裡，每條 statement 都包含時間標記（例如 `valid_from`、`valid_to`）。
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Preserve history non-destructively</strong><br />
+    <strong>以非破壞性的方式保留歷史</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Avoid deleting or overwriting records. Instead mark outdated facts as inactive by setting a <code>status</code> (e.g., <code>inactive</code>).
+      避免刪除或覆寫紀錄。改成設定 <code>status</code>（例如 <code>inactive</code>）把過時的事實標成 inactive。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Optimize for temporal access</strong><br />
+    <strong>針對時間存取做優化</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Index temporal fields (<code>valid_from</code>, <code>valid_to</code>) to support efficient querying of both current and historical states.
+      替時間欄位（<code>valid_from</code>、<code>valid_to</code>）建索引，讓目前狀態和歷史狀態的查詢都有效率。
     </p>
   </li>
 </ol>
 
 
-#### Example: Non-Destructive Updates
+#### 範例：非破壞性更新
 
-Rather than removing or overwriting a record, update its status and close its validity window:
+不要刪除或覆寫紀錄，而是更新它的 status 並關閉它的有效視窗：
 
 ```sql
 UPDATE statements
@@ -4996,21 +5003,21 @@ SET status = 'inactive', valid_to = '2025-03-15T00:00:00Z'
 WHERE statement_id = '...' AND entity_id = '...';
 ```
 
-#### A.1.3. Indexing & Semantic Search
+#### A.1.3. 索引與語意搜尋
 
-##### Temporal Indexes
-To support efficient temporal queries create B-tree indexes on `valid_from` and `valid_to`. A 'B-tree' index is a tree data structure that keeps data sorted to facilitate fast lookups, range queries, and ordered scans in logarithmic time. It's the default index type in many relational databases. 
+##### 時間索引
+為了支援有效率的時間查詢，在 `valid_from` 和 `valid_to` 上建立 B-tree 索引。B-tree 索引是一種讓資料保持排序的樹狀資料結構，能以對數時間做快速查找、範圍查詢和有序掃描。它是許多關聯式資料庫的預設索引類型。
 
 ```sql
 CREATE INDEX ON statements (valid_from);
 CREATE INDEX ON statements (valid_to);
 ```
-##### Semantic search with pgvector
-Storing vector embeddings in PostgreSQL (via the `pgvector` extension) enables similarity-based retrieval via semantic search. This follows a two-step process:
-1. Store high-dimensional vectors that represent the semantic meaning of the text. These can be created with embedding models such as OpenAI's `text-embedding-3-small` and `text-embedding-3-large`
-2. Use Approximate Nearest-Neighbour (ANN) for efficient similarity matching at scale
+##### 用 pgvector 做語意搜尋
+把向量 embedding 存在 PostgreSQL（透過 `pgvector` extension），就能透過語意搜尋做相似度檢索。這分成兩個步驟：
+1. 儲存代表文字語意的高維向量。這些可以用 OpenAI 的 `text-embedding-3-small` 和 `text-embedding-3-large` 這類 embedding model 產生
+2. 用近似最近鄰（Approximate Nearest-Neighbour, ANN）在大規模下做有效率的相似度比對
 
-There are several different indexing options available in pgvector, each with different purposes. These indexing options are described in more detail, along with in-depth implementation steps in the [README on the Github repository for pgvector](https://github.com/pgvector/pgvector/blob/master/README.md).
+pgvector 有幾種不同的索引選項，各有不同用途。這些索引選項和深入的實作步驟，在 [pgvector 的 Github repository README](https://github.com/pgvector/pgvector/blob/master/README.md) 裡有更詳細的說明。
 | <div align="center">Index Type</div> | <div align="center">Build Time</div> | <div align="center">Query Speed</div> | <div align="center">Memory Usage</div> | <div align="center">Accuracy</div> | <div align="center">Recommended Scale</div> | Notes |
 |-------------------------------------|--------------------------------------|----------------------------------------|-----------------------------------------|-----------------------------------|----------------------------------------------|-------|
 | <div align="center">**flat**</div> | <div align="center">Minimal</div> | <div align="center">Slow<br>(linear scan)</div> | <div align="center">Low</div> | <div align="center">100%<br>(exact)</div> | <div align="center">Very small<br>(&lt; 100 K vectors)</div> | No approximate indexing—scans all vectors. Best for exact recall on small collections |
@@ -5019,29 +5026,29 @@ There are several different indexing options available in pgvector, each with di
 | <div align="center">**hnsw**</div> | <div align="center">Highest</div> | <div align="center">Fastest<br>(esp. at scale)</div> | <div align="center">High<br>(in-memory)</div> | <div align="center">Very high</div> | <div align="center">Large to Very Large<br>(100 M–Billions+)</div> | Builds a hierarchical navigable graph. Ideal for latency-sensitive, high-scale systems |
 
 
-##### Tuning parameters for vector indexing
+##### 向量索引的調校參數
 
 `ivfflat`
-* `lists`: Number of partitions (e.g., 100)
-* `probes`: Number of partitions to scan at query time (e.g., 10-20), controls recall vs. latency
+* `lists`：分區數量（例如 100）
+* `probes`：查詢時要掃描的分區數量（例如 10-20），控制 recall 和延遲的取捨
 
 `ivfpq`
-* `subvectors`: Number of blocks to quantize (e.g., 16)
-* `bits`: Number of bits per block (e.g., 8)
-* `probes`: Same as in `ivfflat`
+* `subvectors`：要量化的區塊數（例如 16）
+* `bits`：每個區塊的 bit 數（例如 8）
+* `probes`：和 `ivfflat` 相同
 
 `hnsw`
-* `M`: Max connections per node (e.g., 16)
-* `ef_construction`: Build-time dynamic candidate list size (e.g., 200)
-* `ef_search`: Queyr-time candidate pool (e.g., 64-128)
+* `M`：每個 node 的最大連線數（例如 16）
+* `ef_construction`：建索引時的動態候選清單大小（例如 200）
+* `ef_search`：查詢時的候選池大小（例如 64-128）
 
-##### Best practices
-- `flat` for debugging or small datasets
-- `ivfflat` when you want tunable accuracy with good speed
-- `ivfpq` when memory efficiency is critical
-- `hnsw` when optimizing for lowest latency on massive collections
+##### 最佳實務
+- `flat` 用於 debug 或小型資料集
+- `ivfflat` 適合想要可調準確度又有不錯速度的時候
+- `ivfpq` 適合記憶體效率很關鍵的時候
+- `hnsw` 適合在超大型資料集上追求最低延遲的時候
 
-##### Other vector database options in the ecosystem
+##### 生態系中的其他向量資料庫選項
 
 | Vector DB    | Key Features                                                 | Pros                                        | Cons                                                            |
 | ------------ | ------------------------------------------------------------ | ------------------------------------------- | --------------------------------------------------------------- |
@@ -5051,7 +5058,7 @@ There are several different indexing options available in pgvector, each with di
 | **Qdrant**   | Lightweight, real-time updates, payload filtering            | Simple setup, good hybrid query support     | Lacks native relational joins; eventual consistency in clusters |
 | **Vectara**  | Managed with semantic ranking and re-ranking                 | Strong relevance features; easy integration | Proprietary; limited index control                              |
 
-##### Choosing the Right Vector Store
+##### 選擇合適的向量儲存
 
 | <div align="center">Scale</div> | <div align="center">Recommendation</div> | Details |
 |--------------------------------|------------------------------------------|---------|
@@ -5059,167 +5066,167 @@ There are several different indexing options available in pgvector, each with di
 | <div align="center">**Large Scale**<br>(100M – 1B+ vectors)</div> | <div align="center">Milvus or Qdrant</div> | Suitable for high-throughput workloads, especially when GPU-accelerated indexing or sub-millisecond latency is needed. |
 | <div align="center">**Hybrid Scenarios**</div> | <div align="center">PostgreSQL for metadata<br>+ dedicated vector DB</div> | Use PostgreSQL for entity metadata storage and a vector DB (e.g., Milvus, Qdrant) for similarity search. Synchronize embeddings using CDC pipelines (e.g., Debezium). |
 
-For more detailed information, check out the [OpenAI cookbook on vector databases](https://cookbook.openai.com/examples/vector_databases/readme).
+更多詳細資訊請參考 [OpenAI cookbook 的 vector databases](https://cookbook.openai.com/examples/vector_databases/readme)。
 
-##### Durable disk storage and backup
-For some cases, especially those requiring high availability or state recovery across restarts, it may be worth persisting state to reliable disk storage and implementing a backup strategy. 
+##### 持久化磁碟儲存與備份
+有些情況，特別是需要高可用性或重啟後狀態還原的，值得把狀態持久化到可靠的磁碟儲存，並實作備份策略。
 
-If durability is a concern, consider using persistent disks with regular backups or syncing state to external storage. While not necessary for all deployments, it can provide a valuable safeguard against data loss or operational disruption in environments where consistency and fault tolerance matter.
+如果在意持久性，可以考慮使用有定期備份的 persistent disk，或把狀態同步到外部儲存。雖然不是所有部署都需要，但在重視一致性和容錯的環境，這能有效防止資料遺失或營運中斷。
 
-### A.2. Managing and Pruning Datasets
+### A.2. 管理與修剪資料集
 
-#### A.2.1. TTL (Time-to-Live) and Archival Policies
+#### A.2.1. TTL（Time-to-Live）與封存政策
 
-Establish clear policies to determine which facts should be retained indefinitely (e.g., legally required records for regulators) and which can be archived after a defined period (e.g., statements sourced from social media more than one year old).
+訂立清楚的政策，決定哪些事實要永久保留（例如法規要求保留的紀錄），哪些可以在一段時間後封存（例如來自社群媒體、超過一年的 statement）。
 
-Key practices to include:
+要納入的關鍵做法：
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Automated Archival Jobs</strong><br />
+    <strong>自動封存任務</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Set up a background task that periodically queries for records with e.g., <code>valid_to &lt; NOW() - INTERVAL 'X days'</code> and moves them to an archival table for long-term storage.
+      設一個背景任務，定期查詢符合例如 <code>valid_to &lt; NOW() - INTERVAL 'X days'</code> 的紀錄，並把它們移到封存 table 做長期儲存。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Source-Specific Retention Policies</strong><br />
+    <strong>依來源訂定保留政策</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Tailor retention durations by data source or entity type. For example, high-authority sources like government publications may warrant longer retention than less reliable data such as scraped news headlines or user-generated content.
+      依資料來源或 entity 類型調整保留期限。例如政府公告這類高權威來源，可能值得保留更久，而爬來的新聞標題或使用者產生的內容可靠度較低。
     </p>
   </li>
 </ol>
 
-#### A.2.2. Relevance Scoring and Intelligent Pruning
+#### A.2.2. 相關性評分與智慧修剪
 
-As your knowledge graph grows, the utility of many facts will decline. To keep the graph focused and maximise performance: 
+隨著知識圖譜成長，許多事實的效用會下降。為了讓圖保持專注並發揮最佳效能：
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Index a Relevance Score</strong><br />
+    <strong>替相關性分數建索引</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Introduce a numeric <code>relevance_score</code> column (or columns) that incorporate metrics such as recency, source trustworthiness, and production query frequency.
+      加入一個（或多個）數值型的 <code>relevance_score</code> 欄位，納入新鮮度、來源可信度和 production 查詢頻率這類指標。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Automated Pruning Logic</strong><br />
+    <strong>自動修剪邏輯</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Schedule a routine job to prune or archive facts falling below a predefined relevance threshold.
+      排一個例行任務，修剪或封存相關性低於預設門檻的事實。
     </p>
   </li>
 </ol>
 
 
-#### Advanced Relevance-Based Graph Reduction
+#### 進階的相關性圖縮減
 
-Efficiently reducing the size of a knowledge graph is important when scaling. [A 2024 survey](https://arxiv.org/pdf/2402.03358) categorizes techniques into **sparsification**, **coarsening**, and **condensation**—all aimed at shrinking the graph while preserving task-critical semantics. These methods offer substantial runtime and memory gains on large-scale KGs.
+在擴展時，有效縮小知識圖譜的大小很重要。[2024 年的一份綜述](https://arxiv.org/pdf/2402.03358)把技術分成 **sparsification（稀疏化）**、**coarsening（粗化）** 和 **condensation（濃縮）**，目標都是在保留任務關鍵語意的前提下縮小圖。這些方法能在大規模 KG 上帶來可觀的執行時間和記憶體收益。
 
-Example implementation pattern:
+實作模式範例：
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Score Each Triple</strong><br />
+    <strong>替每個 Triple 評分</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Compute a composite <code>relevance_score</code>, for example:
+      計算一個複合的 <code>relevance_score</code>，例如：
     </p>
     <pre style="margin-top: 0.5em; margin-bottom: 0.5em; background-color: #f5f5f5; padding: 0.75em; border-radius: 5px;"><code>relevance_score = β1 * recency_score + β2 * source_trust_score + β3 * retrieval_count</code></pre>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Where:
+      其中：
     </p>
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li><code>recency_score</code>: exponential decay from <code>valid_from</code></li>
-      <li><code>source_trust_score</code>: source-domain trust value</li>
-      <li><code>retrieval_count</code>: production query frequency</li>
+      <li><code>recency_score</code>：從 <code>valid_from</code> 起的指數衰減</li>
+      <li><code>source_trust_score</code>：來源網域的可信度數值</li>
+      <li><code>retrieval_count</code>：production 查詢頻率</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Apply a Reduction Strategy</strong><br />
+    <strong>套用縮減策略</strong><br />
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li><strong>Sparsify</strong>: Select and retain only the most relevant edges or nodes based on criteria like centrality, spectral similarity, or embedding preservation</li>
-      <li><strong>Coarsen</strong>: Group low-importance or semantically similar nodes into super-nodes and aggregate their features and connections</li>
-      <li><strong>Condense</strong>: Construct a task-optimized mini-graph from scratch</li>
+      <li><strong>Sparsify</strong>：依 centrality、spectral similarity 或 embedding 保留度這類標準，只挑選並保留最相關的 edge 或 node</li>
+      <li><strong>Coarsen</strong>：把低重要性或語意相似的 node 合併成 super-node，並聚合它們的特徵和連線</li>
+      <li><strong>Condense</strong>：從頭建一個針對任務優化的迷你圖</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Validate in Shadow Mode</strong><br />
+    <strong>用 Shadow Mode 驗證</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Log and compare outputs from the pruned vs. original graph before routing production traffic.
+      在把 production 流量導過去之前，先記錄並比較修剪後的圖和原始圖的輸出。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Re-Score Regularly</strong><br />
+    <strong>定期重新評分</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Recompute relevance (e.g., nightly) to ensure new or frequently accessed facts surface back to the top.
+      重新計算相關性（例如每晚一次），讓新進或常被存取的事實重新浮到最上面。
     </p>
   </li>
 </ol>
 
-### A.3. Implementing Concurrency in the Ingestion Pipeline
+### A.3. 在 Ingestion Pipeline 實作並行處理
 
-Moving from prototype to production often requires you to transform your linear processing pipeline into a concurrent, scalable pipeline. Instead of processing documents sequentially (document → chunking → statement extraction → entity extraction → statement invalidation → entity resolution), implement a staged pipeline where each phase can scale independently.
+從 prototype 走向 production，通常需要把線性的處理 pipeline 改成並行、可擴展的 pipeline。不要依序處理文件（文件 → chunking → statement 抽取 → entity 抽取 → statement invalidation → entity resolution），而是實作分階段的 pipeline，讓每個階段都能獨立擴展。
 
-Design your pipeline with a series of specialized stages, each with its own queue and worker pool. This allows you to scale bottlenecks independently and maintain system reliability under varying loads. 
+設計 pipeline 時，用一系列專門的階段，每個都有自己的 queue 和 worker pool。這樣你能獨立擴展瓶頸，並在負載變動時維持系統可靠度。
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
     <strong>Batch Chunking</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Begin by collecting documents in batches of e.g., 100–500 using a job queue like Redis or Amazon SQS. Process these documents in parallel, splitting each into their respective chunks. The chunking stage should often optimize for I/O parallelization as document reading is often the bottleneck. You can then store the chunks and their respective metadata in your <code>chunk_store</code> table, using bulk insert operations to minimize overhead.
+      先用 Redis 或 Amazon SQS 這類 job queue，以例如 100–500 份為一批收集文件。平行處理這些文件，把每份切成各自的 chunk。chunking 階段通常要針對 I/O 平行化優化，因為讀文件往往是瓶頸。然後你可以把 chunk 和它們各自的 metadata 存進 <code>chunk_store</code> table，用 bulk insert 操作降低開銷。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Statement and Entity Extraction</strong><br />
+    <strong>Statement 與 Entity 抽取</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Pull chunks in batches of e.g., 50–100 and send them to your chosen LLM (e.g., GPT-4.1-mini) using parallel API requests. Implement rate limiting with semaphores or other methods to stay safely within OpenAI's API limits whilst maximizing your throughputs. We've covered rate limiting in more detail in our cookbook on <a href="https://cookbook.openai.com/examples/how_to_handle_rate_limits">How to handle rate limits</a>. Once extracted, you can then write these to the relevant table in your database.
+      以例如 50–100 個為一批取出 chunk，用平行 API 請求送給你選的 LLM（例如 GPT-4.1-mini）。用 semaphore 或其他方法實作 rate limiting，在最大化吞吐量的同時安全地待在 OpenAI 的 API 限制內。我們在 <a href="https://cookbook.openai.com/examples/how_to_handle_rate_limits">How to handle rate limits</a> 這份 cookbook 裡更詳細地講過 rate limiting。抽取完成後，就可以寫進資料庫相關的 table。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      You can then similarly group the statements we've just extracted into batches, and run the entity extraction processes in a similar vein before storing them.
+      接著你可以用類似的方式，把剛抽出的 statement 分成批次，用相近的流程跑 entity 抽取，再存起來。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
     <strong>Statement Invalidation</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Group extracted statement IDs by their associated entity clusters (e.g., all statements related to a specific entity like “Acme Corp.”). Send each cluster to your LLM (e.g., GPT-4.1-mini) in parallel to assess which statements are outdated or superseded. Use the model’s output to update the <code>status</code> field in your <code>statements</code> table—e.g., setting <code>status = 'inactive'</code>. Parallelize invalidation jobs for performance and consider scheduling periodic sweeps for consistency.
+      依關聯的 entity 群集（例如所有和特定 entity 如 “Acme Corp.” 相關的 statement）把抽出的 statement ID 分組。把每個群集平行送給你的 LLM（例如 GPT-4.1-mini），評估哪些 statement 已過時或被取代。用模型的輸出更新 <code>statements</code> table 的 <code>status</code> 欄位，例如設成 <code>status = 'inactive'</code>。把 invalidation 工作平行化以提升效能，並考慮排定定期掃描以維持一致性。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
     <strong>Entity Resolution</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Take batches of newly extracted entity mentions and compute embeddings using your model’s embedding endpoint. Insert these into your <code>entity_registry</code> table, assigning each a provisional or canonical <code>entity_id</code>. Perform approximate nearest-neighbor (ANN) searches using <code>pgvector</code> to identify near-duplicates or aliases. You can then update the <code>entities</code> table with resolved canonical IDs, ensuring downstream tasks reference unified representations.
+      取一批新抽出的 entity mention，用你模型的 embedding endpoint 計算 embedding。把它們插入 <code>entity_registry</code> table，替每個指派暫時的或 canonical 的 <code>entity_id</code>。用 <code>pgvector</code> 做近似最近鄰（ANN）搜尋，找出近似重複或別名。然後你可以用解析出的 canonical ID 更新 <code>entities</code> table，確保下游任務引用統一的表示。
     </p>
   </li>
 </ol>
 
 
-### Advantages of Batch Processing
-* Throughput – Batching reduces the overhead of individual API calls and database transactions.
+### 批次處理的優點
+* 吞吐量：批次處理降低單次 API 呼叫和資料庫 transaction 的開銷。
 
-* Parallelism – Each stage can horizontally scale: you can run multiple worker processes for chunking, extraction, invalidation, etc., each reading from a queue.
+* 平行度：每個階段都能水平擴展，你可以為 chunking、抽取、invalidation 等階段各跑多個 worker process，每個都從 queue 讀取。
 
-* Backpressure & Reliability – If one stage becomes slow (e.g., statement invalidation during a sudden data surge), upstream stages can buffer more items in the queue until capacity frees up.
+* Backpressure 與可靠性：如果某個階段變慢（例如資料暴增時的 statement invalidation），上游階段可以在 queue 裡緩衝更多項目，直到容量釋出。
 
 
-### A.4. Minimizing Token Cost
+### A.4. 降低 Token 成本
 
 #### A.4.1. Prompt Caching
 
-Avoid redundant API calls by memoizing responses to brittle sub-prompts.
+用記憶化（memoize）脆弱的子 prompt 回應，避免重複的 API 呼叫。
 
-Implementation Strategy:
-- **Cache Frequent Queries**: For example, repeated prompts like "Extract entities from this statement" on identical statements
-- **Use Hash Keys**: Generate a unique cache key using the MD5 hash of the statement text: `md5(statement_text)`
-- **Storage Options**: Redis for scalable persistence or in-memory LRU cache for simplicity and speed
-- **Bypass API Calls**: If a statement is found in cache, skip the API call
+實作策略：
+- **快取常見查詢**：例如對相同 statement 重複出現的 "Extract entities from this statement" 這類 prompt
+- **使用 Hash key**：用 statement 文字的 MD5 hash 產生唯一的快取 key：`md5(statement_text)`
+- **儲存選項**：需要可擴展的持久化就用 Redis，追求簡單和速度就用記憶體內 LRU cache
+- **略過 API 呼叫**：如果在快取裡找到 statement，就跳過 API 呼叫
 
-#### A.4.2. Service Tier: Flex
+#### A.4.2. Service Tier：Flex
 
-Utilize the `service_tier=flex` parameter in the OpenAI Responses SDK to enable partial completions and reduce costs.
+在 OpenAI Responses SDK 裡使用 `service_tier=flex` 參數，可以啟用部分完成（partial completion）並降低成本。
 
-API Configuration:
+API 設定：
 ```json
 {
   "model": "o4-mini",
@@ -5228,94 +5235,94 @@ API Configuration:
 }
 ```
 
-Cost Benefits:
-- Charges only for generated tokens, not prompt tokens
-- Can reduce costs by up to 40% for short extractions (e.g., single-sentence entity lists)
+成本效益：
+- 只對生成的 token 收費，不對 prompt token 收費
+- 對短抽取（例如單句的 entity 清單）最多可降低 40% 的成本
 
-You can learn more about the power of Flex processing and how to utilise it in the [API documentation for Flex processing](https://platform.openai.com/docs/guides/flex-processing?api-mode=responses).
+你可以在 [Flex processing 的 API 文件](https://platform.openai.com/docs/guides/flex-processing?api-mode=responses)裡進一步了解 Flex processing 的威力與使用方式。
 
-#### A.4.3. Minimize "Chattiness"
+#### A.4.3. 減少「話多」
 
-Replace expensive text-generation calls with more efficient alternatives where possible.
+盡可能用更有效率的替代方案，取代昂貴的文字生成呼叫。
 
-Alternative approach:
-- Use embeddings endpoint (cheaper per token) combined with pgvector nearest-neighbor search
-- Instead of asking the model "Which existing statement is most similar?", compute embeddings once and query directly in Postgres
-- This approach is particularly effective for semantic similarity tasks
+替代做法：
+- 用 embeddings endpoint（每 token 更便宜）搭配 pgvector 最近鄰搜尋
+- 不要問模型 "Which existing statement is most similar?"，而是只算一次 embedding，然後直接在 Postgres 裡查詢
+- 這個做法對語意相似度任務特別有效
 
-**Benefits:**
-- Lower cost per operation
-- Faster query response times
-- Reduced API dependency for similarity searches
+**好處：**
+- 每次操作成本更低
+- 查詢回應時間更快
+- 相似度搜尋對 API 的依賴更少
 
-### A.5. Scaling and Productionizing our Retrieval Agent
+### A.5. 擴展並讓 Retrieval Agent 上 production
 
-Once your graph is populated, you need a mechanism to answer multi-hop queries at scale. This requires:
+圖譜填好之後，你需要一個機制在大規模下回答多跳查詢。這需要：
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Agent Architecture</strong><br />
+    <strong>Agent 架構</strong><br />
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li><strong>Controller Agent (Frontend)</strong>: Receives a user question (e.g., “What events led to Acme Corp.’s IPO?”), then decomposes it into sub-questions or traversal steps.</li>
-      <li><strong>Traversal Worker Agents</strong>: Each worker can perform a local graph traversal (e.g., “Find all facts where Acme Corp. has EventType = Acquisition between 2020–2025”), possibly in parallel on different partitions of the graph.</li>
+      <li><strong>Controller Agent（前端）</strong>：接收使用者問題（例如 “What events led to Acme Corp.’s IPO?”），再把它拆成子問題或走訪步驟。</li>
+      <li><strong>Traversal Worker Agents</strong>：每個 worker 可以執行一次局部圖走訪（例如 “Find all facts where Acme Corp. has EventType = Acquisition between 2020–2025”），有可能在圖的不同 partition 上平行進行。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Parallel Subgraph Extraction</strong><br />
+    <strong>平行子圖抽取</strong><br />
     <ul style="margin-top: 0.5em; margin-bottom: 0.5em; padding-left: 1.2em;">
-      <li>Partition the graph by entity ID hash (e.g., modulo 16). For a given query, identify which partitions are likely to contain relevant edges, then dispatch traversal tasks in parallel to each worker.</li>
-      <li>Workers return partial subgraphs (nodes + edges), and the Controller Agent merges them.</li>
+      <li>依 entity ID 的 hash 對圖做 partition（例如 modulo 16）。對於一個查詢，找出哪些 partition 可能含有相關 edge，然後平行把走訪任務派給各個 worker。</li>
+      <li>Worker 回傳部分子圖（node + edge），再由 Controller Agent 合併。</li>
     </ul>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Chained LLM Reasoning</strong><br />
+    <strong>串接式 LLM 推理</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      For multi-hop questions, the Controller can prompt a model (e.g., GPT-4.1) with the partial subgraph and ask “Which next edge should I traverse?” This allows dynamic, context-aware traversal rather than blind breadth-first search.
+      對多跳問題，Controller 可以拿部分子圖去 prompt 模型（例如 GPT-4.1），問「Which next edge should I traverse?」這讓走訪能隨上下文動態調整，而不是盲目的 breadth-first search。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Caching and Memoization</strong><br />
+    <strong>快取與記憶化</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      For frequently asked queries or subgraph patterns, cache the results (e.g., in Redis or a Postgres Materialized View) with a TTL equal to the fact’s <code>valid_to</code> date, so that subsequent requests hit the cache instead of re-traversing.
+      對常被問的查詢或子圖模式，把結果快取起來（例如放在 Redis 或 Postgres Materialized View），TTL 設成該事實的 <code>valid_to</code> 日期，讓之後的請求直接命中快取，不必重新走訪。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Load Balancing &amp; Autoscaling</strong><br />
+    <strong>負載平衡與 Autoscaling</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Deploy the Traversal Worker Agents in a Kubernetes cluster with Horizontal Pod Autoscalers. Use CPU and memory metrics (and average queue length) to scale out during peak usage.
+      把 Traversal Worker Agents 部署在 Kubernetes cluster，搭配 Horizontal Pod Autoscaler。依 CPU 和記憶體指標（以及平均 queue 長度）在尖峰時段向外擴展。
     </p>
   </li>
 </ol>
 
 
-### A.6. Safeguards
+### A.6. 防護機制
 
-#### A.6.1 Multi-Layered Output Verification
+#### A.6.1 多層輸出驗證
 
-Run a lightweight validation pipeline to ensure outputs are as desired. Some examples of what can be included in this:
-* Check that dates conform to `ISO-8601`
-* Verify that entity types match your controlled vocabulary (e.g., if the model outputs an unexpected label, flag for manual review)
-* Deploy a "sanity-check" function call to a smaller, cheaper model to verify the consistency of outputs (for example, “Does this statement parse correctly as a Fact? Yes/No.”)
+跑一條輕量的驗證 pipeline，確保輸出符合期望。可以包含的例子有：
+* 檢查日期是否符合 `ISO-8601`
+* 驗證 entity 類型是否符合你控管的詞彙表（例如模型輸出非預期的 label，就標起來交給人工審查）
+* 部署一個呼叫較小、較便宜模型的「sanity-check」function call，驗證輸出的一致性（例如 “Does this statement parse correctly as a Fact? Yes/No.”）
 
-#### A.6.2. Audit Logging & Monitoring
+#### A.6.2. 稽核 Log 與監控
 
-- Implement structured logging with configurable verbosity levels (e.g., debug, info, warn, error)
-- Store input pre-processing steps, intermediate outputs, and final results with full tracing, such as that offered via [OpenAI's tracing](https://platform.openai.com/traces)
-- Track token throughput, latency, and error rates
-- Monitor data quality metrics where possible, such as document or statement coverage, temporal resolution rates, and more
-- Measure business-related metrics such as user numbers, average message volume, and user satisfaction
+- 實作可設定詳細程度（例如 debug、info、warn、error）的結構化 log
+- 儲存輸入的前處理步驟、中間輸出和最終結果，並做完整追蹤，例如 [OpenAI 的 tracing](https://platform.openai.com/traces) 提供的功能
+- 追蹤 token 吞吐量、延遲和錯誤率
+- 盡可能監控資料品質指標，例如文件或 statement 涵蓋率、時間解析成功率等
+- 衡量業務相關指標，例如使用者人數、平均訊息量和使用者滿意度
 
-### A.7. Prompt Optimization
+### A.7. Prompt 優化
 
 <ol style="margin-left: 1em; line-height: 1.6; padding-left: 0.5em;">
   <li style="margin-bottom: 1.2em;">
-    <strong>Personas</strong><br />
+    <strong>Persona</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Introducing a persona to the model is an effective way to drive performance. Once you have narrowed down the specialism of the component you are developing the prompt for, you can create a persona in the system prompt that helps to shape the model's behaviour. We used this in our planner model to create a system prompt like this:
+      替模型加上 persona 是提升效能的有效方法。一旦確定你要寫 prompt 的元件的專長領域，就可以在 system prompt 裡建立 persona 來塑造模型的行為。我們在 planner 模型就用了這個做法，建出像這樣的 system prompt：
     </p>
     <pre style="margin-top: 0.5em; margin-bottom: 0.5em; background-color: #f5f5f5; padding: 0.75em; border-radius: 5px;"><code>initial_planner_system_prompt = (
     "You work for the leading financial firm, ABC Incorporated, one of the largest financial firms in the world. "
@@ -5327,17 +5334,17 @@ Run a lightweight validation pipeline to ensure outputs are as desired. Some exa
     "their research queries. \n"
 )</code></pre>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Persona prompts can become much more developed and specific than this, but this should provide an insight into what this looks like in practice.
+      persona prompt 可以發展得更完整、更具體，不過這個例子應該能讓你看出實務上長什麼樣子。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Few-Shot Prompting and Chain-of-Thought</strong><br />
+    <strong>Few-Shot Prompting 與 Chain-of-Thought</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      For extraction-related tasks, such as statement extraction, a concise few-shot prompt (2–5 examples) will typically deliver higher precision than a zero-shot prompt at a marginal increase in cost.
+      對 statement 抽取這類抽取相關的任務，簡短的 few-shot prompt（2–5 個範例）通常比 zero-shot prompt 有更高的精確度，成本只增加一點點。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      For e.g., temporal reconciliation tasks, chain-of-thought methods where you guide the model through comparison logic are more appropriate. This can look like:
+      對例如時間協調（temporal reconciliation）這類任務，引導模型走過比較邏輯的 chain-of-thought 方法更合適。看起來可以像這樣：
     </p>
     <pre style="margin-top: 0.5em; margin-bottom: 0.5em; background-color: #f5f5f5; padding: 0.75em; border-radius: 5px;"><code>Example 1: [Old fact], [New fact] → Invalidate
 Example 2: [Old fact], [New fact] → Coexist
@@ -5345,31 +5352,43 @@ Now: [Old fact], [New fact] →</code></pre>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Dynamic Prompting &amp; Context Management</strong><br />
+    <strong>動態 Prompting 與上下文管理</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      You can also lean on other LLMs or more structured methods to prune and prepare material that will be dynamically passed to prompts. We saw an example of this when building the tools for our retriever above, where the <code>timeline_generation</code> tool sorts the retrieved material before passing it back to the central orchestrator.
+      你也可以靠其他 LLM 或更結構化的方法，修剪並準備要動態傳進 prompt 的素材。我們在前面建 retriever 的 tool 時就看過一個例子，<code>timeline_generation</code> tool 會先把取回的素材排序，再傳回中央 orchestrator。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Steps to clean up the context or compress it mid-run can also be highly effective for longer-running queries.
+      對執行時間較長的查詢，在執行途中清理或壓縮上下文的步驟也可以非常有效。
     </p>
   </li>
 
   <li style="margin-bottom: 1.2em;">
-    <strong>Template Library &amp; A/B Testing</strong><br />
+    <strong>模板庫與 A/B 測試</strong><br />
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Maintain a set of prompt templates in a version-controlled directory (e.g., <code>prompts/statement_extraction.json</code>, <code>prompts/entity_extraction.json</code>) to enable you to audit past changes and revert if necessary. You can utilize OpenAI's reusuable prompts for this. In the OpenAI dashboard, you can develop <a href="https://platform.openai.com/docs/guides/text#reusable-prompts">reusable prompts</a> to use in API requests. This enables you to build and evaluate your prompts, deploying updated and improved versions without ever changing the code.
+      把一組 prompt 模板放在受版本控制的目錄（例如 <code>prompts/statement_extraction.json</code>、<code>prompts/entity_extraction.json</code>），這樣你可以稽核過去的變更，必要時還原。你可以利用 OpenAI 的 reusable prompts。在 OpenAI dashboard 裡，你可以開發 <a href="https://platform.openai.com/docs/guides/text#reusable-prompts">reusable prompts</a> 用在 API 請求。這讓你能建立並評估 prompt，部署更新、改進過的版本，完全不用改程式碼。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Automate A/B testing by periodically sampling extracted facts from the pipeline, re-running them through alternative prompts, and comparing performance scores (you can track this in a separate evaluation harness).
+      自動化 A/B 測試的做法：定期從 pipeline 抽樣抽出的事實，用替代 prompt 重新跑一次，並比較效能分數（你可以在獨立的評估 harness 裡追蹤這些）。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      Track key performance indicators (KPIs) such as extraction latency, error rates, and invalidation accuracy.
+      追蹤關鍵績效指標（KPI），例如抽取延遲、錯誤率和 invalidation 準確度。
     </p>
     <p style="margin-top: 0.5em; margin-bottom: 0.5em;">
-      If any metric drifts beyond a threshold (e.g., invalidation accuracy drops below 90%), trigger an alert and roll back to a previous prompt version.
+      如果任何指標漂移超過門檻（例如 invalidation 準確度掉到 90% 以下），就觸發警報並回滾到先前的 prompt 版本。
     </p>
   </li>
 </ol>
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 知識圖譜的事實會過期，所以每條 statement 都要帶有效時間（`valid_at`、`invalid_at`），並區分 Static、Dynamic、Atemporal 和 Fact、Opinion、Prediction，才能回答「某個時間點當時什麼是真的」。
+- 新資料進來時用 Invalidation Agent 雙向比對舊事實，而且只比對 dynamic 的 FACT，再用共享 entity、predicate 群組、時間重疊和 embedding 相似度先縮小候選，最後才交給 LLM 判斷，這樣能省下大量 LLM 呼叫。
+- Entity resolution 要在失效檢查之前做完，不然 `AMD` 和 `Advanced Micro Devices` 會被當成兩個東西，失效比對就會漏掉。
+- 多步檢索靠 planner 先把問題拆成任務，orchestrator 再迴圈呼叫 tool，圖譜查不到就換來源。tool 設計落在固定、半結構化、自由形式之間取捨，這份範例選半結構化。
+- 模型選擇和評估都是「先用最強的跑通，再往下降」：先用 GPT-4.1 或 o3 把邏輯做對，再換小模型、蒸餾或 RFT；評估則先合成測試，再 golden 資料集，最後靠真實使用者回饋。
+
+## 練習
+
+1. 在 `Predicate` 的定義裡新增一個你自己的 predicate（例如 `ACQUIRED`），補上對應的定義，再用一兩份逐字稿重跑 triplet 抽取，看新 predicate 有沒有被用到、會不會和既有的重疊。
+2. 調整 `InvalidationAgent` 的 `_similarity_threshold`（0.5）和 `_top_k`（10），例如改成 0.7 和 5，比較同一批事件被標成失效的數量和送進 LLM 的候選數，說明這兩個參數怎麼影響成本和漏判。
+3. 仿照 `factual_qa`，替 retriever 新增一個 `timeline_generation` tool：吃 `entity` 和日期範圍，把圖上相關 edge 依 `valid_at` 排序後回傳，再用 MultiStepRetriever 問一個需要時間軸的問題，看 orchestrator 會不會呼叫它。

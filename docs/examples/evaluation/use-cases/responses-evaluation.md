@@ -1,19 +1,25 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/responses-evaluation.ipynb
 ---
 
-# Evals API Use-case - Responses Evaluation
+# Evals API 使用案例：Responses 評估
 
 > 原文：[examples/evaluation/use-cases/responses-evaluation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/responses-evaluation.ipynb)
 
-Cookbook to evaluate new models against stored Responses API logs.
+這份 cookbook 示範怎麼用已儲存的 Responses API log 來評估新模型。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這個 eval 要比較新模型（gpt-4.1-mini）和舊模型（gpt-4o-mini）在一批已儲存 response 上的表現。好處是對多數開發者來說，不用花時間自己組一整套 eval，因為資料早就存在你的 [logs 頁面](https://platform.openai.com/logs)裡。
 
+## 學完你會
+- 用 Responses API 產生範例流量，並確認它們被存進 logs。
+- 用篩選條件指定要評估哪些已儲存的 response，建立 eval run 評估原始回覆。
+- 對同一批資料跑新模型（gpt-4.1-mini）的 run，到 dashboard 比較結果。
 
-
-In the following eval, we are going to compare how a new model (gpt-4.1-mini) compares to our old model (gpt-4o-mini) by evaluating it on some stored responses. The benefit of this is for most developers, they won't have to spend any time putting together a whole eval -- all of their data will already be stored in their [logs page](https://platform.openai.com/logs).
+## 開跑前
+- 需要 OpenAI API key。
+- 你的 org 必須沒有停用資料 logging（例如 zdr），否則看不到儲存的 response。
 
 ```python
 import openai
@@ -23,9 +29,9 @@ import os
 client = openai.OpenAI()
 ```
 
-We want to see how gpt-4.1 compares to gpt-4o on explaining a code base. Since can only use the responses datasource if you already have user traffic, we're going to generate some example traffic using 4o, and then compare how it does to gpt-4.1. 
+我們想看 gpt-4.1 和 gpt-4o 在解釋程式碼庫這件事上表現如何。因為只有在已經有使用者流量時才能使用 responses 資料來源，所以我們先用 4o 產生一些範例流量，再比較 gpt-4.1 的表現。
 
-We're going to get some example code files from the OpenAI SDK, and ask gpt-4o to explain them to us.
+我們會從 OpenAI SDK 取幾個範例程式檔，請 gpt-4o 解釋給我們聽。
 
 ```python
 openai_sdk_file_path = os.path.dirname(openai.__file__)
@@ -42,7 +48,7 @@ file_paths   = [
 print(file_paths[0])
 ```
 
-Now, lets generate some responses. 
+現在來產生一些 response。
 
 ```python
 for file_path in file_paths:
@@ -65,7 +71,7 @@ for file_path in file_paths:
     print(response.output_text)
 ```
 
-Note that in order for this to work, you'll have to be doing this on an org where data logging isn't disabled (through zdr, etc). If you aren't sure if this is the case for you, go to https://platform.openai.com/logs?api=responses and see if you can see the responses you just generated.
+注意，要讓這個流程成立，你必須在沒有停用資料 logging（例如透過 zdr 等）的 org 上操作。如果不確定是不是這樣，到 https://platform.openai.com/logs?api=responses 看看能不能看到剛剛產生的 response。
 
 ````python
 grader_system_prompt = """
@@ -165,7 +171,7 @@ logs_eval = client.evals.create(
 )
 ```
 
-First, lets kick off a run to evaluate how good the original responses were. To do this, we just set the filters for what responses we want to evaluate on
+首先，啟動一次 run 來評估原始回覆有多好。做法只要設定篩選條件，指定要評估哪些 response。
 
 ```python
 gpt_4o_mini_run = client.evals.runs.create(
@@ -178,7 +184,7 @@ gpt_4o_mini_run = client.evals.runs.create(
 )
 ```
 
-Now, let's see how 4.1-mini does!
+接著看看 4.1-mini 的表現！
 
 ```python
 gpt_41_mini_run = client.evals.runs.create(
@@ -196,12 +202,19 @@ gpt_41_mini_run = client.evals.runs.create(
 )
 ```
 
-Now, lets go to the dashboard to see how we did!
+現在到 dashboard 看結果如何！
 
 ```python
 gpt_4o_mini_run.report_url
 ```
 
+## 重點整理
+- 已存在 logs 的 Responses 流量可以直接當 eval 資料，不用另外準備資料集。
+- 比較新舊模型時，用同一批輸入、同樣的評分方式，結果才公平。
+- 篩選條件決定評估範圍，可以只挑特定模型或特定時段的 response。
+- 這個做法要求資料沒有被關閉 logging，用之前先確認。
 
-
-<!-- tutor:summary -->
+## 練習
+1. 把要解釋的程式檔換成別的檔案，重新產生範例流量。
+2. 修改篩選條件，只評估其中一部分 response，看 run 的樣本數怎麼變。
+3. 把比較的新模型換成另一個模型，跑一次 run，並在 dashboard 比較三者的差異。

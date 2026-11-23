@@ -1,28 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/tools-evaluation.ipynb
 ---
 
-# Evals API Use-case - Tools Evaluation
+# Evals API 使用案例：評估 tool 呼叫
 
 > 原文：[examples/evaluation/use-cases/tools-evaluation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/tools-evaluation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+用 Evals API 評估模型從原始碼擷取結構化資訊的能力：從 Python 檔案裡找出定義的 symbol（函式、類別、方法、變數）。模型透過 tool 呼叫回傳結果，再由 grader 依 rubric 打分，並同時比較 Completions 和 Responses 兩個 endpoint。
 
-This cookbook shows how to **measure and improve a model’s ability to extract structured information from source code** with tool evaluation. In this case, the set of *symbols* (functions, classes, methods, and variables) defined in Python files.  
+## 學完你會
 
-## Setup<a name="Setup"></a>
+- 用 SDK 的檔案建一個小型資料集，並寫一份 grading rubric
+- 用 `client.evals.create(...)` 建 eval，再對同一個 eval 啟動兩個 run
+- 寫輪詢程式等 run 完成，並檢視模型回傳的 symbols
 
-Install the latest **openai** Python package ≥ 1.14.0 and set your `OPENAI_API_KEY` environment variable.  If you also want to evaluate an *assistant with tools*, enable the *Assistants v2 beta* in your account.
+## 開跑前
+
+- OpenAI API key（環境變數 `OPENAI_API_KEY`）
+- 如果要評估帶 tool 的 assistant，帳號要啟用 Assistants v2 beta
+
+這份 cookbook 示範如何用 tool evaluation **衡量並提升模型從原始碼擷取結構化資訊的能力**。具體來說，是找出 Python 檔案裡定義的 *symbol*（函式、類別、方法和變數）。
+
+## 設定<a name="Setup"></a>
+
+安裝最新的 **openai** Python 套件（≥ 1.14.0），並設定 `OPENAI_API_KEY` 環境變數。如果也想評估*帶 tool 的 assistant*，要在帳號啟用 *Assistants v2 beta*。
 
 ```bash
 pip install --upgrade openai
 export OPENAI_API_KEY=sk‑...
 ```
-Below we import the SDK, create a client, and define a helper that builds a small dataset from files inside the **openai** package itself.
+下面匯入 SDK、建立 client，並定義一個 helper，用 **openai** 套件本身的檔案建一個小資料集。
 
 ```python
 %pip install --upgrade openai pandas jinja2 rich --quiet
@@ -46,11 +58,11 @@ client = openai.OpenAI(
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-### Dataset factory & grading rubric
-* `get_dataset` builds a small in-memory dataset by reading several SDK files.
-* `structured_output_grader` defines a detailed evaluation rubric. 
-* `sampled.output_tools[0].function.arguments.symbols` specifies the extracted symbols from the code file based on the tool invocation.
-* `client.evals.create(...)` registers the eval with the platform.
+### 資料集工廠與評分 rubric
+* `get_dataset` 讀取幾個 SDK 檔案，建一個小型的記憶體內資料集。
+* `structured_output_grader` 定義一份詳細的評分 rubric。
+* `sampled.output_tools[0].function.arguments.symbols` 指的是根據 tool 呼叫，模型從程式碼檔案擷取出的 symbol。
+* `client.evals.create(...)` 會把 eval 註冊到平台上。
 
 ```python
 def get_dataset(limit=None):
@@ -99,9 +111,9 @@ structured_output_grader_user_prompt = """
 """
 ```
 
-### Evals Creation
+### 建立 Eval
 
-Here we create an eval that will be used to evaluate the quality of extracted information from code files.
+這裡建一個 eval，用來評估從程式碼檔案擷取資訊的品質。
 
 
 ```python
@@ -153,8 +165,8 @@ symbol_tool = {
 }
 ```
 
-### Kick off model runs
-Here we launch two runs against the same eval: one that calls the **Completions** endpoint, and one that calls the **Responses** endpoint.
+### 啟動模型 run
+這裡對同一個 eval 啟動兩個 run：一個呼叫 **Completions** endpoint，一個呼叫 **Responses** endpoint。
 
 ```python
 gpt_4one_completions_run = client.evals.runs.create(
@@ -206,9 +218,9 @@ gpt_4one_responses_run = client.evals.runs.create(
 )
 ```
 
-### Utility Poller
+### 輪詢工具
 
-We create a utility poller that will be used to poll for the results of the eval runs.
+我們寫一個輪詢工具，用來取得 eval run 的結果。
 
 ```python
 def poll_runs(eval_id, run_ids):
@@ -249,9 +261,9 @@ responses_output = client.evals.runs.output_items.list(
 )
 ```
 
-### Inspecting results<a name="Inspecting-results"></a>
+### 檢視結果<a name="Inspecting-results"></a>
 
-For both completions and responses, we print the *symbols* dictionary that the model returned. You can diff this against the reference answer or compute precision / recall.
+對 completions 和 responses 都印出模型回傳的 *symbols* 字典。你可以拿它跟參考答案比對，或算 precision / recall。
 
 ```python
 import json
@@ -341,26 +353,37 @@ display(HTML(table_html))
     <IPython.core.display.HTML object>
     ```
 
-### Visualize Evals Dashboard
+### 在 Evals Dashboard 視覺化
 
-You can navigate to the Evals Dashboard in order to visualize the data.
+你可以到 Evals Dashboard 查看資料的視覺化。
 
 
 ![evals_tool_dashboard](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/evals_tool_dashboard.png)
 
 
-You can also take a look at the explanation of the failed results in the Evals Dashboard after the run is complete as shown in the image below.
+run 完成後，也可以在 Evals Dashboard 看失敗案例的說明，如下圖。
 
 ![evals_tool_failed](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/eval_tools_fail.png)
 
 
 
 
-This notebook demonstrated how to use OpenAI Evals to assess and improve a model’s ability to extract structured information from Python code using tool calls. 
+這份 notebook 示範了如何用 OpenAI Evals，評估並改善模型透過 tool 呼叫從 Python 程式碼擷取結構化資訊的能力。
 
 
-OpenAI Evals provides a robust, reproducible framework for evaluating LLMs on structured extraction tasks. By combining clear tool schemas, rigorous grading rubrics, and well-structured datasets, you can measure and improve overall performance.
+OpenAI Evals 提供了穩健、可重現的框架，用來評估 LLM 在結構化擷取任務上的表現。結合清楚的 tool schema、嚴謹的 grading rubric 和結構良好的資料集，你就能衡量並提升整體表現。
 
-*For more details, see the [OpenAI Evals documentation](https://platform.openai.com/docs/guides/evals).*
+*更多細節請看 [OpenAI Evals 文件](https://platform.openai.com/docs/guides/evals)。*
 
-<!-- tutor:summary -->
+## 重點整理
+
+- eval 由資料集、grader 和 run 三塊組成，同一個 eval 可以對不同設定重複跑，才能公平比較。
+- 結構化擷取靠 tool schema 約束輸出格式，grader 再去比對內容對不對。
+- rubric 寫得越明確，評分越穩定，失敗原因也越好分析。
+- 拿到 symbols 之後還可以自己算 precision / recall，不必只靠 grader 的分數。
+
+## 練習
+
+1. 改 `get_dataset` 讀的檔案，換成別的 SDK 檔案，看分數怎麼變。
+2. 修改 `structured_output_grader` 的 rubric，讓它對漏掉的 symbol 扣更重，重跑比較。
+3. 把兩個 run 的 symbols 輸出跟自己手動整理的答案比對，算出 precision 和 recall。

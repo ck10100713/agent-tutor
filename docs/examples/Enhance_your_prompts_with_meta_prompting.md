@@ -1,25 +1,34 @@
 ---
-translated: false
+translated: true
 source: examples/Enhance_your_prompts_with_meta_prompting.ipynb
 ---
 
-# Enhance your prompts with meta prompting
+# 用 Meta Prompting 強化你的 Prompt
 
 > 原文：[examples/Enhance_your_prompts_with_meta_prompting.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Enhance_your_prompts_with_meta_prompting.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+拿一個很簡單的新聞摘要 prompt，請更強的模型（`o1-preview`）幫忙改寫成更詳細的版本，再給 `gpt-4o` 用。最後用 LLM as a judge 評分，比較兩個 prompt 產出的摘要差在哪。
+
+## 學完你會
+- 用強模型去生成或優化給較弱模型用的 prompt（meta prompting）。
+- 用同一批 BBC 新聞資料，並排產生簡單版和強化版 prompt 的摘要。
+- 設計 LLM as a judge 的評分 prompt，量化兩個 prompt 在分類、關鍵字、情感分析、完整度上的差異。
+
+## 開跑前
+- 需要 OpenAI API key，而且帳號要能用 `o1-preview`。
+- 資料來自 HuggingFace 的 `bbc_news_alltime`，需要能連網下載。
+
+歡迎來到 meta prompting 的教學！這份指南會示範怎麼把一個基本的 prompt 改進，提升語言模型的輸出品質。我們用新聞報導摘要當例子來說明整個過程。
 
 
-Welcome to our cookbook on meta prompting! In this guide, we'll explore how to take a basic prompt and refine it to enhance the quality of outputs from a language model. We'll use the example of summarizing news reports to illustrate the process.
+Meta-prompting 是用 LLM 來生成或改進 prompt 的技巧。通常做法是用比較聰明的模型，替比較不聰明的模型優化 prompt。這是用 prompt 來引導、組織和優化其他 prompt，讓它們更能引導 LLM 產出高品質、相關的結果。我們會用推理能力更強的 `o1-preview`，來改進給 `gpt-4o` 用的 prompt。
 
+我們希望靠這個技巧讓你用 LLM 開發更順手、更容易上手。別忘了看看 playground 裡的 [Generate Anything](https://platform.openai.com/docs/guides/prompt-generation) 功能，它是入門 meta prompting 的好起點。
 
-Meta-prompting is a technique where you use an LLM to generate or improve prompts. Typically this is done using a higher intelligence model that optimizes prompts for a model with less intelligence. It’s a process of using prompts to guide, structure, and optimize other prompts, helping ensure they’re more effective in guiding the LLM towards high-quality, relevant outputs. We'll be leveraging the capabilities of `o1-preview`, a more intelligent model with advanced reasoning skills, to improve a prompt for `gpt-4o`.
-
-We're committed to making your development journey with LLMs smoother and more accessible through this technique. Don't forget to check out our [Generate Anything](https://platform.openai.com/docs/guides/prompt-generation) feature in the playground — it's a fantastic starting point to dive into meta prompting.
-
-In this example, we'll begin with a simple prompt for summarizing news articles and then enhance it to see how the outputs improve. We'll use `o1-preview` to analyze and refine our prompt, adding more detail and clarity along the way. Finally, we'll evaluate the outputs systematically to understand the impact of our refinements.
+這個例子會從一個簡單的新聞摘要 prompt 開始，再強化它，看輸出怎麼進步。我們用 `o1-preview` 分析並改進 prompt，補上更多細節和清楚度。最後系統化地評估輸出，了解改進帶來的影響。
 
 ```python
 import pandas as pd
@@ -39,9 +48,9 @@ client = openai.Client()
       from .autonotebook import tqdm as notebook_tqdm
     ```
 
-## Importing the Data
+## 匯入資料
 
-Let's kick things off by importing the `bbc_news_alltime` dataset from [HuggingFace](https://huggingface.co/datasets/RealTimeData/bbc_news_alltime). This dataset contains all BBC News articles, capturing everything published monthly from 2017 up to the latest complete month. For our experiment, we'll focus exclusively on a sample from a recent month—August 2024—to keep things current and manageable.
+先從 [HuggingFace](https://huggingface.co/datasets/RealTimeData/bbc_news_alltime) 匯入 `bbc_news_alltime` 資料集。這份資料集收錄 BBC News 的所有文章，涵蓋 2017 年起到最近一個完整月份、每個月發布的內容。實驗只用最近一個月（2024 年 8 月）的樣本，這樣資料夠新、量也剛好。
 
 
 ```python
@@ -96,16 +105,16 @@ df.head()
     ... (省略 8 行)
     ```
 
-## Iterating on Prompts
+## 迭代 Prompt
 
 
-Let's start with a straightforward prompt and then use `o1-preview` to enhance it for better results. We want to summarize news articles, so this is what i'll ask the model to do. 
+先從一個直白的 prompt 開始，再用 `o1-preview` 把它改得更好。我們要摘要新聞文章，所以先這樣請模型做。 
 
 ```python
 simple_prompt = "Summarize this news article: {article}"
 ```
 
-To improve the prompt, we need to provide `o1-preview` with the context and goals we want to achieve. We can then ask it to generate a more detailed prompt that would produce richer and more comprehensive news summaries.
+要改進 prompt，需要先把背景和目標告訴 `o1-preview`，再請它產生更詳細的 prompt，讓摘要更豐富、更完整。
 
 ```python
 meta_prompt = """
@@ -138,9 +147,9 @@ complex_prompt
     'Please read the following news article and provide a comprehensive summary that includes:\n\n1. **Type of News**: Specify the category of the news article (e.g., Politics, Technology, Health, Sports, etc.).\n2. **Summary**: Write a concise and clear summary of the main points, ensuring the structure is logical and intuitive.\n3. **Tags**: List relevant keywords or tags associated with the article.\n4. **Sentiment Analysis**: Analyze the overall sentiment of the article (positive, negative, or neutral) and briefly explain your reasoning.\n\n**Article:**\n\n{article}'
     ```
 
-## Generating the Summaries
+## 產生摘要
 
-Now that we have both prompts, let's generate the summaries! For each entry in our dataset, we'll use both the simple and the enhanced prompts to see how they compare. By doing this, we'll get a firsthand look at how our refinements with `o1-preview` can lead to richer and more detailed summaries. Let's dive in and see the difference for ourselves!
+現在兩個 prompt 都有了，來產生摘要！資料集的每一筆都用簡單版和強化版 prompt 各跑一次，比較結果。這樣就能親眼看到 `o1-preview` 的改進怎麼讓摘要更豐富、更詳細。來看看差別！
 
 ```python
 def generate_response(prompt): 
@@ -154,7 +163,7 @@ def generate_summaries(row):
     return simple_itinerary, complex_itinerary
 ```
 
-Let's check if everything looks good and if we can generate a summary for the first news report. 
+先確認一切正常，並替第一篇新聞產生摘要。 
 
 ```python
 generate_summaries(df.iloc[0])
@@ -167,9 +176,9 @@ generate_summaries(df.iloc[0])
      '1. **Type of News**: Entertainment\n\n2. **Summary**: Laura Whitmore, a television presenter, has spoken out about her experiences on Strictly Come Dancing, revealing that issues she attempted to address during her tenure on the show are now coming to light. In an interview with The Irish Times, she described feeling "gaslit" and suggested that her concerns, which she raised eight years ago, were not taken seriously at the time. Whitmore recalled that her participation left her feeling "broken" and criticized how she was portrayed during the show. She mentioned contributing evidence to an ongoing review involving incidents of alleged inappropriate behavior during her time on the show, although she did not make an official complaint. The BBC, which has been navigating its own controversy related to the treatment of contestants, stated it is taking these claims seriously and plans to enhance welfare measures on the show, including the introduction of a chaperone at rehearsals. Recent allegations from other contestants have further intensified the scrutiny of Strictly Come Dancing.\n\n3. **Tags**: Laura Whitmore, Strictly Come Dancing, BBC, allegations, inappropriate behavior, gaslighting, welfare measures, entertainment controversy\n\n4. **Sentiment Analysis**: The overall sentiment of the article is negative. It highlights serious allegations of mistreatment and inappropriate behavior associated with a popular television show, along with personal accounts from Whitmore that reflect emotional distress and professional struggles. The tone conveys a sense of urgency and seriousness regarding the issues raised, indicating a critical atmosphere within the entertainment industry related to contestant treatment.')
     ```
 
-By comparing the summaries generated from the simple and enhanced prompts, we can already see significant improvements. The initial summary gives us a general overview of the article, whereas the enhanced summary dives deeper — it not only provides a detailed summary but also categorizes the news type, lists relevant tags, and even includes a sentiment analysis.
+比較兩個 prompt 產生的摘要，就能看出明顯的進步。最初的摘要只給文章的大致概覽，強化版則更深入：不只有詳細摘要，還會分類新聞類型、列出相關標籤，甚至附上情感分析。
 
-Let's test on the entire dataset now! 
+現在對整個資料集測試！ 
 
 ```python
 # Add new columns to the dataframe for storing itineraries
@@ -238,16 +247,16 @@ df.head()
     ... (省略 22 行)
     ```
 
-## Evaluating the Results
+## 評估結果
 
-To assess the difference in performance between the two prompts, we'll use a structured evaluation approach with the LLM acting as a judge. This means we'll leverage the language model itself to evaluate and compare the outputs based on specific criteria.
+要評估兩個 prompt 的表現差異，我們用結構化的評估方法，讓 LLM 當評審。也就是利用語言模型本身，依特定標準評估並比較輸出。
 
-**What Does "LLM as a Judge" Mean?**
+**"LLM as a Judge" 是什麼意思？**
 
-Using an LLM as a judge involves having the language model evaluate its own outputs or those of another model. It applies predefined criteria to assess aspects like accuracy, clarity, and relevance. This approach helps us obtain an objective and consistent evaluation without human bias, making it easier to identify improvements between different prompts. Our cookbook on [Getting Started with OpenAI Evals](https://cookbook.openai.com/examples/evaluation/getting_started_with_openai_evals) offers a glimps on how you can get started with this approach.
+讓 LLM 當評審，是指請語言模型評估自己或另一個模型的輸出，依預先定義的標準檢視準確度、清楚度和相關性等面向。這樣能得到客觀、一致、沒有人為偏見的評估，更容易看出不同 prompt 之間的進步。我們的 [Getting Started with OpenAI Evals](https://cookbook.openai.com/examples/evaluation/getting_started_with_openai_evals) 教學可以讓你一窺怎麼開始用這個方法。
 
 
-Here's the prompt we'll use for evaluation:
+這是我們用來評估的 prompt：
 
 ```python
 evaluation_prompt = """
@@ -280,9 +289,9 @@ class ScoreCard(BaseModel):
     detail_completeness: int
 ```
 
-Here's a pro tip — you can actually use meta prompting to refine your evaluation prompt as well! By applying the same iterative enhancement to the prompt that instructs the LLM to act as a judge, you can make your evaluations even more precise and insightful. 
+給你一個小撇步：你也可以用 meta prompting 來改進評估用的 prompt！對指示 LLM 當評審的 prompt 做同樣的迭代強化，評估就能更精準、更有洞察力。 
 
-Let's use this prompt to evaluate our summaries!
+來用這個 prompt 評估我們的摘要！
 
 ```python
 def evaluate_summaries(row):
@@ -407,12 +416,21 @@ plt.legend(loc='upper left', bbox_to_anchor=(1, 1))
 plt.show()
 ```
 
-After evaluating the results, we found that while the basic prompt performed well in clarity and structure, the enhanced prompt significantly improved outputs across several other key criteria: Categorization, Keywords and Tags, Sentiment Analysis, and Detail and Completeness. The complex prompt led to summaries that were more informative, better organized, and richer in content.
+評估後發現，基本 prompt 在清楚度和結構上表現不錯，但強化版 prompt 在其他幾個關鍵項目上大幅進步：分類（Categorization）、關鍵字與標籤（Keywords and Tags）、情感分析（Sentiment Analysis），以及細節與完整度（Detail and Completeness）。複雜的 prompt 讓摘要更有資訊量、組織更好、內容更豐富。
 
-This demonstrates how refining prompts can greatly enhance the quality of the generated summaries. Although this is a simplified example, the benefits of prompt optimization are expected to be even more pronounced in real-world, production-level applications, leading to outputs that are more aligned with specific goals and user needs.
+這證明改進 prompt 能大幅提升產出摘要的品質。雖然這是簡化的例子，但在真實的正式環境裡，prompt 優化的效益預期會更明顯，輸出會更貼近特定目標和使用者需求。
 
-## Conclusion
+## 結論
 
-Meta prompting is a powerful technique that can significantly enhance the quality of outputs from language models. Our exploration showed that starting with a simple prompt and refining it using `o1-preview` led to summaries that were more informative, better organized, and richer in content—improving across key criteria like categorization, keywords and tags, sentiment analysis, and completeness. This exercise underscores the value of prompt optimization, and even in this simplified example, the benefits are clear. In real-world applications, leveraging meta prompting and tools like `o1-preview` can elevate language model performance to better meet your specific goals and user needs.
+Meta prompting 是很強的技巧，能大幅提升語言模型的輸出品質。這次的探索顯示，從簡單的 prompt 開始，再用 `o1-preview` 改進，摘要變得更有資訊量、組織更好、內容更豐富，在分類、關鍵字與標籤、情感分析和完整度等關鍵標準上都有進步。這個練習凸顯了 prompt 優化的價值，即使是簡化的例子，好處也很明顯。在真實應用裡，善用 meta prompting 和 `o1-preview` 這類工具，可以讓語言模型的表現更貼近你的特定目標和使用者需求。
 
-<!-- tutor:summary -->
+## 重點整理
+- Meta prompting 是用較強的模型替較弱的模型寫或改 prompt，你只要說明背景和目標。
+- 先有簡單的 baseline prompt，再迭代改進，才看得出改進的效果。
+- 強化版 prompt 的摘要多了分類、標籤、情感分析和更完整的細節，簡單版只有大致概覽。
+- LLM as a judge 可以用固定標準量化比較，而評估 prompt 本身也能用 meta prompting 來改。
+
+## 練習
+1. 換一個月份的資料（改掉 2024 年 8 月的篩選），重跑兩個 prompt，看強化版優勢是否還在。
+2. 在給 `o1-preview` 的目標說明裡加一個新需求（例如摘要要限制在 100 字內），重新產生強化版 prompt 並比較。
+3. 用 meta prompting 改寫評估用的 judge prompt，加入一項新的評分標準（例如事實正確性），再重跑評估。

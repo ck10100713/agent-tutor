@@ -1,50 +1,59 @@
 ---
-translated: false
+translated: true
 source: examples/Prompt_migration_guide.ipynb
 ---
 
-# Prompt Migration Guide
+# Prompt 遷移指南
 
 > 原文：[examples/Prompt_migration_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Prompt_migration_guide.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+把原本為舊模型寫的 prompt，改寫成適合 GPT-4.1 的版本。流程是先抽出所有 instruction，再讓 GPT-4.1 自己批評 prompt 哪裡模糊、矛盾，最後自動產生修訂版，並用 MT-Bench 子集測量改寫前後跟人類判斷的一致度。
 
-Newer models, such as GPT-4.1, are best in class in performance and instruction following. As model gets smarter, there is a consistent need to adapt prompts that were originally tailored to earlier models' limitations, ensuring they remain effective and clear for newer generations.
+## 學完你會
+- 用模型列出 prompt 裡所有 instruction，檢查哪些不該是 instruction、哪些不清楚
+- 讓 GPT-4.1 找出 prompt 的歧義、缺定義、衝突和缺漏 context，並據此自動產生新的 system prompt
+- 用有人類標註的資料算出 LLM judge 和人類的一致度，比較改寫前後的差別
 
-Models such as GPT‑4.1 excel at closely following instructions, but this precision means it can interpret unclear or poorly phrased instructions **literally**, leading to unexpected or incorrect results. To leverage GPT‑4.1's full potential, it's essential to refine prompts, ensuring each instruction is explicit, unambiguous, and aligned with your intended outcomes.
+## 開跑前
+需要安裝 `openai` Python 套件，並設定好 `OPENAI_API_KEY`。
+
+GPT-4.1 這類較新的模型，在效能和遵循指令上是同級最佳。模型越聰明，原本為早期模型限制量身打造的 prompt 就越需要調整，才能讓它們在新一代模型上依然有效又清楚。
+
+GPT‑4.1 這類模型很會照指示做事，但這種精準也表示，遇到不清楚或寫得不好的指示，它可能會**照字面**解讀，得到出乎意料或錯誤的結果。要發揮 GPT‑4.1 的完整潛力，必須修改 prompt，讓每一條指示都明確、沒有歧義，並且符合你想要的結果。
 
 ---
 
-Example of Unclear Instructions:
+不清楚的指示範例：
 
-- Ambiguous:
+- 有歧義：
 
 > "Do not include irrelevant information."
 
-Issue: GPT-4.1 might struggle to determine what is "irrelevant" if not explicitly defined. This could cause it to omit essential details due to overly cautious interpretation or include too much detail inadvertently..
+問題：如果沒有明確定義什麼是「不相關」，GPT-4.1 可能不知道怎麼判斷。這可能讓它因為過度保守而漏掉重要細節，或是不小心放了太多細節。
 
-- Improved:
+- 改善後：
 
 > "Only include facts directly related to the main topic (X). Exclude personal anecdotes, unrelated historical context, or side discussions."
 
 ---
 
-**Objective**: This interactive notebook helps you improve an existing prompt (written for another model) into one that is clear, unambiguous and optimised for GPT‑4.1 following best practices.
+**目標**：這個互動式 notebook 幫你把現有的 prompt（為其他模型寫的），依最佳實務改成清楚、沒有歧義、針對 GPT‑4.1 最佳化的版本。
 
-**Workflow Overview**  
-This notebook uses the following approach:
+**流程總覽**  
+這個 notebook 的做法如下：
 
-- [Step 1. Input your original prompt](#step-1-input-your-original-prompt)  
-- [Step 2. Identify all instructions in your prompt](#step-2-identify-all-instructions-in-your-prompt)  
-- [Step 3. Ask GPT-4.1 to *critique* the prompt](#step-3-ask-gpt-4-1-to-critique-the-prompt)  
-- [Step 4. Auto-generate a revised system prompt](#step-4-auto-generate-a-revised-system-prompt)  
-- [Step 5. Evaluate and iterate](#step-5-evaluate-and-iterate)  
-- [Step 6. (Optional) Automatically apply GPT-4.1 best practices](#step-6-optional-automatically-apply-gpt-4-1-best-practices)
+- [Step 1. 輸入你原本的 prompt](#step-1-input-your-original-prompt)  
+- [Step 2. 找出 prompt 裡所有的指示](#step-2-identify-all-instructions-in-your-prompt)  
+- [Step 3. 請 GPT-4.1 *批評* 這個 prompt](#step-3-ask-gpt-4-1-to-critique-the-prompt)  
+- [Step 4. 自動產生修訂後的 system prompt](#step-4-auto-generate-a-revised-system-prompt)  
+- [Step 5. 評估並迭代](#step-5-evaluate-and-iterate)  
+- [Step 6.（選用）自動套用 GPT-4.1 最佳實務](#step-6-optional-automatically-apply-gpt-4-1-best-practices)
 
-**Prerequisites**
-- The `openai` Python package and `OPENAI_API_KEY`
+**前置條件**
+- `openai` Python 套件和 `OPENAI_API_KEY`
 
 ```python
 # !pip install openai pydantic tiktoken
@@ -75,7 +84,7 @@ client = OpenAI()
 MODEL = "gpt-4.1"
 ```
 
-Below are a few helper functions to enable us to easily review the analysis and modifications on our prompt.
+下面是幾個 helper function，讓我們可以輕鬆檢視對 prompt 的分析和修改。
 
 ```python
 _COLORS = {
@@ -179,10 +188,10 @@ def display_cards(
     _render("\n".join(cards))
 ```
 
-## Step 1. Input Your Original Prompt
-Begin by providing your existing prompt clearly between triple quotes (`"""`). This prompt will serve as the baseline for improvement.
+## Step 1. 輸入你原本的 prompt
+先把你現有的 prompt 清楚地放在三個引號（`"""`）之間。這個 prompt 會是改善的基準。
 
-For this example, we will be using the system prompt for LLM-as-a-Judge provided in the following [paper](https://arxiv.org/pdf/2306.05685).
+這個範例用的是 LLM-as-a-Judge 的 system prompt，出自這篇 [論文](https://arxiv.org/pdf/2306.05685)。
 
 ```python
 original_prompt = """
@@ -222,10 +231,10 @@ print("Original prompt length:", num_tokens, "tokens")
     Original prompt length: 243 tokens
     ```
 
-## Step 2. Identify All Instructions in your Prompt
-In this section, we will extract every INSTRUCTION that the LLM identifies within the system prompt. This allows you to review the list, spot any statements that should not be instructions, and clarify any that are ambiguous.
+## Step 2. 找出 prompt 裡所有的指示
+這一段我們會抽出 LLM 在 system prompt 裡辨識出的每一條 INSTRUCTION。這樣你可以檢查清單，找出不該算指示的句子，並釐清含糊的地方。
 
-Carefully review and confirm that each listed instruction is both accurate and essential to retain.
+仔細確認每條列出的指示都正確，而且值得保留。
 
 ```python
 class Instruction(BaseModel):
@@ -285,22 +294,22 @@ display_cards(
     <IPython.core.display.HTML object>
     ```
 
-It's helpful to examine which parts of your prompt the model recognizes as instructions. Instructions are how we "program" models using natural language, so it's crucial to ensure they're clear, precise, and correct.
+看看模型把你 prompt 的哪些部分當成指示，很有幫助。指示就是我們用自然語言「寫程式」控制模型的方式，所以務必確保它們清楚、精確、正確。
 
-## Step 3. Ask GPT-4.1 to *critique* the prompt
-Next, GPT‑4.1 itself will critique the original prompt, specifically identifying areas that may cause confusion or errors:
+## Step 3. 請 GPT-4.1 *批評* 這個 prompt
+接下來，由 GPT‑4.1 自己批評原本的 prompt，特別找出可能造成混淆或錯誤的地方：
 
-- Ambiguity: Phrases open to multiple interpretations.
+- 歧義：可以有多種解讀的措辭。
 
-- Lacking Definitions: Labels or terms that are not clearly defined, which may cause the model to infer or guess their intended meaning.
+- 缺少定義：沒有清楚定義的標籤或用語，可能讓模型自己推測或猜它的意思。
 
-- Conflicting Instructions: Rules or conditions that contradict or overlap.
+- 指示衝突：互相矛盾或重疊的規則或條件。
 
-- Missing Context or Assumptions: Necessary information or context not explicitly provided.
+- 缺少 context 或假設：必要的資訊或 context 沒有明說。
 
-The critique output will be clearly organized, highlighting specific issues along with actionable suggestions for improvement.
+批評的輸出會整理得很清楚，標出具體問題和可執行的改善建議。
 
-Models are really good at **identifying parts of a prompt that they find ambiguous or confusing**. By addressing these issues, we can engineer the instructions to make them clearer and more effective for the model.
+模型非常擅長**找出 prompt 裡它覺得含糊或混淆的地方**。解決這些問題之後，我們就能調整指示，讓模型更容易看懂、更有效。
 
 ````python
 class CritiqueIssue(BaseModel):
@@ -412,9 +421,9 @@ print(issues_str)
     Suggestion: Define what is meant by objectivity in this evaluation context, possibly by referencing adherence to the listed criteria.
     ```
 
-Review the list of issues:
-- If you are satisfied with them, proceed to next step #4. 
-- If you believe some issues are not relevant, copy the above text into the next cell and remove those issues. In this case, all three issues make reasonable sense, so we skip this step.
+檢視問題清單：
+- 如果你滿意，就繼續下一步 #4。 
+- 如果你覺得有些問題不相關，把上面的文字複製到下一個 cell，並刪掉那些問題。這個例子裡三個問題都合理，所以跳過這一步。
 
 ```python
 # issues_str = """
@@ -422,8 +431,8 @@ Review the list of issues:
 # """
 ```
 
-## Step 4. Auto‑generate a revised *system* prompt
-We now feed the critique back to GPT‑4.1 and ask it to produce an improved version of the original prompt, ready to drop into a `system` role message.
+## Step 4. 自動產生修訂後的 *system* prompt
+現在把批評結果餵回 GPT‑4.1，請它產生原 prompt 的改善版本，可以直接放進 `system` role 的訊息。
 
 ```python
 REVISE_SYSTEM_PROMPT = """
@@ -502,7 +511,7 @@ print(revised_response.output_text)
     [The End of Assistant B’s Answer]
     ```
 
-Let's review the changes side-by-side comparison highlighting changes between the improved and refined prompts:
+我們用並排比較的方式看修改，標出改善版和精修版的差異：
 
 ```python
 show_critique_and_diff(original_prompt, revised_prompt)
@@ -514,38 +523,38 @@ show_critique_and_diff(original_prompt, revised_prompt)
     <IPython.core.display.HTML object>
     ```
 
-## Step 5. Evaluate and iterate
-Finally, evaluate your refined prompt by:
+## Step 5. 評估並迭代
+最後，用下面的方式評估你精修後的 prompt：
 
-- Testing it with representative evaluation examples or data.
+- 用有代表性的評估範例或資料來測試。
 
-- Analyzing the responses to ensure desired outcomes.
+- 分析回應，確認有達到想要的結果。
 
-- Iterating through previous steps if further improvements are required.
+- 如果還需要改善，就回頭重複前面的步驟。
 
-Consistent testing and refinement ensure your prompts consistently achieve their intended results.
+持續測試和精修，才能確保 prompt 每次都達到預期的結果。
 
-### Current Example
+### 目前的範例
 
-Let’s evaluate whether our current prompt migration has actually improved for the task of this judge. The original prompt, drawn from this [paper](https://arxiv.org/pdf/2306.05685), is designed to serve as a judge between two assistants’ answers. Conveniently, the paper provides a set of human-annotated ground truths, so we can measure how often the LLM judge agrees with the humans judgments.
+我們來評估這次的 prompt 遷移，在這個 judge 的任務上到底有沒有進步。原本的 prompt 出自這篇[論文](https://arxiv.org/pdf/2306.05685)，用來擔任兩個助理答案之間的評審。方便的是，論文提供了一組人類標註的 ground truth，所以我們可以衡量 LLM judge 跟人類判斷一致的頻率。
 
-Thus, our metric of success will be measuring how closely the judgments generated by our migrated prompt align with human evaluations compared to the judgments generated with our baseline prompt. For context, the benchmark we’re using is a subset of MT-Bench, which features multi-turn conversations. In this example, we’re evaluating 200 conversation rows, each comparing the performance of different model pairs.
+因此，我們的成功指標是：遷移後的 prompt 產生的判斷，跟人類評估的吻合程度，相較於 baseline prompt 產生的判斷如何。補充一下，我們用的 benchmark 是 MT-Bench 的子集，裡面是多輪對話。這個範例評估 200 筆對話資料，每筆比較不同模型組合的表現。
 
 
 
-On our evaluation subset, a useful reference anchor is human-human agreement, since each conversation is rated by multiple annotators. Humans do not always agree with each other on which assistant answer is better, so we wouldn't expect our judge to achieve perfect agreement either. For turn 1 (without ties), humans agree with each other in 81% of cases, and for turn 2, in 76% of cases.
+在我們的評估子集上，一個有用的參考基準是人與人之間的一致度，因為每段對話都由多位標註者評分。人類對於哪個助理的答案比較好，也不一定意見一致，所以我們也不會期待 judge 能達到完美一致。第 1 輪（不含平手）人類彼此一致的比例是 81%，第 2 輪是 76%。
 
 ![Graph 3 for Model Agreement](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt_migrator_fig.png)
 
-Comparing this to our models before migration, GPT-4 (as used in the paper) achieves an agreement with human judgments of 74% on turn 1 and 71% on turn 2, which is not bad, but still below the human-human ceiling. Switching to GPT-4.1 (using the same prompt) improves the agreement: 77% on turn 1 and 72% on turn 2. Finally, after migrating and tuning our prompt specifically for GPT-4.1, the agreement climbs further, reaching 80% on turn 1 and 72% on turn 2, very close to matching the level of agreement seen between human annotators.
+對照遷移前的模型：GPT-4（論文用的）跟人類判斷的一致度，第 1 輪是 74%，第 2 輪是 71%，不算差，但還是低於人類之間的上限。換成 GPT-4.1（用同一個 prompt）後，一致度提高：第 1 輪 77%，第 2 輪 72%。最後，針對 GPT-4.1 遷移並調整 prompt 之後，一致度再往上，第 1 輪到 80%，第 2 輪 72%，非常接近人類標註者之間的一致程度。
 
-Viewed all together, we can see that prompt migration and upgrading to more powerful models improve agreement on our sample task. Go ahead and try it on your prompt now!
+整體來看，prompt 遷移加上升級到更強的模型，都能提高這個範例任務的一致度。現在換你用自己的 prompt 試試！
 
-## Step 6. (OPTIONAL) Automatically Apply GPT‑4.1 Best Practices
+## Step 6.（選用）自動套用 GPT‑4.1 最佳實務
 
-In this step, GPT-4.1 best practices will be applied automatically to enhance your original prompt. We strongly suggest to manually review the edits made and decide if you want to keep or not.
+這一步會自動套用 GPT-4.1 最佳實務來改善你原本的 prompt。我們強烈建議你手動檢查這些修改，再決定要不要保留。
 
-See the [4.1 Prompting Guide](https://cookbook.openai.com/examples/gpt4-1_prompting_guide) for reference.
+可以參考 [4.1 Prompting Guide](https://cookbook.openai.com/examples/gpt4-1_prompting_guide)。
 
 ```python
 BEST_PRACTICES_SYSTEM_PROMPT = """
@@ -668,4 +677,14 @@ show_critique_and_diff(revised_prompt, improved_prompt)
     <IPython.core.display.HTML object>
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- 新模型會更精準地照字面執行指示，舊 prompt 裡含糊的句子可能造成意外結果
+- 先抽出 instruction 清單檢查，因為指示就是你用自然語言寫的「程式」
+- 模型很會指出 prompt 裡自己覺得模糊、缺定義或互相衝突的地方，可以拿來當批評者
+- 改寫後一定要用有 ground truth 的資料評估，不能只憑感覺
+- 自動套用最佳實務的結果，要自己手動檢查再決定保不保留
+
+## 練習
+1. 把 Step 1 的 prompt 換成你自己專案裡的一段 system prompt，跑一遍 Step 2，看模型抽出的 instruction 有沒有你沒預期的。
+2. 在 Step 3 的批評結果裡，刪掉一個你覺得不相關的問題再進 Step 4，比較產生的 prompt 有什麼差別。
+3. 自己挑 10 筆有人類標註的資料，分別用原本和遷移後的 prompt 跑一遍，算出各自跟人類的一致度。

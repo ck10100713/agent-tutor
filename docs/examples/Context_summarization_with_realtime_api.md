@@ -1,48 +1,58 @@
 ---
-translated: false
+translated: true
 source: examples/Context_summarization_with_realtime_api.ipynb
 ---
-
-# Context Summarization with Realtime API
+# 用 Realtime API 做 Context Summarization
 
 > 原文：[examples/Context_summarization_with_realtime_api.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Context_summarization_with_realtime_api.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+從頭做一個語音 bot：從麥克風收音、即時串流到 Realtime API、即時播放回覆。對話變長、token 累積太多時，自動把舊的對話壓成一段摘要，讓回答品質不會掉。
 
-## 1. Overview
-Build an end‑to‑end **voice bot** that listens to your mic, speaks back in real time and **summarises long conversations** so quality never drops.
+## 學完你會
+- 把麥克風 PCM‑16 音訊用 asyncio queue 和 WebSocket 串流到 Realtime API，並處理 `response.done` 等回傳事件。
+- 寫一個 `ConversationState` 記錄所有對話，監控 token 用量，超過門檻就在背景做摘要。
+- 用 `conversation.item.create` 把摘要插到對話最前面，再用 `conversation.item.delete` 刪掉被摘要的舊訊息，並驗證摘要真的進了 context。
 
-### What You’ll Learn
-1. **Live microphone streaming** → OpenAI *Realtime* (voice‑to‑voice) endpoint.
-2. **Instant transcripts & speech playback** on every turn.
-3. **Conversation state container** that stores **every** user/assistant message.
-4. **Automatic “context trim”** – when the token window becomes very large (configurable), older turns are compressed into a summary.
-5. **Extensible design** you can adapt to support customer‑support bots, kiosks, or multilingual assistants.
+## 開跑前
+- Python 3.10 以上。
+- 需要 `OPENAI_API_KEY`（Realtime API 會計費）。
+- 需要麥克風和喇叭，作業系統跳出權限詢問時要允許。
+
+## 1. 概述
+做一個端到端的**語音 bot**：聽你的麥克風、即時說話回應，並且**摘要很長的對話**，讓品質不會下降。
+
+### 你會學到什麼
+1. **即時麥克風串流** → OpenAI *Realtime*（voice‑to‑voice）endpoint。
+2. 每一輪都有**即時逐字稿與語音播放**。
+3. 一個**對話狀態容器**，儲存**每一則** user / assistant 訊息。
+4. **自動 “context trim”**：當 token 視窗變得很大（可設定），較舊的對話會被壓縮成摘要。
+5. **可擴充的設計**，可以改成客服 bot、kiosk 或多語言助理。
 
 
-### Prerequisites
+### 先決條件
 
 | Requirement | Details |
 |-------------|---------|
-| **Python ≥ 3.10** | Will ensure that you don't hit any issues |
-| **OpenAI API key** | Set `OPENAI_API_KEY` in your shell or paste inline (*not ideal for prod*) |
-| Mic + speakers | Grant OS permission if prompted |
+| **Python ≥ 3.10** | 確保不會遇到問題 |
+| **OpenAI API key** | 在 shell 設定 `OPENAI_API_KEY`，或直接貼在程式裡（*正式環境不建議*） |
+| 麥克風 + 喇叭 | 若系統詢問，請授予權限 |
 
 
-**Need help setting up the key?**  
-> Follow the [official quick‑start guide](https://platform.openai.com/docs/quickstart#step-2-set-your-api-key).
+**需要協助設定 key？**  
+> 照著[官方快速入門指南](https://platform.openai.com/docs/quickstart#step-2-set-your-api-key)做。
 
 
-*Notes:*
-> 1. gpt-realtime supports a 32k token context window, though in certain use cases, you may notice performance degrade as you stuff more tokens into the context window.
-> 2. Token window = all tokens (words and audio tokens) the model currently keeps in memory for the session.x
+*備註：*
+> 1. gpt-realtime 支援 32k token 的 context window，不過在某些情境下，context 塞越多 token，你可能會發現表現變差。
+> 2. Token window = 模型在這個 session 中目前記在記憶裡的所有 token（文字和音訊 token）。
 
-### One‑liner install (run in a fresh cell)
+### 一行安裝（在新的 cell 執行）
 
-*New API Parameters:*
-> 1. The Realtime API GA has releases a new parameter [`truncation`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update#realtime-client-events/session/update-session-realtime-session-configuration-truncation). This parameter automatically optimizes context truncation, preserving relevant information while maximizing cache hit rates.
+*新的 API 參數：*
+> 1. Realtime API GA 新增了 [`truncation`](https://platform.openai.com/docs/api-reference/realtime-client-events/session/update#realtime-client-events/session/update-session-realtime-session-configuration-truncation) 參數。這個參數會自動優化 context 的截斷，保留相關資訊，同時最大化 cache 命中率。
 
 ```python
 # Run once to install or upgrade dependencies (comment out if already installed)
@@ -77,32 +87,32 @@ if not openai.api_key:
     raise ValueError("OPENAI_API_KEY not found – please set env var or edit this cell.")
 ```
 
-## 2. Token Utilisation – Text vs Voice
+## 2. Token 使用量：文字 vs 語音
 
-Large‑token windows are precious, every extra token you use costs latency + money.  
-For **audio** the input token window increases much faster than for plain text because amplitude, timing, and other acoustic details must be represented.
+大的 token 視窗很珍貴，每多用一個 token 就多一分延遲和成本。  
+**音訊**的輸入 token 視窗成長得比純文字快很多，因為振幅、時間和其他聲學細節都要被表示出來。
 
-In practice you’ll often see **≈ 10 ×** more tokens for the *same* sentence in audio versus text.
+實際上，同一句話用音訊的 token 通常比文字多出**約 10 倍**。
 
 
-* gpt-realtime accepts up to **32k tokens** and as the token size increases, instruction adherence can drift.
-* Every user/assistant turn consumes tokens → the window **only grows**.
-* **Strategy**: Summarise older turns into a single assistant message, keep the last few verbatim turns, and continue.
+* gpt-realtime 最多接受 **32k token**，而且 token 越多，遵循指令的能力可能越飄。
+* 每一輪 user / assistant 對話都會消耗 token，視窗**只會越來越大**。
+* **策略**：把較舊的對話摘要成一則 assistant 訊息，保留最近幾輪的原文，然後繼續。
 
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/text-vs-audio-tokens.png" alt="drawing" width="800"/>
 
-## 3. Helper Functions
-The following helper functions will enable us to run the full script.
+## 3. 輔助函式
+下面的輔助函式讓我們能跑完整個 script。
 
-### 3.1 Conversation State
-Unlike HTTP-based Chat Completions, the Realtime API maintains an open, **stateful** session with two key components:
+### 3.1 對話狀態
+跟 HTTP 式的 Chat Completions 不同，Realtime API 維持一個開著的、**有狀態**的 session，有兩個關鍵元件：
 
 | Component       | Purpose |
 |----------------|---------|
-| **Session**     | Controls global settings — model, voice, modalities, VAD, etc. |
-| **Conversation** | Stores turn-by-turn messages between user and assistant — both audio and text. |
+| **Session**     | 控制全域設定：model、voice、modalities、VAD 等。 |
+| **Conversation** | 儲存 user 和 assistant 之間一輪一輪的訊息，包括音訊和文字。 |
 
-This notebook wraps these components inside a simple `ConversationState` object to keep your logic clean, track history, and manage summarization when context windows fill up.
+這個 notebook 把這兩個元件包進一個簡單的 `ConversationState` 物件，讓邏輯保持乾淨、追蹤歷史，並在 context window 快滿時管理摘要。
 
 ```python
 @dataclass
@@ -123,7 +133,7 @@ class ConversationState:
     summarising: bool = False       # Guard so we don’t run two summaries at once
 ```
 
-A quick helper to peek at the transcript:
+一個快速看逐字稿的 helper：
 
 ```python
 def print_history(state) -> None:
@@ -135,17 +145,17 @@ def print_history(state) -> None:
     print("——————————————————————————————————————————")
 ```
 
-### 3.2 · Streaming Audio
-We’ll stream raw PCM‑16 microphone data straight into the Realtime API.
+### 3.2 · 串流音訊
+我們把原始 PCM‑16 麥克風資料直接串流進 Realtime API。
 
-The pipeline is: mic ─► async.Queue ─► WebSocket ─► Realtime API
+流程是：mic ─► async.Queue ─► WebSocket ─► Realtime API
 
-#### 3.2.1 Capture Microphone Input
-We’ll start with a coroutine that:
+#### 3.2.1 擷取麥克風輸入
+先寫一個 coroutine，它會：
 
-* Opens the default mic at **24 kHz, mono, PCM‑16** (one of the [format](https://platform.openai.com/docs/api-reference/realtime-sessions/create#realtime-sessions-create-input_audio_format) Realtime accepts).  
-* Slices the stream into **≈ 40 ms** blocks.  
-* Dumps each block into an `asyncio.Queue` so another task (next section) can forward it to OpenAI.
+* 以 **24 kHz、單聲道、PCM‑16** 開啟預設麥克風（這是 Realtime 接受的[格式](https://platform.openai.com/docs/api-reference/realtime-sessions/create#realtime-sessions-create-input_audio_format)之一）。  
+* 把串流切成 **約 40 ms** 的區塊。  
+* 把每個區塊丟進 `asyncio.Queue`，讓另一個 task（下一節）可以轉送給 OpenAI。
 
 ```python
 async def mic_to_queue(pcm_queue: asyncio.Queue[bytes]) -> None:
@@ -184,10 +194,10 @@ async def mic_to_queue(pcm_queue: asyncio.Queue[bytes]) -> None:
             print("⏹️  Mic stream closed.")
 ```
 
-#### 3.2.2 Send Audio Chunks to the API
+#### 3.2.2 把音訊區塊送到 API
 
-Our mic task is now filling an `asyncio.Queue` with raw PCM‑16 blocks.  
-Next step: pull chunks off that queue, **base‑64 encode** them (the protocol requires JSON‑safe text), and ship each block to the Realtime WebSocket as an `input_audio_buffer.append` event.
+麥克風 task 現在會把原始 PCM‑16 區塊不斷放進 `asyncio.Queue`。  
+下一步：從 queue 取出區塊，做 **base‑64 編碼**（協定要求是 JSON 安全的文字），再把每個區塊當成 `input_audio_buffer.append` 事件送到 Realtime WebSocket。
 
 ```python
 # Helper function to encode audio chunks in base64
@@ -205,41 +215,41 @@ async def queue_to_websocket(pcm_queue: asyncio.Queue[bytes], ws):
         print("WebSocket closed – stopping uploader")
 ```
 
-#### 3.2.3 Handle Incoming Events 
-Once audio reaches the server, the Realtime API pushes a stream of JSON events back over the **same** WebSocket.  
-Understanding these events is critical for:
+#### 3.2.3 處理收到的事件 
+音訊到達 server 後，Realtime API 會在**同一條** WebSocket 上持續推送 JSON 事件。  
+理解這些事件對下面幾件事很重要：
 
-* Printing live transcripts  
-* Playing incremental audio back to the user  
-* Keeping an accurate [`Conversation State`](https://platform.openai.com/docs/api-reference/realtime-server-events/conversation/created) so context trimming works later  
+* 印出即時逐字稿  
+* 把增量音訊播放給使用者  
+* 維持準確的 [`Conversation State`](https://platform.openai.com/docs/api-reference/realtime-server-events/conversation/created)，之後 context trimming 才會正確  
 
 
-| Event type | When it arrives | Why it matters | Typical handler logic |
+| Event type | When it arrives | Why it matters | Typical handler logic |
 |------------|-----------------|---------------|-----------------------|
 | **`session.created`** | Immediately after the WebSocket handshake | Confirms the session is open and provides the `session.id`. | Log the ID for traceability and verify the connection. |
 | **`session.updated`** | After you send a `session.update` call | Acknowledges that the server applied new session settings. | Inspect the echoed settings and update any local cache. |
-| **`conversation.item.created`** (user) | A few ms after the user stops speaking (client VAD fires) | Reserves a timeline slot; transcript may still be **`null`**. | Insert a *placeholder* user turn in `state.history` marked “pending transcript”. |
-| **`conversation.item.retrieved`** | ~100 – 300 ms later, once audio transcription is complete | Supplies the final user transcript (with timing). | Replace the placeholder with the transcript and print it if desired. |
-| **`response.audio.delta`** | Every 20 – 60 ms while the assistant is speaking | Streams PCM‑16 audio chunks (and optional incremental text). | Buffer each chunk and play it; optionally show partial text in the console. |
-| **`response.done`** | After the assistant’s last token | Signals both audio & text are complete; includes usage stats. | Finalize the assistant turn, update `state.latest_tokens`, and log usage. |
+| **`conversation.item.created`** (user) | A few ms after the user stops speaking (client VAD fires) | Reserves a timeline slot; transcript may still be **`null`**. | Insert a *placeholder* user turn in `state.history` marked “pending transcript”. |
+| **`conversation.item.retrieved`** | ~100 – 300 ms later, once audio transcription is complete | Supplies the final user transcript (with timing). | Replace the placeholder with the transcript and print it if desired. |
+| **`response.audio.delta`** | Every 20 – 60 ms while the assistant is speaking | Streams PCM‑16 audio chunks (and optional incremental text). | Buffer each chunk and play it; optionally show partial text in the console. |
+| **`response.done`** | After the assistant’s last token | Signals both audio & text are complete; includes usage stats. | Finalize the assistant turn, update `state.latest_tokens`, and log usage. |
 | **`conversation.item.deleted`** | Whenever you prune with `conversation.item.delete` | Confirms a turn was removed, freeing tokens on the server. | Mirror the deletion locally so your context window matches the server’s. |
 
 
 
-### 3.3 Detect When to Summarise
-The Realtime model keeps a **large 32 k‑token window**, but quality can drift long before that limit as you stuff more context into the model.
+### 3.3 偵測何時該摘要
+Realtime 模型有 **32k token 的大視窗**，但 context 塞越多，品質可能在到達上限之前就開始飄。
 
-Our goal: **auto‑summarise** once the running window nears a safe threshold (default **2 000 tokens** for the notebook), then prune the superseded turns both locally *and* server‑side.
+我們的目標：當累積的視窗接近安全門檻（這個 notebook 預設 **2 000 tokens**）時**自動摘要**，然後把被取代的舊對話在本機*和* server 端都刪掉。
 
-We monitor latest_tokens returned in `response.done`. When it exceeds SUMMARY_TRIGGER and we have more than KEEP_LAST_TURNS, we spin up a background summarization coroutine.
+我們監控 `response.done` 回傳的 latest_tokens。當它超過 SUMMARY_TRIGGER，且對話輪數多於 KEEP_LAST_TURNS 時，就啟動一個背景的摘要 coroutine。
 
-We compress everything except the last 2 turns into a single French paragraph, then:
+我們把最後 2 輪以外的所有內容壓縮成一段法文，然後：
 
-1. Insert that paragraph as a new assistant message at the top of the conversation.
+1. 把這一段插到對話最前面，當作一則新訊息。
 
-2. Delete the message items that was used for the summary.
+2. 刪除被拿去做摘要的那些訊息 item。
 
-We will later ask the Voice agent what language was the summary to test if the Summary insertion into Realtime API Conversation Context was successful.
+之後我們會問語音 agent 摘要是什麼語言，來測試摘要有沒有成功插進 Realtime API 的 Conversation context。
 
 ```python
 async def run_summary_llm(text: str) -> str:
@@ -257,8 +267,8 @@ async def run_summary_llm(text: str) -> str:
     return resp.choices[0].message.content.strip()
 ```
 
-Important implementation detail:
-- The summary is appended as a SYSTEM message rather than an ASSISTANT message. Testing revealed that, during extended conversations, using ASSISTANT messages for summaries can cause the model to mistakenly switch from audio responses to text responses. By using SYSTEM messages for summaries (which can also include additional custom instructions), we clearly signal to the model that these are context-setting instructions, preventing it from incorrectly adopting the modality of the ongoing user-assistant interaction.
+重要的實作細節：
+- 摘要是以 SYSTEM 訊息而不是 ASSISTANT 訊息的形式加入。測試發現，在很長的對話中，用 ASSISTANT 訊息放摘要，可能讓模型誤把音訊回應切換成文字回應。改用 SYSTEM 訊息放摘要（也可以附加額外的自訂指令），就能清楚告訴模型這是設定 context 的指令，避免它錯誤地沿用目前 user 與 assistant 互動的 modality。
 
 ```python
 async def summarise_and_prune(ws, state):
@@ -306,7 +316,7 @@ async def summarise_and_prune(ws, state):
     state.summarising = False
 ```
 
-The following function lets us poll for transcripts over time. This is useful in cases where the user's audio hasn't been transcribed immediately, so we can retrieve the final result later.
+下面的函式讓我們可以隨時間輪詢逐字稿。當使用者的音訊沒有馬上被轉錄時很有用，我們之後可以再取得最終結果。
 
 ```python
 async def fetch_full_item(
@@ -339,14 +349,14 @@ async def fetch_full_item(
     return item
 ```
 
-## 4. End‑to‑End Workflow Demonstration
+## 4. 端到端流程示範
 
-Run the two cells below to launch an interactive session. Interrupt the cell stop recording.
+執行下面兩個 cell 來啟動互動 session。中斷 cell 就會停止錄音。
 
-> **Note:**  
-> This notebook uses `SUMMARY_TRIGGER = 2000` and `KEEP_LAST_TURNS = 2` to make summarization easier to demo quickly.  
-> In production, you should tune these values based on your application's needs.  
-> - A typical `SUMMARY_TRIGGER` falls between **20,000–32,000 tokens**, depending on how performance degrades with larger context for your use case.
+> **注意：**  
+> 這個 notebook 使用 `SUMMARY_TRIGGER = 2000` 和 `KEEP_LAST_TURNS = 2`，讓摘要比較容易快速示範。  
+> 正式環境請依你的應用需求調整這些值。  
+> - 典型的 `SUMMARY_TRIGGER` 落在 **20,000–32,000 tokens** 之間，要看你的使用情境中 context 變大後表現會怎麼退化。
 
 ```python
 # Audio/config knobs
@@ -526,27 +536,27 @@ session.created ✅
 ```
 
 ---
-We had a conversation with our Voice AI. After several turns, the total token count reached SUMMARY_MAX, which triggered the conversation summarization step. This generated a summary of the earlier messages.
+我們跟 Voice AI 聊了一段。幾輪之後，總 token 數達到 SUMMARY_MAX，觸發了對話摘要的步驟，產生了前面訊息的摘要。
 
-Since there were N = 4 total messages, we summarized the first N - 2 = 2 messages:
+因為總共有 N = 4 則訊息，我們摘要前 N - 2 = 2 則：
 ```txt
 —— Conversation so far ———————————————
 [user     ] Can you tell me a quick story?  (item_BTuMOcpUqp8qknKhLzlkA)
 [assistant] Once upon a time, in a cozy little village, there was a cat named Whiskers who was always getting into trouble. One sunny day, Whiskers found a mysterious glowing stone in the garden. Curious, he pawed at it, and poof! The stone granted him the ability to talk to birds. Whiskers and his new bird friends had grand adventures, solving mysteries and exploring the village. And from that day on, Whiskers was known as the most adventurous cat in the village. The end.  (item_BTuMPRWxqpv0ph6QM46DK)
 ```
 
-We then created a summary in French and inserted it into the conversation history using the root: true flag. This ensured the summary appeared as the first message in the conversation. After that, we deleted the original items, using `"type": "conversation.item.delete"`, that were summarized.
+接著我們產生法文摘要，用 root: true 旗標插進對話歷史，讓摘要出現在對話的第一則。之後，我們用 `"type": "conversation.item.delete"` 把被摘要的原始 item 刪掉。
 
-To validate the summary insertion, we asked the Voice AI what language the summary was in. It correctly responded:
+為了驗證摘要有插進去，我們問 Voice AI 摘要是什麼語言，它正確回答：
 
 ```txt
 [assistant] Sure! The first summary I provided between us was in French.  (item_BTuPLa7BaSQToGCVOmfBK)
 ```
 
-## 5 · Real‑World Applications
+## 5 · 實際應用
 
-Context summarisation can be useful for **long‑running voice experiences**.  
-Here are a use case ideas:
+Context summarisation 對**長時間進行的語音體驗**很有用。  
+以下是一些應用點子：
 
 | Use‑case | Added Value | Why Useful |
 |----------|-------------|------------|
@@ -556,22 +566,32 @@ Here are a use case ideas:
 | **Meeting assistant** | Live transcripts + concise action‑item recap in Slack | Distills lengthy meetings into actionable summaries, saving team members time and ensuring important points are not missed. |
 
 
-## 6 · Next Steps & Further Reading
-Try out the notebook and try integrating context summary into your application.
+## 6 · 下一步與延伸閱讀
+試跑這個 notebook，並試著把 context summary 整合進你的應用。
 
-Few things you can try:
+可以試試這幾件事：
 | Try this… | What you’ll learn |
 |-----------|------------------|
-| **A/B test summarisation**<br/>Run your eval suite with summarisation *on* vs *off*. | Whether trimming actually improves quality for your domain—and how it affects latency & cost. |
+| **A/B test summarisation**<br/>Run your eval suite with summarisation *on* vs *off*. | Whether trimming actually improves quality for your domain—and how it affects latency & cost. |
 | **Swap summary styles**<br/>Change the system prompt to bullet points, JSON, English vs French, etc. | Which format the downstream assistant absorbs best; how language choice influences follow‑up answers. |
-| **Vary thresholds**<br/>Play with `SUMMARY_TRIGGER_TOKENS` (2 k → 8 k). | The sweet spot between model drift and summarisation overhead. |
+| **Vary thresholds**<br/>Play with `SUMMARY_TRIGGER_TOKENS` (2 k → 8 k). | The sweet spot between model drift and summarisation overhead. |
 | **Cost tracing**<br/>Log `usage.total_tokens` before/after summarisation. | Concrete ROI: token savings per hour of conversation. |
 
 
-### Resources:
+### 參考資源：
 - [OpenAI Realtime Guide](https://platform.openai.com/docs/guides/realtime)
 - [OpenAI Realtime Conversations](https://platform.openai.com/docs/guides/realtime-conversations)
 - [OpenAI Realtime API Reference](https://platform.openai.com/docs/api-reference/realtime)
 - [Voice AI and Voice Agents](https://voiceaiandvoiceagents.com/)
 
-<!-- tutor:summary -->
+## 重點整理
+- Realtime API 是有狀態的 session，音訊 token 比文字多很多（約 10 倍），所以 context 長得很快。
+- 視窗雖有 32k，但品質常在到達上限前就開始飄，所以要在安全門檻自動摘要。
+- 摘要策略是保留最近幾輪原文，把舊的壓成一則訊息放到最前面，再刪掉原本的 item，本機和 server 的歷史要同步。
+- 摘要用 SYSTEM 訊息放，避免模型在長對話中從音訊回應誤切成文字回應。
+- 門檻（`SUMMARY_TRIGGER`、`KEEP_LAST_TURNS`）要依實際用例調整，示範用 2000，正式環境常在 2 萬到 3.2 萬之間。
+
+## 練習
+1. 把 `SUMMARY_TRIGGER` 從 2000 改成 4000，觀察要聊幾輪才會觸發摘要，以及觸發時 `latest_tokens` 的值。
+2. 把摘要的語言從法文改成英文或繁體中文，再問語音 agent 摘要是什麼語言，確認新的摘要有被插進 context。
+3. 把 `KEEP_LAST_TURNS` 從 2 改成 4，並在每次摘要前後印出 `usage.total_tokens`，比較省下多少 token。

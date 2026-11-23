@@ -1,66 +1,77 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md
 ---
 
-# GPT Actions library - Salesforce & Gong
+# GPT Actions 函式庫：Salesforce 與 Gong
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md)
 
+## 這篇在做什麼
+
+教你建一個同時串接 Salesforce 和 Gong 的 GPT。Salesforce 直接用既有 cookbook 的做法，Gong 則透過一個 serverless middleware 取得通話逐字稿。最後在同一個 GPT 裡建兩個 Action。
+
+## 學完你會
+
+- 寫一個接收 `callIds` 陣列、從 Gong 取逐字稿並整理回應的 serverless function
+- 為 Salesforce 和 middleware 各寫一份 OpenAPI schema，建立兩個獨立的 Action
+- 用 Custom GPT instructions 讓 GPT 先查 Salesforce 拿 Call ID，再取 Gong 逐字稿並用 MEDPICC 或 SPICED 整理
+
+## 開跑前
+
+- 需要 Salesforce 帳號與 Connected App（OAuth 設定見 Salesforce cookbook）
+- 需要 Gong API key
+- 需要部署 middleware 的雲端環境（AWS、Azure Functions 或 Google Cloud Function）
 
 
-<!-- tutor:goals -->
+## 簡介
 
+這一頁是給開發者的指南，說明怎麼建立 middleware，把 GPT Action 連到特定應用程式。開始前請先看過下面這些資料：
 
+- [GPT Actions 簡介](https://platform.openai.com/docs/actions)
+- [GPT Actions Library 簡介](https://platform.openai.com/docs/actions/actions-library)
+- [從零開始建立 GPT Action 的範例](https://platform.openai.com/docs/actions/getting-started)
 
-## Introduction
+這個 GPT Action 說明怎麼建立一個能從 Salesforce 和 Gong 取得資訊的 GPT。過程會建立多個自訂 Action，它們已記錄在既有的 cookbook 裡，下一節會列出這些 cookbook。
 
-This page provides an instruction & guide for developers building middleware to connect a GPT Action to a specific application. Before you proceed, make sure to first familiarize yourself with the following information:
+### 價值與商業使用範例
 
-- [Introduction to GPT Actions](https://platform.openai.com/docs/actions)
-- [Introduction to GPT Actions Library](https://platform.openai.com/docs/actions/actions-library)
-- [Example of Building a GPT Action from Scratch](https://platform.openai.com/docs/actions/getting-started)
+**價值**：使用者現在可以用 ChatGPT 的能力來：
 
-This particular GPT Action provides an overview of how to build a GPT that retrieves information from Salesforce and Gong. This will include creating multiple custom actions which are documented in existing cookbooks. We will highlight these cookbooks in the next section.
+- 連接 Salesforce
+- 搜尋客戶帳號
+- 取得先前通話的 Gong 逐字稿
 
-### Value + Example Business Use Cases
+**使用範例**：
 
-**Value**: Users can now leverage ChatGPT's capabilities to:
+業務代表正在準備即將到來的客戶會議。透過這個整合，他可以快速從 Salesforce 取得相關的帳號資料，取得最近的 Gong 通話逐字稿，並得到 AI 產生、依 MEDPICC 或 SPICED 這類成熟銷售方法論整理的摘要與洞察。這讓業務代表清楚掌握客戶目前的狀況和下一步，全程只要幾分鐘
 
-- Connect to Salesforce
-- Search for customer accounts
-- Retrieve Gong transcripts from previous calls
-
-**Example Use Cases**:
-
-A sales rep is preparing for an upcoming customer meeting. Using this integration, they can quickly retrieve relevant account details from Salesforce, access recent Gong call transcripts, and receive AI-generated summaries and insights structured around proven sales methodologies like MEDPICC or SPICED. This empowers the rep with a clear, actionable understanding of the customer's current state and next steps — all in minutes
-
-## Application Information
-In this example, we are connecting to Salesforce and Gong (via a middleware). We are going to refer to existing cookbooks for basic setup and authentication instructions for Salesforce and creating a middleware. 
+## 應用程式資訊
+這個例子會連接 Salesforce 和 Gong（透過 middleware）。Salesforce 的基本設定與認證，以及 middleware 的建立，我們參考既有的 cookbook。
 
 ### Salesforce GPT Action
 
-Refer to our cookbook on setting up a GPT Action for Salesforce. The two settings to pay attention to in that cookbook are:
+請參考我們設定 Salesforce GPT Action 的 cookbook。其中要注意的兩個設定是：
 
-- [Application Information](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#application-information) - this covers the necessary concepts to be familiar with in Salesforce
-- [Authentication Instructions](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#authentication-instructions) - this covers creating a Connected App in Salesforce and configuring OAuth (on both Salesforce and ChatGPT)
+- [Application Information](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#application-information)：涵蓋 Salesforce 中需要熟悉的概念
+- [Authentication Instructions](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#authentication-instructions)：涵蓋在 Salesforce 建立 Connected App，並設定 OAuth（Salesforce 和 ChatGPT 兩邊都要）
 
 ### Middleware GPT Action
-Refer to any one of our cookbooks on creating a middleware:
+請參考我們任一份建立 middleware 的 cookbook：
 
 - [GPT Actions library (Middleware) - AWS](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_aws_function)
 - [GPT Actions library (Middleware) - Azure Functions](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function)
 - [GPT Actions library (Middleware) - Google Cloud Function](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_middleware_google_cloud_function)
 
-### Application Prerequisites
+### 應用程式前置條件
 
-In addition to the prerequisites in the cookbooks above, please ensure that you have access to a Gong API key
+除了上面 cookbook 的前置條件外，還要確認你有 Gong API key
 
-## Application Setup
+## 應用程式設定
 
-### Deploying a serverless function
+### 部署 serverless function
 
-This serverless function will accept an array of `callIds`, fetch the transcripts from Gong and clean up the response that it sends to ChatGPT. Here is an example of what it looks like on Azure Functions (Javascript)
+這個 serverless function 會接收一個 `callIds` 陣列，從 Gong 取得逐字稿，並整理好回應再送給 ChatGPT。下面是它在 Azure Functions (Javascript) 上的範例
 
 ```javascript
 const { app } = require('@azure/functions');
@@ -177,7 +188,7 @@ app.http('callTranscripts', {
 
 ```
 
-Here are the dependencies that you would include in your `package.json` file
+這是你要放進 `package.json` 的相依套件
 
 ```javascript
 "dependencies": {
@@ -186,11 +197,11 @@ Here are the dependencies that you would include in your `package.json` file
   }
 ```
 
-## ChatGPT Steps
+## ChatGPT 步驟
 
 ### Custom GPT Instructions
 
-Once you've created a Custom GPT, copy the text below in the Instructions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建立好 Custom GPT 後，把下面的文字複製到 Instructions 欄位。有疑問可以看[入門範例](https://platform.openai.com/docs/actions/getting-started)，裡面更詳細說明這一步。
 
 ```
 # Trigger
@@ -253,15 +264,15 @@ Is there someone internally who is championing our solution? Mention names, role
 ### (Optional) Competition
 Mention any competing vendors, internal builds, or alternative solutions discussed.
 ```
-In the above example, replace the query in (3) to retrieves the Gong Call IDs from your custom Salesforce object.
+上面的例子裡，請把 (3) 的查詢換成從你自訂的 Salesforce 物件取出 Gong Call ID 的查詢。
 
-You will now create 2 separate actions - one to connect to Salesforce and the other to connect to the middleware that calls the Gong APIs
+接著你要建立 2 個獨立的 Action，一個連 Salesforce，另一個連呼叫 Gong API 的 middleware
 
-### OpenAPI Schema for Salesforce custom action
+### Salesforce 自訂 Action 的 OpenAPI Schema
 
-Once you've created a Custom GPT, copy the text below in the Actions panel. Have questions? Check out [Getting Started Example](https://platform.openai.com/docs/actions/getting-started) to see how this step works in more detail.
+建立好 Custom GPT 後，把下面的文字複製到 Actions 欄位。有疑問可以看[入門範例](https://platform.openai.com/docs/actions/getting-started)，裡面更詳細說明這一步。
 
-Below is an example of what connecting to Salesforce might look like. You'll need to insert your URL in this section.
+下面是連接 Salesforce 的範例，你需要在這一段填入你的 URL。
 
 ```javascript
 openapi: 3.1.0
@@ -361,11 +372,11 @@ components:
       additionalProperties: true
 ```
 
-### Authentication instructions for Salesforce custom actions
-Please follow the steps shown in [GPT Actions library - Salesforce](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#in-chatgpt)
+### Salesforce 自訂 Action 的認證設定
+請照 [GPT Actions library - Salesforce](https://cookbook.openai.com/examples/chatgpt/gpt_actions_library/gpt_action_salesforce#in-chatgpt) 裡的步驟做
 
-### OpenAPI Schema for the middleware that connects to Gong
-In this example, we are setting this up for an Azure Function that calls the Gong APIs. Replace `url` with your own Middleware URL
+### 連接 Gong 的 middleware 的 OpenAPI Schema
+這個例子是針對呼叫 Gong API 的 Azure Function 來設定。請把 `url` 換成你自己的 middleware URL
 
 ```
 openapi: 3.1.0
@@ -456,6 +467,18 @@ paths:
 ```
 
 
-*Are there integrations that you’d like us to prioritize? Are there errors in our integrations? File a PR or issue in our github, and we’ll take a look.*
+*有想要我們優先處理的整合嗎？我們的整合有錯誤嗎？歡迎到 GitHub 提 PR 或 issue，我們會處理。*
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 多個系統的整合可以拆成多個 Action，每個 Action 各有自己的 OpenAPI schema 和認證。
+- Gong 這類不方便直接給 GPT 呼叫的 API，可以用 serverless middleware 包起來，順便清理回應。
+- middleware 在回傳前整理資料，能減少給 ChatGPT 的雜訊和 token。
+- Custom GPT instructions 負責定義步驟順序，像是先查 Salesforce 拿 Call ID，再取 Gong 逐字稿。
+- 用 MEDPICC、SPICED 這類框架引導摘要，輸出會比較結構化。
+
+## 練習
+
+1. 在 middleware 程式裡，把回傳的逐字稿欄位只留下發言者和文字，看回應大小變化。
+2. 修改 instructions 的 (3)，改成查你自己物件的 Call ID 欄位名稱。
+3. 在 instructions 裡把摘要框架從 MEDPICC 換成 SPICED，比較 GPT 輸出的結構。

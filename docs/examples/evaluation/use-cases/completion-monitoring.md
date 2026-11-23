@@ -1,28 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/completion-monitoring.ipynb
 ---
 
-# Evals API Use-case - Monitoring stored completions
+# Evals API 使用案例：監控已儲存的 completions
 
 > 原文：[examples/evaluation/use-cases/completion-monitoring.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/completion-monitoring.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Evals API 檢查 prompt 改動有沒有造成 regression。資料來源是 production 已儲存的 chat completions，用兩個版本的 prompt 比較表現。
 
+## 學完你會
+- 用 `store=True` 和 metadata 記錄 chat completions，並以 stored completions 當 eval 的資料來源
+- 建立 Eval（data source config 加上 model grader）和多個 Run
+- 用 metadata filter 比較不同 prompt 版本，也能換模型重新產生 completions 比較
 
-Evals are **task-oriented** and iterative, they're the best way to check how your LLM integration is doing and improve it.
+## 開跑前
+需要 OpenAI API key。建立的 completions 要在 https://platform.openai.com/logs 看得到，後面步驟才能用。
 
-In the following eval, we are going to focus on the task of **detecting our prompt changes for regressions**.
+Evals 是**以任務為導向**且可迭代的，是檢查你的 LLM 整合表現、並加以改進的最好方式。
 
-Our use-case is:
-1. We have been logging chat completion requests by setting `store=True` in our production chat completions requests. Note that you can also enable "on by default" logging in your admin panel (https://platform.openai.com/settings/organization/data-controls/data-retention).
-2. We want to see whether our prompt changes have introduced regressions.
+下面這個 eval 要處理的任務是**偵測 prompt 改動造成的 regression**。
 
-## Evals structure
+我們的使用情境是：
+1. 我們一直在 production 的 chat completions 請求裡設定 `store=True` 來記錄請求。注意你也可以在管理面板開啟「預設記錄」（https://platform.openai.com/settings/organization/data-controls/data-retention）。
+2. 我們想知道 prompt 改動有沒有造成 regression。
 
-Evals have two parts, the "Eval" and the "Run". An "Eval" holds the configuration for your testing criteria and the structure of the data for your "Runs". An Eval can have many Runs, which are each evaluated using your testing criteria.
+## Evals 的結構
+
+Evals 有兩個部分，「Eval」和「Run」。「Eval」保存你的測試準則設定，以及「Run」的資料結構。一個 Eval 可以有很多個 Run，每個 Run 都會用你的測試準則來評估。
 
 ```python
 from openai import AsyncOpenAI
@@ -33,13 +41,13 @@ os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "your-api-key")
 client = AsyncOpenAI()
 ```
 
-## Use-case
+## 使用案例
 
-We're testing the following integration, a push notifications summary, which takes in multiple push notifications and collapses them into a single one, this is a chat completions call.
+我們要測試的整合是推播通知摘要：它接收多則推播通知，並濃縮成一則，這是一個 chat completions 呼叫。
 
-# Generate our test data
+# 產生測試資料
 
-I'm going to produce simulated production chat completions requests with two different prompt versions to test how each performs. The first is a "good" prompt, the second is a "bad" prompt. These will have different metadata which we'll use later.
+我會用兩個不同版本的 prompt 產生模擬的 production chat completions 請求，測試各自的表現。第一個是「好」的 prompt，第二個是「壞」的 prompt。它們會帶不同的 metadata，後面會用到。
 
 ```python
 push_notification_data = [
@@ -131,9 +139,9 @@ for notifications in push_notification_data:
 await asyncio.gather(*tasks)
 ```
 
-You can view the completions you just created at https://platform.openai.com/logs. 
+你可以到 https://platform.openai.com/logs 查看剛建立的 completions。
 
-**Make sure that the chat completions show up, as they are necessary for the next step.**
+**請確認這些 chat completions 有出現，因為下一步需要它們。**
 
 ```python
 completions = await client.chat.completions.list()
@@ -141,17 +149,17 @@ assert completions.data, "No completions found. You may need to enable logs in y
 completions.data[0]
 ```
 
-# Setting up your eval
+# 設定你的 eval
 
-An Eval holds the configuration that is shared across multiple *Runs*, it has two components:
-1. Data source configuration `data_source_config` - the schema (columns) that your future *Runs* conform to.
-    - The `data_source_config` uses JSON Schema to define what variables are available in the Eval.
-2. Testing Criteria `testing_criteria` - How you'll determine if your integration is working for each *row* of your data source.
+Eval 保存多個 *Run* 共用的設定，有兩個組成：
+1. 資料來源設定 `data_source_config`：你之後的 *Run* 要遵循的 schema（欄位）。
+    - `data_source_config` 用 JSON Schema 定義 Eval 裡有哪些變數可用。
+2. 測試準則 `testing_criteria`：你要怎麼判斷資料來源的每一*列*，整合是否運作正常。
 
-For this use-case, we're using stored-completions, so we'll set up that data_source_config
+這個使用案例用的是 stored-completions，所以我們設定對應的 data_source_config
 
-**Important**
-You are likely to have many different stored completions use-cases, metadata is the best way to keep track of this for evals to keep them focused and task oriented.
+**重要**
+你很可能有許多不同的 stored completions 使用情境，metadata 是追蹤它們的最佳方式，能讓 eval 保持聚焦、以任務為導向。
 
 ```python
 # We want our input data to be available in our variables, so we set the item_schema to
@@ -164,13 +172,13 @@ data_source_config = {
 }
 ```
 
-This data_source_config defines what variables are available throughout the eval.
+這個 data_source_config 定義了整個 eval 裡可用的變數。
 
-The stored completions config provides two variables for you to use throughout your eval:
-1. {{item.input}} - the messages sent to the completions call
-2. {{sample.output_text}} - the text response from the assistant
+stored completions 的設定提供兩個變數，讓你在 eval 裡使用：
+1. {{item.input}}：送進 completions 呼叫的 messages
+2. {{sample.output_text}}：assistant 回應的文字
 
-**Now, we'll use those variables to set up our test criteria.**
+**接下來用這些變數來設定測試準則。**
 
 ```python
 GRADER_DEVELOPER_PROMPT = """
@@ -202,11 +210,11 @@ push_notification_grader = {
 }
 ```
 
-The `push_notification_grader` is a model grader (llm-as-a-judge), which looks at the input `{{item.input}}` and the generated summary `{{sample.output_text}}` and labels it as "correct" or "incorrect".
+`push_notification_grader` 是一個 model grader（llm-as-a-judge），它會看輸入 `{{item.input}}` 和產生的摘要 `{{sample.output_text}}`，並把它標成 "correct" 或 "incorrect"。
 
-Note: under the hood, this uses structured outputs so that labels are always valid.
+注意：底層用的是 structured outputs，所以標籤一定是合法值。
 
-**Now we'll create our eval!, and start adding data to it**
+**現在建立 eval，並開始加入資料**
 
 ```python
 eval_create_result = await client.evals.create(
@@ -219,12 +227,12 @@ eval_create_result = await client.evals.create(
 eval_id = eval_create_result.id
 ```
 
-# Creating runs
+# 建立 Run
 
-Now that we have our eval set-up with our test_criteria, we can start adding runs.
-I want to compare the performance between my two **prompt versions**
+eval 和測試準則設定好之後，就可以開始加入 Run。
+我想比較我的兩個 **prompt 版本**之間的表現
 
-To do this, we just define our source as "stored_completions" with a metadata filter for each of our prompt versions.
+做法是把資料來源定義成 "stored_completions"，並為每個 prompt 版本加上 metadata filter。
 
 ```python
 # Grade prompt_version=v1
@@ -262,9 +270,9 @@ eval_run_result_v2 = await client.evals.runs.create(
 print(eval_run_result_v2.report_url)
 ```
 
-Just for to be thorough, let's see how this prompt would do with 4o, instead of 4o-mini, with both prompt versions as the starting point.
+為了更完整，我們看看這個 prompt 用 4o 而不是 4o-mini 表現如何，兩個 prompt 版本都當起點。
 
-All we have to do is reference the input messages ({{item.input}}) and set the model to 4o. Since we don't already have any stored completions for 4o, this eval run will generate new completions.
+只需要引用輸入 messages（{{item.input}}），並把模型設成 4o。因為我們還沒有任何 4o 的 stored completions，這個 eval run 會產生新的 completions。
 
 ```python
 tasks = []
@@ -292,8 +300,17 @@ for run in result:
     print(run.report_url)
 ```
 
-If you view that report, you'll see that we can see that prompt_version=v2 has a regression!
+打開那份報告就會看到，prompt_version=v2 出現了 regression！
 
-## Congratulations, you just discovered a bug, you could revert it, or make another prompt change, etc.!
+## 恭喜，你剛發現了一個 bug，可以把它 revert，或再改一次 prompt 等等！
 
-<!-- tutor:summary -->
+## 重點整理
+- Eval 保存測試準則和資料結構，Run 是用這些準則評估的一次執行，一個 Eval 可以有很多 Run。
+- 用 `store=True` 加 metadata 記錄 production 請求，就能直接拿真實流量當 eval 資料。
+- model grader 用 `{{item.input}}` 和 `{{sample.output_text}}` 兩個變數評斷輸出好壞。
+- 用 metadata filter 區分 prompt 版本，就能偵測 prompt 改動造成的 regression。
+
+## 練習
+1. 改 grader 的評分指示，讓它對摘要多加一條標準（例如不能超過一句話）。
+2. 新增第三個 prompt 版本的 completions，建立對應的 Run 一起比較。
+3. 把重新產生 completions 的 Run 換成別的模型，看 regression 是否仍然存在。

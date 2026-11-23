@@ -1,39 +1,52 @@
 ---
-translated: false
+translated: true
 source: examples/deep_research_api/introduction_to_deep_research_api.ipynb
 ---
-
-# Introduction to deep research in the OpenAI API
+# OpenAI API 的 deep research 入門
 
 > 原文：[examples/deep_research_api/introduction_to_deep_research_api.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/deep_research_api/introduction_to_deep_research_api.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+介紹 Deep Research API 怎麼用。你丟一個高層次的問題，它會自己拆解子問題、搜尋網路、整合結果，回傳附引用的結構化報告。範例用 semaglutide 的經濟影響研究當主題，並示範怎麼解析回應、看中間步驟、接 MCP，以及加上改寫 prompt 的流程。
 
-## Background
+## 學完你會
 
-The Deep Research API enables you to automate complex research workflows that require reasoning, planning, and synthesis across real-world information. It is designed to take a high-level query and return a structured, citation-rich report by leveraging an agentic model capable of decomposing the task, performing web searches, and synthesizing results.
+- 用 `responses` endpoint 搭配 `web_search_preview`、`background` 模式呼叫 Deep Research 模型
+- 解析回應：取出最終報告、inline citation，以及 reasoning、web search、code 執行等中間步驟
+- 用輕量模型先改寫或澄清使用者的 prompt，再交給 Deep Research
 
-Unlike ChatGPT where this process is abstracted away, the API provides direct programmatic access. When you send a request, the model autonomously plans sub-questions, uses tools like web search and code execution, and produces a final structured response. This cookbook will provide a brief introduction to the Deep Research API and how to use it.
+## 開跑前
 
-You can access Deep Research via the `responses` endpoint using the following models:
+- OpenAI API key（Deep Research 模型要付費）
+- 如果要試 MCP 的部分，需要一個可用的 MCP server 和你自己的文件
 
-- `o3-deep-research-2025-06-26`: Optimized for in-depth synthesis and higher-quality output  
-- `o4-mini-deep-research-2025-06-26`: Lightweight and faster, ideal for latency-sensitive use cases
+---
 
-## Setup
+## 背景
 
-### Install requirements
-Install the latest version of the OpenAI Python SDK.
+Deep Research API 讓你自動化需要推理、規劃，以及整合真實世界資訊的複雜研究流程。它的設計是接收高層次的查詢，利用一個具備 agent 能力的模型，拆解任務、執行網路搜尋、整合結果，最後回傳結構化、引用豐富的報告。
+
+不同於 ChatGPT 把這個過程隱藏起來，API 讓你直接用程式存取。送出請求後，模型會自行規劃子問題，使用網路搜尋和程式碼執行等 tool，產生最終的結構化回應。這份 cookbook 會簡單介紹 Deep Research API 和使用方式。
+
+可以透過 `responses` endpoint 使用 Deep Research，支援下面的模型：
+
+- `o3-deep-research-2025-06-26`：針對深入整合和較高品質的輸出最佳化
+- `o4-mini-deep-research-2025-06-26`：輕量且較快，適合對延遲敏感的情境
+
+## 設定
+
+### 安裝需要的套件
+安裝最新版的 OpenAI Python SDK。
 
 ```python
 !pip install --upgrade openai
 ```
 
-### Authenticate
-Import the OpenAI client and initialize with your API key.
+### 認證
+匯入 OpenAI client，並用你的 API key 初始化。
 
 ```python
 from openai import OpenAI
@@ -42,15 +55,15 @@ OPENAI_API_KEY="" # YOUR OPENAI_API_KEY
 client = OpenAI(api_key=OPENAI_API_KEY)
 ```
 
-## Getting started
+## 開始使用
 
-Let’s walk through an example of a Deep Research API call. Imagine we’re working at a healthcare financial services firm tasked with producing an in-depth report on the economic implications of recent medications used to treat type 2 diabetes and obesity—particularly semaglutide. Our goal is to synthesize clinical outcomes, cost-effectiveness, and regional pricing data into a structured, citation-backed analysis that could inform investment, payer strategy, or policy recommendations.
+我們來走一遍 Deep Research API 呼叫的範例。假設我們在一家醫療金融服務公司，任務是針對最近用來治療第二型糖尿病和肥胖的藥物（特別是 semaglutide）的經濟影響，產出一份深入報告。目標是把臨床結果、成本效益和各地區的價格資料，整合成有結構、有引用佐證的分析，供投資、保險給付策略或政策建議參考。
 
-To get started, let's:
-- Put our role in the system message, outlining the type of report we'd like to generate.
-- Set the `summary` parameter to `"auto"` for the best available summary. To request a more detailed report, set `summary` to `"detailed"`.
-- Include the required `web_search_preview` tool and optionally add `code_interpreter`.
-- Set the `background` parameter to `True`. Since a Deep Research task can take several minutes to execute, enabling background mode will allow you to run the request asynchronously without having to worry about timeouts or other connectivity issues.
+開始之前，我們要：
+- 在 system message 裡放入我們的角色，說明想產出的報告類型。
+- 把 `summary` 參數設成 `"auto"`，取得最好的摘要。想要更詳細的報告，可以把 `summary` 設成 `"detailed"`。
+- 加入必要的 `web_search_preview` tool，也可以選擇性加上 `code_interpreter`。
+- 把 `background` 參數設成 `True`。因為 Deep Research 任務可能要跑好幾分鐘，開啟 background 模式可以讓你非同步執行請求，不用擔心 timeout 或其他連線問題。
 
 ```python
 system_message = """
@@ -107,13 +120,13 @@ response = client.responses.create(
 )
 ```
 
-## Parse the Response
+## 解析回應
 
-The Deep Research API response includes a structured final answer along with inline citations, summaries of the reasoning steps, and source metadata.
+Deep Research API 的回應包含結構化的最終答案、inline citation、reasoning 步驟的摘要，以及來源的 metadata。
 
-### Extract the Final Report Output
+### 取出最終報告
 
-Here's the main text output of this report.
+這是報告的主要文字輸出。
 
 
 ```python
@@ -121,13 +134,13 @@ Here's the main text output of this report.
 print(response.output[-1].content[0].text)
 ```
 
-### Access Inline Citations and Metadata
-Inline citations in the response text are annotated and linked to their corresponding source metadata. Each annotation contains:
-- start_index and end_index: the character span in the text the citation refers to
-- title: a brief title of the source
-- url: the full source URL
+### 取得 inline citation 和 metadata
+回應文字裡的 inline citation 都有標註，並連結到對應的來源 metadata。每個 annotation 包含：
+- start_index 和 end_index：citation 對應到文字中的字元範圍
+- title：來源的簡短標題
+- url：完整的來源 URL
 
-This structure will allow you to build a citation list or bibliography, add clickable hyperlinks in downstream apps, and highlight & trace data-backed claims in your report.
+有了這個結構，你就能建立引用清單或參考文獻、在下游應用加上可點擊的超連結，並標示與追溯報告中有資料佐證的論述。
 
 ```python
 annotations = response.output[-1].content[0].annotations
@@ -138,12 +151,12 @@ for i, citation in enumerate(annotations):
     print(f"  Location: chars {citation.start_index}–{citation.end_index}")
 ```
 
-### Inspect Intermediate Steps
-The Deep Research API also exposes all intermediate steps taken by the agent, including reasoning steps, web search calls, and code executions. You can use these to debug, analyze, or visualize how the final answer was constructed.
-Each intermediate step is stored in `response.output`, and the `type` field indicates what kind it is.
+### 檢視中間步驟
+Deep Research API 也會公開 agent 做過的所有中間步驟，包含 reasoning 步驟、網路搜尋呼叫和程式碼執行。你可以用這些來 debug、分析，或視覺化最終答案是怎麼組出來的。
+每個中間步驟都存在 `response.output` 裡，`type` 欄位表示它是哪一種。
 
-#### Reasoning Step
-These represent internal summaries or plans generated by the model as it reasons through sub-questions.
+#### Reasoning 步驟
+這些是模型在推理子問題時產生的內部摘要或計畫。
 
 ```python
 # Find the first reasoning step
@@ -152,8 +165,8 @@ for s in reasoning.summary:
     print(s.text)
 ```
 
-#### Web Search Call
-These show what search queries were executed and can help you trace what information the model retrieved.
+#### 網路搜尋呼叫
+這些顯示執行過哪些搜尋查詢，能幫你追蹤模型取得了哪些資訊。
 
 ```python
 # Find the first web search step
@@ -162,8 +175,8 @@ print("Query:", search.action["query"])
 print("Status:", search.status)
 ```
 
-#### Code Execution
-If the model used the code interpreter (e.g. for parsing data or generating charts), those steps will appear as type "code_interpreter_call" or similar.
+#### 程式碼執行
+如果模型用了 code interpreter（例如解析資料或產生圖表），這些步驟會以 "code_interpreter_call" 或類似的 type 出現。
 
 ```python
 # Find a code execution step (if any)
@@ -177,11 +190,11 @@ else:
 
 #### Model Context Protocol (MCP)
 
-Suppose you would like to pull in your own internal documents as part of a Deep Research task. The Deep Research models and the Responses API both support MCP-based tools, so you can extend them to query your private knowledge stores or other 3rd party services.
+假設你想在 Deep Research 任務中引入自己的內部文件。Deep Research 模型和 Responses API 都支援 MCP 型的 tool，所以你可以擴充它們，去查詢你的私有知識庫或其他第三方服務。
 
-In the example below, we configure an MCP tool that lets Deep Research fetch your organizations internal semaglutide studies on demand. The MCP server is a proxy for the OpenAI File Storage service that automagically vectorizes your uploaded files for performant retrieval.
+在下面的例子裡，我們設定一個 MCP tool，讓 Deep Research 可以隨需取得你組織內部的 semaglutide 研究。這個 MCP server 是 OpenAI File Storage 服務的 proxy，會自動把你上傳的檔案向量化，方便高效檢索。
 
-If you would like to see _how_ we built this simple MCP server, refer to [this related cookbook](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme).
+想看這個簡單的 MCP server 是_怎麼_建的，請參考[這份相關的 cookbook](https://cookbook.openai.com/examples/deep_research_api/how_to_build_a_deep_research_mcp_server/readme)。
 
 ```python
 # system_message includes reference to internal file lookups for MCP.
@@ -239,9 +252,9 @@ response = client.responses.create(
 )
 ```
 
-## Reviewing your response
+## 檢視你的回應
 
-First 100 characters of your Research Report, followed by Citations and MCP tool calls. 
+研究報告的前 100 個字元，後面接著 citation 和 MCP tool 呼叫。
 
 ```python
 # Grab the full report text once
@@ -301,20 +314,20 @@ for name, server, args in calls:
 print("--------")
 ```
 
-## Clarifying Questions in ChatGPT vs. the Deep Research API
-If you’ve used Deep Research in ChatGPT, you may have noticed that it often asks follow-up questions after you submit a query. This is intentional: ChatGPT uses an intermediate model (like gpt-4.1) to help clarify your intent and gather more context (such as your preferences, goals, or constraints) before the research process begins. This extra step helps the system tailor its web searches and return more relevant and targeted results.
+## ChatGPT 和 Deep Research API 的澄清問題差異
+如果你在 ChatGPT 用過 Deep Research，可能注意到送出查詢後它常會追問。這是刻意的：ChatGPT 會用一個中間模型（像 gpt-4.1）幫忙釐清你的意圖，並在研究開始前收集更多 context（例如你的偏好、目標或限制）。這個額外的步驟能讓系統調整網路搜尋，回傳更相關、更有針對性的結果。
 
-In contrast, the Deep Research API skips this clarification step. As a developer, you can configure this processing step to rewrite the user prompt or ask a set of clarifying questions, since the model expects fully-formed prompts up front and will not ask for additional context or fill in missing information; it simply starts researching based on the input it receives.
+相較之下，Deep Research API 跳過這個澄清步驟。因為模型預期一開始就拿到完整的 prompt，不會要求額外的 context，也不會補足缺漏的資訊，它只會根據收到的輸入開始研究，所以身為開發者，你可以自行設定這個處理步驟，來改寫使用者 prompt 或問一組澄清問題。
 
-To get strong, reliable outputs from the API, you can use two approaches.
-- Use a prompt rewriter using another lightweight model (e.g., gpt-4.1) to expand or specify user queries before passing them to the research model.
-- Include all relevant details: desired scope, comparisons, metrics, regions, preferred sources, and expected output format.
+要從 API 得到穩定可靠的好輸出，可以用兩種做法。
+- 用另一個輕量模型（例如 gpt-4.1）做 prompt rewriter，在把使用者查詢交給研究模型前，先擴充或具體化。
+- 把所有相關細節都放進去：想要的範圍、比較對象、指標、地區、偏好的來源，以及預期的輸出格式。
 
-This setup gives developers full control over how research tasks are framed, but also places greater responsibility on the quality of the input prompt. Here's an example of a generic rewriting_prompt to better direct the subsequent deep research query.
+這樣的設計讓開發者完全掌控研究任務怎麼被框定，但也讓輸入 prompt 的品質責任更重。下面是一個通用的 rewriting_prompt 範例，用來更好地引導後續的 deep research 查詢。
 
 ![../../images/intro_dr.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/intro_dr.png)
 
-Here's an example of a rewriting prompt:
+這是一個改寫 prompt 的範例：
 
 ```python
 suggested_rewriting_prompt = """
@@ -371,11 +384,11 @@ new_query = response.output[0].content[0].text
 print(new_query)
 ```
 
-In this instance, a user submitted a generic or open-ended query without specifying key details like travel dates, destination preferences, budget, interests, or travel companions; the rewriting prompt rewrote the query so Deep Research will attempt to generate a broad and inclusive response that anticipates common use cases.
+在這個例子裡，使用者送出的是泛泛、開放式的查詢，沒有說明旅行日期、目的地偏好、預算、興趣或同行的人等關鍵細節。改寫 prompt 把查詢改寫後，Deep Research 會嘗試產生廣泛、涵蓋面大的回應，預先考慮常見的使用情境。
 
-While this behavior can be helpful in surfacing a wide range of options, it often leads to verbosity, higher latency, and increased token usage, as the model must account for many possible scenarios. This is especially true for queries that trigger complex planning or synthesis tasks (e.g. multi-destination travel itineraries, comparative research, product selection).
+這種行為在呈現各種選項時很有用，但常常導致內容冗長、延遲變高、token 用量增加，因為模型必須考慮許多可能的情境。對於會觸發複雜規劃或整合任務的查詢（例如多目的地的旅遊行程、比較型研究、產品選擇）尤其如此。
 
-Instead of proceeding immediately with a broad research plan, let's trying using a lighter weight model to gently ask clarification questions from the user before generating a full answer and then using the rewriting prompt for clearer output for the model.
+與其馬上照廣泛的研究計畫進行，我們改試試用較輕量的模型，先溫和地向使用者問澄清問題，再產生完整答案，然後用改寫 prompt 讓模型得到更清楚的輸出。
 
 ```python
 suggested_clariying_prompt = """"
@@ -463,16 +476,28 @@ deep_research_call = client.responses.create(
 print(deep_research_call.output[-1].content[0].text)
 ```
 
-And there you have it! A deep research report crafted for your upcoming trip to France!
+這樣就完成了！一份為你即將到來的法國之旅量身打造的 deep research 報告！
 
-In this notebook, we explored how to use the Deep Research API to automate complex, real-world research tasks, from analyzing the economic impact of semaglutide to planning a trip to France that works for you. Deep Research shines when you need structured, citation-backed answers grounded in real-world evidence. Some standout use cases include:
-- Product comparisons and market analyses
-- Competitive intelligence and strategy reports
-- Technical literature reviews and policy synthesis
+這份 notebook 探討了怎麼用 Deep Research API 自動化複雜的真實世界研究任務，從分析 semaglutide 的經濟影響，到規劃一趟適合你的法國旅行。需要有結構、有引用、以真實證據為基礎的答案時，Deep Research 特別好用。幾個突出的使用情境包括：
+- 產品比較和市場分析
+- 競爭情報和策略報告
+- 技術文獻回顧和政策整合
 
 
-Whether you're looking to build research agents, generate structured reports, or integrate high-quality synthesis into your workflows, we hope the examples here help you get started.
+不管你是想建構研究 agent、產生結構化報告，或是把高品質的整合能力放進你的工作流程，希望這裡的範例能幫你起步。
 
-What's next? [Deep Research Agents](https://cookbook.openai.com/examples/deep_research_api/introduction_to_deep_research_api_agents)
+接下來？[Deep Research Agents](https://cookbook.openai.com/examples/deep_research_api/introduction_to_deep_research_api_agents)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Deep Research 是 agent 式的模型，會自己拆子問題、搜尋、整合，用 `responses` endpoint 呼叫，任務很久所以要開 `background`。
+- 回應不只有報告，`response.output` 裡有 reasoning、搜尋、程式碼執行等中間步驟，可用來 debug 和追溯來源。
+- Inline citation 的 annotation 帶字元範圍、標題和 URL，可以直接做參考文獻或超連結。
+- 它不像 ChatGPT 會先追問，prompt 要自己寫完整，或用輕量模型先改寫、澄清。
+- MCP tool 能讓 Deep Research 查你自己的私有資料。
+
+## 練習
+
+1. 把 `summary` 從 `"auto"` 改成 `"detailed"`，比較 reasoning 摘要的差異。
+2. 換成 `o4-mini-deep-research-2025-06-26`，比較跑的時間和報告品質。
+3. 把研究主題換成你自己的，並寫一段程式用 annotation 的 start_index、end_index、url 產出一份參考文獻清單。

@@ -1,41 +1,49 @@
 ---
-translated: false
+translated: true
 source: examples/Parse_PDF_docs_for_RAG.ipynb
 ---
 
-# How to parse PDF docs for RAG
+# 如何為 RAG 解析 PDF 文件
 
 > 原文：[examples/Parse_PDF_docs_for_RAG.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Parse_PDF_docs_for_RAG.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範用 GPT-4o 把簡報、網頁匯出的 PDF 這類內容豐富的文件，轉成 RAG 可以用的文字。流程是把 PDF 轉成圖片，讓 GPT-4o 看圖產生內容，再 embedding 後做檢索和回答。
 
+## 學完你會
+- 用 pdfminer 抽文字，並把 PDF 頁面轉成圖片交給 GPT-4o 分析
+- 按頁切 chunk、用 OpenAI embeddings 建立可檢索的內容
+- 檢索相關內容當 context，讓 GPT-4o 回答問題
 
-This notebook shows how to leverage GPT-4o to turn rich PDF documents such as slide decks or exports from web pages into usable content for your RAG application.
+## 開跑前
+需要 OpenAI API key，並在本機安裝 `poppler`（`pdf2image` 需要）。處理全部文件約 2 分鐘。
 
-This technique can be used if you have a lot of unstructured data containing valuable information that you want to be able to retrieve as part of your RAG pipeline.
+這份 notebook 示範怎麼用 GPT-4o 把簡報或網頁匯出這類內容豐富的 PDF，變成 RAG 應用可以用的內容。
 
-For example, you could build a Knowledge Assistant that could answer user queries about your company or product based on information contained in PDF documents. 
+如果你有大量非結構化資料，裡面有想在 RAG pipeline 裡檢索到的有價值資訊，就可以用這個技巧。
 
-The example documents used in this notebook are located at [data/example_pdfs](https://github.com/openai/openai-cookbook/blob/main/examples/data/example_pdfs). They are related to OpenAI's APIs and various techniques that can be used as part of LLM projects.
+例如你可以做一個 Knowledge Assistant，根據 PDF 文件裡的資訊回答使用者關於公司或產品的問題。
 
-## Data preparation
+範例文件放在 [data/example_pdfs](https://github.com/openai/openai-cookbook/blob/main/examples/data/example_pdfs)，內容跟 OpenAI 的 API 以及 LLM 專案會用到的各種技巧有關。
 
-In this section, we will process our input data to prepare it for retrieval.
+## 資料準備
 
-We will do this in 2 ways:
+這個段落先處理輸入資料，讓它可以被檢索。
 
-1. Extracting text with pdfminer
-2. Converting the PDF pages to images to analyze them with GPT-4o
+我們用兩種方式：
 
-You can skip the 1st method if you want to only use the content inferred from the image analysis.
+1. 用 pdfminer 抽文字
+2. 把 PDF 頁面轉成圖片，交給 GPT-4o 分析
 
-### Setup
+如果只想用圖片分析得到的內容，可以跳過第 1 種方法。
 
-We need to install a few libraries to convert the PDF to images and extract the text (optional).
+### 環境設定
 
-**Note: You need to install `poppler` on your machine for the `pdf2image` library to work. You can follow the instructions to install it [here](https://pypi.org/project/pdf2image/).**
+要安裝幾個函式庫，用來把 PDF 轉成圖片和抽文字（文字抽取是選用）。
+
+**注意：你的機器要先安裝 `poppler`，`pdf2image` 才能運作。安裝方式請看[這裡](https://pypi.org/project/pdf2image/)。**
 
 ```python
 %pip install pdf2image -q
@@ -85,7 +93,7 @@ from rich import print
 from ast import literal_eval
 ```
 
-### File processing
+### 檔案處理
 
 ```python
 def convert_doc_to_images(path):
@@ -97,7 +105,7 @@ def extract_text_from_doc(path):
     return text
 ```
 
-#### Testing with an example
+#### 用範例測試
 
 ```python
 file_path = "data/example_pdfs/fine-tuning-deck.pdf"
@@ -114,9 +122,9 @@ for img in images:
     display(img)
 ```
 
-### Image analysis with GPT-4o
+### 用 GPT-4o 做圖片分析
 
-After converting a PDF file to multiple images, we'll use GPT-4o to analyze the content based on the images.
+PDF 轉成多張圖片後，我們用 GPT-4o 根據圖片分析內容。
 
 ```python
 # Initializing OpenAI client - see https://platform.openai.com/docs/quickstart?context=python
@@ -203,7 +211,7 @@ def analyze_image(data_uri):
     return response.choices[0].message.content
 ```
 
-#### Testing with an example
+#### 用範例測試
 
 ```python
 img = images[2]
@@ -232,7 +240,7 @@ print(res)
     10 examples. This ensures the model has enough data to learn from and improve its performance.
     ```
 
-#### Processing all documents
+#### 處理所有文件
 
 ```python
 files_path = "data/example_pdfs"
@@ -248,12 +256,12 @@ def analyze_doc_image(img):
     return data
 ```
 
-We will list all files in the example folder and process them by 
-1. Extracting the text
-2. Converting the docs to images
-3. Analyzing pages with GPT-4o
+我們會列出範例資料夾裡所有檔案，依序做這幾件事：
+1. 抽取文字
+2. 把文件轉成圖片
+3. 用 GPT-4o 分析頁面
 
-Note: This takes about ~2 mins to run. Feel free to skip and load directly the result file (see below).
+注意：這一步大約要跑 2 分鐘。可以跳過，直接載入結果檔（見下方）。
 
 ```python
 docs = []
@@ -340,13 +348,13 @@ with open(json_path, 'r') as f:
     docs = json.load(f)
 ```
 
-### Embedding content
-Before embedding the content, we will chunk it logically by page.
-For real-world scenarios, you could explore more advanced ways to chunk the content:
-- Cutting it into smaller pieces
-- Adding data - such as the slide title, deck title and/or the doc description - at the beginning of each piece of content. That way, each independent chunk can be in context
+### 內容 embedding
+embedding 之前，先把內容按頁合理地切 chunk。
+實際情境可以考慮更進階的切法：
+- 切成更小的片段
+- 在每個片段開頭加上資料，例如投影片標題、簡報標題或文件描述，這樣每個獨立的 chunk 都有上下文
 
-For the sake of brevity, we will use a very simple chunking strategy and rely on separators to split the text by page.
+為了簡單起見，我們用很單純的切法，靠分隔符號按頁切開文字。
 
 ```python
 # Chunking content by page and merging together slides text & description if applicable
@@ -6541,7 +6549,7 @@ df["embeddings"] = df.embeddings.apply(literal_eval).apply(np.array)
 
 ## Retrieval-augmented generation
 
-The last step of the process is to generate outputs in response to input queries, after retrieving content as context to reply.
+流程最後一步，是先檢索內容當 context，再針對輸入的問題產生回答。
 
 ```python
 system_prompt = '''
@@ -7003,22 +7011,31 @@ for ex in example_inputs:
     --------------
     ```
 
-## Wrapping up
+## 收尾
 
-In this notebook, we have learned how to develop a basic RAG pipeline based on PDF documents. This includes:
+這份 notebook 學到怎麼開發一個以 PDF 文件為基礎的基本 RAG pipeline，包含：
 
-- How to parse pdf documents, taking slide decks and an export from an HTML page as examples, using a python library as well as GPT-4o to interpret the visuals
-- How to process the extracted content, clean it and chunk it into several pieces
-- How to embed the processed content using OpenAI embeddings
-- How to retrieve content that is relevant to an input query
-- How to use GPT-4o to generate an answer using the retrieved content as context
+- 怎麼解析 PDF 文件，以簡報和 HTML 頁面匯出檔為例，用 Python 函式庫加上 GPT-4o 來解讀視覺內容
+- 怎麼處理抽出來的內容，清理並切成多個片段
+- 怎麼用 OpenAI embeddings 對處理後的內容做 embedding
+- 怎麼檢索跟輸入問題相關的內容
+- 怎麼用 GPT-4o 以檢索到的內容為 context 產生答案
 
-If you want to explore further, consider these optimisations:
+想進一步優化的話可以考慮：
 
-- Playing around with the prompts provided as examples
-- Chunking the content further and adding metadata as context to each chunk
-- Adding rule-based filtering on the retrieval results or re-ranking results to surface to most relevant content
+- 調整範例提供的 prompt
+- 把內容切得更細，並為每個 chunk 加上 metadata 當 context
+- 對檢索結果加規則式過濾，或做 re-ranking，把最相關的內容排到前面
 
-You can apply the techniques covered in this notebook to multiple use cases, such as assistants that can access your proprietary data, customer service or FAQ bots that can read from your internal policies, or anything that requires leveraging rich documents that would be better understood as images.
+這些技巧可以用在很多情境，例如能存取你專有資料的 assistant、讀內部政策的客服或 FAQ 機器人，或任何需要處理「用圖片看比較看得懂」的豐富文件的場合。
 
-<!-- tutor:summary -->
+## 重點整理
+- 簡報、網頁匯出的 PDF 光抽文字會漏掉視覺資訊，轉成圖片讓多模態模型看效果比較好。
+- 文字抽取和圖片分析可以並用，也可以只留圖片分析的結果。
+- 切 chunk 的策略會影響檢索品質，按頁切是最簡單的起點，加上標題等 metadata 會更好。
+- RAG 的流程是 embedding、檢索、把檢索結果塞進 prompt 給模型回答。
+
+## 練習
+1. 修改分析圖片的 prompt，要求 GPT-4o 輸出時多附上每頁的標題，看檢索結果有沒有變好。
+2. 把按頁切 chunk 改成每頁再切成更小的片段，並在每個片段開頭加上文件標題。
+3. 對檢索結果加一個相似度門檻或 re-ranking，低於門檻就回答「找不到」。

@@ -1,27 +1,35 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/bulk-experimentation.ipynb
 ---
-
-# Evals API Use-case - Bulk model and prompt experimentation
+# Evals API 使用案例：大量測試模型與 prompt
 
 > 原文：[examples/evaluation/use-cases/bulk-experimentation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/bulk-experimentation.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Evals API 一次測試多組模型和 prompt 的組合，目標是讓推播通知摘要器表現最好。建一個用 LLM 當評審的 Eval，再用 3 種 prompt 乘上 3 個模型跑出 9 個 Run。
+
+## 學完你會
+- 設定 Eval 的 `data_source_config`（JSON Schema）和 `testing_criteria`（model grader）。
+- 在 grader 裡用 `{{item.notifications}}` 和 `{{sample.output_text}}` 這些變數。
+- 用迴圈對所有 prompt 和模型的組合建立 Run，一次比較多種設定。
+
+## 開跑前
+- 需要 OpenAI API key（Evals 和模型呼叫會產生費用）。
 
 
-Evals are **task oriented** and iterative, they're the best way to check how your LLM integration is doing and improve it.
+Eval 是**以任務為導向**、可反覆迭代的，也是檢查 LLM 整合表現並加以改進的最佳方式。
 
-In the following eval, we are going to focus on the task of **testing many variants of models and prompts**.
+下面這個 eval 要處理的任務是**測試多種模型和 prompt 的變化**。
 
-Our use-case is:
-1. I want to get the best possible performance out of my push notifications summarizer
+我們的使用情境是：
+1. 我想讓我的推播通知摘要器得到最好的表現
 
-## Evals structure
+## Eval 的結構
 
-Evals have two parts, the "Eval" and the "Run". An "Eval" holds the configuration for your testing criteria and the structure of the data for your "Runs". An Eval `has_many` runs, that are evaluated by your testing criteria.
+Eval 有兩個部分，"Eval" 和 "Run"。"Eval" 存放測試標準的設定，以及 "Run" 所用資料的結構。一個 Eval `has_many` 個 run，這些 run 由你的測試標準來評估。
 
 ```python
 import pydantic
@@ -32,9 +40,9 @@ import os
 os.environ["OPENAI_API_KEY"] = os.environ.get("OPENAI_API_KEY", "your-api-key")
 ```
 
-## Use-case
+## 使用情境
 
-We're testing the following integration, a push notifications summarizer, which takes in multiple push notifications and collapses them into a single message.
+我們要測試的整合是推播通知摘要器，它接收多則推播通知，把它們濃縮成一則訊息。
 
 ```python
 class PushNotifications(pydantic.BaseModel):
@@ -69,14 +77,14 @@ result = summarize_push_notification(example_push_notifications_list.notificatio
 print(result.choices[0].message.content)
 ```
 
-# Setting up your eval
+# 設定你的 eval
 
-An Eval holds the configuration that is shared across multiple *Runs*, it has two components:
-1. Data source configuration `data_source_config` - the schema (columns) that your future *Runs* conform to.
-    - The `data_source_config` uses JSON Schema to define what variables are available in the Eval.
-2. Testing Criteria `testing_criteria` - How you'll determine if your integration is working for each *row* of your data source.
+Eval 存放多個 *Run* 共用的設定，包含兩個部分：
+1. 資料來源設定 `data_source_config`：之後的 *Run* 要符合的 schema（欄位）。
+    - `data_source_config` 用 JSON Schema 定義 Eval 裡可用的變數。
+2. 測試標準 `testing_criteria`：怎麼判斷你的整合對資料來源的每一*列*資料是否運作正常。
 
-For this use-case, we want to test if the push notification summary completion is good, so we'll set-up our eval with this in mind.
+這個使用情境要測試推播通知摘要的 completion 好不好，所以我們照這個目標設定 eval。
 
 ```python
 # We want our input data to be available in our variables, so we set the item_schema to
@@ -89,9 +97,9 @@ data_source_config = {
 }
 ```
 
-This data_source_config defines what variables are available throughout the eval.
+這個 data_source_config 定義了整個 eval 裡可用的變數。
 
-This item schema:
+這個 item schema：
 ```json
 {
   "properties": {
@@ -105,12 +113,12 @@ This item schema:
   "type": "object"
 }
 ```
-Means that we'll have the variable `{{item.notifications}}` available in our eval.
+表示 eval 裡會有 `{{item.notifications}}` 這個變數可用。
 
 `"include_sample_schema": True`
-Mean's that we'll have the variable `{{sample.output_text}}` available in our eval.
+表示 eval 裡會有 `{{sample.output_text}}` 這個變數可用。
 
-**Now, we'll use those variables to set up our test criteria.**
+**接下來，用這些變數來設定測試標準。**
 
 ```python
 GRADER_DEVELOPER_PROMPT = """
@@ -163,12 +171,12 @@ push_notification_grader = {
 }
 ```
 
-The `push_notification_grader` is a model grader (llm-as-a-judge) which looks at the input `{{item.notifications}}` and the generated summary `{{sample.output_text}}` and labels it as "correct" or "incorrect"
-We then instruct via the "passing_labels" what constitutes a passing answer.
+`push_notification_grader` 是一個 model grader（llm-as-a-judge），它看輸入 `{{item.notifications}}` 和產生的摘要 `{{sample.output_text}}`，把它標成 "correct" 或 "incorrect"。
+再透過 "passing_labels" 指定什麼樣的答案算通過。
 
-Note: under the hood, this uses structured outputs so that labels are always valid.
+注意：底層用的是 structured outputs，所以標籤一定是合法的。
 
-**Now we'll create our eval, and start adding data to it!**
+**現在建立 eval，開始加資料進去！**
 
 ```python
 eval_create_result = openai.evals.create(
@@ -182,10 +190,10 @@ eval_create_result = openai.evals.create(
 eval_id = eval_create_result.id
 ```
 
-# Creating runs
+# 建立 Run
 
-Now that we have our eval set-up with our testing_criteria, we can start to add a bunch of runs!
-We'll start with some push notification data.
+eval 和 testing_criteria 設定好之後，就可以開始加一堆 run 了！
+先從一些推播通知資料開始。
 
 ```python
 push_notification_data = [
@@ -241,14 +249,14 @@ push_notification_data = [
 """]
 ```
 
-Now we're going to set up a bunch of prompts to test.
+現在設定一批要測試的 prompt。
 
-We want to test a basic prompt, with a couple of variations:
-1. In one variation, we'll just have the basic prompt
-2. In the next one, we'll include some positive examples of what we want the summaries to look like
-3. In the final one, we'll include both positive and negative examples.
+我們想測試一個基本 prompt，再加幾個變化：
+1. 第一種只用基本 prompt
+2. 第二種加入一些我們想要的摘要長什麼樣的正面範例
+3. 最後一種同時加入正面和負面範例
 
-We'll also include a list of models to use.
+我們也會列出要使用的模型清單。
 
 ```python
 PROMPT_PREFIX = """
@@ -300,11 +308,11 @@ prompts = [
 models = ["gpt-4o", "gpt-4o-mini", "o3-mini"]
 ```
 
-**Now we can just loop through all prompts and all models to test a bunch of configurations at once!**
+**現在只要用迴圈跑過所有 prompt 和所有模型，就能一次測試一堆設定組合！**
 
-We'll use the 'completion' run data source with template variables for our push notification list.
+我們用 'completion' 的 run data source，並用 template 變數放入推播通知清單。
 
-OpenAI will handle making the completions calls for you and populating "sample.output_text"
+OpenAI 會幫你呼叫 completion，並填入 "sample.output_text"
 
 ```python
 for prompt_name, prompt in prompts:
@@ -346,6 +354,15 @@ for prompt_name, prompt in prompts:
 
 
 
-## Congratulations, you just tested 9 different prompt and model variations across your dataset!
+## 恭喜，你剛剛在資料集上測試了 9 種不同的 prompt 和模型組合！
 
-<!-- tutor:summary -->
+## 重點整理
+- Eval 放共用設定（資料結構和測試標準），Run 是用某組設定跑出來的一次評估，一個 Eval 有很多 Run。
+- `data_source_config` 決定 eval 裡有哪些變數可用，`include_sample_schema` 讓模型輸出變成 `{{sample.output_text}}`。
+- Model grader 是 llm-as-a-judge，用 `passing_labels` 定義什麼算通過。
+- 把 prompt 和模型做成清單再用迴圈建 Run，就能系統性地比較多種組合。
+
+## 練習
+1. 在 prompt 清單裡多加一個變化（例如要求摘要不超過 20 字），確認 Run 數量增加。
+2. 把模型清單換成你想比較的其他模型。
+3. 修改 `push_notification_grader` 的評分指示（例如要求摘要必須保留最重要的一則通知），看各組合的通過率變化。

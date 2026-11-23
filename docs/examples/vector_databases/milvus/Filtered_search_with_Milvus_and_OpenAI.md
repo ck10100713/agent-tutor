@@ -1,32 +1,43 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/milvus/Filtered_search_with_Milvus_and_OpenAI.ipynb
 ---
-
-# Filtered search with Milvus and OpenAI
+# 用 Milvus 和 OpenAI 做過濾式搜尋
 
 > 原文：[examples/vector_databases/milvus/Filtered_search_with_Milvus_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/milvus/Filtered_search_with_Milvus_and_OpenAI.ipynb)
 
+## 這篇在做什麼
 
+用 OpenAI 替電影簡介產生 embedding，存進 Milvus，再用語意搜尋找出相關的電影。搜尋時還能加上 metadata 的過濾條件，縮小結果範圍。
 
-<!-- tutor:goals -->
+## 學完你會
 
-### Finding your next movie
+- 用 Docker 啟動 Milvus standalone，並用 `pymilvus` 建立 collection 和 index
+- 批次呼叫 OpenAI embedding，連同 title、type、release_year、rating 一起寫進 Milvus
+- 用「描述文字加過濾表達式」的查詢，做帶 metadata 條件的向量搜尋
 
-In this notebook we will be going over generating embeddings of movie descriptions with OpenAI and using those embeddings within Milvus to find relevant movies. To narrow our search results and try something new, we are going to be using filtering to do metadata searches. The dataset in this example is sourced from HuggingFace datasets, and contains a little over 8 thousand movie entries.
+## 開跑前
 
-Lets begin by first downloading the required libraries for this notebook:
-- `openai` is used for communicating with the OpenAI embedding service
-- `pymilvus` is used for communicating with the Milvus server
-- `datasets` is used for downloading the dataset
-- `tqdm` is used for the progress bars
+- 需要 OpenAI API key
+- 需要 Docker，用來跑 Milvus（檔案資料夾裡的 `docker-compose.yaml`）
+- 這是 notebook 的內容，本機要先裝好下面提到的套件
+
+### 找你的下一部電影
+
+這份 notebook 會用 OpenAI 替電影簡介產生 embedding，再用這些 embedding 在 Milvus 裡找相關的電影。為了縮小搜尋結果、嘗試新東西，我們會用過濾做 metadata 搜尋。這個範例的資料集來自 HuggingFace datasets，有 8 千多筆電影資料。
+
+先下載這份 notebook 需要的套件：
+- `openai` 用來跟 OpenAI 的 embedding 服務溝通
+- `pymilvus` 用來跟 Milvus server 溝通
+- `datasets` 用來下載資料集
+- `tqdm` 用來顯示進度條
 
 
 ```python
 ! pip install openai pymilvus datasets tqdm
 ```
 
-With the required packages installed we can get started. Lets begin by launching the Milvus service. The file being run is the `docker-compose.yaml` found in the folder of this file. This command launches a Milvus standalone instance which we will use for this test.  
+套件裝好就能開始了。先把 Milvus 服務啟動。要跑的檔案是這個檔案所在資料夾裡的 `docker-compose.yaml`。這個指令會啟動一個 Milvus standalone 實例，我們用它來做這次測試。  
 
 ```python
 ! docker compose up -d
@@ -82,16 +93,16 @@ With the required packages installed we can get started. Lets begin by launching
     ... (省略 49 行)
     ```
 
-With Milvus running we can setup our global variables:
-- HOST: The Milvus host address
-- PORT: The Milvus port number
-- COLLECTION_NAME: What to name the collection within Milvus
-- DIMENSION: The dimension of the embeddings
-- OPENAI_ENGINE: Which embedding model to use
-- openai.api_key: Your OpenAI account key
-- INDEX_PARAM: The index settings to use for the collection
-- QUERY_PARAM: The search parameters to use
-- BATCH_SIZE: How many movies to embed and insert at once
+Milvus 跑起來之後，就可以設定全域變數：
+- HOST：Milvus 的主機位址
+- PORT：Milvus 的 port 號碼
+- COLLECTION_NAME：collection 在 Milvus 裡的名稱
+- DIMENSION：embedding 的維度
+- OPENAI_ENGINE：要用哪個 embedding 模型
+- openai.api_key：你的 OpenAI 帳號 key
+- INDEX_PARAM：collection 用的 index 設定
+- QUERY_PARAM：搜尋用的參數
+- BATCH_SIZE：一次 embed 並插入多少部電影
 
 ```python
 import openai
@@ -151,8 +162,8 @@ collection.create_index(field_name="embedding", index_params=INDEX_PARAM)
 collection.load()
 ```
 
-## Dataset
-With Milvus up and running we can begin grabbing our data. Hugging Face Datasets is a hub that holds many different user datasets, and for this example we are using HuggingLearners's netflix-shows dataset. This dataset contains movies and their metadata pairs for over 8 thousand movies. We are going to embed each description and store it within Milvus along with its title, type, release_year and rating.
+## 資料集
+Milvus 跑起來之後，就可以開始抓資料。Hugging Face Datasets 是一個存放各種使用者資料集的 hub，這個範例用的是 HuggingLearners 的 netflix-shows 資料集。它包含 8 千多部電影和它們的 metadata。我們要把每一筆簡介 embed，連同 title、type、release_year 和 rating 一起存進 Milvus。
 
 ```python
 import datasets
@@ -167,8 +178,8 @@ dataset = datasets.load_dataset('hugginglearners/netflix-shows', split='train')
     Found cached dataset csv (/Users/filiphaltmayer/.cache/huggingface/datasets/hugginglearners___csv/hugginglearners--netflix-shows-03475319fc65a05a/0.0.0/6b34fb8fcf56f7c8ba51dc895bfa2bfbe43546f190a60fcf74bb5e8afdcc2317)
     ```
 
-## Insert the Data
-Now that we have our data on our machine we can begin embedding it and inserting it into Milvus. The embedding function takes in text and returns the embeddings in a list format. 
+## 插入資料
+資料已經在本機了，就可以開始做 embedding 並插入 Milvus。Embedding 函式吃文字，回傳 list 格式的 embedding。
 
 ```python
 # Simple function that converts the texts to embeddings
@@ -180,7 +191,7 @@ def embed(texts):
     return [x['embedding'] for x in embeddings['data']]
 ```
 
-This next step does the actual inserting. We iterate through all the entries and create batches that we insert once we hit our set batch size. After the loop is over we insert the last remaining batch if it exists. 
+下一步才是真正的插入。我們走訪所有項目，累積成 batch，一達到設定的 batch size 就插入。迴圈結束後，如果還有剩下的 batch，就把最後一批也插入。
 
 ```python
 from tqdm import tqdm
@@ -218,8 +229,8 @@ if len(data[0]) != 0:
     100%|██████████| 8807/8807 [00:31<00:00, 276.82it/s]
     ```
 
-## Query the Database
-With our data safely inserted in Milvus, we can now perform a query. The query takes in a tuple of the movie description you are searching for an the filter to use. More info about the filter can be found [here](https://milvus.io/docs/boolean.md). The search first prints out your description and filter expression. After that for each result we print the score, title, type, release year, rating, and description of the result movies. 
+## 查詢資料庫
+資料安全存進 Milvus 之後，就可以做查詢了。查詢吃一個 tuple，裡面是你要搜尋的電影描述和要用的過濾條件。過濾語法的更多說明在[這裡](https://milvus.io/docs/boolean.md)。搜尋會先印出你的描述和過濾表達式，接著對每個結果印出分數、title、type、release year、rating 和該電影的簡介。
 
 ```python
 import textwrap
@@ -272,4 +283,15 @@ query(my_query)
     pet at a dog show to save a baby panda from an illegal sale.
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 流程是：簡介轉 embedding、連同 metadata 存進 Milvus、查詢時用 embedding 找相似度。
+- Milvus 的 collection 除了向量，還可以存 title、type、release_year、rating 等欄位，這些欄位才能拿來過濾。
+- 過濾是在向量搜尋時一起套用的條件，不是搜完再手動篩，所以回來的結果都已經符合條件。
+- 批次 embed 和批次插入，比一筆一筆處理有效率，記得迴圈結束後補插最後一批。
+
+## 練習
+
+1. 把 `BATCH_SIZE` 改大或改小，觀察插入全部資料的時間怎麼變。
+2. 在查詢的過濾表達式裡，改用 `release_year` 做範圍條件（例如只找 2015 年之後的片），比較結果跟沒過濾時有什麼不同。
+3. 再加一個過濾條件，同時限制 `type` 和 `rating`，並用同一段描述比較不同組合的結果。

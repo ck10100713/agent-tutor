@@ -1,74 +1,86 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/workspace_agents/workspace-agents-api-trigger.ipynb
 ---
-
-# Trigger a Workspace Agent from the API
+# 用 API 觸發 Workspace Agent
 
 > 原文：[examples/chatgpt/workspace_agents/workspace-agents-api-trigger.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/workspace_agents/workspace-agents-api-trigger.ipynb)
 
-Configure a Workspace Agent, add an API channel, and send a live trigger that writes to the agent's configured destination.
+設定一個 Workspace Agent，加上 API channel，再送出一個真實的 trigger，讓 agent 把結果寫到它設定好的目的地。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇示範怎麼從外部系統用 HTTP 請求啟動一個存在 ChatGPT 裡的 Workspace Agent。你會送一筆事件、確認 trigger 被接受，再去 agent 的目的地確認結果有寫進去。API 只負責啟動，之後做什麼由 agent 的 instructions、app 權限和核准設定決定。
+
+## 學完你會
+
+- 建立一個 Workspace Agent，加上 API channel，拿到 `agtch_...` 開頭的 trigger ID
+- 用 Python 標準函式庫對 trigger endpoint 送 `POST`，帶上 access token、`conversation_key` 和 `Idempotency-Key`
+- 看懂 202、401、403、404、409 各代表什麼，並到目的地驗證 agent 真的有寫入
+
+## 開跑前
+
+- 要有啟用 Workspace Agents 的 ChatGPT workspace，並有建立和分享 agent 的權限
+- 一個存好的 Workspace Agent，且有一個它能寫入的目的地（channel、文件、email、ticket 都可以）
+- 一組帶 Workspace Agents scope 的 access token（不是 OpenAI Platform API key）
+
+Workspace Agents 讓團隊把重複的工作存在 ChatGPT 裡：instructions、連接的 context、app 動作、核准流程和輸出格式。API trigger 則讓另一個系統在 ChatGPT 之外有工作開始時，去啟動這個存好的流程。
+
+這份 notebook 會送出一筆來源事件，確認 trigger 被接受，再到 agent 的目的地確認結果。API 負責啟動 run，接下來發生什麼由 instructions、app 權限和核准設定控制。
+
+*API 觸發的 run 是非同步的。endpoint 只會把 run 排進佇列，不會回傳 agent 完成後的回覆。*
 
 
-Workspace Agents let teams save repeatable work in ChatGPT: instructions, connected context, app actions, approvals, and output format. API triggers let another system start that saved workflow when work begins outside ChatGPT.
+## 你會做出什麼
 
-In this notebook, you send one source event, confirm the trigger was accepted, and verify the result in the agent's destination. The API starts the run. The instructions, app permissions, and approval settings control what happens next.
-
-*API-triggered runs are asynchronous. The endpoint queues the run, but it does not return the completed agent response.*
+做完之後，你會有一個存好的 Workspace Agent、一個帶 `agtch_...` trigger ID 的 API channel，還有一段能對你的 agent 真實執行的 Python trigger 呼叫。
 
 
-## What you will build
+## 前置需求
 
-By the end, you will have a saved Workspace Agent, an API channel with an `agtch_...` trigger ID, and a Python trigger call that can run live against your agent.
+執行真實 trigger 的 cell 之前，你需要：
 
-
-## Prerequisites
-
-Before running the live trigger cell, you need:
-
-| You need | Use this doc |
+| 需要什麼 | 參考文件 |
 | --- | --- |
-| Workspace Agents enabled in a supported ChatGPT workspace, plus permission to create and share agents | [ChatGPT Workspace Agents guide](https://help.openai.com/en/articles/20001143-chatgpt-workspace-agents-for-enterprise-and-business) |
-| A saved Workspace Agent with one destination it can write to | [Create and manage Workspace Agents](https://help.openai.com/en/articles/20001143-chatgpt-workspace-agents-for-enterprise-and-business) |
-| An API channel on that agent and its `agtch_...` trigger ID | [Trigger workspace agent runs](https://developers.openai.com/workspace-agents/trigger-runs) |
-| A Workspace Agent access token with the Workspace Agents scope | [Authenticate with Workspace Agent access tokens](https://developers.openai.com/workspace-agents/authentication) |
-| A notebook or backend environment that can send HTTPS `POST` requests | This notebook uses Python's standard library. No OpenAI Platform SDK is required. |
+| 在支援的 ChatGPT workspace 啟用 Workspace Agents，並有建立與分享 agent 的權限 | [ChatGPT Workspace Agents guide](https://help.openai.com/en/articles/20001143-chatgpt-workspace-agents-for-enterprise-and-business) |
+| 一個存好的 Workspace Agent，有一個可寫入的目的地 | [Create and manage Workspace Agents](https://help.openai.com/en/articles/20001143-chatgpt-workspace-agents-for-enterprise-and-business) |
+| 該 agent 上的 API channel 和它的 `agtch_...` trigger ID | [Trigger workspace agent runs](https://developers.openai.com/workspace-agents/trigger-runs) |
+| 一組帶 Workspace Agents scope 的 Workspace Agent access token | [Authenticate with Workspace Agent access tokens](https://developers.openai.com/workspace-agents/authentication) |
+| 能送 HTTPS `POST` 請求的 notebook 或後端環境 | 這份 notebook 只用 Python 標準函式庫，不需要 OpenAI Platform SDK |
 
-One async detail matters: the HTTP request returns before the agent finishes. The destination can be any connected app or surface the agent can write to, such as a channel, document, email, or ticket.
+有一個非同步的細節要記得：HTTP 請求會在 agent 做完之前就回來。目的地可以是 agent 能寫入的任何已連接 app 或介面，例如 channel、文件、email 或 ticket。
 
-Check the Help Center for current plan and regional availability.
+目前的方案和地區支援請看 Help Center。
 
 
-## Architecture
+## 架構
 
-The source system decides when work starts. The Workspace Agent decides how the saved workflow runs using its instructions, context, apps, and approvals.
+來源系統決定什麼時候開始工作。Workspace Agent 用它的 instructions、context、app 和核准設定，決定存好的流程怎麼跑。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/business-technical-bridge.svg" alt="Flow from source event to backend, API trigger, Workspace Agent, and output" width="80%" />
 </p>
 
-*The backend starts the run. The agent follows the saved workflow and writes the result.*
+*後端啟動 run，agent 照存好的流程執行並寫出結果。*
 
 
-## 1. Write the agent instructions
+## 1. 寫 agent 的 instructions
 
-The API trigger only starts the run. The Workspace Agent instructions tell the agent what to do next.
+API trigger 只負責啟動 run。接下來做什麼，要靠 Workspace Agent 的 instructions 告訴它。
 
-| Instructions decide | App setup decides |
+| instructions 決定 | app 設定決定 |
 | --- | --- |
-| Which destination to use | Whether the app can access that destination |
-| What output to write | Whether the write action is available |
-| Whether to act immediately or ask first | Whether approval is required before writing |
+| 要用哪個目的地 | app 能不能存取那個目的地 |
+| 要寫什麼輸出 | 寫入動作是否可用 |
+| 要直接做還是先問 | 寫入前是否需要核准 |
 
-For this demo, the instructions should be narrow: read the source event, write one update to the destination, and include the request ID so you can verify it.
+這個 demo 的 instructions 要很窄：讀來源事件、對目的地寫一則更新、並附上 request ID 方便你驗證。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/agent_instructions.png" alt="Workspace Agent builder showing channels, connected apps, files, and instructions" width="80%" />
 </p>
 
-*Use the instructions section to make the destination, write behavior, and approval expectations clear.*
+*用 instructions 區塊把目的地、寫入行為和核准預期寫清楚。*
 
 
 ```python
@@ -90,19 +102,19 @@ If write approval is required, request approval. If the destination is unavailab
 print(agent_builder_prompt)
 ```
 
-Test the exact behavior in Preview before adding the API trigger. Paste a sample message with a request ID, destination, and update text. If Preview cannot write to the destination, the API trigger will not either.
+加 API trigger 之前，先在 Preview 測一次實際行為。貼一段含 request ID、目的地和更新文字的範例訊息。如果 Preview 寫不進目的地，API trigger 也一樣寫不進去。
 
 
-## 2. Connect one output destination
+## 2. 連接一個輸出目的地
 
-Choose one low-risk destination the agent can write to: a channel, document, email, ticket, or another connected app. Configure the app connection and decide whether writes should require approval before testing the API trigger.
+選一個風險低、agent 能寫入的目的地：channel、文件、email、ticket 或其他已連接的 app。測試 API trigger 之前，先設定好 app 連線，並決定寫入是否要核准。
 
-Auto-approved writes are useful for low-risk demo destinations. Riskier writes should stay approval-gated.
+低風險的 demo 目的地可以自動核准寫入。風險較高的寫入要維持需要核准。
 
-| Auth model | Use it when | Watch for |
+| 驗證方式 | 適用時機 | 要注意 |
 | --- | --- | --- |
-| End-user account | Each person running the agent should use their own app permissions | API-triggered workflows may need the caller to have the right app access |
-| Agent-owned account | The workflow needs a consistent shared connection, such as a team channel, shared document, or shared inbox | Use a service account when possible. Avoid personal accounts unless you understand the risk |
+| End-user account | 每個執行 agent 的人要用自己的 app 權限 | API 觸發的流程可能要求呼叫者本身有對應的 app 權限 |
+| Agent-owned account | 流程需要固定的共用連線，例如團隊 channel、共用文件或共用信箱 | 盡量用 service account，除非清楚風險，不要用個人帳號 |
 
 
 ```python
@@ -121,38 +133,38 @@ After the write succeeds, stop.
 print(api_output_instructions)
 ```
 
-## 3. Add an API channel
+## 3. 加上 API channel
 
-Open the agent in the Workspace Agent builder. Add an API channel, save the agent, copy the trigger ID, and confirm the ID starts with `agtch_`.
+在 Workspace Agent builder 開啟 agent，加一個 API channel、存檔、複製 trigger ID，並確認 ID 是 `agtch_` 開頭。
 
-Share the agent with the user whose access token will call the API. The trigger ID goes in the API path. It is different from the agent name.
+把 agent 分享給會拿 access token 來呼叫 API 的使用者。trigger ID 放在 API 路徑裡，它跟 agent 名稱是兩回事。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/api_channel.png" alt="API channel with trigger ID" width="80%" />
 </p>
 
-*Use this API channel ID in the trigger endpoint.*
+*這個 API channel ID 就是 trigger endpoint 要用的。*
 
 
-## 4. Configure the live call
+## 4. 設定真實呼叫
 
-You need two values:
+你需要兩個值：
 
-| Value | Where it comes from |
+| 值 | 從哪來 |
 | --- | --- |
-| API trigger ID | The agent's API channel. It starts with `agtch_...`. |
-| Workspace Agent access token | ChatGPT `Admin > Access tokens`, with the Workspace Agents scope. |
+| API trigger ID | agent 的 API channel，格式是 `agtch_...` |
+| Workspace Agent access token | ChatGPT 的 `Admin > Access tokens`，要帶 Workspace Agents scope |
 
-Use a Workspace Agent access token for `https://api.chatgpt.com`, not an OpenAI Platform API key. The token owner must be able to run the shared agent, or the API returns `403 Forbidden`.
+對 `https://api.chatgpt.com` 要用 Workspace Agent access token，不是 OpenAI Platform API key。token 擁有者必須有權限執行這個被分享的 agent，不然 API 會回 `403 Forbidden`。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/access_token.png" alt="Access token settings with Workspace Agents scope" width="80%" />
 </p>
 
-*Store the token as a secret. Do not paste it into notebook code.*
+*token 當成 secret 存放，不要貼進 notebook 程式碼。*
 
 
-For a live run, export the values before opening the notebook:
+要真實執行的話，開 notebook 之前先匯出這些值：
 
 ```bash
 export WORKSPACE_AGENT_TRIGGER_ID="agtch_..."
@@ -162,7 +174,7 @@ export WORKSPACE_AGENT_OUTPUT_DESTINATION="output-destination"
 jupyter notebook  # or jupyter lab
 ```
 
-`WORKSPACE_AGENT_OUTPUT_DESTINATION` is optional. It labels the destination in the trigger input; access still comes from the agent's connected app.
+`WORKSPACE_AGENT_OUTPUT_DESTINATION` 是選填。它只是在 trigger input 裡標示目的地名稱，實際能不能存取還是看 agent 連接的 app。
 
 
 ```python
@@ -200,9 +212,9 @@ if OUTPUT_DESTINATION == "the agent's configured destination":
     print("Tip: set WORKSPACE_AGENT_OUTPUT_DESTINATION when you want the API input to name a specific destination.")
 ```
 
-## 5. Send one source event
+## 5. 送出一筆來源事件
 
-Keep the first input small: a source system sends an event, and the Workspace Agent writes one update to its destination.
+第一次的 input 保持簡單：來源系統送一筆事件，Workspace Agent 對目的地寫一則更新。
 
 
 ```python
@@ -219,7 +231,7 @@ source_event = {
 source_event
 ```
 
-Map the source event into plain text before calling the trigger endpoint. The API passes the event to the agent. The agent's saved instructions, app permissions, and approval settings control the write.
+呼叫 trigger endpoint 之前，先把來源事件轉成純文字。API 只是把事件傳給 agent，寫入行為由 agent 存好的 instructions、app 權限和核准設定控制。
 
 
 ```python
@@ -240,9 +252,9 @@ agent_input = build_agent_input(source_event)
 print(agent_input)
 ```
 
-Use `conversation_key` when multiple events should continue the same agent conversation, such as several updates for the same request.
+如果多筆事件要接續同一段 agent 對話（例如同一個 request 的多次更新），用 `conversation_key`。
 
-For retries, send an `Idempotency-Key` header. Reuse the same key only when retrying the same source event.
+要重試的話，送 `Idempotency-Key` header。只有在重試同一筆來源事件時，才重複使用同一個 key。
 
 
 ```python
@@ -258,24 +270,24 @@ print(json.dumps(payload, indent=2))
 print("Idempotency-Key:", idempotency_key)
 ```
 
-## 6. Trigger the agent from the API
+## 6. 用 API 觸發 agent
 
-Endpoint:
+Endpoint：
 
 ```http
 POST https://api.chatgpt.com/v1/workspace_agents/{id}/trigger
 ```
 
-Required and recommended request fields:
+必填與建議的請求欄位：
 
-| Location | Field | Required | Description |
+| 位置 | 欄位 | 必填 | 說明 |
 | --- | --- | --- | --- |
-| Path | `id` | Yes | API trigger ID from the agent's API channel, in `agtch_...` format |
-| Header | `Authorization` | Yes | Bearer credential using the Workspace Agent access token |
-| Header | `Content-Type` | Yes | Use `application/json` |
-| Header | `Idempotency-Key` | Recommended | Stable key for retrying the same source event |
-| Body | `input` | Yes | Message text passed to the agent as trigger input |
-| Body | `conversation_key` | No | Caller-defined stable ID for continuing the same agent conversation |
+| Path | `id` | 是 | agent 的 API channel 的 trigger ID，格式 `agtch_...` |
+| Header | `Authorization` | 是 | 用 Workspace Agent access token 的 Bearer 憑證 |
+| Header | `Content-Type` | 是 | 用 `application/json` |
+| Header | `Idempotency-Key` | 建議 | 重試同一筆來源事件用的固定 key |
+| Body | `input` | 是 | 當作 trigger input 傳給 agent 的訊息文字 |
+| Body | `conversation_key` | 否 | 呼叫端自訂的固定 ID，用來接續同一段 agent 對話 |
 
 
 ```python
@@ -347,20 +359,20 @@ else:
         print("Expected output destination:", source_event["output_destination"])
 ```
 
-A `202 Accepted` confirms the trigger was accepted for processing. It does not mean the agent finished. The API returns no body, no public run ID, and no final agent output.
+`202 Accepted` 代表 trigger 已被接受處理，不代表 agent 已經做完。API 不會回傳 body、公開的 run ID 或 agent 最終輸出。
 
-For the first live run, look for three things: `HTTP status: 202`, a unique request ID, and an update in the destination that starts with `Workspace Agent API demo received:`.
+第一次真實執行時，確認三件事：`HTTP status: 202`、一個唯一的 request ID、以及目的地出現以 `Workspace Agent API demo received:` 開頭的更新。
 
-If the trigger succeeds but nothing is written, debug the agent configuration, not the HTTP request. Usually one of these is missing: destination instructions, app permission, app authentication, or the intended approval setting.
+如果 trigger 成功但什麼都沒寫入，要查的是 agent 設定，不是 HTTP 請求。通常是這幾項缺了一個：目的地的 instructions、app 權限、app 驗證，或預期中的核准設定。
 
-For repeated notebook tests, keep the generated request ID and idempotency key unique. Reusing the same `Idempotency-Key` for the same source event can return the original accepted outcome instead of enqueueing a new run.
+重複測試 notebook 時，request ID 和 idempotency key 都要產生新的。對同一筆來源事件重用同一個 `Idempotency-Key`，可能回傳原本已接受的結果，而不是排入新的 run。
 
 
-## 7. Adapt the call for a backend worker
+## 7. 改成適合後端 worker 的呼叫
 
-The live call above is the minimal test. The helper below wraps the same request shape for a backend worker, scheduled job, or workflow engine.
+上面的真實呼叫是最小測試。下面的 helper 把同樣的請求包起來，給後端 worker、排程工作或 workflow engine 用。
 
-Keep `conversation_key` and `Idempotency-Key` stable for the same source event so retries do not enqueue duplicate runs.
+同一筆來源事件要讓 `conversation_key` 和 `Idempotency-Key` 保持固定，這樣重試才不會排入重複的 run。
 
 
 ```python
@@ -409,114 +421,114 @@ backend_preview = handle_source_event(source_event, live=False)
 print(json.dumps(backend_preview, indent=2))
 ```
 
-In production, log the source request ID, trigger ID, idempotency key, timestamp, and HTTP status. Do not log the access token or sensitive request details.
+正式環境要記錄來源 request ID、trigger ID、idempotency key、時間戳和 HTTP status。不要記錄 access token 或敏感的請求內容。
 
 
-## 8. Verify the destination action
+## 8. 驗證目的地的動作
 
-The API does not return the completed response, so verify the action in the agent's destination. Check the exact destination named in the trigger input or saved in the agent instructions.
+API 不會回傳完成的回覆，所以要到 agent 的目的地確認動作。檢查 trigger input 裡指定的、或 agent instructions 裡存的那個目的地。
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/api-trigger-check.svg" alt="API trigger flow showing accepted request and destination check" width="80%" />
 </p>
 
-*The HTTP response tells you the trigger was received. Verify the actual work in the destination.*
+*HTTP 回應只告訴你 trigger 收到了，實際的工作要去目的地驗證。*
 
 
-Search the configured destination for the generated request ID printed by the live trigger cell. The update should start with:
+到設定好的目的地搜尋真實 trigger cell 印出來的 request ID。更新應該以這段開頭：
 
 ```text
 Workspace Agent API demo received: DEMO-20260618010101
 ```
 
-At that point, the end-to-end path is working: trigger, token, sharing, instructions, app permissions, and approval behavior.
+到這裡，整條路徑都通了：trigger、token、分享、instructions、app 權限和核准行為。
 
-If the trigger succeeds but no output appears, check these first:
+如果 trigger 成功但沒有輸出，先查這些：
 
-| Check | What to verify |
+| 檢查 | 要確認什麼 |
 | --- | --- |
-| Preview | Paste the exact `agent_input` text and confirm the agent writes to the destination |
-| Destination | Set `WORKSPACE_AGENT_OUTPUT_DESTINATION` to the exact destination name before starting the kernel |
-| Permissions | Confirm the connected app can write to that destination during API-triggered runs |
-| Approval | Confirm the write action is auto-approved if the demo should write automatically |
-| Access | Confirm the token owner can run the agent and the saved API channel is active |
+| Preview | 貼上完全一樣的 `agent_input` 文字，確認 agent 會寫入目的地 |
+| 目的地 | 啟動 kernel 之前，把 `WORKSPACE_AGENT_OUTPUT_DESTINATION` 設成確切的目的地名稱 |
+| 權限 | 確認連接的 app 在 API 觸發的 run 中能寫入該目的地 |
+| 核准 | 如果 demo 要自動寫入，確認寫入動作是自動核准 |
+| 存取 | 確認 token 擁有者能執行這個 agent，且存好的 API channel 是啟用狀態 |
 
-From there, replace `source_event` with any backend event. The API call stays the same. The agent owner updates the instructions, destination, and approval behavior in ChatGPT.
+接下來把 `source_event` 換成任何後端事件即可。API 呼叫不變，agent 擁有者在 ChatGPT 裡更新 instructions、目的地和核准行為。
 
 
-Before rollout, run a small test matrix:
+上線前先跑一個小型測試矩陣：
 
-| Test | Expected result |
+| 測試 | 預期結果 |
 | --- | --- |
-| Happy path | Agent writes `Workspace Agent API demo received: <request_id>` to the configured destination |
-| Missing request ID | Agent asks for a request ID and does not write an ambiguous update |
-| Duplicate retry with same idempotency key | API returns the original accepted outcome instead of enqueueing a second trigger event |
-| Token from unshared user | API returns `403 Forbidden` |
-| Wrong trigger ID | API returns `404 Not Found` |
-| Agent or destination not runnable | API returns `409 Conflict` |
+| 正常流程 | agent 把 `Workspace Agent API demo received: <request_id>` 寫到設定好的目的地 |
+| 缺 request ID | agent 會要求提供 request ID，不會寫出意義不明的更新 |
+| 用同一個 idempotency key 重複重試 | API 回傳原本已接受的結果，不會排入第二個 trigger 事件 |
+| 未被分享的使用者的 token | API 回 `403 Forbidden` |
+| trigger ID 錯誤 | API 回 `404 Not Found` |
+| agent 或目的地無法執行 | API 回 `409 Conflict` |
 
 
-## Error handling
+## 錯誤處理
 
-The trigger endpoint can return:
+trigger endpoint 可能回傳：
 
-| Status | What it means | What to do |
+| 狀態 | 意思 | 該怎麼做 |
 | --- | --- | --- |
-| `202 Accepted` | Request accepted for processing | Verify the result in the configured destination |
-| `401 Unauthorized` | Token is missing, expired, revoked, invalid, or the wrong credential type | Create a ChatGPT Workspace Agent access token from `Admin > Access tokens` with the Workspace Agents scope. Do not use an OpenAI Platform API key |
-| `403 Forbidden` | The token is valid but cannot trigger this agent | Share the agent with the caller or use a token from an allowed user |
-| `404 Not Found` | The trigger ID does not exist or is not visible to the caller | Confirm the `agtch_` ID from the API channel |
-| `409 Conflict` | The agent or API channel is not runnable | Save/publish the agent and confirm the API channel is active |
-| `202 Accepted`, but no output appears | The trigger succeeded, but the agent did not write to the destination | Check instructions, app authentication, destination permissions, and write-approval settings |
+| `202 Accepted` | 請求已接受處理 | 到設定好的目的地驗證結果 |
+| `401 Unauthorized` | token 缺少、過期、被撤銷、無效，或憑證類型錯誤 | 從 `Admin > Access tokens` 建立帶 Workspace Agents scope 的 ChatGPT Workspace Agent access token。不要用 OpenAI Platform API key |
+| `403 Forbidden` | token 有效，但不能觸發這個 agent | 把 agent 分享給呼叫者，或改用被允許的使用者的 token |
+| `404 Not Found` | trigger ID 不存在，或對呼叫者不可見 | 確認 API channel 上的 `agtch_` ID |
+| `409 Conflict` | agent 或 API channel 無法執行 | 儲存或發布 agent，並確認 API channel 是啟用狀態 |
+| `202 Accepted`，但沒有輸出 | trigger 成功，但 agent 沒有寫入目的地 | 檢查 instructions、app 驗證、目的地權限和寫入核准設定 |
 
-For transient network failures, retry with the same `Idempotency-Key` for the same source event. For a different source event, generate a new idempotency key.
+遇到暫時性的網路失敗，用同一個 `Idempotency-Key` 重試同一筆來源事件。如果是不同的來源事件，就產生新的 idempotency key。
 
 
-## Production checklist
+## 上線檢查清單
 
-Before expanding beyond a pilot, lock down four things:
+從試行階段擴大之前，先把四件事鎖好：
 
-| Area | Check |
+| 面向 | 檢查 |
 | --- | --- |
-| Auth | Store and rotate the access token. Use a token owner that makes run attribution clear. |
-| Access | Share the agent only with allowed users or groups. Confirm the connected app can write to the destination. |
-| Behavior | Make destination, output format, and approval behavior explicit in the agent instructions. |
-| Operations | Include source event IDs, monitor non-202 responses, and watch for missing output. |
+| Auth | 存放並定期輪換 access token。選一個讓 run 歸屬清楚的 token 擁有者 |
+| Access | 只把 agent 分享給允許的使用者或群組，確認連接的 app 能寫入目的地 |
+| Behavior | 在 agent instructions 裡明確寫出目的地、輸出格式和核准行為 |
+| Operations | 帶上來源事件 ID、監控非 202 的回應、留意缺少輸出的情況 |
 
-Auto-approve only low-risk writes. Keep sensitive writes approval-gated until the workflow is reviewed with the business owner.
+只對低風險的寫入使用自動核准。敏感的寫入要維持需要核准，直到流程跟業務負責人一起檢視過。
 
 
-## When to use this pattern
+## 什麼時候用這個模式
 
-Use API triggers when a business-owned Workspace Agent should do the work, but another system starts it.
+當工作應該由業務團隊擁有的 Workspace Agent 來做，但由另一個系統來啟動時，就用 API trigger。
 
-| Use this pattern when | Use another approach when |
+| 適合用這個模式 | 該用別的做法 |
 | --- | --- |
-| A non-technical owner should maintain the workflow instructions. | The caller needs the completed answer in the HTTP response. |
-| Work starts from a form, ticket, CRM record, scheduled job, or backend event. | The source system needs low-latency synchronous behavior. |
-| The result can be written to a connected app, channel, document, or email. | There is no durable destination for the agent output. |
-| Instructions and approval settings can safely control the write behavior. | The workflow is high-impact and lacks review, audit, or rollback paths. |
+| 非技術的負責人要自己維護流程的 instructions | 呼叫端需要在 HTTP 回應裡拿到完成的答案 |
+| 工作從表單、ticket、CRM 紀錄、排程工作或後端事件開始 | 來源系統需要低延遲的同步行為 |
+| 結果可以寫到已連接的 app、channel、文件或 email | agent 的輸出沒有可長期保存的目的地 |
+| instructions 和核准設定足以安全地控制寫入行為 | 流程影響很大，卻缺少審查、稽核或回滾機制 |
 
-That is the ownership split: business teams refine the agent in ChatGPT, while engineering keeps the source-system trigger stable.
+這就是分工方式：業務團隊在 ChatGPT 裡調整 agent，工程團隊負責讓來源系統的 trigger 保持穩定。
 
 
-## Adapt this pattern
+## 延伸這個模式
 
-Use the same pattern when work starts outside ChatGPT but should run through a reusable Workspace Agent:
+當工作從 ChatGPT 之外開始，但要透過可重複使用的 Workspace Agent 執行時，都可以用同樣的模式：
 
-| Workflow | Source event | Agent output |
+| 流程 | 來源事件 | agent 輸出 |
 | --- | --- | --- |
-| Meeting follow-up | Meeting recording or transcript is ready | Action items and follow-up draft |
-| Calendar-driven prep | Google Calendar event or upcoming-meeting schedule is found | Briefing document or prep summary |
-| Inbound lead qualification | CRM lead or form submission | Account summary and sales task |
-| Support escalation | High-priority ticket is created | Escalation summary and next steps |
-| Employee support | Helpdesk ticket is opened | Triage answer or escalation route |
-| Weekly reporting | Scheduled job finds new records | Summary document or team update |
+| 會議後續追蹤 | 會議錄影或逐字稿準備好 | 待辦事項和後續追蹤草稿 |
+| 依行事曆準備 | 找到 Google Calendar 事件或即將到來的會議行程 | 簡報文件或準備摘要 |
+| 進站 lead 篩選 | CRM lead 或表單提交 | 帳戶摘要和業務任務 |
+| 客服升級 | 建立高優先度 ticket | 升級摘要和後續步驟 |
+| 員工支援 | 開啟 helpdesk ticket | 分流回答或升級路徑 |
+| 每週報表 | 排程工作找到新紀錄 | 摘要文件或團隊更新 |
 
-Start with one narrow workflow, one clear source event, and one output destination. After the agent behaves consistently, add more destinations, richer context, or additional approval-gated actions.
+從一個窄的流程、一個明確的來源事件、一個輸出目的地開始。等 agent 的行為穩定了，再加更多目的地、更豐富的 context，或需要核准的動作。
 
 
-## Further reading
+## 延伸閱讀
 
 - [Building workspace agents in ChatGPT to complete repeatable, end-to-end work](https://developers.openai.com/cookbook/articles/chatgpt-agents-sales-meeting-prep)
 - [ChatGPT Workspace Agents for Enterprise and Business](https://help.openai.com/en/articles/20001143-chatgpt-workspace-agents-for-enterprise-and-business)
@@ -524,4 +536,16 @@ Start with one narrow workflow, one clear source event, and one output destinati
 - [Authenticate with Workspace Agent access tokens](https://developers.openai.com/workspace-agents/authentication)
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- API trigger 只負責啟動，agent 做什麼取決於 instructions、app 權限和核准設定
+- 呼叫是非同步的，202 只代表被接受，結果要去目的地驗證
+- 用 `Idempotency-Key` 讓重試安全，用 `conversation_key` 接續同一段對話
+- 要用 Workspace Agent access token，不是 Platform API key，而且 token 擁有者要能執行這個 agent
+- trigger 成功但沒輸出時，先查 agent 設定，不要先懷疑 HTTP 請求
+
+## 練習
+
+1. 改動 `source_event` 的內容（例如換成一筆假的 ticket 事件），重新產生 request ID 和 idempotency key，確認目的地有寫入新的更新。
+2. 故意把 trigger ID 改錯一個字元，或換成沒被分享的使用者的 token，確認你拿到 404 或 403。
+3. 在後端 worker 的 helper 裡加上 log（source request ID、trigger ID、idempotency key、timestamp、HTTP status），並確認不會把 access token 印出來。

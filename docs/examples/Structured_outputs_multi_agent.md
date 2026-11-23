@@ -1,32 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/Structured_outputs_multi_agent.ipynb
 ---
 
-# Structured Outputs for Multi-Agent Systems
+# 多 agent 系統的 Structured Outputs
 
 > 原文：[examples/Structured_outputs_multi_agent.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Structured_outputs_multi_agent.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Structured Outputs 打造一個 4 個 agent 的資料分析系統：一個負責分流，三個各自負責資料前處理、分析和視覺化。每個 agent 有自己的 prompt 和專屬 tool，輸出都被 schema 約束。
 
+## 學完你會
+- 用 `strict: true` 讓 tool call 的參數嚴格符合 schema
+- 把 tool 依職責分組，拆成多個專責 agent，並用一個 triage agent 分派
+- 寫出 tool 執行函式和 handler，把結果寫回對話歷史，串起整個多 agent 流程
 
-In this cookbook, we will explore how to use Structured Outputs to build multi-agent systems.
+## 開跑前
+需要 OpenAI API key。
 
-Structured Outputs is a new capability that builds upon JSON mode and function calling to enforce a strict schema in a model output.
+這份 cookbook 會探討怎麼用 Structured Outputs 打造多 agent 系統。
 
-By using the new parameter `strict: true`, we are able to guarantee the response abides by a provided schema.
+Structured Outputs 是一個新功能，建立在 JSON mode 和 function calling 之上，能強制模型輸出符合嚴格的 schema。
 
-To demonstrate the power of this feature, we will use it to build a multi-agent system.
+只要使用新參數 `strict: true`，就能保證回應遵守提供的 schema。
 
-### Why build a Multi-Agent System?
+為了示範這個功能的威力，我們用它來打造一個多 agent 系統。
 
-When using function calling, if the number of functions (or tools) increases, the performance may suffer.
+### 為什麼要建多 agent 系統？
 
-To mitigate this, we can logically group the tools together and have specialized "agents" that are able to solve specific tasks or sub-tasks, which will increase the overall system performance.
+使用 function calling 時，如果函式（或 tool）的數量變多，效能可能會下降。
 
-## Environment set up
+為了解決這個問題，我們可以把 tool 依邏輯分組，讓專責的「agent」去解決特定任務或子任務，這樣能提升整體系統的效能。
+
+## 環境設定
 
 ```python
 from openai import OpenAI
@@ -43,18 +51,18 @@ client = OpenAI()
 MODEL = "gpt-4o-2024-08-06"
 ```
 
-## Agents set up
+## 設定 agent
 
-The use case we will tackle is a data analysis task.
+我們要處理的使用情境是資料分析任務。
 
-Let's first set up our 4-agents system:
+先來設定這個 4 個 agent 的系統：
 
-1.   **Triaging agent:** Decides which agent(s) to call
-2.   **Data pre-processing Agent:** Prepares data for analysis - for example by cleaning it up
-3.   **Data Analysis Agent:** Performs analysis on the data
-4.   **Data Visualization Agent:** Visualizes the output of the analysis to extract insights
+1.   **Triaging agent：** 決定要呼叫哪些 agent
+2.   **資料前處理 agent：** 為分析準備資料，例如清理資料
+3.   **資料分析 agent：** 對資料做分析
+4.   **資料視覺化 agent：** 把分析結果視覺化，從中取得洞見
 
-We will start by defining the system prompts for each of these agents.
+先來定義每個 agent 的 system prompt。
 
 ```python
 triaging_system_prompt = """You are a Triaging Agent. Your role is to assess the user's query and route it to the relevant agents. The agents available are:
@@ -80,28 +88,28 @@ visualization_system_prompt = """You are a Visualization Agent. Your role is to 
 - create_pie_chart"""
 ```
 
-We will then define the tools for each agent.
+接著定義每個 agent 的 tool。
 
-Apart from the triaging agent, each agent will be equipped with tools specific to their role:
+除了 triaging agent 之外，每個 agent 都配備符合自己角色的 tool：
 
-#### Data pre-processing agent
+#### 資料前處理 agent
 
 
-1.   Clean data
-2.   Transform data
-3.   Aggregate data
+1.   清理資料
+2.   轉換資料
+3.   彙總資料
 
-#### Data analysis agent
+#### 資料分析 agent
 
-1.   Statistical analysis
-2.   Correlation analysis
-3.   Regression Analysis
+1.   統計分析
+2.   相關性分析
+3.   迴歸分析
 
-#### Data visualization agent
+#### 資料視覺化 agent
 
-1.   Create bar chart
-2.   Create line chart
-3.   Create pie chart
+1.   建立長條圖
+2.   建立折線圖
+3.   建立圓餅圖
 
 ```python
 triage_tools = [
@@ -364,14 +372,14 @@ visualization_tools = [
 ]
 ```
 
-## Tool execution
+## Tool 執行
 
-We need to write the code logic to:
-- handle passing the user query to the multi-agent system
-- handle the internal workings of the multi-agent system
-- execute the tool calls
+我們需要寫程式邏輯來：
+- 處理把使用者 query 傳給多 agent 系統
+- 處理多 agent 系統的內部運作
+- 執行 tool call
 
-For the sake of brevity, we will only define the logic for tools that are relevant to the user query.
+為了簡潔，我們只定義跟使用者 query 相關的 tool 邏輯。
 
 ```python
 # Example query
@@ -387,11 +395,11 @@ house_size (m3), house_price ($)
 """
 ```
 
-From the user query, we can infer that the tools we would need to call are `clean_data`, `start_analysis` and `use_line_chart`.
+從使用者 query 可以推斷，需要呼叫的 tool 是 `clean_data`、`start_analysis` 和 `use_line_chart`。
 
-We will first define the execution function which runs tool calls.
+先定義負責執行 tool call 的執行函式。
 
-This maps a tool call to the corresponding function. It then appends the output of the function to the conversation history.
+它把 tool call 對應到相應的函式，再把函式的輸出附加到對話歷史。
 
 ```python
 def clean_data(data):
@@ -476,13 +484,13 @@ def execute_tool(tool_calls, messages):
     return messages
 ```
 
-Next, we will create the tool handlers for each of the sub-agents.
+接著，為每個子 agent 建立 tool handler。
 
-These have a unique prompt and tool set passed to the model. 
+它們各自有獨特的 prompt 和 tool 組合傳給模型。 
 
-The output is then passed to an execution function which runs the tool calls.
+輸出再傳給執行函式去跑 tool call。
 
-We will also append the messages to the conversation history.
+我們也會把訊息附加到對話歷史。
 
 ```python
 # Define the functions to handle each agent's processing
@@ -529,9 +537,9 @@ def handle_visualization_agent(query, conversation_messages):
     execute_tool(response.choices[0].message.tool_calls, conversation_messages)
 ```
 
-Finally, we create the overarching tool to handle processing the user query.
+最後，建立總管的 tool 來處理使用者 query。
 
-This function takes the user query, gets a response from the model and handles passing it to the other agents to execute. In addition to this, we will keep the state of the ongoing conversation.
+這個函式接收使用者 query，從模型取得回應，並負責把它交給其他 agent 去執行。此外，我們也會保存進行中對話的狀態。
 
 ```python
 # Function to handle user input and triaging
@@ -567,9 +575,9 @@ def handle_user_message(user_query, conversation_messages=[]):
     return conversation_messages
 ```
 
-## Multi-agent system execution
+## 多 agent 系統執行
 
-Finally, we run the overarching `handle_user_message` function on the user query and view the output.
+最後，對使用者 query 執行總管的 `handle_user_message` 函式，看輸出。
 
 ```python
 handle_user_message(user_query)
@@ -615,12 +623,21 @@ handle_user_message(user_query)
       'content': '{"line_chart": "sample_line_chart"}'}]
     ```
 
-## Conclusion
+## 結論
 
-In this cookbook, we've explored how to leverage Structured Outputs to build more robust multi-agent systems.
+這份 cookbook 探討了怎麼利用 Structured Outputs 打造更穩健的多 agent 系統。
 
-Structured Outputs ensures that tool calls follow the specified schema. Application code must still validate argument semantics and business rules.
+Structured Outputs 確保 tool call 遵循指定的 schema。應用程式的程式碼仍然必須驗證參數的語意和業務規則。
 
-This can be applied to many more use cases, and we hope you can take inspiration from this to build your own use case!
+這個做法可以套用到更多使用情境，希望你能從中得到靈感，做出自己的應用！
 
-<!-- tutor:summary -->
+## 重點整理
+- tool 太多會拖垮 function calling 的效果，依職責拆成專責 agent 可以改善。
+- triage agent 只負責分派，各子 agent 用自己的 prompt 和 tool 集合處理任務。
+- `strict: true` 保證格式符合 schema，但參數內容對不對，仍要自己驗證。
+- 整個系統的關鍵是把每次 tool 的輸出寫回對話歷史，讓後續步驟看得到。
+
+## 練習
+1. 在資料前處理 agent 的 tool 清單裡新增一個 tool（例如去除重複資料），並補上對應的執行函式。
+2. 修改使用者 query，讓它改用圓餅圖，看 triage agent 是否改呼叫不同的 tool。
+3. 在執行函式裡加上參數驗證（例如檢查欄位名稱是否合法），不合法時回傳錯誤訊息，驗證 schema 之外的語意檢查。

@@ -1,65 +1,73 @@
 ---
-translated: false
+translated: true
 source: examples/gpt4-1_prompting_guide.ipynb
 ---
-
-# GPT-4.1 Prompting Guide
+# GPT-4.1 Prompting 指南
 
 > 原文：[examples/gpt4-1_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt4-1_prompting_guide.ipynb)
 
+## 這篇在做什麼
+
+這篇整理 GPT-4.1 系列的 prompting 技巧，來自 OpenAI 內部大量測試，涵蓋 agent 工作流、長 context、chain of thought、指令遵循和 diff 產生。GPT-4.1 比 GPT-4o 更照字面執行指令，舊 prompt 搬過來常常需要調整。
+
+## 學完你會
+
+1. 在 agent 的 system prompt 裡寫出 persistence、tool-calling、planning 三種提醒，把模型從聊天機器人狀態變成會主動推進的 agent。
+2. 針對長 context、chain of thought 和指令遵循，決定指令該放哪裡、怎麼寫，並知道常見的失敗模式怎麼排查。
+3. 選對 prompt 的分隔符號，並用推薦的 `apply_patch` 格式讓模型產生可以套用的 diff。
+
+## 開跑前
+
+文中的範例 cell 會呼叫 OpenAI API，需要 `OPENAI_API_KEY`。
+
+GPT-4.1 系列在程式、指令遵循和長 context 的能力比 GPT-4o 進步不少。這篇把一系列重要的 prompting 技巧整理出來，幫開發者把新模型用到極致。
+
+很多常見的最佳做法對 GPT-4.1 依然適用，像是提供範例 context、讓指令盡量具體清楚，還有透過 prompt 引導模型先規劃。不過要把這個模型用好，大概得做一些 prompt 遷移。GPT-4.1 被訓練成比前代更緊密、更照字面地遵循指令，前代比較會自己推測 user 和 system prompt 背後的意圖。這也代表 GPT-4.1 很好控制，對寫得明確的 prompt 反應很好。如果模型行為跟你預期不同，幾乎都只要一句堅定、明確的話說清楚你要的行為，就能把它拉回來。
+
+下面有可以參考的 prompt 範例。這些建議雖然適用範圍很廣，但沒有一體適用的建議。AI 工程本質上是經驗科學，大型語言模型本質上又不具確定性，所以除了照這份指南做，也建議建立有資訊量的 eval 並經常迭代，確認 prompt 的修改真的對你的情境有幫助。
+
+# 1. Agentic 工作流
+
+GPT-4.1 很適合拿來建 agentic 工作流。模型訓練時，我們強調提供多樣的 agentic 解題軌跡，我們為這個模型做的 agentic harness 在 SWE-bench Verified 上，達到非 reasoning 模型的最佳表現，解出 55% 的問題。
 
 
-<!-- tutor:goals -->
+## System Prompt 提醒
 
+要充分用上 GPT-4.1 的 agentic 能力，建議在所有 agent prompt 裡放進三種關鍵提醒。下面的 prompt 是針對 agentic coding 工作流最佳化的，但很容易改成一般的 agentic 用途。
 
-The GPT-4.1 family of models represents a significant step forward from GPT-4o in capabilities across coding, instruction following, and long context. In this prompting guide, we collate a series of important prompting tips derived from extensive internal testing to help developers fully leverage the improved abilities of this new model family. 
-
-Many typical best practices still apply to GPT-4.1, such as providing context examples, making instructions as specific and clear as possible, and inducing planning via prompting to maximize model intelligence. However, we expect that getting the most out of this model will require some prompt migration. GPT-4.1 is trained to follow instructions more closely and more literally than its predecessors, which tended to more liberally infer intent from user and system prompts. This also means, however, that GPT-4.1 is highly steerable and responsive to well-specified prompts - if model behavior is different from what you expect, a single sentence firmly and unequivocally clarifying your desired behavior is almost always sufficient to steer the model on course.
-
-Please read on for prompt examples you can use as a reference, and remember that while this guidance is widely applicable, no advice is one-size-fits-all. AI engineering is inherently an empirical discipline, and large language models are inherently nondeterministic; in addition to following this guide, we advise building informative evals and iterating often to ensure your prompt engineering changes are yielding benefits for your use case.
-
-# 1. Agentic Workflows
-
-GPT-4.1 is a great place to build agentic workflows. In model training we emphasized providing a diverse range of agentic problem-solving trajectories, and our agentic harness for the model achieves state-of-the-art performance for non-reasoning models on SWE-bench Verified, solving 55% of problems. 
-
-
-## System Prompt Reminders
-
-In order to fully utilize the agentic capabilities of GPT-4.1, we recommend including three key types of reminders in all agent prompts. The following prompts are optimized specifically for the agentic coding workflow, but can be easily modified for general agentic use cases.
-
-1. Persistence: this ensures the model understands it is entering a multi-message turn, and prevents it from prematurely yielding control back to the user. Our example is the following:
+1. Persistence：讓模型知道它進入的是多訊息的回合，避免太早把控制權還給 user。範例如下：
 
 ```
 You are an agent - please keep going until the user’s query is completely resolved, before ending your turn and yielding back to the user. Only terminate your turn when you are sure that the problem is solved.
 ```
 
-2. Tool-calling: this encourages the model to make full use of its tools, and reduces its likelihood of hallucinating or guessing an answer. Our example is the following:
+2. Tool-calling：鼓勵模型充分利用 tool，降低它幻想或亂猜答案的機率。範例如下：
 
 ```
 If you are not sure about file content or codebase structure pertaining to the user’s request, use your tools to read files and gather the relevant information: do NOT guess or make up an answer.
 ```
 
-3. Planning \[optional\]: if desired, this ensures the model explicitly plans and reflects upon each tool call in text, instead of completing the task by chaining together a series of only tool calls. Our example is the following:
+3. Planning \[選用\]：需要的話，這能讓模型在文字裡明確規劃並反思每一次 tool call，不會只是把一連串 tool call 接在一起就完成任務。範例如下：
 
 ```
 You MUST plan extensively before each function call, and reflect extensively on the outcomes of the previous function calls. DO NOT do this entire process by making function calls only, as this can impair your ability to solve the problem and think insightfully.
 ```
 
-GPT-4.1 is trained to respond very closely to both user instructions and system prompts in the agentic setting. The model adhered closely to these three simple instructions and increased our internal SWE-bench Verified score by close to 20% \- so we highly encourage starting any agent prompt with clear reminders covering the three categories listed above. As a whole, we find that these three instructions transform the model from a chatbot-like state into a much more “eager” agent, driving the interaction forward autonomously and independently. 
+GPT-4.1 被訓練成在 agentic 情境下，對 user 指令和 system prompt 都反應得很貼近。模型嚴格遵守這三個簡單的指令，讓我們內部的 SWE-bench Verified 分數提高了將近 20% \- 所以我們強烈建議，任何 agent prompt 都用涵蓋上面三類的明確提醒開頭。整體來看，這三個指令把模型從類似聊天機器人的狀態，變成「積極」得多的 agent，能自主、獨立地推進互動。
 
 ## Tool Calls
 
-Compared to previous models, GPT-4.1 has undergone more training on effectively utilizing tools passed as arguments in an OpenAI API request. We encourage developers to exclusively use the tools field to pass tools, rather than manually injecting tool descriptions into your prompt and writing a separate parser for tool calls, as some have reported doing in the past. This is the best way to minimize errors and ensure the model remains in distribution during tool-calling trajectories \- in our own experiments, we observed a 2% increase in SWE-bench Verified pass rate when using API-parsed tool descriptions versus manually injecting the schemas into the system prompt.
+跟前幾代模型相比，GPT-4.1 針對有效使用 OpenAI API 請求裡以參數傳入的 tool，做了更多訓練。我們建議開發者只用 tools 欄位傳 tool，不要像有些人以前那樣，手動把 tool 描述塞進 prompt，再另外寫 tool call 的 parser。這是減少錯誤、讓模型在 tool-calling 過程中維持在訓練分佈內的最好做法。我們自己的實驗中，用 API 解析的 tool 描述，比手動把 schema 注入 system prompt，SWE-bench Verified 通過率高了 2%。
 
-Developers should name tools clearly to indicate their purpose and add a clear, detailed description in the "description" field of the tool. Similarly, for each tool param, lean on good naming and descriptions to ensure appropriate usage. If your tool is particularly complicated and you'd like to provide examples of tool usage, we recommend that you create an `# Examples` section in your system prompt and place the examples there, rather than adding them into the "description' field, which should remain thorough but relatively concise. Providing examples can be helpful to indicate when to use tools, whether to include user text alongside tool calls, and what parameters are appropriate for different inputs. Remember that you can use “Generate Anything” in the [Prompt Playground](https://platform.openai.com/playground) to get a good starting point for your new tool definitions.
+開發者應該把 tool 的名字取得清楚，點出用途，並在 tool 的 "description" 欄位寫清楚、詳細的描述。同樣地，每個 tool 參數也要靠好的命名和描述，確保被正確使用。如果 tool 特別複雜，想提供使用範例，建議在 system prompt 建一個 `# Examples` 區段，把範例放在那裡，不要塞進 "description" 欄位，那個欄位要寫得完整但相對精簡。範例能幫助說明什麼時候該用 tool、tool call 旁邊要不要附上 user 文字，以及不同輸入適合什麼參數。記得可以用 [Prompt Playground](https://platform.openai.com/playground) 裡的 “Generate Anything”，替新的 tool 定義找個不錯的起點。
 
-## Prompting-Induced Planning & Chain-of-Thought
+## 用 Prompting 引導規劃和 Chain-of-Thought
 
-As mentioned already, developers can optionally prompt agents built with GPT-4.1 to plan and reflect between tool calls, instead of silently calling tools in an unbroken sequence. GPT-4.1 is not a reasoning model \- meaning that it does not produce an internal chain of thought before answering \- but in the prompt, a developer can induce the model to produce an explicit, step-by-step plan by using any variant of the Planning prompt component shown above. This can be thought of as the model “thinking out loud.” In our experimentation with the SWE-bench Verified agentic task, inducing explicit planning increased the pass rate by 4%. 
+前面提過，開發者可以選擇用 prompt 讓 GPT-4.1 打造的 agent 在 tool call 之間規劃和反思，不要不間斷地靜靜連續呼叫 tool。GPT-4.1 不是 reasoning 模型，也就是說它回答前不會產生內部的 chain of thought，但開發者可以在 prompt 裡用上面 Planning prompt 的任何變體，引導模型產生明確的逐步計畫。可以想成模型在「出聲思考」。我們在 SWE-bench Verified 這個 agentic 任務上實驗，引導明確規劃讓通過率提高了 4%。
 
-## Sample Prompt: SWE-bench Verified
+## 範例 Prompt：SWE-bench Verified
 
-Below, we share the agentic prompt that we used to achieve our highest score on SWE-bench Verified, which features detailed instructions about workflow and problem-solving strategy. This general pattern can be used for any agentic task.
+下面是我們拿到 SWE-bench Verified 最高分所用的 agentic prompt，裡面有關於工作流和解題策略的詳細指示。這個通用模式可以套用在任何 agentic 任務上。
 
 ```python
 from openai import OpenAI
@@ -261,18 +269,18 @@ response.to_dict()["output"]
       'status': 'completed'}]
     ```
 
-# 2. Long context
+# 2. 長 context
 
-GPT-4.1 has a performant 1M token input context window, and is useful for a variety of long context tasks, including structured document parsing, re-ranking, selecting relevant information while ignoring irrelevant context, and performing multi-hop reasoning using context.
+GPT-4.1 有效能很好的 1M token 輸入 context window，適用於各種長 context 任務，包括結構化文件解析、重新排序、在忽略無關 context 的同時挑出相關資訊，以及利用 context 做多跳推理。
 
 
-## Optimal Context Size
+## 最佳 context 大小
 
-We observe very good performance on needle-in-a-haystack evaluations up to our full 1M token context, and we’ve observed very strong performance at complex tasks with a mix of both relevant and irrelevant code and other documents. However, long context performance can degrade as more items are required to be retrieved, or perform complex reasoning that requires knowledge of the state of the entire context (like performing a graph search, for example).
+在 needle-in-a-haystack eval 上，直到完整的 1M token context 都有很好的表現，在混合相關與不相關程式碼和其他文件的複雜任務上，表現也很強。不過，當需要擷取的項目變多，或需要複雜推理、得掌握整個 context 的狀態時（例如做 graph search），長 context 的表現可能會下降。
 
-## Tuning Context Reliance
+## 調整對 context 的依賴程度
 
-Consider the mix of external vs. internal world knowledge that might be required to answer your question. Sometimes it’s important for the model to use some of its own knowledge to connect concepts or make logical jumps, while in others it’s desirable to only use provided context
+想一下回答你的問題，需要多少外部知識和模型內部的世界知識。有時候讓模型用一些自己的知識來連結概念或做邏輯跳躍很重要，有時候則希望它只用提供的 context。
 
 ```
 # Instructions
@@ -282,15 +290,15 @@ Consider the mix of external vs. internal world knowledge that might be required
 - By default, use the provided external context to answer the User Query, but if other basic knowledge is needed to answer, and you're confident in the answer, you can use some of your own knowledge to help answer the question.
 ```
 
-## Prompt Organization
+## Prompt 的組織
 
-Especially in long context usage, placement of instructions and context can impact performance. If you have long context in your prompt, ideally place your instructions at both the beginning and end of the provided context, as we found this to perform better than only above or below. If you’d prefer to only have your instructions once, then above the provided context works better than below.
+尤其在長 context 的用法裡，指令和 context 的擺放位置會影響表現。如果 prompt 裡有很長的 context，理想上要把指令同時放在提供的 context 的開頭和結尾，我們發現這樣比只放上面或只放下面表現更好。如果你偏好指令只出現一次，那放在 context 上面比放下面好。
 
 # 3. Chain of Thought
 
-As mentioned above, GPT-4.1 is not a reasoning model, but prompting the model to think step by step (called “chain of thought”) can be an effective way for a model to break down problems into more manageable pieces, solve them, and improve overall output quality, with the tradeoff of higher cost and latency associated with using more output tokens. The model has been trained to perform well at agentic reasoning about and real-world problem solving, so it shouldn’t require much prompting to perform well.
+如前面所說，GPT-4.1 不是 reasoning 模型，但提示模型一步一步思考（稱為「chain of thought」），可以有效讓模型把問題拆成比較好處理的小塊、逐一解決，並提升整體輸出品質，代價是輸出 token 變多，成本和延遲都比較高。這個模型已經被訓練成擅長 agentic 推理和解決真實世界的問題，所以不太需要很多 prompting 就能表現得好。
 
-We recommend starting with this basic chain-of-thought instruction at the end of your prompt:
+建議從 prompt 結尾的這段基本 chain-of-thought 指令開始：
 
 ```
 ...
@@ -298,9 +306,9 @@ We recommend starting with this basic chain-of-thought instruction at the end of
 First, think carefully step by step about what documents are needed to answer the query. Then, print out the TITLE and ID of each document. Then, format the IDs into a list.
 ```
 
-From there, you should improve your chain-of-thought (CoT) prompt by auditing failures in your particular examples and evals, and addressing systematic planning and reasoning errors with more explicit instructions. In the unconstrained CoT prompt, there may be variance in the strategies it tries, and if you observe an approach that works well, you can codify that strategy in your prompt. Generally speaking, errors tend to occur from misunderstanding user intent, insufficient context gathering or analysis, or insufficient or incorrect step by step thinking, so watch out for these and try to address them with more opinionated instructions.
+接著，審視你自己的範例和 eval 裡失敗的案例，針對系統性的規劃和推理錯誤，加上更明確的指令，改進你的 chain-of-thought（CoT）prompt。在沒有限制的 CoT prompt 裡，模型嘗試的策略可能有差異，如果你看到某個做法很有效，可以把那個策略寫進 prompt。一般來說，錯誤常出在誤解 user 意圖、context 收集或分析不足，或是逐步思考不夠或不正確，所以要留意這幾點，並用更有主見的指令去處理。
 
-Here is an example prompt instructing the model to focus more methodically on analyzing user intent and considering relevant context before proceeding to answer.
+下面這個範例 prompt 要求模型在回答之前，更有條理地專注分析 user 意圖並考慮相關 context。
 
 ```
 # Reasoning Strategy
@@ -320,37 +328,36 @@ First, think carefully step by step about what documents are needed to answer th
 ```
 
 
-# 4. Instruction Following
+# 4. 指令遵循
 
-GPT-4.1 exhibits outstanding instruction-following performance, which developers can leverage to precisely shape and control the outputs for their particular use cases. Developers often extensively prompt for agentic reasoning steps, response tone and voice, tool calling information, output formatting, topics to avoid, and more. However, since the model follows instructions more literally, developers may need to include explicit specification around what to do or not to do. Furthermore, existing prompts optimized for other models may not immediately work with this model, because existing instructions are followed more closely and implicit rules are no longer being as strongly inferred.
+GPT-4.1 的指令遵循表現非常出色，開發者可以用它精準塑造和控制特定用途的輸出。開發者常常大量 prompt 這些東西：agentic 推理步驟、回應的語氣和口吻、tool calling 資訊、輸出格式、要避開的主題等等。不過因為模型比較照字面遵循指令，開發者可能需要明確說清楚該做什麼、不該做什麼。另外，針對其他模型最佳化的現有 prompt，不一定馬上能用在這個模型上，因為現有指令會被更緊密地遵循，而隱含的規則不再被那麼強烈地推測。
 
-## Recommended Workflow
+## 建議的工作流
 
-Here is our recommended workflow for developing and debugging instructions in prompts:
+這是我們建議的 prompt 指令開發和除錯流程：
 
-1. Start with an overall “Response Rules” or “Instructions” section with high-level guidance and bullet points.  
-2. If you’d like to change a more specific behavior, add a section to specify more details for that category, like `# Sample Phrases`.  
-3. If there are specific steps you’d like the model to follow in its workflow, add an ordered list and instruct the model to follow these steps.
-4. If behavior still isn’t working as expected:  
-   1. Check for conflicting, underspecified, or wrong instructions and examples. If there are conflicting instructions, GPT-4.1 tends to follow the one closer to the end of the prompt.
-   2. Add examples that demonstrate desired behavior; ensure that any important behavior demonstrated in your examples are also cited in your rules.
-   3. It’s generally not necessary to use all-caps or other incentives like bribes or tips. We recommend starting without these, and only reaching for these if necessary for your particular prompt. Note that if your existing prompts include these techniques, it could cause GPT-4.1 to pay attention to it too strictly.
+1. 先從整體的「Response Rules」或「Instructions」區段開始，寫高層次的指引和條列重點。
+2. 想改變比較具體的行為時，加一個區段說明那個類別的更多細節，像是 `# Sample Phrases`。
+3. 如果有希望模型在工作流裡遵循的特定步驟，加一個有序列表，並指示模型照這些步驟做。
+4. 如果行為還是不如預期：
+   1. 檢查有沒有互相衝突、說明不足或錯誤的指令和範例。如果指令互相衝突，GPT-4.1 傾向遵循比較靠近 prompt 結尾的那個。
+   2. 加上示範期望行為的範例，並確保範例裡示範的重要行為，也在規則裡有提到。
+   3. 一般不需要用全大寫，或是賄賂、給小費這類誘因。建議先不用，只有在你的 prompt 真的需要時才去用。注意，如果現有的 prompt 裡有這些技巧，可能會讓 GPT-4.1 過度嚴格地在意它。
 
-*Note that using your preferred AI-powered IDE can be very helpful for iterating on prompts, including checking for consistency or conflicts, adding examples, or making cohesive updates like adding an instruction and updating instructions to demonstrate that instruction.*
+*注意，用你喜歡的 AI IDE 來迭代 prompt 很有幫助，包括檢查一致性或衝突、加範例，或做一致的更新，例如加一條指令、再更新其他指令去呼應它。*
 
-## Common Failure Modes
+## 常見的失敗模式
 
-These failure modes are not unique to GPT-4.1, but we share them here for general awareness and ease of debugging.
+這些失敗模式不是 GPT-4.1 獨有，但在這裡分享，讓大家有概念，也方便除錯。
+* 要求模型一律遵循某個特定行為，偶爾會有反效果。比如告訴它「回覆 user 之前一定要先呼叫 tool」，模型在資訊不足時，可能會幻想 tool 的輸入，或用 null 值呼叫 tool。加上「如果你沒有足夠的資訊可以呼叫 tool，就向 user 要你需要的資訊」應該能緩解。
+* 提供範例用語時，模型可能一字不改地使用這些句子，聽起來開始對 user 很重複。要指示模型視情況變化用語。
+* 沒有具體指示的話，有些模型會急著多寫一段文字解釋自己的決定，或輸出比你想要的更多格式。提供指示，必要時加範例來緩解。
 
-* Instructing a model to always follow a specific behavior can occasionally induce adverse effects. For instance, if told “you must call a tool before responding to the user,” models may hallucinate tool inputs or call the tool with null values if they do not have enough information. Adding “if you don’t have enough information to call the tool, ask the user for the information you need” should mitigate this.
-* When provided sample phrases, models can use those quotes verbatim and start to sound repetitive to users. Ensure you instruct the model to vary them as necessary.
-* Without specific instructions, some models can be eager to provide additional prose to explain their decisions, or output more formatting in responses than may be desired. Provide instructions and potentially examples to help mitigate.
+## 範例 Prompt：客服
 
-## Example Prompt: Customer Service
+這示範一個虛構的客服 agent 的最佳做法。留意規則的多樣性、具體程度、用額外區段補充更多細節，以及用一個範例示範涵蓋前面所有規則的精確行為。
 
-This demonstrates best practices for a fictional customer service agent. Observe the diversity of rules, the specificity, the use of additional sections for greater detail, and an example to demonstrate precise behavior that incorporates all prior rules.
-
-Try running the following notebook cell - you should see both a user message and tool call, and the user message should start with a greeting, then echo back their answer, then mention they're about to call a tool. Try changing the instructions to shape the model behavior, or trying other user messages, to test instruction following performance.
+試著執行下面的 notebook cell，你應該會看到一則 user 訊息和一個 tool call，user 訊息會先打招呼，再重複他們的回答，然後提到即將呼叫 tool。可以試著修改指令來塑造模型行為，或換別的 user 訊息，測試指令遵循的表現。
 
 ```python
 SYS_PROMPT_CUSTOMER_SERVICE = """You are a helpful customer service agent working for NewTelco, helping a user efficiently fulfill their request while adhering closely to provided guidelines.
@@ -477,11 +484,11 @@ response.to_dict()["output"]
       'status': 'completed'}]
     ```
 
-# 5. General Advice
+# 5. 一般建議
 
-## Prompt Structure
+## Prompt 結構
 
-For reference, here is a good starting point for structuring your prompts.
+給你參考，這是組織 prompt 的一個好起點。
 
 ```
 # Role and Objective
@@ -502,14 +509,14 @@ For reference, here is a good starting point for structuring your prompts.
 # Final instructions and prompt to think step by step
 ```
 
-Add or remove sections to suit your needs, and experiment to determine what’s optimal for your usage.
+依需求增減區段，並實驗找出最適合你用法的版本。
 
-## Delimiters
+## 分隔符號
 
-Here are some general guidelines for selecting the best delimiters for your prompt. Please refer to the Long Context section for special considerations for that context type.
+這是挑選 prompt 最佳分隔符號的一般準則。長 context 類型的特殊考量，請參考長 context 那一節。
 
-1. Markdown: We recommend starting here, and using markdown titles for major sections and subsections (including deeper hierarchy, to H4+). Use inline backticks or backtick blocks to precisely wrap code, and standard numbered or bulleted lists as needed.  
-2. XML: These also perform well, and we have improved adherence to information in XML with this model. XML is convenient to precisely wrap a section including start and end, add metadata to the tags for additional context, and enable nesting. Here is an example of using XML tags to nest examples in an example section, with inputs and outputs for each:
+1. Markdown：建議從這裡開始，用 markdown 標題標示主要區段和子區段（包含更深的層級，到 H4 以上）。用行內反引號或反引號區塊精準包住程式碼，需要時用標準的編號或項目列表。
+2. XML：表現也不錯，這個模型對 XML 裡資訊的遵循度也有改善。XML 方便精準包住一個區段的開頭和結尾，可以在標籤上加 metadata 提供更多 context，也能巢狀。下面是用 XML 標籤在範例區段裡巢狀放範例，每個範例都有輸入和輸出：
 
 ```
 <examples>
@@ -520,31 +527,31 @@ Here are some general guidelines for selecting the best delimiters for your prom
 </examples>
 ```
 
-3. JSON is highly structured and well understood by the model particularly in coding contexts. However it can be more verbose, and require character escaping that can add overhead.
+3. JSON 結構性很強，模型尤其在寫程式的情境下理解得很好。不過它比較囉嗦，還需要字元跳脫，會增加負擔。
 
-Guidance specifically for adding a large number of documents or files to input context:
+針對要在輸入 context 加入大量文件或檔案的指引：
 
-* XML performed well in our long context testing.  
-  * Example: `<doc id='1' title='The Fox'>The quick brown fox jumps over the lazy dog</doc>`  
-* This format, proposed by Lee et al. ([ref](https://arxiv.org/pdf/2406.13121)), also performed well in our long context testing.  
-  * Example: `ID: 1 | TITLE: The Fox | CONTENT: The quick brown fox jumps over the lazy dog`  
-* JSON performed particularly poorly.  
-  * Example: `[{'id': 1, 'title': 'The Fox', 'content': 'The quick brown fox jumped over the lazy dog'}]`
+* XML 在我們的長 context 測試裡表現很好。
+  * 範例：`<doc id='1' title='The Fox'>The quick brown fox jumps over the lazy dog</doc>`
+* Lee et al. 提出的這個格式（[ref](https://arxiv.org/pdf/2406.13121)），在我們的長 context 測試裡也表現很好。
+  * 範例：`ID: 1 | TITLE: The Fox | CONTENT: The quick brown fox jumps over the lazy dog`
+* JSON 的表現特別差。
+  * 範例：`[{'id': 1, 'title': 'The Fox', 'content': 'The quick brown fox jumped over the lazy dog'}]`
 
-The model is trained to robustly understand structure in a variety of formats. Generally, use your judgement and think about what will provide clear information and “stand out” to the model. For example, if you’re retrieving documents that contain lots of XML, an XML-based delimiter will likely be less effective. 
+這個模型被訓練成能穩健理解各種格式的結構。一般來說，自己判斷一下，什麼能提供清楚的資訊、對模型來說「顯眼」。例如，如果你擷取的文件本身就有很多 XML，用 XML 當分隔符號大概就沒那麼有效。
 
-## Caveats
+## 注意事項
 
-* In some isolated cases we have observed the model being resistant to producing very long, repetitive outputs, for example, analyzing hundreds of items one by one. If this is necessary for your use case, instruct the model strongly to output this information in full, and consider breaking down the problem or using a more concise approach.  
-* We have seen some rare instances of parallel tool calls being incorrect. We advise testing this, and considering setting the [parallel\_tool\_calls](https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls) param to false if you’re seeing issues.
+* 少數情況下，我們觀察到模型抗拒產生很長、很重複的輸出，例如一個一個分析幾百個項目。如果你的用途需要這樣，就強烈指示模型完整輸出，並考慮把問題拆開，或用比較精簡的做法。
+* 我們看過少數平行 tool call 不正確的情況。建議測試一下，如果發現問題，考慮把 [parallel\_tool\_calls](https://platform.openai.com/docs/api-reference/responses/create#responses-create-parallel_tool_calls) 參數設成 false。
 
-# Appendix: Generating and Applying File Diffs
+# 附錄：產生和套用檔案 diff
 
-Developers have provided us feedback that accurate and well-formed diff generation is a critical capability to power coding-related tasks. To this end, the GPT-4.1 family features substantially improved diff capabilities relative to previous GPT models. Moreover, while GPT-4.1 has strong performance generating diffs of any format given clear instructions and examples, we open-source here one recommended diff format, on which the model has been extensively trained. We hope that in particular for developers just starting out, that this will take much of the guesswork out of creating diffs yourself. 
+開發者回饋說，準確且格式正確的 diff 產生，是支撐程式相關任務的關鍵能力。為此，GPT-4.1 系列的 diff 能力比之前的 GPT 模型大幅提升。此外，GPT-4.1 在有清楚指示和範例時，能產生任何格式的 diff，我們在這裡開源一種建議的 diff 格式，模型已經針對它做過大量訓練。我們希望這能替剛起步的開發者省下不少自己摸索 diff 的猜測功夫。
 
 ## Apply Patch
 
-See the example below for a prompt that applies our recommended tool call correctly.
+下面的範例是正確套用我們建議的 tool call 的 prompt。
 
 ```python
 APPLY_PATCH_TOOL_DESC = """This is a custom utility that makes it more convenient to add, remove, move, or edit code files. `apply_patch` effectively allows you to execute a diff/patch against a file, but the format of the diff specification is unique to this task, so pay careful attention to these instructions. To use the `apply_patch` command, you should pass a message of the following structure as "input":
@@ -619,9 +626,9 @@ APPLY_PATCH_TOOL = {
 }
 ```
 
-## Reference Implementation: apply\_patch.py
+## 參考實作：apply\_patch.py
 
-Here’s a reference implementation of the apply\_patch tool that we used as part of model training. You’ll need to make this an executable and available as \`apply\_patch\` from the shell where the model will execute commands:
+這是我們在模型訓練過程中用的 apply\_patch tool 的參考實作。你得讓它成為可執行檔，並在模型要執行指令的 shell 裡，可以用 \`apply\_patch\` 呼叫。
 
 ```python
 #!/usr/bin/env python3
@@ -1158,11 +1165,11 @@ if __name__ == "__main__":
     main()
 ```
 
-## Other Effective Diff Formats
+## 其他有效的 Diff 格式
 
-If you want to try using a different diff format, we found in testing that the SEARCH/REPLACE diff format used in Aider’s polyglot benchmark, as well as a pseudo-XML format with no internal escaping, both had high success rates.
+如果想試別的 diff 格式，我們測試發現，Aider 的 polyglot benchmark 用的 SEARCH/REPLACE diff 格式，以及沒有內部跳脫的偽 XML 格式，成功率都很高。
 
-These diff formats share two key aspects: (1) they do not use line numbers, and (2) they provide both the exact code to be replaced, and the exact code with which to replace it, with clear delimiters between the two.
+這些 diff 格式有兩個共通點：(1) 不用行號，(2) 同時提供要被取代的精確程式碼，和要取代成的精確程式碼，兩者之間有清楚的分隔符號。
 
 ````python
 SEARCH_REPLACE_DIFF_EXAMPLE = """
@@ -1194,6 +1201,16 @@ def search():
 """
 ````
 
+## 重點整理
 
+- agent prompt 開頭放 persistence、tool-calling、planning 三種提醒，能明顯拉高 agentic 任務的表現。
+- tool 要用 API 的 tools 欄位傳，不要手動塞進 prompt，並把名字和 description 寫清楚。
+- GPT-4.1 照字面遵循指令，指令衝突時偏向聽最後面那個，所以舊 prompt 要檢查衝突和隱含規則。
+- 長 context 裡，指令放在開頭和結尾最好，分隔符號優先用 Markdown 或 XML，JSON 在大量文件時表現差。
+- 要產生 diff，用不靠行號、同時給出舊內容和新內容的格式，例如推薦的 `apply_patch`。
 
-<!-- tutor:summary -->
+## 練習
+
+1. 在客服範例的 prompt 裡，刪掉其中一條規則，換個 user 訊息再跑一次，看行為有沒有改變。
+2. 把客服範例裡的範例用語拿掉，再加一句「要變化用語」，比較兩種版本的輸出是否重複。
+3. 把長 context 範例裡的文件格式，從 XML 改成 `ID: | TITLE: | CONTENT:` 格式，再試試指令放在 context 上方、下方、前後都放，比較結果。

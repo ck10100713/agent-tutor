@@ -1,36 +1,43 @@
 ---
-translated: false
+translated: true
 source: examples/Data-intensive-Realtime-apps.ipynb
 ---
-
-# Practical guide to data-intensive apps with the Realtime API
+# 用 Realtime API 處理大量資料的實戰指南
 
 > 原文：[examples/Data-intensive-Realtime-apps.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Data-intensive-Realtime-apps.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇教你怎麼讓 Realtime API 在 function call 回傳大量資料時，還能維持快速、穩定的回應。範例是一個 NBA 選秀球探 agent，會呼叫多個 function 來分析選秀新秀。基本的 Realtime API 設定不在這篇範圍內。
 
+## 學完你會
+- 把一個肥大的 function 拆成職責清楚的小 function，縮小每次回傳的資料量
+- 用過濾、攤平結構、換資料格式這幾招，讓 function call 的回傳更精簡
+- 在資料量大的 function call 之後送出 hint prompt，讓模型答得更準
 
-This cookbook serves as a practical guide to help AI Engineers maximize the effectiveness of OpenAI's Realtime API, specifically when dealing with data-intensive function calls. We'll focus on scenarios common in speech-to-speech agents, where vast amounts of data must be handled smoothly and efficiently.
+## 開跑前
+需要有 OpenAI API key，並且已經會建立 Realtime API 的 session。
 
-This post won't cover the basics of setting up a Realtime API solution. Instead, you'll gain clear insights and actionable strategies to enhance the performance and reliability of your real-time conversational agents. It addresses specific challenges unique to handling large amounts of data in real-time conversational contexts.
+這份 cookbook 是給 AI 工程師的實戰指南，教你在遇到資料量很大的 function call 時，怎麼讓 OpenAI 的 Realtime API 發揮最好的效果。重點放在 speech-to-speech agent 常見的情境：大量資料要順暢又有效率地處理。
 
-### What is the Realtime API?
+這篇不會講怎麼從頭架一個 Realtime API 方案，而是給你清楚的觀念和可以直接用的做法，讓即時對話 agent 的效能和穩定度更好。內容針對的是即時對話情境下，處理大量資料會碰到的特殊問題。
 
-Before we dive in, let’s quickly recap the API for those who are new. The OpenAI Realtime API is a recent offering that supports low-latency, multimodal interactions—such as speech-to-speech conversations and live transcription. Picture scenarios like real-time voice-based customer support or live movie transcriptions. 
+### 什麼是 Realtime API？
 
-### What is a data-intensive function call?
+先簡單回顧一下。OpenAI Realtime API 是比較新的服務，支援低延遲的多模態互動，例如 speech-to-speech 對話和即時轉錄。想像一下即時語音客服，或是電影的即時字幕轉錄。
 
-Agents need access to tools and relevant data to perform their tasks. For instance, a financial analyst agent might pull real-time market data. In many cases, services already exist in your environment that expose this information through APIs.
+### 什麼是資料量大的 function call？
 
-Historically, APIs weren’t designed with agents in mind and often return large volumes of data, depending on the service. As engineers, we frequently wrap these APIs with function calls to accelerate agent development—which makes perfect sense. Why reinvent what already exists?
+Agent 要有 tool 和相關資料才能完成任務。例如財務分析 agent 可能要抓即時市場資料。很多時候，你的環境裡已經有現成的服務，透過 API 提供這些資訊。
 
-If not carefully optimized, these data-intensive function calls can quickly overwhelm the Realtime API—leading to slow responses or even failures to process user requests.
+過去的 API 並不是為 agent 設計的，依服務不同常常會回傳大量資料。工程師通常會直接用 function call 把這些 API 包起來，加快 agent 開發速度，這很合理，已經有的東西何必重做。
 
-### Setting the stage
+但如果不好好最佳化，這些資料量大的 function call 很容易壓垮 Realtime API，造成回應變慢，甚至處理不了使用者的請求。
 
-Our example centers on an NBA Scouting Agent that calls multiple functions to deliver in-depth analysis of upcoming draft prospects. To demonstrate practical guidelines for Realtime API interactions, we use large, realistic payloads inspired by NBA draft prospects. Below, you’ll find a monolithic `searchDraftProspects` function defined in the Realtime session to set the stage.
+### 範例場景
+
+我們的範例是一個 NBA 球探 agent，它會呼叫多個 function，對即將選秀的新秀做深入分析。為了示範 Realtime API 互動的實務準則，我們用了大型又貼近真實的 payload，靈感來自 NBA 選秀新秀的資料。下面是在 Realtime session 裡定義的一個肥大的 `searchDraftProspects` function。
 
 ```json
 // "Hey, pull up point guards projected in the top 10 in the 2025 draft"
@@ -69,7 +76,7 @@ Our example centers on an NBA Scouting Agent that calls multiple functions to de
 }
 ```
 
-The searchDraftProspects function call returns a hefty payload. The example’s structure and size are drawn from real-world scenarios we’ve encountered.
+searchDraftProspects 這個 function call 回傳的 payload 很大。範例的結構和大小是參考我們在真實場景中遇到的情況。
 
 ```json
 // Example Payload
@@ -182,13 +189,13 @@ The searchDraftProspects function call returns a hefty payload. The example’s 
 }
 ```
 
-## Guiding principles
+## 指導原則
 
-### 1. Break down unwieldy functions into smaller ones with clear roles and responsibilities
+### 1. 把笨重的 function 拆成小的，職責清楚
 
-It almost goes without saying—when building function calls, your top priority is to design clear, well-defined functions. This makes it easy to trim response sizes and avoid overwhelming the model. Each function call should be straightforward to explain, sharply scoped, and return only the information needed for its purpose. Overlapping responsibilities between functions inevitably invites confusion.
+這點幾乎不用多說：設計 function call 時，第一優先是把 function 設計得清楚、定義明確。這樣才容易縮小回傳大小，避免模型被資料淹沒。每個 function call 都應該一句話講得清楚、範圍收斂，只回傳它用途需要的資訊。function 之間職責重疊，一定會造成混亂。
 
-For example, we can limit the `searchDraftProspects` function call to return only general details—such as player stats—for each prospect, dramatically reducing the response size. If more information is needed, the new `getProspectDetails` function call provides expanded details. There’s no universal solution; the right approach depends on your use case and data model.
+舉例來說，我們可以讓 `searchDraftProspects` 只回傳每位新秀的一般資訊（例如球員數據），大幅縮小回傳大小。需要更多細節時，再用新的 `getProspectDetails` function call 取得完整資料。沒有萬用解法，要看你的使用情境和資料模型。
 
 ```json
 {
@@ -260,25 +267,25 @@ For example, we can limit the `searchDraftProspects` function call to return onl
 }
 ```
 
-### 2. As conversations unfold, optimize the context
+### 2. 對話進行時，持續優化 context
 
-Realtime conversations allow for generous 30-minute sessions—but the rolling context window only supports ~16,000 tokens (depending on the model snapshot, context window limitations are improving). As a result, you may notice performance gradually decline during extended exchanges. As conversations progress and more function calls are made, the conversation state can expand quickly with both important information and unnecessary noise—so it’s important to focus on keeping the most relevant details. This approach helps maintain strong performance and reduces cost.
+Realtime 對話允許長達 30 分鐘的 session，但滾動式的 context window 只支援大約 16,000 tokens（實際依模型 snapshot 而定，context window 的限制正在改善）。所以在長時間對話中，你可能會發現效能慢慢下降。隨著對話進行、function call 越來越多，對話狀態會快速膨脹，裡面有重要資訊也有不必要的雜訊，所以要把重心放在保留最相關的細節。這樣能維持良好的效能，也能降低成本。
 
-**i) Periodically summarize the conversation state**
+**i) 定期摘要對話狀態**
 
-Periodically summarizing the conversation as it unfolds is an excellent way to reduce context size—cutting both cost and latency.
+在對話進行中定期做摘要，是縮小 context 的好方法，成本和延遲都會下降。
 
-See @Minhajul's' epic guide on implementing automatic summarization in Realtime conversations ([link](https://cookbook.openai.com/examples/context_summarization_with_realtime_api)).
+可以參考 @Minhajul 寫的 Realtime 對話自動摘要實作指南（[連結](https://cookbook.openai.com/examples/context_summarization_with_realtime_api)）。
 
-**ii) Periodically remind the model of its role and responsibilities**
+**ii) 定期提醒模型它的角色和職責**
 
-Data-heavy payloads can quickly fill the context window. If you notice the model losing track of instructions or available tools, periodically remind it of its system prompt and tools by calling `session.update`—this keeps it focused on its role and responsibilities.
+資料量大的 payload 很快就會塞滿 context window。如果你發現模型忘了指示或可用的 tool，可以呼叫 `session.update`，定期把 system prompt 和 tool 再提醒它一次，讓它專注在自己的角色和職責上。
 
-### 3. Data processing and optimization
+### 3. 資料處理與最佳化
 
-**i) Use filtering in your function calls to trim data-heavy responses down to only the essential fields needed to answer the question**
+**i) 在 function call 裡做過濾，把資料量大的回應縮減成回答問題真正需要的欄位**
 
-Generally, fewer tokens returned by function calls lead to better quality responses. Common pitfalls occur when function calls return excessively large payloads spanning thousands of tokens. Focus on applying filters in each function call, either at the data-level or function-level, to minimize response sizes.
+一般來說，function call 回傳的 token 越少，回答品質越好。常見的坑是 function call 回傳好幾千 token 的巨大 payload。在每個 function call 裡做過濾，不管是資料層還是 function 層，都能把回應大小壓下來。
 
 ```json
 // Filtered response
@@ -317,9 +324,9 @@ Generally, fewer tokens returned by function calls lead to better quality respon
 }
 ```
 
-**ii) Flatten hierarchical payloads—without losing key information**
+**ii) 攤平階層式 payload，但不要丟掉關鍵資訊**
 
-Hierarchical payloads from API calls can sometimes include repeated level titles—like "ProspectInfo" or "Stats"—which may add extra noise and make things harder for the model to process. As you explore ways to make your data more efficient, you might try flattening these structures by trimming away some of the unnecessary labels. This can help improve performance, but consider what information is important to keep for your particular use case.
+API 回傳的階層式 payload 有時會重複出現各層標題，像 "ProspectInfo" 或 "Stats"，這會增加雜訊，讓模型更難處理。在讓資料更有效率的過程中，可以試著攤平這些結構，去掉一些不必要的標籤。這樣能提升效能，不過要想清楚你的使用情境裡哪些資訊必須保留。
 
 ```json
 // Flattened payload
@@ -373,9 +380,9 @@ Hierarchical payloads from API calls can sometimes include repeated level titles
  }
  ```
 
-**iii) Experiment with different data formats**
+**iii) 試試不同的資料格式**
 
-The way you structure your data has a direct impact on how well the model processes and summarizes API responses. In our experience, clear, key-based formats like JSON or YAML help the model interpret data more accurately than tabular formats such as Markdown. Large tables, especially, tend to overwhelm the model—resulting in less fluent and less accurate outputs. Still, it’s worth experimenting with different formats to find what works best for your use case.
+資料怎麼組織，會直接影響模型處理和摘要 API 回應的效果。根據我們的經驗，JSON 或 YAML 這類以 key 為主的格式，比 Markdown 這類表格格式更能幫模型正確理解資料。尤其是大型表格，很容易讓模型吃不消，輸出變得不流暢也不準。不過還是值得多試幾種格式，找出最適合你情境的。
 
 ```yaml
 status:
@@ -434,11 +441,11 @@ data:
         contactEmail: "rallen@elitesports.com"
 ```
 
-## 4. After data-heavy function calls, follow up with hint prompts
+## 4. 資料量大的 function call 之後，接著送 hint prompt
 
-Underlying models often struggle to transition smoothly from data-heavy responses to accurate answers. To improve fluency and accuracy when working with complex data, provide a function call hint immediately after the function call. These hints guide the model on the specific task—teaching it how to interpret key fields and domain-specific values.
+底層模型常常很難從資料量大的回應順利轉成準確的答案。為了在處理複雜資料時讓回答更流暢準確，可以在 function call 之後立刻給一個 function call hint。這些 hint 會告訴模型當下的任務，教它怎麼解讀關鍵欄位和領域特有的值。
 
-The following example illustrates an effective hint prompt.
+下面是一個有效的 hint prompt 範例。
 
 ```javascript
 // Function call hint
@@ -478,7 +485,7 @@ Important: Respond based strictly on provided data, without inventing details.
 `;
 ```
 
-In practice, we first append the function call result to the conversation. Then, we emit a response from the Realtime API with the hint prompt. Voilà—the model gracefully handles all the information.
+實際做法是先把 function call 的結果加進對話，再用 hint prompt 要 Realtime API 產生一次回應。這樣模型就能漂亮地處理所有資訊。
 
 ```javascript
 // Add new conversation item for the model
@@ -506,17 +513,27 @@ const event = {
 dataChannel.send(JSON.stringify(event));
 ```
 
-## Wrapping up
+## 總結
 
-Building effective agents with the Realtime API is an ongoing process of exploration and adaptation.
+用 Realtime API 打造有效的 agent，是不斷探索和調整的過程。
 
-**Summary of Key Recommendations**
+**重點建議整理**
 
-- **Filter data:** Only include fields and details that are directly relevant to the user’s request or the model’s next step. Trim the rest.
-- **Flatten and simplify structures:** Reduce deeply nested or redundant data. Present information in a way that’s easy for both models and humans to scan.
-- **Prefer clear, structured formats:** Use JSON (or YAML) with consistent field names and minimal noise. Avoid large tables or markdown for data-heavy responses.
-- **Guide the model with hint prompts:** After returning lots of data, follow up with a targeted prompt that explains exactly what the model should extract or summarize.
+- **過濾資料：** 只放跟使用者請求或模型下一步直接相關的欄位和細節，其餘砍掉。
+- **攤平並簡化結構：** 減少深層巢狀或重複的資料，讓模型和人都容易掃讀。
+- **偏好清楚的結構化格式：** 用 JSON（或 YAML），欄位名稱一致、雜訊少。資料量大的回應避免用大型表格或 markdown。
+- **用 hint prompt 引導模型：** 回傳大量資料之後，接著送一個明確的 prompt，說明模型該擷取或摘要什麼。
 
-Remember—experimentation is essential. Realtime models keep improving, and we’ll continue sharing tips to help you get the most out of the Realtime API.
+記得，實驗很重要。Realtime 模型持續在進步，我們也會繼續分享讓你把 Realtime API 用得更好的技巧。
 
-<!-- tutor:summary -->
+## 重點整理
+- function call 回傳的資料越大，Realtime API 越容易變慢或失敗，所以要先控制回傳大小
+- function 拆小、職責單一，比一個包山包海的 function 好管理
+- 對話 context 有限，要靠摘要和 `session.update` 提醒來維持模型的專注
+- 過濾欄位、攤平結構、用 JSON 或 YAML，都是在減少模型要處理的雜訊
+- 大量資料回傳後送 hint prompt，能幫模型順利轉成準確的回答
+
+## 練習
+1. 看 `searchDraftProspects` 的定義，挑兩個你覺得球探不一定每次都需要的欄位，從回傳裡拿掉，比較前後 payload 的大小。
+2. 把你拆出來的 `getProspectDetails` 加上一個參數，只回傳指定的幾個欄位（例如只要身體數據），讓呼叫端自己決定要多少資料。
+3. 改寫 hint prompt，讓模型回答時一定要先講出該球員的位置和身高，再給評價，然後觀察回答有沒有照做。

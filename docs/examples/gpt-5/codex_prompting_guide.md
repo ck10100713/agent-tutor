@@ -1,44 +1,54 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/codex_prompting_guide.ipynb
 ---
 
-# Codex Prompting Guide
+# Codex Prompting 指南
 
 > 原文：[examples/gpt-5/codex_prompting_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/codex_prompting_guide.ipynb)
 
+## 這篇在做什麼
 
+教你怎麼直接透過 API 使用 Codex 系列模型（`gpt-5.3-codex`）打造 coding agent：prompt 要怎麼寫、tool 要怎麼接（`apply_patch`、shell、`update_plan` 等）、怎麼用 compaction 撐長任務，以及新的 `phase` 參數。參考實作是開源的 codex-cli。
 
-<!-- tutor:goals -->
+## 學完你會
 
+- 把現有的 agent harness 遷移到 codex-cli 風格：用標準 starter prompt 當底，移除前置計畫和進度回報的 prompting。
+- 正確接上 `apply_patch`、`shell_command`、`update_plan` 等 tool，並設定平行 tool call 與 tool 回應截斷（上限 10k token）。
+- 在 Responses API 裡保留 assistant item 的 `phase`，並用 metaprompting 修 overthinking 或囉嗦的進度更新。
 
-Codex models advance the frontier of intelligence and efficiency and our recommended agentic coding model. Follow this guide closely to ensure you’re getting the best performance possible from this model. This guide is for anyone using the model directly via the API for maximum customizability; we also have the [Codex SDK](https://developers.openai.com/codex/sdk/) for simpler integrations.
+## 開跑前
 
-In the API, the Codex-tuned model is `gpt-5.3-codex` (see the [model page](https://developers.openai.com/api/docs/models/gpt-5.3-codex)).
+- 需要 OpenAI API 存取權限，且能使用 `gpt-5.3-codex`。
+- 想看參考實作的話，clone 開源的 codex-cli repo。
 
-Recent improvements to Codex models
+Codex 模型推進了智慧與效率的前沿，是我們推薦的 agentic coding 模型。照著這份指南做，才能拿到這個模型最好的表現。這份指南寫給直接透過 API 使用模型、想要最大客製彈性的人；如果想要比較簡單的整合，我們也有 [Codex SDK](https://developers.openai.com/codex/sdk/)。
 
-* Faster and more token efficient: Uses fewer thinking tokens to accomplish a task. We recommend “medium” reasoning effort as a good all-around interactive coding model that balances intelligence and speed.  
-* Higher intelligence and long-running autonomy: Codex is very capable and will work autonomously for hours to complete your hardest tasks. You can use `high` or `xhigh` reasoning effort for your hardest tasks.  
-* First-class compaction support: Compaction enables multi-hour reasoning without hitting context limits and longer continuous user conversations without needing to start new chat sessions.  
-* Codex is also much better in PowerShell and Windows environments.
+在 API 裡，針對 Codex 調校的模型是 `gpt-5.3-codex`（見[模型頁面](https://developers.openai.com/api/docs/models/gpt-5.3-codex)）。
 
-# Getting Started
+Codex 模型最近的改進
 
-If you already have a working Codex implementation, this model should work well with relatively minimal updates, but if you’re starting with a prompt and set of tools that’s optimized for GPT-5-series models, or a third-party model, we recommend making more significant changes. The best reference implementation is our fully open-source codex-cli agent, available on [GitHub](https://github.com/openai/codex). Clone this repo and use Codex (or any coding agent) to ask questions about how things are implemented. From working with customers, we’ve also learned how to customize agent harnesses beyond this particular implementation.
+* 更快、更省 token：完成任務用的 thinking token 更少。我們建議用 “medium” reasoning effort，當作兼顧智慧和速度的互動式 coding 模型。  
+* 更高的智慧和長時間自主運作：Codex 能力很強，可以自主工作數小時來完成你最難的任務。最難的任務可以用 `high` 或 `xhigh` reasoning effort。  
+* 一級支援的 compaction：compaction 讓模型能做數小時的 reasoning 而不撞到 context 上限，也讓使用者的對話可以持續更久，不用開新的 chat session。  
+* Codex 在 PowerShell 和 Windows 環境也好很多。
 
-Key steps to migrate your harness to codex-cli:
+# 開始使用
 
-1. Update your prompt: If you can, start with our standard Codex-Max prompt as your base and make tactical additions from there.  
-   a) The most critical snippets are those covering autonomy and persistence, codebase exploration, tool use, and frontend quality.  
-   b) You should also remove all prompting for the model to communicate an upfront plan, preambles, or other status updates during the rollout, as this can cause the model to stop abruptly before the rollout is complete.  
-2. Update your tools, including our apply\_patch implementation and other best practices below. This is a major lever for getting the most performance.
+如果你已經有可以運作的 Codex 實作，這個模型只要小幅更新就能運作良好；但如果你從為 GPT-5 系列模型或第三方模型最佳化的 prompt 和 tool 組合開始，我們建議做比較大的修改。最好的參考實作是我們完全開源的 codex-cli agent，放在 [GitHub](https://github.com/openai/codex)。clone 這個 repo，用 Codex（或任何 coding agent）問它各個東西是怎麼實作的。跟客戶合作的過程中，我們也學到怎麼在這個實作之外客製 agent harness。
+
+把你的 harness 遷移到 codex-cli 的關鍵步驟：
+
+1. 更新你的 prompt：可以的話，用我們標準的 Codex-Max prompt 當底，然後做策略性的補充。  
+   a) 最關鍵的片段是關於自主性與持續執行、程式碼庫探索、tool 使用和前端品質的部分。  
+   b) 你也應該移除所有要求模型事先說明計畫、寫 preamble 或在 rollout 過程中更新狀態的 prompt，因為這可能讓模型在 rollout 完成前突然停下來。  
+2. 更新你的 tool，包括我們的 apply\_patch 實作和下面其他最佳實務。這是拿到最佳表現的主要槓桿。
 
 # Prompting
 
-## Recommended Starter Prompt
+## 建議的 Starter Prompt
 
-This prompt began as the default [GPT-5.1-Codex-Max prompt](https://github.com/openai/codex/blob/main/codex-rs/core/gpt-5.1-codex-max_prompt.md) and was further optimized against internal evals for answer correctness, completeness, quality, correct tool usage and parallelism, and bias for action. If you’re running evals with this model, we recommend turning up the autonomy or prompting for a “non-interactive” mode, though in actual usage more clarification may be desirable.
+這份 prompt 一開始是預設的 [GPT-5.1-Codex-Max prompt](https://github.com/openai/codex/blob/main/codex-rs/core/gpt-5.1-codex-max_prompt.md)，之後針對答案正確性、完整性、品質、正確使用 tool 與平行化、以及行動傾向，對內部 eval 做了進一步最佳化。如果你用這個模型跑 eval，我們建議把自主性調高，或在 prompt 裡要求 “non-interactive” 模式；不過實際使用時，多一些釐清可能比較好。
 
 ```
 You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.
@@ -175,17 +185,17 @@ You are producing plain text that will later be styled by the CLI. Follow these 
   * Examples: src/app.ts, src/app.ts:42, b/server/index.js#L10, C:\repo\project\main.rs:12:5
 ```
 
-## Mid-Rollout User Updates
+## Rollout 中途的使用者更新
 
-The Codex model family can surface mid-rollout user updates while it's working. For codex versions prior to gpt-5.3-codex, these updates are system-generated rather than promptable, so we advise against adding instructions to the prompt about intermediate plans or messages to the user for those. For gpt-5.3-codex and after, these updates are more communicative and provide more critical information about what's happening and why and work similarly to how intermediate messages work for other GPT-5 series models and can be prompted according to the Preambles & Personality section below.
+Codex 模型家族在工作時可以呈現 rollout 中途的使用者更新。gpt-5.3-codex 之前的 codex 版本，這些更新是系統產生的，無法用 prompt 控制，所以我們建議不要在 prompt 裡加關於中間計畫或給使用者訊息的指示。gpt-5.3-codex 之後，這些更新的溝通性更強，會提供更關鍵的資訊，說明正在發生什麼和為什麼，運作方式跟其他 GPT-5 系列模型的中間訊息類似，可以依照下面「Preambles 與個性」一節來 prompt。
 
-## Using agents.md
+## 使用 agents.md
 
-Codex-cli automatically enumerates these files and injects them into the conversation; the model has been trained to closely adhere to these instructions.
+Codex-cli 會自動列舉這些檔案並注入對話；模型被訓練成會嚴格遵守這些指示。
 
-1\. Files are pulled from \~/.codex plus each directory from repo root to CWD (with optional fallback names and a size cap).  
-2\. They’re merged in order, later directories overriding earlier ones.  
-3\. Each merged chunk shows up to the model as its own user-role message like so:
+1\. 檔案從 \~/.codex 和 repo 根目錄到 CWD 之間的每個目錄收集（可選擇備用檔名和大小上限）。  
+2\. 依序合併，後面的目錄覆蓋前面的。  
+3\. 每個合併後的區塊會以獨立的 user-role 訊息傳給模型，像這樣：
 
 ```
 # AGENTS.md instructions for <directory>
@@ -194,34 +204,34 @@ Codex-cli automatically enumerates these files and injects them into the convers
 </INSTRUCTIONS>
 ```
 
-Additional details
+補充細節
 
-* Each discovered file becomes its own user-role message that starts with \# AGENTS.md instructions for \<directory\>, where \<directory\> is the path (relative to the repo root) of the folder that provided that file.  
-* Messages are injected near the top of the conversation history, before the user prompt, in root-to-leaf order: global instructions first, then repo root, then each deeper directory. If an AGENTS.override.md was used, its directory name still appears in the header (e.g., \# AGENTS.md instructions for backend/api), so the context is obvious in the transcript.
+* 每個找到的檔案都會變成自己的 user-role 訊息，開頭是 \# AGENTS.md instructions for \<directory\>，其中 \<directory\> 是提供該檔案的資料夾（相對於 repo 根目錄）的路徑。  
+* 訊息注入在對話歷史靠近開頭的位置，在使用者 prompt 之前，順序由根到葉：先是全域指示，再來是 repo 根目錄，然後是每個更深的目錄。如果用了 AGENTS.override.md，它所在的目錄名稱仍會出現在標頭裡（例如 \# AGENTS.md instructions for backend/api），所以 transcript 裡的 context 很清楚。
 
 # Compaction
 
-Compaction unlocks significantly longer effective context windows, where user conversations can persist for many turns without hitting context window limits or long context performance degradation, and agents can perform very long trajectories that exceed a typical context window for long-running, complex tasks. A weaker version of this was previously possible with ad-hoc scaffolding and conversation summarization, but our first-class implementation, available via the Responses API, is integrated with the model and is highly performant.
+Compaction 大幅拉長有效的 context window：使用者的對話可以持續很多輪而不撞到 context window 上限或長 context 的效能下降，agent 也能跑超出一般 context window 的很長軌跡，處理長時間運作的複雜任務。以前可以用臨時拼湊的 scaffolding 和對話摘要做出比較弱的版本，但我們透過 Responses API 提供的一級實作跟模型整合在一起，效能很好。
 
-How it works:
+運作方式：
 
-1. You use the Responses API as today, sending input items that include tool calls, user inputs, and assistant messages.  
-2. When your context window grows large, you can invoke /compact to generate a new, compacted context window. Two things to note:  
-   1. The context window that you send to /compact should fit within your model’s context window.  
-   2. The endpoint is ZDR compatible and will return an “encrypted\_content” item that you can pass into future requests.  
-3. For subsequent calls to the /responses endpoint, you can pass your updated, compacted list of conversation items (including the added compaction item). The model retains key prior state with fewer conversation tokens.
+1. 你照常使用 Responses API，傳入包含 tool call、使用者輸入和 assistant 訊息的 input item。  
+2. 當 context window 變大時，可以呼叫 /compact 產生新的、壓縮過的 context window。有兩點要注意：  
+   1. 你傳給 /compact 的 context window 必須放得進模型的 context window。  
+   2. 這個 endpoint 相容 ZDR，並會回傳一個 “encrypted\_content” item，可以傳進之後的請求。  
+3. 後續呼叫 /responses endpoint 時，可以傳入更新後、壓縮過的對話 item 清單（包含新加的 compaction item）。模型用更少的對話 token 保留關鍵的先前狀態。
 
-For endpoint details see our `/responses/compact` [docs](https://platform.openai.com/docs/api-reference/responses/compact).
+endpoint 的細節請看 `/responses/compact` 的[文件](https://platform.openai.com/docs/api-reference/responses/compact)。
 
 # Tools
 
-1. We strongly recommend using our exact `apply_patch` implementation as the model has been trained to excel at this diff format. For terminal commands we recommend our `shell` tool, and for plan/TODO items our `update_plan` tool should be most performant.  
-2. If you prefer your agent to use more “terminal-like tools” (like `file_read()` instead of calling \`sed\` in the terminal), this model can reliably call them instead of terminal (following the instructions below)  
-3. For other tools, including semantic search, MCPs, or other custom tools, they can work but it requires more tuning and experimentation.
+1. 我們強烈建議使用我們原樣的 `apply_patch` 實作，因為模型被訓練成特別擅長這種 diff 格式。終端機指令建議用我們的 `shell` tool，plan/TODO 項目則用我們的 `update_plan` tool 效能應該最好。  
+2. 如果你希望 agent 多用「像終端機的 tool」（例如用 `file_read()` 而不是在終端機呼叫 \`sed\`），這個模型可以穩定地呼叫它們而不用終端機（照下面的指示做）。  
+3. 其他 tool，包括 semantic search、MCP 或其他自訂 tool，也能運作，但需要更多調整和實驗。
 
 ### Apply\_patch
 
-The easiest way to implement apply\_patch is with our first-class implementation in the Responses API, but you can also use our freeform tool implementation with [context-free grammar](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools?utm_source=chatgpt.com#3-contextfree-grammar-cfg). Both are demonstrated below.
+實作 apply\_patch 最簡單的方式是用我們 Responses API 裡的一級實作，你也可以用我們搭配 [context-free grammar](https://cookbook.openai.com/examples/gpt-5/gpt-5_new_params_and_tools?utm_source=chatgpt.com#3-contextfree-grammar-cfg) 的 freeform tool 實作。兩種都在下面示範。
 
 ```py
 # Sample script to demonstrate the server-defined apply_patch tool
@@ -372,11 +382,11 @@ for item in response_cfg.output:
         # *** End Patch
 ```
 
-Patches objects the Responses API tool can be implemented by following this [example](https://github.com/openai/openai-agents-python/blob/main/examples/tools/apply_patch.py) and patches from the freeform tool can be applied with the logic in our canonical GPT-5 [apply\_patch.py](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/apply_patch.py%20) implementation.
+Responses API tool 的 patch 物件可以照這個[範例](https://github.com/openai/openai-agents-python/blob/main/examples/tools/apply_patch.py)實作，freeform tool 產生的 patch 則可以用我們標準的 GPT-5 [apply\_patch.py](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/apply_patch.py%20) 實作裡的邏輯來套用。
 
 ### Shell\_command
 
-This is our default shell tool. Note that we have seen better performance with a command type “string” rather than a list of commands.
+這是我們預設的 shell tool。注意我們看到 command 用 “string” 型別比用指令清單效能更好。
 
 ```
 {
@@ -416,17 +426,17 @@ This is our default shell tool. Note that we have seen better performance with a
 }
 ```
 
-If you’re using Windows PowerShell, update to this tool description.
+如果你用的是 Windows PowerShell，請改用這個 tool 描述。
 
 ```
 Runs a shell command and returns its output. The arguments you pass will be invoked via PowerShell (e.g., ["pwsh", "-NoLogo", "-NoProfile", "-Command", "<cmd>"]). Always fill in workdir; avoid using cd in the command string.
 ```
 
-You can check out codex-cli for the implementation for `exec_command`, which launches a long-lived PTY when you need streaming output, REPLs, or interactive sessions; and `write_stdin`, to feed extra keystrokes (or just poll output) for an existing exec\_command session.
+你可以參考 codex-cli 裡 `exec_command` 的實作，需要串流輸出、REPL 或互動式 session 時，它會啟動長時間存活的 PTY；還有 `write_stdin`，用來對既有的 exec\_command session 多送一些按鍵（或只是輪詢輸出）。
 
 ### Update Plan
 
-This is our default TODO tool; feel free to customize as you’d prefer. See the `## Plan tool` section of our starter prompt for additional instructions to maintain hygiene and tweak behavior.
+這是我們預設的 TODO tool，你可以隨意客製。starter prompt 裡的 `## Plan tool` 一節有更多關於保持整潔和調整行為的指示。
 
 ```json
 {
@@ -474,7 +484,7 @@ This is our default TODO tool; feel free to customize as you’d prefer. See the
 
 ### View\_image
 
-This is a basic function used in codex-cli for the model to view images.
+這是 codex-cli 裡讓模型看圖片的基本函式。
 
 ```
 {
@@ -502,9 +512,9 @@ This is a basic function used in codex-cli for the model to view images.
 
 ```
 
-## Dedicated terminal-wrapping tools
+## 專用的終端機包裝 tool
 
-If you would prefer your codex agent to use terminal-wrapping tools (like a dedicated `list_dir(‘.’)` tool instead of `terminal(‘ls .’)`, this generally works well. We see the best results when the name of the tool, the arguments, and the output are as close as possible to those from the underlying command, so it’s as in-distribution as possible for the model (which was primarily trained using a dedicated terminal tool). For example, if you notice the model using git via the terminal and would prefer it to use a dedicated tool, we found that creating a related tool, and adding a directive in the prompt to only use that tool for git commands, fully mitigated the model’s terminal usage for git commands.
+如果你希望 codex agent 用包裝終端機的 tool（例如專用的 `list_dir(‘.’)` tool 而不是 `terminal(‘ls .’)`），這通常運作得很好。我們發現 tool 的名稱、參數和輸出越接近底層指令的樣子，效果越好，因為這樣最貼近模型的訓練分布（模型主要是用專用的終端機 tool 訓練的）。舉例來說，如果你發現模型透過終端機用 git，而你想讓它用專用 tool，我們發現建立一個相關的 tool，並在 prompt 裡加一條「git 指令只能用這個 tool」的指示，就能完全消除模型用終端機跑 git 的情況。
 
 ```
 GIT_TOOL = {
@@ -542,17 +552,17 @@ GIT_TOOL = {
 PROMPT_TOOL_USE_DIRECTIVE = "- Strictly avoid raw `cmd`/terminal when a dedicated tool exists. Default to solver tools: `git` (all git), `list_dir`, `apply_patch`. Use `cmd`/`run_terminal_cmd` only when no listed tool can perform the action." # update with your desired tools
 ```
 
-## Other Custom Tools (web search, semantic search, memory, etc.)
+## 其他自訂 tool（web search、semantic search、memory 等）
 
-The model hasn’t necessarily been post-trained to excel at these tools, but we have seen success here as well. To get the most out of these tools, we recommend:
+模型不一定針對這些 tool 做過 post-training 來讓它們表現特別好，但我們也看到成功的案例。想把這些 tool 發揮到最好，我們建議：
 
-1. Making the tool names and arguments as semantically “correct” as possible, for example “search” is ambiguous but “semantic\_search” clearly indicates what the tool does, relative to other potential search-related tools you might have. “Query” would be a good param name for this tool.  
-2. Be explicit in your prompt about when, why, and how to use these tools, including good and bad examples.  
-3. It could also be helpful to make the results look different from outputs the model is accustomed to seeing from other tools, for example ripgrep results should look different from semantic search results to avoid the model collapsing into old habits.
+1. 讓 tool 名稱和參數在語意上盡量「正確」，例如 “search” 很模糊，但 “semantic\_search” 清楚地表明這個 tool 做什麼，跟你可能有的其他搜尋相關 tool 區分開來。“Query” 會是這個 tool 不錯的參數名稱。  
+2. 在 prompt 裡明確說明什麼時候、為什麼、怎麼使用這些 tool，包括好的和壞的範例。  
+3. 也可以讓結果看起來不同於模型習慣從其他 tool 看到的輸出，例如 ripgrep 的結果應該跟 semantic search 的結果長得不一樣，避免模型退回舊習慣。
 
-## Parallel Tool Calling
+## 平行 Tool Calling
 
-In codex-cli, when parallel tool calling is enabled, the responses API request sets `parallel_tool_calls: true` and the following snippet is added to the system instructions:
+在 codex-cli 裡，開啟平行 tool calling 時，responses API 請求會設定 `parallel_tool_calls: true`，並把下面這段加到系統指示裡：
 
 ```
 ## Exploration and reading files
@@ -569,7 +579,7 @@ In codex-cli, when parallel tool calling is enabled, the responses API request s
 - Do not try to parallelize using scripting or anything else than `multi_tool_use.parallel`.
 ```
 
-We've found it to be helpful and more in-distribution if parallel tool call items and responses are ordered in the following way:
+我們發現平行 tool call 的 item 和回應用以下方式排序會有幫助，也更貼近訓練分布：
 
 ```
 function_call
@@ -578,71 +588,70 @@ function_call_output
 function_call_output
 ```
 
-## Tool Response Truncation
+## Tool 回應截斷
 
-We recommend doing tool call response truncation as follows to be as in-distribution for the model as possible:
+我們建議照下面的方式截斷 tool call 的回應，盡量貼近模型的訓練分布：
 
-* Limit to 10k tokens. You can cheaply approximate this by computing `num_bytes/4`.  
-* If you hit the truncation limit, you should use half of the budget for the beginning, half for the end, and truncate in the middle with `…3 tokens truncated…`
+* 限制在 10k token。可以用 `num_bytes/4` 便宜地估算。  
+* 如果碰到截斷上限，前半預算用在開頭，後半用在結尾，中間截掉並標示 `…3 tokens truncated…`
 
-## New features in GPT-5.3 Codex
+## GPT-5.3 Codex 的新功能
 
-### Preamble messages
+### Preamble 訊息
 
-The Responses API has been updated to include a new `phase` parameter intended to prevent early stopping and other misbehaviors when preamble messages are requested by the prompt. `phase` is currently only supported with `gpt-5.3-codex`. Check out implementation details below. Correctly implementing this parameter is required for `gpt-5.3-codex`; otherwise, significant performance degradation can occur.
+Responses API 更新了，加入新的 `phase` 參數，用來在 prompt 要求 preamble 訊息時，防止提早停止和其他不當行為。`phase` 目前只支援 `gpt-5.3-codex`。實作細節見下面。`gpt-5.3-codex` 必須正確實作這個參數，否則效能會大幅下降。
 
 ### Phase
 
-To better support preamble messages with `gpt-5.3-codex`, the Responses API includes a `phase` field designed to prevent early stopping on longer-running tasks and other misbehaviors.
+為了更好地支援 `gpt-5.3-codex` 的 preamble 訊息，Responses API 有 `phase` 欄位，用來防止長時間任務提早停止和其他不當行為。
 
-#### Values
+#### 值
 
-`phase` is one of:
+`phase` 是下列其中之一：
 
 - `null`
 - `"commentary"`
 - `"final_answer"`
 
-#### Where it appears
+#### 出現在哪裡
 
-You’ll receive `phase` on assistant output items (for example, `output_item.done`). Your integration must persist assistant output items, including their `phase`, and pass those assistant items back in subsequent requests.
+你會在 assistant 的 output item 上收到 `phase`（例如 `output_item.done`）。你的整合必須保存 assistant output item，包括它們的 `phase`，並在後續請求裡把這些 assistant item 傳回去。
+**重要：** `phase` 只支援 assistant item。不要把 `phase` 加到 user 訊息上。
 
-**Important:** `phase` is only supported on assistant items. Do not add `phase` to user messages.
+#### 下游怎麼用
 
-#### How it’s used downstream
+當模型在 output item 上標記：
 
-When the model marks an output item with:
+- `phase: "commentary"`：對應的 assistant 訊息應該視為 commentary/preamble 風格的內容。
+- `phase: "final_answer"`：對應的 assistant 訊息應該視為最後的收尾。
 
-- `phase: "commentary"`: the corresponding assistant message should be treated as commentary/preamble-style content.
-- `phase: "final_answer"`: the corresponding assistant message should be treated as the final closeout.
+`gpt-5.3-codex` 一定要正確保留 assistant item 上的 `phase`。如果重建歷史時掉了 assistant 的 `phase` metadata，效能會大幅下降。
 
-Correctly preserving `phase` on assistant items is required for `gpt-5.3-codex`. If assistant `phase` metadata is dropped during history reconstruction, significant performance degradation can occur.
+### Preambles 與個性
 
-### Preambles & Personality
+Preamble 是隨 tool call 一起送出的訊息，在工作時給使用者更新：簡短、人看得懂的進度和意圖快照，讓使用者掌握狀況，又不會把 transcript 變成 tool call 的 log。GPT-5.3-Codex 的 preamble 已經調校成具有下列特徵：
 
-Preambles are messages sent along with tool calls that provide user updates while working: short, human-readable progress and intent snapshots that keep the user oriented without turning the transcript into a tool-call log. GPT-5.3-Codex preambles have been tuned toward the following characteristics:
+- 在任何 tool call 之前先回應再規劃（1 句回應、1 到 2 句計畫）。
+- 大部分更新維持 1 到 2 句，只在真正的里程碑才用較長的更新。
+- 頻率：目標是每 1 到 3 個執行步驟一次；硬性下限是至少每 6 個步驟或 10 次 tool call 內要有一次。
+- 每次更新的內容：目前為止的成果與影響、接下來 1 到 3 個步驟，以及有的話，未解的問題與學到的事。
+- 語氣：像真人結對編程，不拘禮節；避免標題或狀態標籤，以及 log 式的口吻。
 
-- Acknowledge then plan before any tool calls (1 sentence acknowledgement, 1–2 sentence plan).
-- Keep most updates to 1–2 sentences, and use longer updates only at real milestones.
-- Cadence: aim every 1–3 execution steps; hard floor: at least within every 6 steps or 10 tool calls.
-- Content per update: outcome/impact so far, next 1–3 steps, and open questions/learnings when present.
-- Tone: real person pairing, low-ceremony; avoid headings/status labels and log voice.
+#### 個性（Friendly 與 Pragmatic）
 
-#### Personality (Friendly vs Pragmatic)
+個性是比 preamble 機制（頻率、長度和依據）更高層的氛圍與協作姿態。它影響用字、模型多積極地解釋取捨，以及互動中帶多少溫度。
 
-Personality is the higher-level vibe and collaboration posture that sits above preamble mechanics (cadence, length, and grounding). It affects word choice, how eagerly the model explains tradeoffs, and how much warmth it brings to the interaction.
-
-The Codex app and CLI ship with support for two personalities provided here as example implementations for your harness.
+Codex app 和 CLI 內建支援兩種個性，這裡提供作為你的 harness 的範例實作。
 
 ##### Friendly
 
-- More human, partner-y pairing energy.
-- Slightly more acknowledgement, reassurance, and context-setting.
-- Better when the user benefits from narrative orientation (onboarding, ambiguous tasks, higher-stakes changes).
+- 比較有人味，有夥伴結對的感覺。
+- 多一點回應、安心感和背景鋪陳。
+- 使用者需要敘事式的引導時比較適合（新手上路、模糊的任務、風險較高的改動）。
 
-###### Example Friendly personality prompt snippet from codex-cli
+###### codex-cli 的 Friendly 個性 prompt 範例
 
-This snippet can be used in your system prompt to steer the pair programming personality of the model.
+這段可以放進你的系統 prompt，用來引導模型結對編程的個性。
 
 ```
 # Personality
@@ -668,21 +677,21 @@ You escalate gently and deliberately when decisions have non-obvious consequence
 
 ##### Pragmatic
 
-- More terse, direct, let’s ship delivery.
-- Fewer social flourishes; higher ratio of actionable information per token.
-- Better when latency/throughput matters, or your users already know the workflow and just want progress and results.
+- 比較精簡、直接，先出貨再說。
+- 少一點社交客套，每個 token 的可執行資訊比例更高。
+- 延遲或吞吐量重要，或使用者已經熟悉流程、只想要進度和結果時比較適合。
 
-### Troubleshooting & Metaprompting
+### 疑難排解與 Metaprompting
 
-Common failure modes we’ve been explicitly tracking:
+我們一直明確追蹤的常見失敗模式：
 
-- Overthinking / long time before first useful action (tool call or concrete plan).
-- Loggy / unnatural status updates instead of pair programmer collaboration.
-- Awkward preamble phrasing and repetitive tics ("Good catch", "Aha", "Got it–", etc.).
+- 想太多／在第一個有用的動作（tool call 或具體計畫）之前花太長時間。
+- 像 log 一樣不自然的狀態更新，而不是結對編程的協作。
+- 尷尬的 preamble 措辭和重複的口頭禪（"Good catch"、"Aha"、"Got it–" 等）。
 
-#### Metaprompting for targeted fixes
+#### 用 Metaprompting 做針對性修正
 
-Failure modes like the ones above can typically be addressed through metaprompting. It’s possible to ask the model at the end of a turn that didn’t perform up to expectations how to improve its own instructions. The following prompt was used to produce some of the solutions to overthinking problems above and can be modified to meet your particular needs.
+像上面這些失敗模式，通常可以用 metaprompting 解決。在一個表現不如預期的 turn 結束時，可以問模型要怎麼改進它自己的指示。下面這份 prompt 就是用來產生上面一些 overthinking 問題解法的，你可以依需求修改。
 
 ```
 That was a high quality response, thanks! It seemed like it took you a while to finish responding though. Is there a way to clarify your instructions so you can get to a response as good as this faster next time? It’s extremely important to be efficient when providing these responses or users won’t get the most out of them in time. Let’s see if we can improve!
@@ -691,12 +700,24 @@ read through your instructions starting from "" and look for anything that might
 write out targeted (but generalized) additions/changes/deletions to your instructions to make a request like this one faster next time with the same level of quality
 ```
 
-When metaprompting inside a specific context, it is important to generate responses a few times if possible and pay attention to elements of the responses that are common between them. Some improvements or changes the model proposes might be overly specific to that particular situation, but you can often simplify them to arrive at a general improvement. We recommend creating an eval to measure whether a particular prompt change is better or worse for your particular use case.
+在特定 context 裡做 metaprompting 時，可以的話最好多生成幾次，並注意各次回應共通的部分。模型提出的某些改進或修改可能只適用於那個特定情境，但你通常可以把它們簡化成通用的改進。我們建議建立 eval，衡量某個 prompt 的改動對你的使用情境是變好還是變差。
 
-#### Some examples
+#### 一些例子
 
-- For overthinking / slow starts: ask it to propose instruction changes that reduce time-to-first-tool-call or first concrete plan.
-- For overly loggy preambles: ask it to rewrite your user updates instructions to satisfy your particular preference constraints.
+- 針對 overthinking／慢啟動：請它提出能縮短到第一次 tool call 或第一個具體計畫的時間的指示修改。
+- 針對太像 log 的 preamble：請它改寫你的使用者更新指示，以符合你特定的偏好限制。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 遷移 harness 時，以標準 Codex-Max prompt 為底做小幅補充，並移除要求前置計畫、preamble 或狀態更新的 prompt。
+- tool 設計越貼近模型訓練時的樣子越好：用原版 `apply_patch`、`shell`、`update_plan`，包裝終端機的 tool 要讓名稱、參數、輸出接近原指令。
+- 長任務靠 compaction 撐住，tool 回應要截斷在約 10k token，頭尾各留一半。
+- `gpt-5.3-codex` 的 `phase` 必須隨 assistant item 保存並傳回，掉了會讓效能大幅下降。
+- 行為不如預期時，用 metaprompting 請模型改自己的指示，多跑幾次找共通點，再用 eval 驗證。
+
+## 練習
+
+1. 照頁面上的做法，寫一個函式在 tool 回應超過 `num_bytes/4 > 10000` 時，保留前半和後半、中間換成 `…N tokens truncated…`，並用一段長字串測試。
+2. 在你自己保存對話歷史的程式裡，確認 assistant output item 的 `phase` 有被存下來並在下次請求原樣傳回，同時確認 user 訊息沒有被加上 `phase`。
+3. 選一個你的 agent 的失敗案例（例如太多 preamble 或第一個 tool call 太慢），寫一段 metaprompt 請模型提出指示修改，跑三次，整理出共通的建議，並設計一個小 eval 比較修改前後。

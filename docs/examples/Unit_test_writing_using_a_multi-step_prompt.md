@@ -1,32 +1,38 @@
 ---
-translated: false
+translated: true
 source: examples/Unit_test_writing_using_a_multi-step_prompt.ipynb
 ---
 
-# Unit test writing using a multi-step prompt
+# 用多步驟 prompt 寫單元測試
 
 > 原文：[examples/Unit_test_writing_using_a_multi-step_prompt.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/Unit_test_writing_using_a_multi-step_prompt.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+像寫單元測試這種複雜任務，適合用多步驟 prompt。跟單一 prompt 不同，多步驟 prompt 會先讓 GPT 產生文字，再把輸出餵回後面的 prompt。需要 GPT 先推理再回答，或先想好計畫再執行時，這樣做很有幫助。
 
+這篇用三步驟 prompt 幫 Python function 寫單元測試：
 
-Complex tasks, such as writing unit tests, can benefit from multi-step prompts. In contrast to a single prompt, a multi-step prompt generates text from GPT and then feeds that output text back into subsequent prompts. This can help in cases where you want GPT to reason things out before answering, or brainstorm a plan before executing it.
+1. **Explain**：給一個 Python function，請 GPT 解釋這個 function 在做什麼、為什麼這樣做。
+2. **Plan**：請 GPT 規劃一組要測的單元測試。
+    - 如果計畫太短，就請 GPT 再多想一些測試點子。
+3. **Execute**：最後請 GPT 寫出涵蓋計畫案例的單元測試。
 
-In this notebook, we use a 3-step prompt to write unit tests in Python using the following steps:
+## 學完你會
+- 串出一個把前一步輸出餵給下一步的多步驟 prompt。
+- 加入條件分支，例如計畫太短才要求擴充。
+- 加上輸出檢查（用 `ast` 解析程式碼）和 streaming 輸出，並讓不同步驟用不同模型。
 
-1. **Explain**: Given a Python function, we ask GPT to explain what the function is doing and why.
-2. **Plan**: We ask GPT to plan a set of unit tests for the function.
-    - If the plan is too short, we ask GPT to elaborate with more ideas for unit tests.
-3. **Execute**: Finally, we instruct GPT to write unit tests that cover the planned cases.
+## 開跑前
+- 需要 OpenAI API key。原文建議用最強的模型（2023 年 5 月時是 GPT-4），會有費用。
 
-The code example illustrates a few embellishments on the chained, multi-step prompt:
+範例程式碼示範了串接多步驟 prompt 的幾個加強做法：
 
-- Conditional branching (e.g., asking for elaboration only if the first plan is too short)
-- The choice of different models for different steps
-- A check that re-runs the function if the output is unsatisfactory (e.g., if the output code cannot be parsed by Python's `ast` module)
-- Streaming output so that you can start reading the output before it's fully generated (handy for long, multi-step outputs)
+- 條件分支（例如只在第一版計畫太短時才要求擴充）
+- 不同步驟選用不同模型
+- 輸出不理想時重跑的檢查（例如輸出的程式碼無法被 Python 的 `ast` 模組解析）
+- Streaming 輸出，讓你在內容全部產生前就能開始讀（對很長的多步驟輸出很方便）
 
 ````python
 # imports needed to run the code in this notebook
@@ -374,6 +380,16 @@ print(unit_tests)
         assert pig_latin(text) == expected
     ```
 
-Make sure to check any code before using it, as GPT makes plenty of mistakes (especially on character-based tasks like this one). For best results, use the most powerful model (GPT-4, as of May 2023).
+用任何程式碼之前一定要檢查，因為 GPT 常常出錯（尤其是這類以字元為基礎的任務）。要得到最好的結果，請用最強的模型（截至 2023 年 5 月是 GPT-4）。
 
-<!-- tutor:summary -->
+## 重點整理
+- 多步驟 prompt 讓模型先解釋、再規劃、最後才執行，比一次要求寫完更穩。
+- 每一步的輸出是下一步的輸入，所以要設計好每步交接什麼內容。
+- 條件分支和輸出檢查可以讓流程自己補救品質不佳的中間結果。
+- 不同步驟的難度不同，可以選不同模型，在成本和品質間取捨。
+- 生成的程式碼一定要人工檢查再用。
+
+## 練習
+1. 把「計畫太短」的判斷門檻調高或調低，觀察擴充步驟被觸發的頻率。
+2. 換一個你自己寫的 Python function 丟進流程，檢查產生的測試能不能跑過。
+3. 在 Execute 之前新增一步，讓 GPT 審查並修正自己的計畫，再比較最後的測試品質。

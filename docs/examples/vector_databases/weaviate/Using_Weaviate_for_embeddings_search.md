@@ -1,42 +1,54 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/weaviate/Using_Weaviate_for_embeddings_search.ipynb
 ---
 
-# Using Weaviate for embeddings search
+# 用 Weaviate 做 embeddings 搜尋
 
 > 原文：[examples/vector_databases/weaviate/Using_Weaviate_for_embeddings_search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/Using_Weaviate_for_embeddings_search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+帶你走一遍完整流程：載入已經做好 embedding 的資料、建立 Weaviate 的 schema 並寫入、再用向量做相似度搜尋。最後也示範讓 Weaviate 內建的 OpenAI module 自動幫你產生 query 的 embedding。
+
+## 學完你會
+
+- 用 Docker 或 Weaviate Cloud Service 起一個 Weaviate，並用 Python client 連上去。
+- 建立 `Article` schema，把標題向量寫進去，然後用向量查詢找相近的文章。
+- 用 `with_near_text` 讓 Weaviate 的 text2vec-openai module 自動產生 embedding 來搜尋。
+
+## 開跑前
+
+- 自架需要 [Docker](https://www.docker.com/)，也可以改用 Weaviate Cloud Service 建免費 cluster。
+- 用 `with_near_text` 需要 `OPENAI_API_KEY`。
+
+這個 notebook 帶你走一個簡單的流程：下載資料、做 embedding，然後用幾種 vector database 建立索引並搜尋。很多客戶需要在安全的環境裡，把我們的 embeddings 和自己的資料一起儲存、搜尋，來支援聊天機器人、topic modelling 等正式環境的情境，這就是這個流程要解決的。
+
+### 什麼是 Vector Database
+
+vector database 是專門用來儲存、管理和搜尋 embedding 向量的資料庫。近年來，隨著 AI 在自然語言、圖像辨識等非結構化資料上的效果越來越好，用 embeddings 把非結構化資料（文字、音訊、影片等）編碼成向量，給機器學習模型使用的做法暴增。vector database 就是企業用來落地並擴展這些情境的有效方案。
+
+### 為什麼要用 Vector Database
+
+vector database 讓企業可以把這個 repo 裡分享過的許多 embeddings 使用情境（例如問答、聊天機器人和推薦服務），放到安全、可擴展的環境裡。很多客戶用 embeddings 在小規模時能解決問題，但效能和安全性讓他們沒辦法上正式環境。我們認為 vector database 是解決這件事的關鍵元件，這份指南會帶你走過基本流程：對文字資料做 embedding、存進 vector database，再用來做語意搜尋。
 
 
-This notebook takes you through a simple flow to download some data, embed it, and then index and search it using a selection of vector databases. This is a common requirement for customers who want to store and search our embeddings with their own data in a secure environment to support production use cases such as chatbots, topic modelling and more.
-
-### What is a Vector Database
-
-A vector database is a database made to store, manage and search embedding vectors. The use of embeddings to encode unstructured data (text, audio, video and more) as vectors for consumption by machine-learning models has exploded in recent years, due to the increasing effectiveness of AI in solving use cases involving natural language, image recognition and other unstructured forms of data. Vector databases have emerged as an effective solution for enterprises to deliver and scale these use cases.
-
-### Why use a Vector Database
-
-Vector databases enable enterprises to take many of the embeddings use cases we've shared in this repo (question and answering, chatbot and recommendation services, for example), and make use of them in a secure, scalable environment. Many of our customers make embeddings solve their problems at small scale but performance and security hold them back from going into production - we see vector databases as a key component in solving that, and in this guide we'll walk through the basics of embedding text data, storing it in a vector database and using it for semantic search.
-
-
-### Demo Flow
-The demo flow is:
-- **Setup**: Import packages and set any required variables
-- **Load data**: Load a dataset and embed it using OpenAI embeddings
+### Demo 流程
+流程如下：
+- **Setup**：匯入套件並設定需要的變數
+- **載入資料**：載入資料集並用 OpenAI embeddings 做 embedding
 - **Weaviate**
-    - *Setup*: Here we'll set up the Python client for Weaviate. For more details go [here](https://weaviate.io/developers/weaviate/current/client-libraries/python.html)
-    - *Index Data*: We'll create an index with __title__ search vectors in it
-    - *Search Data*: We'll run a few searches to confirm it works
+    - *Setup*：在這裡設定 Weaviate 的 Python client。更多細節看[這裡](https://weaviate.io/developers/weaviate/current/client-libraries/python.html)
+    - *建立索引資料*：我們會建立一個包含 __title__ 搜尋向量的索引
+    - *搜尋資料*：跑幾個搜尋確認功能正常
 
-Once you've run through this notebook you should have a basic understanding of how to setup and use vector databases, and can move on to more complex use cases making use of our embeddings.
+跑完這個 notebook 之後，你應該對怎麼設定和使用 vector database 有基本的理解，可以繼續做更複雜的 embeddings 應用。
 
 ## Setup
 
-Import the required libraries and set the embedding model that we'd like to use.
+匯入需要的函式庫，並設定想用的 embedding 模型。
 
 ```python
 # We'll need to install the Weaviate client
@@ -69,9 +81,9 @@ warnings.filterwarnings(action="ignore", message="unclosed", category=ResourceWa
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 ```
 
-## Load data
+## 載入資料
 
-In this section we'll load embedded data that we've prepared previous to this session.
+這一節載入我們事先準備好、已經做過 embedding 的資料。
 
 ```python
 embeddings_url = 'https://cdn.openai.com/API/examples/data/vector_database_wikipedia_articles_embedded.zip'
@@ -160,43 +172,43 @@ article_df.info(show_counts=True)
 
 ## Weaviate
 
-Another vector database option we'll explore is **Weaviate**, which offers both a managed, [SaaS](https://console.weaviate.io/) option, as well as a self-hosted [open source](https://github.com/weaviate/weaviate) option. As we've already looked at a cloud vector database, we'll try the self-hosted option here.
+我們要探索的另一個 vector database 選項是 **Weaviate**，它同時提供託管的 [SaaS](https://console.weaviate.io/) 和自架的[開源](https://github.com/weaviate/weaviate)版本。前面已經看過雲端的 vector database，所以這裡試試自架的版本。
 
-For this we will:
-- Set up a local deployment of Weaviate
-- Create indices in Weaviate
-- Store our data there
-- Fire some similarity search queries
-- Try a real use case
+我們會：
+- 在本機部署 Weaviate
+- 在 Weaviate 建立索引
+- 把資料存進去
+- 送出一些相似度搜尋 query
+- 試一個真實的使用情境
 
 
-### Bring your own vectors approach
-In this cookbook, we provide the data with already generated vectors. This is a good approach for scenarios, where your data is already vectorized.
+### 自備向量的做法
+這份 cookbook 提供的資料已經產生好向量。如果你的資料本來就已經向量化，這是個好做法。
 
-### Automated vectorization with OpenAI module
-For scenarios, where your data is not vectorized yet, you can delegate the vectorization task with OpenAI to Weaviate.
-Weaviate offers a built-in module [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai), which takes care of the vectorization for you at:
-* import
-* for any CRUD operations
-* for semantic search
+### 用 OpenAI module 自動向量化
+如果你的資料還沒向量化，可以把用 OpenAI 做向量化的工作交給 Weaviate。
+Weaviate 內建 [text2vec-openai](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai) module，會幫你處理這些時機的向量化：
+* 匯入時
+* 任何 CRUD 操作
+* 語意搜尋
 
-Check out the [Getting Started with Weaviate and OpenAI module cookbook](getting-started-with-weaviate-and-openai.md) to learn step by step how to import and vectorize data in one step.
+想一步一步學怎麼一次完成匯入和向量化，看 [Getting Started with Weaviate and OpenAI module cookbook](getting-started-with-weaviate-and-openai.md)。
 
 ### Setup
 
-To run Weaviate locally, you'll need [Docker](https://www.docker.com/). Following the instructions contained in the Weaviate documentation [here](https://weaviate.io/developers/weaviate/installation/docker-compose), we created an example docker-compose.yml file in this repo saved at [`docker-compose.yml`](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/docker-compose.yml).
+要在本機執行 Weaviate，需要 [Docker](https://www.docker.com/)。照 Weaviate 文件[這裡](https://weaviate.io/developers/weaviate/installation/docker-compose)的說明，我們在這個 repo 做了一個範例 docker-compose.yml，放在 [`docker-compose.yml`](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/docker-compose.yml)。
 
-After starting Docker, you can start Weaviate locally by navigating to the `examples/vector_databases/weaviate/` directory and running `docker-compose up -d`.
+啟動 Docker 之後，進到 `examples/vector_databases/weaviate/` 目錄執行 `docker-compose up -d`，就能在本機啟動 Weaviate。
 
 #### SaaS
-Alternatively you can use [Weaviate Cloud Service](https://console.weaviate.io/) (WCS) to create a free Weaviate cluster.
-1. create a free account and/or login to [WCS](https://console.weaviate.io/)
-2. create a `Weaviate Cluster` with the following settings:
-    * Sandbox: `Sandbox Free`
-    * Weaviate Version: Use default (latest)
-    * OIDC Authentication: `Disabled`
-3. your instance should be ready in a minute or two
-4. make a note of the `Cluster Id`. The link will take you to the full path of your cluster (you will need it later to connect to it). It should be something like: `https://your-project-name-suffix.weaviate.network` 
+你也可以用 [Weaviate Cloud Service](https://console.weaviate.io/)（WCS）建立免費的 Weaviate cluster。
+1. 建立免費帳號或登入 [WCS](https://console.weaviate.io/)
+2. 用以下設定建立一個 `Weaviate Cluster`：
+    * Sandbox：`Sandbox Free`
+    * Weaviate Version：用預設（最新版）
+    * OIDC Authentication：`Disabled`
+3. instance 一兩分鐘內就會準備好
+4. 記下 `Cluster Id`。這個連結會帶你到 cluster 的完整路徑（之後連線會用到），大概長這樣：`https://your-project-name-suffix.weaviate.network` 
 
 ```python
 # Option #1 - Self-hosted - Weaviate Open Source 
@@ -222,13 +234,13 @@ client = weaviate.Client(
 client.is_ready()
 ```
 
-### Index data
+### 建立索引資料
 
-In Weaviate you create __schemas__ to capture each of the entities you will be searching. 
+在 Weaviate 裡，你用 __schema__ 來描述每一種要搜尋的實體。 
 
-In this case we'll create a schema called **Article** with the **title** vector from above included for us to search by.
+這裡我們建立一個叫 **Article** 的 schema，包含上面準備好的 **title** 向量，供我們搜尋。
 
-The next few steps closely follow the documentation Weaviate provides [here](https://weaviate.io/developers/weaviate/quickstart).
+接下來幾個步驟，緊跟 Weaviate 提供的[文件](https://weaviate.io/developers/weaviate/quickstart)。
 
 
 ```python
@@ -446,9 +458,9 @@ print(test_article["content"])
     Lakes of Ticino
     ```
 
-### Search data
+### 搜尋資料
 
-As above, we'll fire some queries at our new Index and get back results based on the closeness to our existing vectors
+跟前面一樣，我們對新建的索引送出一些 query，根據跟現有向量的接近程度取回結果
 
 ```python
 def query_weaviate(query, collection_name, top_k=20):
@@ -539,11 +551,11 @@ for article in query_result["data"]["Get"]["Article"]:
     20. David II of Scotland (Score: 0.922)
     ```
 
-### Let Weaviate handle vector embeddings
+### 讓 Weaviate 處理向量 embedding
 
-Weaviate has a [built-in module for OpenAI](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai), which takes care of the steps required to generate a vector embedding for your queries and any CRUD operations.
+Weaviate 有[內建的 OpenAI module](https://weaviate.io/developers/weaviate/modules/retriever-vectorizer-modules/text2vec-openai)，會處理 query 和任何 CRUD 操作所需的 embedding 產生步驟。
 
-This allows you to run a vector query with the `with_near_text` filter, which uses your `OPEN_API_KEY`.
+這讓你可以用 `with_near_text` filter 執行向量查詢，它會用你的 `OPEN_API_KEY`。
 
 ```python
 def near_text_weaviate(query, collection_name):
@@ -639,4 +651,16 @@ for article in query_result:
     20. David II of Scotland (Certainty: 0.922) (Distance: 0.157)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- vector database 專門存 embedding 向量並做相似度搜尋，讓 embeddings 應用能放進可擴展、安全的環境。
+- Weaviate 用 schema 描述要搜尋的實體，向量跟資料一起存。
+- 資料已有向量就自備向量，還沒有的話可以交給內建的 text2vec-openai module。
+- 查詢時只要給文字，module 就會幫你把 query 轉成向量，不用自己呼叫 embeddings API。
+- 自架和 SaaS 兩種部署方式，只差連線的 URL，其餘流程一樣。
+
+## 練習
+
+1. 換一個搜尋 query 文字，比較自備向量查詢和 `with_near_text` 查詢的結果差在哪。
+2. 調整查詢的回傳筆數上限，觀察結果數量和相似度排序的變化。
+3. 在 schema 裡多加一個屬性（例如文章內文的向量或文字欄位），重新匯入資料後，改用它來搜尋。

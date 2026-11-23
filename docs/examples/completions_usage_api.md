@@ -1,27 +1,36 @@
 ---
-translated: false
+translated: true
 source: examples/completions_usage_api.ipynb
 ---
 
-# How to use the Usage API and Cost API to monitor your OpenAI usage
+# 如何用 Usage API 和 Cost API 監控你的 OpenAI 用量
 
 > 原文：[examples/completions_usage_api.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/completions_usage_api.ipynb)
 
-Cookbook to fetch and visualize Completions Usage and cost data via API.
+用 API 抓取並視覺化 Completions 用量和費用資料。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 Completions Usage API 和 Costs API 把組織的 token 用量和費用抓下來，轉成 pandas DataFrame，再用 matplotlib 畫成圖表。從時間序列、依模型分組到依 line item 看花費，都有範例。
 
+## 學完你會
+- 呼叫 Usage API 和 Costs API，並用 `group_by` 依 model、project 等欄位分組。
+- 把 API 回傳的 JSON 解析成 DataFrame，畫出 token 用量的長條圖、堆疊圖和圓餅圖。
+- 知道怎麼把這些資料匯出給 Tableau、Power BI 或自建 dashboard。
 
-For most of our users, the [default usage and cost dashboards](https://platform.openai.com/usage) are sufficient. However, if you need more detailed data or a custom dashboard, you can use the Completions Usage API.
+## 開跑前
+- 需要一把 Admin Key（到 platform.openai.com/settings/organization/admin-keys 建立），一般的 API key 不能呼叫這些端點。
+- 需要安裝 pandas 和 matplotlib。
 
-This notebook demonstrates how to retrieve and visualize usage data from the OpenAI Completions Usage API and Costs API. We'll:
-- Call the API to get completions usage data.
-- Parse the JSON response into a pandas DataFrame.
-- Visualize token usage over time using matplotlib.
-- Use grouping by model to analyze token usage across different models.
-- Display model distribution with a pie chart.
+大部分人用[預設的用量與費用 dashboard](https://platform.openai.com/usage) 就夠了。如果你需要更細的資料或自訂 dashboard，就可以用 Completions Usage API。
 
-We also include placeholders for all possible API parameters for a comprehensive overview.
+這份 notebook 示範怎麼從 OpenAI Completions Usage API 和 Costs API 取得用量資料並視覺化，步驟如下：
+- 呼叫 API 取得 completions 用量資料。
+- 把 JSON 回應解析成 pandas DataFrame。
+- 用 matplotlib 畫出 token 用量隨時間的變化。
+- 依 model 分組，比較不同模型的 token 用量。
+- 用圓餅圖顯示模型的分布。
+
+我們也把所有可用的 API 參數都列成佔位符，方便你一次看完整個樣貌。
 
 ```python
 # Install required libraries (if not already installed)
@@ -40,11 +49,11 @@ import json
 %matplotlib inline
 ```
 
-## Setup API Credentials and Parameters
+## 設定 API 憑證和參數
 
-Set up an Admin Key - https://platform.openai.com/settings/organization/admin-keys
+先建立 Admin Key：https://platform.openai.com/settings/organization/admin-keys
 
-Replace `'PLACEHOLDER'` with your actual ADMIN API key. It's best practice to load the key from an environment variable for security.
+把 `'PLACEHOLDER'` 換成你真正的 ADMIN API key。比較安全的做法是從環境變數讀取 key。
 
 ```python
 # Reusable function for retrieving paginated data from the API
@@ -117,9 +126,9 @@ usage_data = get_data(url, params)
     Data retrieved successfully!
     ```
 
-## Inspect the JSON Response
+## 看一下 JSON 回應
 
-Let's take a look at the raw JSON response from the API to understand its structure.
+先看原始的 JSON 回應，了解資料結構。
 
 
 ```python
@@ -172,9 +181,9 @@ print(json.dumps(usage_data, indent=2))
     ... (省略 538 行)
     ```
 
-## Parse the API Response and Create a DataFrame
+## 解析 API 回應並建立 DataFrame
 
-Now we will parse the JSON data, extract relevant fields, and create a pandas DataFrame for easier manipulation and analysis.
+接著解析 JSON，取出需要的欄位，建成 pandas DataFrame，後面處理和分析會比較方便。
 
 ```python
 # Initialize a list to hold parsed records
@@ -267,9 +276,9 @@ df.head()
     4  None  None
     ```
 
-## Visualize Token Usage Over Time
+## 視覺化 Token 用量隨時間的變化
 
-We'll create a bar chart to visualize input and output token usage for each time bucket.
+用長條圖畫出每個時間 bucket 的 input 和 output token 用量。
 
 
 ```python
@@ -309,16 +318,16 @@ else:
 
     ![](completions_usage_api_files/out_12_0.png)
 
-## Visual Example: Grouping by Model
+## 範例：依 model 分組
 
-In this section, we retrieve and visualize usage data grouped by model and project_id. This can help you see the total tokens used by each model over the specified period.
+這一段抓取依 model 和 project_id 分組的用量資料並視覺化，可以看出指定期間內每個模型用了多少 token。
 
-### Note on Grouping Parameter
+### 關於 group_by 參數
 
-- If you do not specify a `group_by` parameter, fields such as `project_id`, `model`, and others will return as `null`. 
-  Although the `group_by` parameter is optional, it is recommended to include it in most cases to retrieve meaningful data.
+- 如果沒有指定 `group_by`，`project_id`、`model` 這類欄位會回傳 `null`。
+  雖然 `group_by` 是選填，但多數情況建議加上，才拿得到有意義的資料。
   
-- You can specify multiple group fields by separating them with commas. For example: `group_by=["model", "project_id"]`.
+- 可以用逗號分隔指定多個分組欄位，例如：`group_by=["model", "project_id"]`。
 
 ```python
 # Calculate start time: n days ago from now
@@ -430,9 +439,9 @@ df.head()
     4    None       None                             gpt-4o-mini-2024-07-18  None
     ```
 
-## Parse the API Response into DataFrame and render a stacked bar chart
+## 解析回應成 DataFrame 並畫堆疊長條圖
 
-Now we will parse the JSON data, extract relevant fields, and create a pandas DataFrame for easier manipulation and analysis.
+一樣先解析 JSON、取出需要的欄位，建成 pandas DataFrame 方便後續處理。
 
 ```python
 # Group data by model and project_id and aggregate model request counts
@@ -514,9 +523,9 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Visual Example: Model Distribution Pie Chart
+## 範例：模型分布圓餅圖
 
-This section visualizes the distribution of token usage across different models using a pie chart.
+這一段用圓餅圖顯示各模型的 token 用量占比。
 
 
 ```python
@@ -616,12 +625,12 @@ else:
     print("No grouped data available for pie chart.")
 ```
 
-## Costs API Example
+## Costs API 範例
 
-In this section, we'll work with the OpenAI Costs API to retrieve and visualize cost data. Similar to the completions data, we'll:
-- Call the Costs API to get aggregated cost data.
-- Parse the JSON response into a pandas DataFrame.
-- Visualize costs grouped by line item using a bar chart.
+這一段改用 OpenAI Costs API 取得並視覺化費用資料。流程跟 completions 資料類似：
+- 呼叫 Costs API 取得彙總後的費用資料。
+- 把 JSON 回應解析成 pandas DataFrame。
+- 用長條圖視覺化依 line item 分組的費用。
 
 ```python
 # Calculate start time: n days ago from now
@@ -697,9 +706,9 @@ print(json.dumps(all_costs_data, indent=2))
     ... (省略 489 行)
     ```
 
-## Parse the Costs API Response and Create a DataFrame
+## 解析 Costs API 回應並建立 DataFrame
 
-We will now parse the JSON data from the Costs API, extract relevant fields, and create a pandas DataFrame for further analysis.
+解析 Costs API 回傳的 JSON，取出欄位，建成 DataFrame 供後續分析。
 
 
 ```python
@@ -751,9 +760,9 @@ cost_df.head()
     4     2025-01-15   2025-01-16
     ```
 
-## Visualize Total Costs per Day
+## 視覺化每日總費用
 
-We'll create a bar chart to visualize the total costs aggregated by day. This helps give a high level perspective on organizational spend.
+用長條圖畫出依天彙總的總費用，從高層次看組織的花費狀況。
 
 ```python
 if not cost_df.empty:
@@ -795,9 +804,9 @@ else:
 
     ![](completions_usage_api_files/out_25_0.png)
 
-## Visualize Costs by Line Item
+## 依 Line Item 視覺化費用
 
-We'll create a bar chart to visualize the total costs aggregated by line item. This helps identify which categories (e.g., models or other services) contribute most to the expenses.
+用長條圖畫出依 line item 彙總的總費用，可以看出哪些類別（例如模型或其他服務）占了最多開銷。
 
 ```python
 days_ago = 30
@@ -909,46 +918,55 @@ else:
       plt.tight_layout()
     ```
 
-## Additional Visualizations (Optional)
+## 更多視覺化（選用）
 
-You can extend this notebook with more visualizations for both the Completions and Costs APIs. For example:
+你可以替 Completions 和 Costs API 加上更多圖表，例如：
 
-**Completions API:**
-- Group by user, project, or model to see which ones consume the most tokens.
-- Create line plots for time series analysis of token usage over days or hours.
-- Use pie charts to visualize distribution of tokens across models, users, or projects.
-- Experiment with different `group_by` parameters (e.g., `["model", "user_id"]`) to gain deeper insights.
+**Completions API：**
+- 依 user、project 或 model 分組，看誰用最多 token。
+- 畫折線圖，看按天或按小時的 token 用量趨勢。
+- 用圓餅圖看 token 在各 model、user 或 project 之間的分布。
+- 試不同的 `group_by`（例如 `["model", "user_id"]`）挖出更深的資訊。
 
-**Costs API:**
-- Group by project or line item to identify spending patterns.
-- Create line or bar charts to visualize daily cost trends.
-- Use pie charts to show how costs are distributed across projects, services, or line items.
-- Try various `group_by` options (e.g., `["project_id"]`, `["line_item"]`) for granular analysis.
+**Costs API：**
+- 依 project 或 line item 分組，找出花費模式。
+- 用折線圖或長條圖看每日費用趨勢。
+- 用圓餅圖看費用在各 project、服務或 line item 之間的分配。
+- 試各種 `group_by`（例如 `["project_id"]`、`["line_item"]`）做更細的分析。
 
-Experiment with different parameters and visualization techniques using `pandas` and `matplotlib` (or libraries like Plotly/Bokeh) to gain deeper insights, and consider integrating these visualizations into interactive dashboards for real-time monitoring.
-
-
-## Integrating with Third-Party Dashboarding Platforms
-
-To bring OpenAI usage and cost data into external dashboarding tools like Tableau, Power BI, or custom platforms (e.g., Plotly Dash, Bokeh), follow these steps:
-
-1. **Data Collection & Preparation:**
-   - Use Python scripts to regularly fetch data from the Completions and Costs APIs.
-   - Process and aggregate the data with pandas, then store it in a database, data warehouse, or export it as CSV/JSON files.
-
-2. **Connecting to a Dashboard:**
-   - **BI Tools (Tableau, Power BI):**
-     - Connect directly to the prepared data source (SQL database, CSV files, or web APIs).
-     - Use built-in connectors to schedule data refreshes, ensuring dashboards always display current information.
-   - **Custom Dashboards (Plotly Dash, Bokeh):**
-     - Embed API calls and data processing into the dashboard code.
-     - Build interactive visual components that automatically update as new data is fetched.
-
-3. **Real-Time & Automated Updates:**
-   - Schedule scripts using cron jobs, task schedulers, or workflow tools (e.g., Apache Airflow) to refresh data periodically.
-   - Implement webhooks or streaming APIs (if available) for near real-time data updates.
-
-By integrating API data into third-party platforms, you can create interactive, real-time dashboards that combine OpenAI metrics with other business data, offering comprehensive insights and automated monitoring.
+你可以用 `pandas` 和 `matplotlib`（或 Plotly/Bokeh）試各種參數和圖表，也可以進一步整合成互動式 dashboard 做即時監控。
 
 
-<!-- tutor:summary -->
+## 整合第三方 Dashboard 平台
+
+想把 OpenAI 的用量和費用資料帶進 Tableau、Power BI 或自建平台（例如 Plotly Dash、Bokeh），可以照下面做：
+
+1. **資料收集與整理：**
+   - 用 Python 腳本定期從 Completions 和 Costs API 抓資料。
+   - 用 pandas 處理、彙總後，存進資料庫、資料倉儲，或匯出成 CSV/JSON。
+
+2. **連到 Dashboard：**
+   - **BI 工具（Tableau、Power BI）：**
+     - 直接連到整理好的資料來源（SQL 資料庫、CSV 或 web API）。
+     - 用內建 connector 排程更新，讓 dashboard 一直是最新資料。
+   - **自建 Dashboard（Plotly Dash、Bokeh）：**
+     - 把 API 呼叫和資料處理寫進 dashboard 程式裡。
+     - 做出會隨新資料自動更新的互動元件。
+
+3. **即時與自動更新：**
+   - 用 cron job、工作排程器或 Apache Airflow 這類工具定期刷新資料。
+   - 如果有 webhook 或 streaming API，可以做到接近即時的更新。
+
+把 API 資料整合進第三方平台後，就能做出結合 OpenAI 指標和其他業務資料的互動式即時 dashboard，做完整的分析和自動監控。
+
+
+## 重點整理
+- Usage API 和 Costs API 需要 Admin Key，跟一般 API key 是分開的。
+- `group_by` 雖然選填，但沒設的話 `model`、`project_id` 等欄位都是 `null`，通常要加。
+- 流程固定是三步：呼叫 API、把 JSON 轉成 DataFrame、用 matplotlib 畫圖。
+- 資料轉成 DataFrame 之後，要匯出給 BI 工具或排程更新都很容易。
+
+## 練習
+1. 把 `group_by` 改成只有 `["model"]`，看圓餅圖和堆疊長條圖有什麼變化。
+2. 把 Costs API 的分組改成 `["project_id"]`，重畫「依 line item」那張圖，看各 project 的花費占比。
+3. 把 DataFrame 用 `to_csv` 存成檔案，再寫一小段腳本每天跑一次並附加新資料，當作自建 dashboard 的資料來源。

@@ -1,28 +1,38 @@
 ---
-translated: false
+translated: true
 source: articles/codex_exec_plans.md
 ---
-
 # Using PLANS.md for multi-hour problem solving
 
 > 原文：[articles/codex_exec_plans.md](https://github.com/openai/openai-cookbook/blob/main/articles/codex_exec_plans.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+這篇介紹一種讓 Codex 處理需要數小時的複雜任務的做法：在 repo 裡放一份 `PLANS.md`，並在 `AGENTS.md` 規定什麼時候要用它。`PLANS.md` 是份會持續更新的設計文件，讓你在 Codex 開始長時間實作前，先確認它打算怎麼做。
 
-Codex and the `gpt-5.2-codex` model (recommended) can be used to implement complex tasks that take significant time to research, design, and implement. The approach described here is one way to prompt the model to implement these tasks and to steer it towards successful completion of a project.
+## 學完你會
 
-These plans are thorough design documents, and "living documents". As a user of Codex, you can use these documents to verify the approach that Codex will take before it begins a long implementation process. The particular `PLANS.md` included below is very similar to one that has enabled Codex to work for more than seven hours from a single prompt.
+- 在 `AGENTS.md` 寫出一條規則，讓 agent 遇到複雜任務時改用 ExecPlan
+- 把 `PLANS.md` 加進 repo，並依需求增減必要章節
+- 在 prompt 裡用 "ExecPlan" 這個簡稱，引導 Codex 照計畫文件實作
 
-We enable Codex to use these documents by first updating `AGENTS.md` to describe when to use `PLANS.md`, and then of course, to add the `PLANS.md` file to our repository.
+## 開跑前
+
+- 需要 Codex，建議搭配 `gpt-5.2-codex` 模型
+
+Codex 搭配 `gpt-5.2-codex` 模型（建議使用）可以用來實作那些需要大量時間研究、設計和實作的複雜任務。這裡介紹的做法，是提示模型實作這類任務、並引導它順利完成專案的方式之一。
+
+這些計畫是完整的設計文件，也是「活文件」。身為 Codex 的使用者，你可以在 Codex 開始長時間實作之前，用這些文件檢查它打算採取的做法。下面附的這份 `PLANS.md` 跟一份曾經讓 Codex 只靠單一 prompt 工作超過七小時的版本非常相似。
+
+要讓 Codex 使用這些文件，先更新 `AGENTS.md`，說明什麼時候該用 `PLANS.md`，然後當然要把 `PLANS.md` 檔案加進 repository。
 
 ## `AGENTS.md`
 
-[`AGENTS.md`](https://github.com/openai/agents.md) is a simple format for guiding coding agents such as Codex. We describe a term that users can use as a shorthand and a simple rule for when to use planning documents. Here, we call it an "ExecPlan". Note that this is an arbitrary term, Codex has not been trained on it. This shorthand can then be used when prompting Codex to direct it to a particular definition of a plan.
+[`AGENTS.md`](https://github.com/openai/agents.md) 是引導 Codex 這類 coding agent 的簡單格式。我們定義一個使用者可以當簡稱的詞，以及一條簡單的規則說明何時使用計畫文件。這裡我們叫它 "ExecPlan"。注意這個詞是任意取的，Codex 並沒有針對它訓練過。之後 prompt Codex 時，可以用這個簡稱，把它導向某個特定的計畫定義。
 
-Here's an `AGENTS.md` section instructing an agent about when to use a plan:
+下面是一段 `AGENTS.md` 內容，告訴 agent 什麼時候該用計畫：
 
 ```md
 # ExecPlans
@@ -32,7 +42,7 @@ When writing complex features or significant refactors, use an ExecPlan (as desc
 
 ## `PLANS.md`
 
-Below is the entire document. The prompting in this document was carefully chosen to provide significant amounts of feedback to users and to guide the model to implement precisely what a plan specifies. Users may find that they benefit from customizing the file to meet their needs, or to add or remove required sections.
+下面是整份文件。這份文件的 prompt 是精心挑選的，目的是給使用者大量回饋，並引導模型精確實作計畫所指定的內容。你可能會發現客製這個檔案很有幫助，例如依需求新增或移除必要章節。
 
 ~~~md
 # Codex Execution Plans (ExecPlans):
@@ -187,4 +197,15 @@ If you follow the guidance above, a single, stateless agent -- or a human novice
 When you revise a plan, you must ensure your changes are comprehensively reflected across all sections, including the living document sections, and you must write a note at the bottom of the plan describing the change and the reason why. ExecPlans must describe not just the what but the why for almost everything.
 ~~~
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 複雜長任務的關鍵是先有一份可檢查的計畫，讓你在 Codex 動手前就能確認方向。
+- `AGENTS.md` 負責講「什麼時候用計畫」，`PLANS.md` 負責講「計畫怎麼寫」，兩者分工。
+- "ExecPlan" 只是自訂簡稱，模型沒被訓練過，靠 `AGENTS.md` 的定義才有意義。
+- ExecPlan 是活文件，實作過程中會持續更新。
+
+## 練習
+
+1. 把文中的 `AGENTS.md` 規則複製到你自己的專案，把觸發條件改成符合你專案的描述（例如「改動超過三個模組」）。
+2. 把 `PLANS.md` 放進 repo，刪掉一個你覺得用不到的必要章節，再讓 Codex 產一份 ExecPlan，看輸出的差別。
+3. 挑一個你手上要花幾小時的真實任務，在 prompt 裡寫「用 ExecPlan 完成」，先審核計畫再讓它實作，記下你修改了哪些計畫內容。

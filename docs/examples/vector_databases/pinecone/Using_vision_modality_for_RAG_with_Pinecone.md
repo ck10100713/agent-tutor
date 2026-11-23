@@ -1,70 +1,81 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.ipynb
 ---
 
-# Optimizing Retrieval-Augmented Generation using GPT-4o Vision Modality
+# 用 GPT-4o Vision 優化 Retrieval-Augmented Generation
 
 > 原文：[examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇處理圖表、表格很多的 PDF 該怎麼做 RAG。做法是先把每一頁轉成圖片，用 GPT-4o vision 抽出文字並描述圖表，存進 Pinecone；檢索到有視覺內容的頁面時，再把整頁圖片直接丟給 GPT-4o 回答。範例文件是世界銀行 2024 年報。
 
-## Optimizing Retrieval-Augmented Generation using GPT-4o Vision Modality
+## 學完你會
+- 建立 Pinecone index，並把每頁文字的 embedding 連同 metadata 用 upsert 寫進去
+- 把 PDF 頁面轉成圖片，用 GPT-4o vision 抽出文字和圖表、表格的描述，並標記哪些頁面有視覺內容
+- 做語意搜尋回答問題，遇到有視覺內容的頁面就改用頁面圖片當 context
 
-Implementing Retrieval-Augmented Generation (RAG) presents unique challenges when working with documents rich in images, graphics and tables. Traditional RAG models excel with textual data but often falter when visual elements play a crucial role in conveying information. In this cookbook, we bridge that gap by leveraging the vision modality to extract and interpret visual content, ensuring that the generated responses are as informative and accurate as possible.
+## 開跑前
+- 需要 Pinecone 帳號和 API key，放在 `.env` 的 `PINECONE_API_KEY`
+- 需要 OpenAI API key，另外可能要裝 Poppler 才能轉 PDF 圖片
+- Vision 呼叫比較貴也比較慢，處理整份年報會花一些費用
 
-Our approach involves parsing documents into images and utilizing metadata tagging to identify pages containing images, graphics and tables. When a semantic search retrieves such a page, we pass the page image to a vision model instead of relying solely on text. This method enhances the model's ability to understand and answer user queries that pertain to visual data.
+## 用 GPT-4o Vision 優化 Retrieval-Augmented Generation
 
-In this cookbook, we will explore and demonstrate the following key concepts:
+要對圖片、圖表和表格很多的文件做 Retrieval-Augmented Generation (RAG)，會碰到一些特別的難題。傳統 RAG 處理純文字資料很強，但當視覺元素是傳遞資訊的關鍵時，常常不夠用。這份 cookbook 用 vision modality 來抽取並解讀視覺內容，補上這個缺口，讓產生的回答盡可能完整、準確。
 
-##### 1. Setting Up a Vector Store with Pinecone:
-- Learn how to initialize and configure Pinecone to store vector embeddings efficiently.
+我們的做法是把文件解析成圖片，並用 metadata 標記哪些頁面有圖片、圖表和表格。語意搜尋檢索到這類頁面時，我們把頁面圖片傳給 vision 模型，而不是只靠文字。這樣模型更能理解跟視覺資料有關的使用者問題。
 
-##### 2. Parsing PDFs and Extracting Visual Information:
-- Discover techniques for converting PDF pages into images.
-- Use GPT-4o vision modality to extract textual information from pages with images, graphics or tables.  
+這份 cookbook 會介紹並示範以下重點：
 
-##### 3. Generating Embeddings: 
-- Utilize embedding models to create vector representations of textual data. 
-- Flag the pages that have visual content so that we set a metadata flag on vector store, and retrieve images to pass on the GPT-4o using vision modality. 
+##### 1. 用 Pinecone 建立 Vector Store：
+- 學會如何初始化並設定 Pinecone，有效率地儲存向量 embeddings。
 
-##### 4. Uploading Embeddings to Pinecone: 
-- Upload these embeddings to Pinecone for storage and retrieval. 
+##### 2. 解析 PDF 並抽取視覺資訊：
+- 了解把 PDF 頁面轉成圖片的技巧。
+- 用 GPT-4o vision modality 從有圖片、圖表或表格的頁面抽出文字資訊。  
 
-##### 5. Performing Semantic Search for Relevant Pages:
-- Implement semantic search on page text to find pages that best match the user's query. 
-- Provide the matching page text to GPT-4o as context to answer user's query.  
+##### 3. 產生 Embeddings： 
+- 用 embedding 模型建立文字資料的向量表示。 
+- 標記有視覺內容的頁面，在 vector store 上設一個 metadata 旗標，之後檢索時就能取出圖片，用 vision modality 傳給 GPT-4o。 
 
-##### 6. Handling Pages with Visual Content (Optional Step):
-- Learn how to pass the image using GPT-4o vision modality for question answering with additional context. 
-- Understand how this process improves the accuracy of responses involving visual data.
+##### 4. 把 Embeddings 上傳到 Pinecone： 
+- 把這些 embeddings 上傳到 Pinecone 儲存和檢索。 
+
+##### 5. 對相關頁面做語意搜尋：
+- 對頁面文字做語意搜尋，找出最符合使用者問題的頁面。 
+- 把符合的頁面文字當 context 提供給 GPT-4o，回答使用者的問題。  
+
+##### 6. 處理有視覺內容的頁面（選用步驟）：
+- 學會如何用 GPT-4o vision modality 傳入圖片，搭配額外 context 回答問題。 
+- 了解這個流程怎麼提高涉及視覺資料的回答準確度。
  
-By the end of this cookbook, you will have a robust understanding of how to implement RAG systems capable of processing and interpreting documents with complex visual elements. This knowledge will empower you to build AI solutions that deliver richer, more accurate information, enhancing user satisfaction and engagement.
+讀完這份 cookbook，你會對如何實作能處理並解讀複雜視覺元素文件的 RAG 系統有紮實的了解，也能做出提供更豐富、更準確資訊的 AI 解決方案。
 
-We will use the World Bank report - [A Better Bank for a Better World: Annual Report 2024](https://documents1.worldbank.org/curated/en/099101824180532047/pdf/BOSIB13bdde89d07f1b3711dd8e86adb477.pdf) to illustrate the concepts as this document has a mix of images, tables and graphics data. 
+我們用世界銀行的報告 [A Better Bank for a Better World: Annual Report 2024](https://documents1.worldbank.org/curated/en/099101824180532047/pdf/BOSIB13bdde89d07f1b3711dd8e86adb477.pdf) 來說明這些概念，因為這份文件同時有圖片、表格和圖形資料。 
 
-Keep in mind that using the Vision Modality is resource-intensive, leading to increased latency and cost. It is advisable to use Vision Modality only for cases where performance on evaluation benchmarks is unsatisfactory with plain text extraction methods. With this context, let's dive in.
+注意，使用 Vision Modality 很吃資源，會增加延遲和成本。建議只在純文字抽取方法在評測 benchmark 上表現不理想時，才使用 Vision Modality。了解這點之後，我們開始吧。
 
-### Step 1: Setting up a Vector Store with Pinecone 
-In this section, we'll set up a vector store using Pinecone to store and manage our embeddings efficiently. Pinecone is a vector database optimized for handling high-dimensional vector data, which is essential for tasks like semantic search and similarity matching.
+### Step 1：用 Pinecone 建立 Vector Store 
+這一節我們用 Pinecone 建立 vector store，有效率地儲存和管理 embeddings。Pinecone 是針對高維向量資料最佳化的向量資料庫，這對語意搜尋和相似度比對這類任務很重要。
 
-**Prerequisites** 
-1. Sign-up for Pinecone and obtain an API key by following the instructions here [Pinecone Database Quickstart](https://docs.pinecone.io/guides/get-started/quickstart)  
-2. Install the Pinecone SDK using `pip install "pinecone[grpc]"`. gRPC (gRPC Remote Procedure Call) is a high-performance, open-source universal RPC framework that uses HTTP/2 for transport, Protocol Buffers (protobuf) as the interface definition language, and enables client-server communication in a distributed system. It is designed to make inter-service communication more efficient and suitable for microservices architectures.   
+**先決條件** 
+1. 註冊 Pinecone 並取得 API key，步驟請看這裡 [Pinecone Database Quickstart](https://docs.pinecone.io/guides/get-started/quickstart)  
+2. 用 `pip install "pinecone[grpc]"` 安裝 Pinecone SDK。gRPC（gRPC Remote Procedure Call）是高效能的開源通用 RPC 框架，用 HTTP/2 傳輸，用 Protocol Buffers (protobuf) 當介面定義語言，讓分散式系統中的 client 和 server 能溝通。它是為了讓服務之間的通訊更有效率而設計，很適合 microservices 架構。   
 
-**Store the API Key Securely**  
-1. Store the API key in an .env file for security purposes in you project directory as follows:  
- `PINECONE_API_KEY=your-api-key-here`.   
- 2. Install `pip install python-dotenv` to read the API Key from the .env file. 
+**安全地存放 API Key**  
+1. 為了安全，把 API key 存在專案目錄下的 .env 檔裡，格式如下：  
+ `PINECONE_API_KEY=your-api-key-here`。   
+ 2. 安裝 `pip install python-dotenv`，用它從 .env 檔讀取 API Key。 
 
-**Create the Pinecone Index**   
-We'll use the `create_index` function to initialize our embeddings database on Pinecone. There are two crucial parameters to consider:
+**建立 Pinecone Index**   
+我們用 `create_index` 函式在 Pinecone 上初始化 embeddings 資料庫。有兩個關鍵參數要考慮：
 
-1. Dimension: This must match the dimensionality of the embeddings produced by your chosen model. For example, OpenAI's text-embedding-ada-002 model produces embeddings with 1536 dimensions, while text-embedding-3-large produces embeddings with 3072 dimensions. We'll use the text-embedding-3-large model, so we'll set the dimension to 3072.
+1. Dimension：必須跟你選的模型產生的 embedding 維度一致。例如 OpenAI 的 text-embedding-ada-002 產生 1536 維的 embeddings，text-embedding-3-large 則是 3072 維。我們用 text-embedding-3-large，所以維度設 3072。
 
-2. Metric: The distance metric determines how similarity is calculated between vectors. Pinecone supports several metrics, including cosine, dotproduct, and euclidean. For this cookbook, we'll use the cosine similarity metric. You can learn more about distance metrics in the [Pinecone Distance Metrics documentation](https://docs.pinecone.io/guides/indexes/understanding-indexes#distance-metrics).
+2. Metric：距離度量決定向量之間的相似度怎麼計算。Pinecone 支援幾種度量，包括 cosine、dotproduct 和 euclidean。這份 cookbook 用 cosine similarity。更多度量的說明可以看 [Pinecone Distance Metrics documentation](https://docs.pinecone.io/guides/indexes/understanding-indexes#distance-metrics)。
 
 ```python
 import os
@@ -101,41 +112,41 @@ while not pc.describe_index(index_name).status['ready']:
     time.sleep(1)
 ```
 
-Navigate to Indexes list on [Pinecone](https://app.pinecone.io/) and you should be able to view `my-test-index` in the list of indexes. 
+到 [Pinecone](https://app.pinecone.io/) 的 Indexes 列表，你應該可以在清單中看到 `my-test-index`。 
 
-### Step 2: Parsing PDFs and Extracting Visual Information:
+### Step 2：解析 PDF 並抽取視覺資訊：
 
-In this section, we will parse our PDF document the World Bank report - [A Better Bank for a Better World: Annual Report 2024](https://documents1.worldbank.org/curated/en/099101824180532047/pdf/BOSIB13bdde89d07f1b3711dd8e86adb477.pdf) and extract textual and visual information, such as describing images, graphics, and tables. The process involves three main steps:
+這一節我們解析世界銀行報告 [A Better Bank for a Better World: Annual Report 2024](https://documents1.worldbank.org/curated/en/099101824180532047/pdf/BOSIB13bdde89d07f1b3711dd8e86adb477.pdf) 這份 PDF，抽出文字和視覺資訊，例如描述圖片、圖形和表格。過程分三個主要步驟：
 
-1. **Parse the PDF into individual pages:** We split the PDF into separate pages for easier processing.
-2. **Convert PDF pages to images:** This enabled vision GPT-4o vision capability to analyze the page as an image.  
-3. **Process images and tables:** Provide instructions to GPT-4o to extract text, and also describe the images, graphics or tables in the document. 
+1. **把 PDF 解析成單獨的頁面：** 把 PDF 切成一頁一頁，方便處理。
+2. **把 PDF 頁面轉成圖片：** 這樣 GPT-4o 的 vision 能力才能把頁面當圖片來分析。  
+3. **處理圖片和表格：** 給 GPT-4o 指示，抽出文字，並描述文件中的圖片、圖形或表格。 
 
-**Prerequisites**
+**先決條件**
 
-Before proceeding, make sure you have the following packages installed. Also ensure your OpenAI API key is set up as an environment variable. You may also need to install Poppler for PDF rendering.  
+開始之前，確認已安裝下列套件，並確保 OpenAI API key 已設成環境變數。你可能還需要安裝 Poppler 來渲染 PDF。  
 
 `pip install PyPDF2 pdf2image pytesseract pandas tqdm`
  
-**Step Breakdown:**
+**步驟拆解：**
 
-**1. Downloading and Chunking the PDF:**  
-- The `chunk_document` function downloads the PDF from the provided URL and splits it into individual pages using PyPDF2.
-- Each page is stored as a separate PDF byte stream in a list.
+**1. 下載並切分 PDF：**  
+- `chunk_document` 函式從提供的 URL 下載 PDF，並用 PyPDF2 切成單獨的頁面。
+- 每一頁都以獨立的 PDF byte stream 存在一個 list 裡。
 
-**2. Converting PDF Pages to Images:** 
-- The `convert_page_to_image` function takes the PDF bytes of a single page and converts it into an image using pdf2image.
-- The image is saved locally in an 'images' directory for further processing.
+**2. 把 PDF 頁面轉成圖片：** 
+- `convert_page_to_image` 函式接收單一頁面的 PDF bytes，並用 pdf2image 轉成圖片。
+- 圖片會存在本機的 'images' 目錄，供後續處理。
 
-**3. Extracting Text Using GPT-4o vision modality:**
-- The `extract_text_from_image` function uses GPT-4o vision capability to extract text from the image of the page.
-- This method can extract textual information even from scanned documents.
-- Note that this modality is resource intensive thus has higher latency and cost associated with it. 
+**3. 用 GPT-4o vision modality 抽取文字：**
+- `extract_text_from_image` 函式用 GPT-4o 的 vision 能力，從頁面圖片抽出文字。
+- 這個方法連掃描文件都能抽出文字資訊。
+- 注意這個 modality 很吃資源，所以延遲和成本都比較高。 
 
-**4. Processing the Entire Document:** 
-- The process_document function orchestrates the processing of each page.
-- It uses a progress bar (tqdm) to show the processing status.
-- The extracted information from each page is collected into a list and then converted into a Pandas DataFrame.
+**4. 處理整份文件：** 
+- process_document 函式負責統籌每一頁的處理。
+- 它用進度條（tqdm）顯示處理狀態。
+- 每一頁抽出的資訊會收集到 list 裡，再轉成 Pandas DataFrame。
 
 ```python
 import base64
@@ -307,7 +318,7 @@ df = process_document(document_to_parse)
     DataFrame created with page data.
     ```
 
-Let's examine the DataFrame to ensure that the pages have been processed correctly. For brevity, we will retrieve and display only the first five rows. Additionally, you should be able to see the page images generated in the 'images' directory.
+我們來檢查 DataFrame，確認頁面處理正確。為了簡潔，只取出並顯示前五列。另外你也應該能在 'images' 目錄看到產生的頁面圖片。
 
 ```python
 from IPython.display import display, HTML
@@ -322,7 +333,7 @@ display(HTML(df.head().to_html()))
     <IPython.core.display.HTML object>
     ```
 
-Let's take a look at a sample page, such as page 21, which contains embedded graphics and text. We can observe that the vision modality effectively extracted and described the visual information. For instance, the pie chart on this page is accurately described as:
+來看一個範例頁面，例如第 21 頁，這頁同時有嵌入的圖形和文字。可以看到 vision modality 有效地抽出並描述了視覺資訊。例如這一頁的圓餅圖被準確描述成：
 
 `"FIGURE 6: MIDDLE EAST AND NORTH AFRICA IBRD AND IDA LENDING BY SECTOR - FISCAL 2024 SHARE OF TOTAL OF $4.6 BILLION" is a circular chart, resembling a pie chart, illustrating the percentage distribution of funds among different sectors. The sectors include:`
 
@@ -379,23 +390,23 @@ for text in filtered_rows.PageText:
     ... (省略 27 行)
     ```
 
-### Step 3: Generating Embeddings: 
+### Step 3：產生 Embeddings： 
 
-In this section, we focus on transforming the textual content extracted from each page of the document into vector embeddings. These embeddings capture the semantic meaning of the text, enabling efficient similarity searches and various Natural Language Processing (NLP) tasks. We also identify pages containing visual elements, such as images, graphics, or tables, and flag them for special handling.
+這一節我們把每一頁抽出的文字內容轉成向量 embeddings。這些 embeddings 捕捉文字的語意，讓相似度搜尋和各種自然語言處理（NLP）任務可以有效率地進行。我們也會找出含有圖片、圖形或表格等視覺元素的頁面，標記起來做特殊處理。
 
-**Step Breakdown:**
+**步驟拆解：**
 
-**1. Adding a flag for visual content**   
+**1. 加上視覺內容的旗標**   
   
-To process pages containing visual information, in Step 2 we used the vision modality to extract content from charts, tables, and images. By including specific instructions in our prompt, we ensure that the model adds markers such as `DESCRIPTION OF THE IMAGE OR CHART` or `TRANSCRIPTION OF THE TABLE` when describing visual content. In this step, if such a marker is detected, we set the Visual_Input_Processed flag to 'Y'; otherwise, it remains 'N'.
+為了處理含有視覺資訊的頁面，我們在 Step 2 用 vision modality 抽取圖表、表格和圖片的內容。透過在 prompt 裡加入特定指示，我們讓模型在描述視覺內容時加上標記，例如 `DESCRIPTION OF THE IMAGE OR CHART` 或 `TRANSCRIPTION OF THE TABLE`。這一步如果偵測到這類標記，就把 Visual_Input_Processed 旗標設為 'Y'，否則維持 'N'。
 
-While the vision modality captures most visual information effectively, some details—particularly in complex visuals like engineering drawings—may be lost in translation. In Step 6, we will use this flag to determine when to pass the image of the page to GPT-4 Vision as additional context. This is an optional enhancement that can significantly improve the effectiveness of a RAG solution.  
+vision modality 雖然能有效捕捉大部分視覺資訊，但有些細節，尤其是工程圖這類複雜的視覺內容，可能在轉成文字時流失。在 Step 6，我們會用這個旗標決定什麼時候把頁面圖片當作額外 context 傳給 GPT-4 Vision。這是選用的強化手段，可以大幅提升 RAG 方案的效果。  
 
-**2. Generating Embeddings with OpenAI's Embedding Model**  
+**2. 用 OpenAI 的 Embedding 模型產生 Embeddings**  
 
-We use OpenAI's embedding model, `text-embedding-3-large`, to generate high-dimensional embeddings that represent the semantic content of each page. 
+我們用 OpenAI 的 embedding 模型 `text-embedding-3-large`，產生代表每頁語意內容的高維 embeddings。 
 
-Note: It is crucial to ensure that the dimensions of the embedding model you use are consistent with the configuration of your Pinecone vector store. In our case, we set up the Pinecone database with 3072 dimensions to match the default dimensions of `text-embedding-3-large`.  
+注意：你用的 embedding 模型的維度，一定要跟 Pinecone vector store 的設定一致。我們的 Pinecone 資料庫設成 3072 維，就是為了配合 `text-embedding-3-large` 的預設維度。  
 
 
 ```python
@@ -430,7 +441,7 @@ df['Embeddings'] = embeddings
     Generating Embeddings: 100%|██████████| 49/49 [00:18<00:00,  2.61it/s]
     ```
 
-We can verify that our logic correctly flagged pages requiring visual input. For instance, page 21, which we previously examined, has the Visual_Input_Needed flag set to "Y".
+我們可以確認邏輯有正確標出需要視覺輸入的頁面。例如前面看過的第 21 頁，它的 Visual_Input_Needed 旗標是 "Y"。
 
 ```python
 # Display the flag for page 21 
@@ -445,28 +456,28 @@ print(filtered_rows.Visual_Input_Processed)
     Name: Visual_Input_Processed, dtype: object
     ```
 
-#### Step 4: Uploading embeddings to Pinecone: 
+#### Step 4：把 embeddings 上傳到 Pinecone： 
 
-In this section, we will upload the embeddings we've generated for each page of our document to Pinecone. Along with the embeddings, we'll include relevant metadata tags that describe each page, such as the page number, text content, image paths, and whether the page includes graphics. 
+這一節我們把為文件每一頁產生的 embeddings 上傳到 Pinecone。除了 embeddings，也會附上描述每一頁的相關 metadata 標籤，例如頁碼、文字內容、圖片路徑，以及這頁是否含有圖形。 
 
-**Step Breakdown:**  
+**步驟拆解：**  
 
-**1. Create Metadata Fields:**  
-Metadata enhances our ability to perform more granular searches, find the text or image associated with the vector, and enables filtering within the vector database.
-* pageId: Combines the document_id and pageNumber to create a unique identifier for each page. We will use this as a unique identifier for our embeddings. 
-* pageNumber: The numerical page number within the document.
-* text: The extracted text content from the page.
-* ImagePath: The file path to the image associated with the page.
-* GraphicIncluded: A boolean or flag indicating whether the page includes graphical elements that may require visual processing.
+**1. 建立 Metadata 欄位：**  
+Metadata 讓我們能做更細緻的搜尋，找到跟向量相關的文字或圖片，並在向量資料庫內做過濾。
+* pageId：結合 document_id 和 pageNumber，為每一頁建立唯一識別碼。我們用它當 embeddings 的唯一 ID。 
+* pageNumber：頁面在文件中的數字頁碼。
+* text：從該頁抽出的文字內容。
+* ImagePath：該頁對應圖片的檔案路徑。
+* GraphicIncluded：布林值或旗標，表示該頁是否含有可能需要視覺處理的圖形元素。
 
-**2. Upload embeddings:**  
-We will use Pinecone API to in function `upsert_vector` to "upserts" the values - 
+**2. 上傳 embeddings：**  
+我們用 Pinecone API 的 `upsert_vector` 函式去「upsert」這些值 - 
 
-* A unique identifier
+* 一個唯一識別碼
 * Embeddings
-* Metadata as defined above 
+* 上面定義的 Metadata 
 
-Note: "Upsert" is a combination of the words "update" and "insert." In database operations, an upsert is an atomic operation that updates an existing record if it exists or inserts a new record if it doesn't. This is particularly useful when you want to ensure that your database has the most recent data without having to perform separate checks for insertion or updating.
+注意：「Upsert」是「update」和「insert」的合成字。在資料庫操作中，upsert 是一個原子操作：記錄存在就更新，不存在就新增。當你想確保資料庫裡是最新的資料，又不想分開做檢查再決定新增或更新時，這很好用。
 
 ```python
 # reload the index from Pinecone 
@@ -512,37 +523,37 @@ for idx, row in tqdm(df.iterrows(), total=df.shape[0], desc='Uploading to Pineco
     Uploading to Pinecone: 100%|██████████| 49/49 [00:08<00:00,  5.93it/s]
     ```
 
-Navigate to Indexes list on [Pinecone](https://app.pinecone.io/) and you should be able to view the vectors upserted into the database with metadata.
+到 [Pinecone](https://app.pinecone.io/) 的 Indexes 列表，你應該可以看到已 upsert 進資料庫、帶有 metadata 的向量。
 
-### Step 5: Performing Semantic Search for Relevant Pages:
-In this section, we implement a semantic search to find the most relevant pages in our document that answer a user's question. This approach uses the embeddings stored in the Pinecone vector database to retrieve pages based on the semantic similarity of their content to the user's query. By doing so, we can effectively search textual content, and provide it as context to GPT-4o for answering user's question.
+### Step 5：對相關頁面做語意搜尋：
+這一節我們實作語意搜尋，找出文件中最能回答使用者問題的頁面。這個做法用存在 Pinecone 向量資料庫裡的 embeddings，根據內容的語意相似度檢索頁面。這樣我們就能有效搜尋文字內容，並把它當 context 提供給 GPT-4o 回答使用者的問題。
 
-**Step Breakdown:**  
+**步驟拆解：**  
 
-**1. Generate an Embedding for the User's Question** 
+**1. 為使用者的問題產生 Embedding** 
 
-* We use OpenAI's embedding model to generate a high-dimensional vector representation of the user's question. 
-* This vector captures the semantic meaning of the question, allowing us to perform an efficient similarity search against our stored embeddings. 
-* The embedding is crucial for ensuring that the search query is semantically aligned with the content of the document, even if the exact words do not match.
+* 用 OpenAI 的 embedding 模型，為使用者的問題產生高維向量表示。 
+* 這個向量捕捉問題的語意，讓我們能對已儲存的 embeddings 做有效率的相似度搜尋。 
+* 即使字面不完全一樣，embedding 也能確保搜尋 query 在語意上跟文件內容對得上。
 
-**2. Query the Pinecone Index for Relevant Pages** 
+**2. 查詢 Pinecone Index 找出相關頁面** 
 
-* Using the generated embedding, we query the Pinecone index to find the most relevant pages. 
-* Pinecone performs a similarity search by comparing the question's embedding to the embeddings stored in the vector database using `cosine` similarity. If you recall, we set this as `metric` parameter in Step 1 when we created our Pinecone database. 
-* We specify the number of top matches to retrieve, typically based on a balance between coverage and relevance. For instance, retrieving the top 3-5 pages is often sufficient to provide a comprehensive answer without overwhelming the model with too much context. 
+* 用產生的 embedding 去查詢 Pinecone index，找出最相關的頁面。 
+* Pinecone 用 `cosine` similarity，把問題的 embedding 跟向量資料庫裡儲存的 embeddings 做比較。還記得我們在 Step 1 建立 Pinecone 資料庫時，把它設成 `metric` 參數。 
+* 我們指定要取回的前幾名數量，通常是在涵蓋範圍和相關性之間取平衡。例如取前 3 到 5 頁，通常就夠提供完整的回答，又不會讓模型被太多 context 淹沒。 
 
 
-**3. Compile the Metadata of Matched Pages to Provide Context** 
+**3. 整理符合頁面的 Metadata 當作 Context** 
 
-* Once the relevant embeddings are identified, we gather their associated metadata, including the extracted text and the page number.
-* This metadata is essential for structuring the context provided to GPT-4o. 
-* We also format the compiled information as a JSON to make it easy for the LLM to interpret.
+* 找出相關的 embeddings 後，我們收集它們的 metadata，包括抽出的文字和頁碼。
+* 這些 metadata 對於組織提供給 GPT-4o 的 context 很重要。 
+* 我們也把整理好的資訊格式化成 JSON，讓 LLM 比較容易解讀。
 
-**4. Use the GPT-4o Model to Generate an Answer** 
+**4. 用 GPT-4o 模型產生答案** 
 
-* Finally, we pass the compiled context to the GPT-4o. 
-* The model uses the context to generate an informative, coherent, and contextually relevant answer to the user's question.
-* The retrieved context helps the LLM answer questions with greater accuracy, as it has access to relevant information from the document. 
+* 最後，我們把整理好的 context 傳給 GPT-4o。 
+* 模型用這些 context 產生資訊豐富、連貫、跟問題相關的答案。
+* 檢索到的 context 讓 LLM 能取得文件中的相關資訊，所以回答問題更準確。 
 
 ```python
 import json
@@ -587,7 +598,7 @@ def get_response_to_question(user_question, pc_index):
     return completion.choices[0].message.content
 ```
 
-Now, let's pose a question that requires information from a diagram. In this case, the relevant details are found within a pie chart.
+現在來問一個需要圖表資訊才能回答的問題，這題的相關細節在一張圓餅圖裡。
 
 ```python
 question = "What percentage was allocated to social protections in Western and Central Africa?"
@@ -602,7 +613,7 @@ print(answer)
     Social protection was allocated 8% of the total lending in Western and Central Africa in fiscal 2024. <source>WB_Report-13, page 13</source>
     ```
 
-Let's make it more challenging by asking a question that requires interpretation of information presented in a table. In our Step 2, we extracted this information using the GPT-4o vision modality. 
+再提高難度，問一個需要解讀表格資訊的問題。在 Step 2，我們已經用 GPT-4o vision modality 抽出這些資訊。 
 
 ```python
 question = "What was the increase in access to electricity between 2000 and 2012 in Western and Central Africa?"
@@ -619,18 +630,18 @@ print(answer)
     <source>WB_Report-13, page 13</source>
     ```
 
-This approach worked well. However, there may be cases where information is embedded within images or graphics that lose fidelity when translated to text, such as complex engineering drawings.
+這個做法效果不錯。不過有些資訊嵌在圖片或圖形裡，轉成文字時會失真，例如複雜的工程圖。
 
-By using the GPT-4o Vision modality, we can pass the image of the page directly to the model as context. In the next section, we will explore how to improve the accuracy of model responses using image inputs.
+用 GPT-4o Vision modality，我們可以直接把頁面圖片當 context 傳給模型。下一節會探討怎麼用圖片輸入提升模型回答的準確度。
 
-### Step 6: Handling Pages with Visual Content (Optional Step):
-When metadata indicates the presence of an image, graphic or a table, we can pass the image as the context to GPT-4o instead of the extracted text. This approach can be useful in cases where text description of the visual information is not sufficient to convey the context. It can be the case for complex graphics such as engineering drawings or complex diagrams. 
+### Step 6：處理有視覺內容的頁面（選用步驟）：
+當 metadata 顯示有圖片、圖形或表格時，我們可以把圖片而不是抽出的文字，當作 context 傳給 GPT-4o。如果視覺資訊的文字描述不足以傳達 context，這個做法就很有用，像是複雜的圖形，例如工程圖或複雜的示意圖。 
 
-**Step Breakdown:** 
+**步驟拆解：** 
 
-The difference between this Step and Step 5, is that we've added additional logic to identify when `Visual_Input_Processed` flag is set for an embedding. In that case, instead of passing the text as the context, we pass the image of the page using GPT-4o vision modality as the context. 
+這一步和 Step 5 的差別在於，我們加了額外的邏輯，判斷某個 embedding 有沒有設 `Visual_Input_Processed` 旗標。有的話，就不傳文字當 context，而是用 GPT-4o vision modality 傳該頁的圖片當 context。 
 
-Note: This approach does increase both latency and cost, as processing image inputs is more resource intensive and expensive. Therefore, it should only be used if the desired results cannot be achieved with the text-only modality as outlined in Step 5 above.
+注意：這個做法會增加延遲和成本，因為處理圖片輸入更吃資源也更貴。所以只有在上面 Step 5 的純文字做法達不到想要的結果時才用。
 
 ```python
 import base64
@@ -712,7 +723,7 @@ def get_response_to_question_with_images(user_question, pc_index):
     return completion.choices[0].message.content
 ```
 
-Let's examine the same questions we asked for the text only semantic search in Step 5. We notice that the GPT-4o model can identify the diagram that has relevant information to answer the question. 
+我們問跟 Step 5 純文字語意搜尋一樣的問題。可以看到 GPT-4o 模型能找出含有相關資訊、可以回答問題的圖表。 
 
 ```python
 question = "What percentage was allocated to social protections in Western and Central Africa?"
@@ -730,7 +741,7 @@ print(answer)
     The percentage allocated to social protection in Western and Central Africa is 8% (Figure 2: Western and Central Africa; IBRD and IDA Lending by Sector).
     ```
 
-Now let's ask a question that possibly cannot be answered by text-only modality, such as find a relevant image in the document and describe the image. 
+現在問一個純文字 modality 可能回答不了的問題，例如在文件中找一張相關的圖片並描述它。 
 
 ```python
 question = "Can you find the image associated with digital improvements and describe what you see in the images?"
@@ -762,16 +773,26 @@ print(answer)
     These images illustrate the initiatives and impacts of the World Bank's projects and activities in various sectors.
     ```
 
-### Conclusion
+### 結論
 
-In this cookbook, we embarked on a journey to enhance Retrieval-Augmented Generation (RAG) systems for documents rich in images, graphics and tables. Traditional RAG models, while proficient with textual data, often overlook the wealth of information conveyed through visual elements. By integrating vision models and leveraging metadata tagging, we've bridged this gap, enabling AI to interpret and utilize visual content effectively.
+在這份 cookbook 裡，我們為圖片、圖形和表格很多的文件，強化了 Retrieval-Augmented Generation (RAG) 系統。傳統 RAG 模型處理文字資料很在行，但常常忽略視覺元素傳達的大量資訊。整合 vision 模型並用 metadata 標記後，我們補上了這個缺口，讓 AI 能有效地解讀並運用視覺內容。
 
-We began by setting up a vector store using Pinecone, establishing a foundation for efficient storage and retrieval of vector embeddings. Parsing PDFs and extracting visual information using GPT-4o vision modality allowed us to convert document pages into relevant text. By generating embeddings and flagging pages with visual content, we created a robust metadata filtering system within our vector store.
+我們從建立 Pinecone vector store 開始，為向量 embeddings 的高效儲存和檢索打好基礎。用 GPT-4o vision modality 解析 PDF 並抽取視覺資訊，讓我們能把文件頁面轉成相關的文字。透過產生 embeddings 並標記有視覺內容的頁面，我們在 vector store 裡建立了穩固的 metadata 過濾機制。
 
-Uploading these embeddings to Pinecone facilitated seamless integration with our RAG processing workflow. Through semantic search, we retrieved relevant pages that matched user queries, ensuring that both textual and visual information were considered. Handling pages with visual content by passing them to vision models enhanced the accuracy and depth of the responses, particularly for queries dependent on images or tables.
+把這些 embeddings 上傳到 Pinecone，讓整合進 RAG 處理流程很順暢。透過語意搜尋，我們檢索到符合使用者問題的相關頁面，確保文字和視覺資訊都被考慮到。把有視覺內容的頁面傳給 vision 模型處理，提升了回答的準確度和深度，特別是依賴圖片或表格的問題。
 
-Using the World Bank's **A Better Bank for a Better World: Annual Report 2024** as our guiding example, we demonstrated how these techniques come together to process and interpret complex documents. This approach not only enriches the information provided to users but also significantly enhances user satisfaction and engagement by delivering more comprehensive and accurate responses.
+以世界銀行的 **A Better Bank for a Better World: Annual Report 2024** 為範例，我們示範了這些技巧如何一起處理並解讀複雜文件。這個做法不只豐富了提供給使用者的資訊，也透過更完整、更準確的回答，大幅提升使用者的滿意度和參與度。
 
-By following the concepts outlined in this cookbook, you are now equipped to build RAG systems capable of processing and interpreting documents with intricate visual elements. This advancement opens up new possibilities for AI applications across various domains where visual data plays a pivotal role.
+照著這份 cookbook 的概念做，你就能建立處理並解讀複雜視覺元素文件的 RAG 系統。這個進展為視覺資料很關鍵的各種領域，帶來 AI 應用的新可能。
 
-<!-- tutor:summary -->
+## 重點整理
+- 純文字 RAG 會漏掉圖表和表格裡的資訊，用 vision 模型把頁面轉成文字描述，是第一層補救。
+- 抽取時在 prompt 要求固定標記，之後就能靠標記自動設旗標，不用另外判斷哪些頁面有圖。
+- Pinecone 的 dimension 要跟 embedding 模型一致（`text-embedding-3-large` 是 3072），metric 決定相似度怎麼算。
+- Metadata 讓你在檢索後取回原文、頁碼和圖片路徑，也能依旗標決定要給模型文字還是圖片。
+- Vision 又貴又慢，先用純文字檢索，真的不夠用再對有旗標的頁面改傳圖片。
+
+## 練習
+1. 把 `Step 5` 的 top-k 從目前的值改成 3 和 5，用同一個問題比較答案有沒有差別。
+2. 在 Step 4 的 metadata 加一個欄位（例如頁面文字長度），upsert 後到 Pinecone 控制台確認它有出現。
+3. 改寫 Step 6 的邏輯：只有檢索結果的第一名頁面有旗標時才傳圖片，其餘仍傳文字，並比較答案品質和 token 用量。

@@ -1,36 +1,46 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/kusto/Getting_started_with_kusto_and_openai_embeddings.ipynb
 ---
 
-# Kusto as a vector database for embeddings
+# 用 Kusto 當 embedding 的向量資料庫
 
 > 原文：[examples/vector_databases/kusto/Getting_started_with_kusto_and_openai_embeddings.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/kusto/Getting_started_with_kusto_and_openai_embeddings.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+示範把 Azure Data Explorer（Kusto）當成向量資料庫，搭配 OpenAI embedding。流程是載入預先算好的 Wikipedia embedding、存進 Kusto、用 OpenAI 把查詢轉成 embedding，再用 Kusto 做 cosine similarity 搜尋。
+
+## 學完你會
+
+- 把 DataFrame 裡的向量透過 Spark 寫進 Kusto 資料表
+- 用 Azure OpenAI 或 OpenAI 產生查詢的 embedding，並選對模型
+- 用 `series-cosine-similarity-fl` 這個 UDF 在 Kusto 裡找最相近的向量
+
+## 開跑前
+
+- 一個 Azure Data Explorer（Kusto）伺服器實例
+- Azure OpenAI 憑證，或 OpenAI API key
+- 在資料庫裡先建好 `series-cosine-similarity-fl` 函式
+
+這份 notebook 一步一步說明如何用 Azure Data Explorer（Kusto）當向量資料庫，搭配 OpenAI embedding。
+
+這份 notebook 呈現的是端到端的流程：
+
+1. 使用 OpenAI API 預先算好的 embedding。
+2. 把 embedding 存進 Kusto。
+3. 用 OpenAI API 把原始文字查詢轉成 embedding。
+4. 用 Kusto 對儲存的 embedding 做 cosine similarity 搜尋。
 
 
+### 前置需求
 
+這次練習需要先準備幾樣東西：
 
-
-This notebook provides step-by-step instructions on using Azure Data Explorer (Kusto) as a vector database with OpenAI embeddings. 
-
-This notebook presents an end-to-end process of:
-
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in Kusto.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using Kusto to perform cosine similarity search in the stored embeddings
-
-
-### Prerequisites
-
-For the purposes of this exercise we need to prepare a couple of things:
-
-1. Azure Data Explorer(Kusto) server instance. https://azure.microsoft.com/en-us/products/data-explorer
-3. Azure OpenAI credentials or OpenAI API key.
+1. Azure Data Explorer(Kusto) 伺服器實例。https://azure.microsoft.com/en-us/products/data-explorer
+3. Azure OpenAI 憑證或 OpenAI API key。
 
 ```python
 %pip install wget
@@ -142,11 +152,11 @@ For the purposes of this exercise we need to prepare a couple of things:
     Warning: PySpark kernel has been restarted to use updated packages.
     ```
 
-### Download precomputed Embeddings
+### 下載預先算好的 Embedding
 
 
 
-In this section we are going to load prepared embedding data, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一節會載入準備好的 embedding 資料，你不需要花自己的額度重算 Wikipedia 文章的 embedding。
 
 
 ```python
@@ -230,10 +240,10 @@ article_df.head()
     4  [0.021524671465158463, 0.018522677943110466, -...          4
     ```
 
-### Store vectors in a Kusto table
+### 把向量存進 Kusto 資料表
 
 
-Create a table & load the vectors in Kusto based on the contents in the dataframe. The spark option CreakeIfNotExists will automatically create a table if it doesn't exist
+根據 dataframe 的內容，在 Kusto 建立資料表並載入向量。spark 選項 CreakeIfNotExists 會在資料表不存在時自動建立。
 
 
 ```python
@@ -298,13 +308,13 @@ save()
     StatementMeta(, 7e5070d2-4560-4fb8-a3a8-6a594acd58ab, 23, Finished, Available)
     ```
 
-### Prepare your OpenAI API key
+### 設定 OpenAI API key
 # 
 
-The OpenAI API key is used for vectorization of the documents and queries. You can follow the instructions to create and retrieve your Azure OpenAI key and endpoint. https://learn.microsoft.com/en-us/azure/cognitive-services/openai/tutorials/embeddings
+OpenAI API key 用來把文件和查詢向量化。可以照說明建立並取得 Azure OpenAI 的 key 和 endpoint。https://learn.microsoft.com/en-us/azure/cognitive-services/openai/tutorials/embeddings
 
 
-Please make sure to use the `text-embedding-3-small` model. Since the precomputed embeddings were created with `text-embedding-3-small` model we also have to use it during search.
+請務必使用 `text-embedding-3-small` 模型。預先算好的 embedding 是用 `text-embedding-3-small` 建的，所以搜尋時也必須用同一個模型。
 
 
 ```python
@@ -317,7 +327,7 @@ import openai
     StatementMeta(, 7e5070d2-4560-4fb8-a3a8-6a594acd58ab, 43, Finished, Available)
     ```
 
-#### If using Azure Open AI
+#### 如果用 Azure Open AI
 
 ```python
 openai.api_version = '2022-12-01'
@@ -341,9 +351,9 @@ def embed(query):
     StatementMeta(, 7e5070d2-4560-4fb8-a3a8-6a594acd58ab, 44, Finished, Available)
     ```
 
-#### If using Open AI
+#### 如果用 Open AI
 
-Only run this cell if you plan to use Open AI for embedding
+只有打算用 Open AI 做 embedding 時才執行這個 cell
 
 ```python
 openai.api_key = ""
@@ -358,7 +368,7 @@ def embed(query):
     return embedded_query
 ```
 
-### Generate embedding for the search term
+### 為搜尋詞產生 embedding
 
 ```python
 
@@ -372,13 +382,13 @@ searchedEmbedding = embed("places where you worship")
     StatementMeta(, 7e5070d2-4560-4fb8-a3a8-6a594acd58ab, 45, Finished, Available)
     ```
 
-#### Semantic search in Kusto 
+#### 在 Kusto 做語意搜尋
 
-We will search the Kusto table for the closest vectors.
+我們會在 Kusto 資料表裡搜尋最接近的向量。
 
-We will be using the series-cosine-similarity-fl UDF for similarity search. 
+相似度搜尋會用 series-cosine-similarity-fl 這個 UDF。
 
-Please create the function in your database before proceeding -
+繼續之前，請先在你的資料庫建立這個函式：
 https://learn.microsoft.com/en-us/azure/data-explorer/kusto/functions-library/series-cosine-similarity-fl?tabs=query-defined
 
 ```python
@@ -545,4 +555,15 @@ df
     ... (省略 19 行)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Kusto 沒有專門的向量索引，靠 cosine similarity 的 UDF 在儲存的向量上算相似度。
+- 預先算好的 embedding 讓你省下重算的成本，但查詢必須用同一個模型（`text-embedding-3-small`）。
+- Azure OpenAI 和 OpenAI 都能產生查詢 embedding，差別在認證與 endpoint 設定。
+- 流程跟其他向量資料庫一致：存向量、查詢轉向量、比相似度。
+
+## 練習
+
+1. 換一個搜尋詞，看回傳的文章是否相關。
+2. 調整查詢回傳的筆數上限，觀察結果變化。
+3. 刻意改用另一個 embedding 模型產生查詢向量，看結果為什麼會變差。

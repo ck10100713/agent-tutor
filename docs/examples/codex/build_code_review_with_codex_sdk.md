@@ -1,38 +1,47 @@
 ---
-translated: false
+translated: true
 source: examples/codex/build_code_review_with_codex_sdk.md
 ---
-
-# Build Code Review with the Codex SDK
+# 用 Codex SDK 打造 Code Review
 
 > 原文：[examples/codex/build_code_review_with_codex_sdk.md](https://github.com/openai/openai-cookbook/blob/main/examples/codex/build_code_review_with_codex_sdk.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+Codex Cloud 的 Code Review 只能接雲端的 GitHub repo。這篇教你用 Codex CLI 的 headless 模式，在自己的 CI/CD runner 上做出同樣的自動 code review，涵蓋 GitHub Actions、GitLab CI/CD、Azure DevOps Pipelines 和 Jenkins。
+
+## 學完你會
+- 用 `codex exec` 搭配 review prompt 在 CI 裡跑 headless 的程式碼審查。
+- 用 JSON schema（structured outputs）規定 Codex 的輸出格式，拿到可以對應到程式碼行數的 finding。
+- 解析 Codex 的結果，呼叫 GitHub、GitLab、Azure DevOps 等 SCM 的 API 貼上 inline review comment。
+
+## 開跑前
+- 需要 `OPENAI_API_KEY`，在 CI 裡要存成 secret variable。
+- GitLab 要另外設 `GITLAB_TOKEN`；Azure DevOps 要開 OAuth token 的 script access，並讓 build service 有 contribute to pull requests 的權限。
 
 
-> **Archived example — review the current CI guidance before using these workflows.** The GitHub example below exposes API and repository tokens to the whole job and combines review with pull request write permissions. Do not copy that credential and permission layout; a read-only sandbox alone does not protect secrets. Use the [current Codex GitHub Action workflow and security checklist](https://learn.chatgpt.com/docs/github-action), which separate review from posting feedback. For other CI systems, follow the [automation authentication guidance](https://learn.chatgpt.com/docs/non-interactive-mode#authenticate-in-automation).
+> **封存範例：使用這些 workflow 前，請先看最新的 CI 指引。** 下面的 GitHub 範例會把 API 和 repository token 暴露給整個 job，而且把 review 和 pull request 寫入權限放在一起。不要照抄這種 credential 和權限配置，只靠 read-only sandbox 保護不了 secret。請改用[最新的 Codex GitHub Action workflow 和安全檢查清單](https://learn.chatgpt.com/docs/github-action)，它把 review 和貼回 feedback 分開處理。其他 CI 系統請參考[自動化環境的驗證指引](https://learn.chatgpt.com/docs/non-interactive-mode#authenticate-in-automation)。
 
-With [Code Review](https://chatgpt.com/codex/settings/code-review) in Codex Cloud, you can connect your team's cloud hosted GitHub repository to Codex and receive automated code reviews on every PR. But what if your code is hosted on-prem, or you don't have GitHub as an SCM?
+用 Codex Cloud 的 [Code Review](https://chatgpt.com/codex/settings/code-review)，你可以把團隊放在雲端的 GitHub repo 連到 Codex，每個 PR 都自動收到 code review。但如果你的程式碼放在 on-prem，或是根本不用 GitHub 當 SCM 呢？
 
-Luckily, we can replicate Codex's cloud hosted review process in our own CI/CD runners. In this guide, we'll build our own Code Review action using the Codex CLI headless mode with GitHub Actions, GitLab CI/CD, Azure DevOps Pipelines, and Jenkins.
+我們可以在自己的 CI/CD runner 上重現 Codex 雲端的 review 流程。這篇會用 Codex CLI 的 headless 模式，分別在 GitHub Actions、GitLab CI/CD、Azure DevOps Pipelines 和 Jenkins 上做一個自己的 Code Review action。
 
-Model recommendation: use `gpt-5.5` for the strongest code review accuracy and consistency in these workflows.
+模型建議：這些 workflow 用 `gpt-5.5`，code review 的準確度和一致性最好。
 
-To build our own Code review, we'll take the following steps and adhere to them closely:
+要做自己的 Code Review，照下面幾個步驟走就好：
 
-1. Install the Codex CLI in our CI/CD runner
-2. Prompt Codex in headless (exec) mode with the Code Review prompt that ships with the CLI
-3. Specify a structured output JSON schema for Codex
-4. Parse the JSON result and use it to make API calls to our SCM to create review comments
+1. 在 CI/CD runner 上安裝 Codex CLI
+2. 用 headless（exec）模式，搭配 CLI 內建的 Code Review prompt 呼叫 Codex
+3. 給 Codex 一份結構化輸出的 JSON schema
+4. 解析 JSON 結果，拿去呼叫 SCM 的 API 建立 review comment
 
-Once implemented, Codex will be able to leave inline code review comments:
+做完之後，Codex 就能留下 inline 的 code review comment：
 <img src="https://raw.githubusercontent.com/openai/openai-cookbook/main/images/codex_code_review.png" alt="Codex Code Review in GitHub" width="500"/>
 
-## The Code Review Prompt
+## Code Review Prompt
 
-GPT-5.5 is the recommended model for complex coding workflows in Codex. You can steer GPT-5.5 to conduct a code review with the following prompt:
+GPT-5.5 是 Codex 裡處理複雜 coding workflow 的推薦模型。用下面這個 prompt 就能引導 GPT-5.5 做 code review：
 
 ```
 You are acting as a reviewer for a proposed code change made by another engineer.
@@ -44,11 +53,11 @@ After listing findings, produce an overall correctness verdict (\"patch is corre
 Ensure that file citations and line numbers are exactly correct using the tools available; if they are incorrect your comments will be rejected.
 ```
 
-## Codex Structured Outputs
+## Codex 的 Structured Outputs
 
-In order to make comments on code ranges in our pull request, we need to receive Codex's response in a specific format. To do that we can create a file called `codex-output-schema.json` that conforms to OpenAI's [structured outputs](https://platform.openai.com/docs/guides/structured-outputs) format.
+要在 pull request 的程式碼範圍上留言，我們需要 Codex 用固定格式回應。做法是建一個 `codex-output-schema.json`，格式符合 OpenAI 的 [structured outputs](https://platform.openai.com/docs/guides/structured-outputs)。
 
-To use this file in our workflow YAML, we can call Codex with the `output-schema-file` argument like this:
+在 workflow YAML 裡，可以用 `output-schema-file` 參數把這個檔案帶給 Codex，像這樣：
 
 ```yaml
 - name: Run Codex structured review
@@ -63,15 +72,15 @@ To use this file in our workflow YAML, we can call Codex with the `output-schema
             output-file: codex-output.json
 ```
 
-You can also pass a similar argument to `codex exec` for example:
+`codex exec` 也可以傳類似的參數，例如：
 
 ```bash
 codex exec "Review my pull request!" --output-schema codex-output-schema.json
 ```
 
-## GitHub Actions Example
+## GitHub Actions 範例
 
-Let's put it all together. If you're using GitHub Actions in an on-prem environment, you can tailor this example to your specific workflow. Inline comments highlight the key steps.
+把前面的東西串起來。如果你在 on-prem 環境用 GitHub Actions，可以照自己的 workflow 調整這個範例。行內註解標出了重點步驟。
 
 ```yaml
 name: Codex Code Review
@@ -352,21 +361,21 @@ jobs:
         shell: bash
 ```
 
-## GitLab Example
-GitLab doesn’t have a direct equivalent to the GitHub Action, but you can run codex exec inside GitLab CI/CD to perform automated code reviews.
+## GitLab 範例
+GitLab 沒有直接對應 GitHub Action 的東西，不過可以在 GitLab CI/CD 裡跑 codex exec 來做自動 code review。
 
-However, the GitHub Action includes an important [safety strategy](https://github.com/openai/codex-action?tab=readme-ov-file#safety-strategy): it drops sudo permissions so Codex cannot access its own OpenAI API key. This isolation is critical—especially for public repositories where sensitive secrets (like your OpenAI API key) may be present—because it prevents Codex from reading or exfiltrating credentials during execution.
-Before running this job, configure your GitLab project:
+但 GitHub Action 有一個重要的[安全策略](https://github.com/openai/codex-action?tab=readme-ov-file#safety-strategy)：它會拿掉 sudo 權限，讓 Codex 讀不到自己的 OpenAI API key。這個隔離很關鍵，尤其是公開 repo 裡可能有敏感 secret（例如你的 OpenAI API key），隔離可以避免 Codex 在執行時讀取或外洩 credential。
+跑這個 job 之前，先設定你的 GitLab 專案：
 
-1. Go to **Project → Settings → CI/CD**.
-2. Expand the **Variables** section.
-3. Add these variables:
+1. 到 **Project → Settings → CI/CD**。
+2. 展開 **Variables** 區塊。
+3. 加入這些變數：
    - `OPENAI_API_KEY`
    - `GITLAB_TOKEN`
-4. Mark them as masked/protected as appropriate.
-5. Add the following GitLab example job to your `.gitlab-ci.yml` file at the root of your repository so it runs during merge request pipelines.
+4. 視情況勾選 masked/protected。
+5. 把下面的 GitLab 範例 job 加到 repo 根目錄的 `.gitlab-ci.yml`，讓它在 merge request pipeline 裡執行。
 
-Please be mindful with your API key on public repositories.
+公開 repo 上請小心處理你的 API key。
 
 ```yaml
 stages:
@@ -615,21 +624,21 @@ codex-structured-review:
 
 ```
 
-## Azure DevOps Pipelines Example
+## Azure DevOps Pipelines 範例
 
-Azure DevOps does not use GitHub Actions or GitLab CI/CD, but the same Codex review pattern applies: run Codex in an Azure Pipeline, provide the pull request diff, request structured output, and publish the resulting findings back to the Azure DevOps pull request as review threads.
+Azure DevOps 不用 GitHub Actions 或 GitLab CI/CD，但 Codex review 的模式一樣：在 Azure Pipeline 裡跑 Codex，提供 pull request 的 diff，要求結構化輸出，再把 findings 以 review thread 的形式發回 Azure DevOps 的 pull request。
 
-Before running this job, configure your Azure DevOps project:
+跑這個 job 之前，先設定你的 Azure DevOps 專案：
 
-1. Store `OPENAI_API_KEY` as a secret pipeline variable or in a variable group.
-2. Enable script access to the OAuth token if you plan to use `$(System.AccessToken)` for Azure DevOps REST API calls.
-3. For Azure Repos Git, configure a **Build validation** branch policy on the target branch so the pipeline runs for pull requests.
-4. Ensure the build service identity has permission to contribute to pull requests.
-5. Add an Azure Pipelines YAML file similar to the example below.
+1. 把 `OPENAI_API_KEY` 存成 secret pipeline variable 或放進 variable group。
+2. 如果要用 `$(System.AccessToken)` 呼叫 Azure DevOps REST API，要開啟 OAuth token 的 script access。
+3. Azure Repos Git 要在目標 branch 設定 **Build validation** branch policy，pipeline 才會在 pull request 時跑。
+4. 確認 build service identity 有 contribute to pull requests 的權限。
+5. 加一個類似下面範例的 Azure Pipelines YAML 檔。
 
-Please be mindful with your API key on public repositories. For public or untrusted pull requests, use the same isolation mindset described in the GitLab section: Codex should not be able to read or exfiltrate credentials while reviewing arbitrary code.
+公開 repo 上請小心處理你的 API key。對於公開或不受信任的 pull request，要用跟 GitLab 那段一樣的隔離思維：Codex 審查任意程式碼時，不應該讀得到或外洩 credential。
 
-This example assumes `review_prompt.md` and `codex-output-schema.json` are committed next to the pipeline. The schema should include `code_location.relative_file_path`, which the Azure DevOps publishing step uses to map findings back to repository paths.
+這個範例假設 `review_prompt.md` 和 `codex-output-schema.json` 跟 pipeline 一起 commit 在同一處。schema 要包含 `code_location.relative_file_path`，Azure DevOps 的發布步驟靠它把 finding 對回 repo 路徑。
 
 ```yaml
 trigger: none
@@ -799,17 +808,17 @@ steps:
       SYSTEM_ACCESSTOKEN: $(System.AccessToken)
 ```
 
-This is a minimal practical Azure Repos example, with explicit caveats around inline comment anchoring.
+這是一個精簡但實用的 Azure Repos 範例，inline comment 的錨定有一些需要注意的限制。
 
-This example assumes a same-repository Azure Repos PR; forked or cross-repository PRs may need to fetch from `System.PullRequest.SourceRepositoryUri`.
+這個範例假設是同一個 repo 內的 Azure Repos PR；fork 或跨 repo 的 PR 可能要從 `System.PullRequest.SourceRepositoryUri` fetch。
 
-The Azure DevOps-specific step is publishing Codex findings through the [Pull Request Threads API](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/create?view=azure-devops-rest-7.1). Inline comments are attached with `threadContext.filePath`, `threadContext.rightFileStart`, `threadContext.rightFileEnd`, and `pullRequestThreadContext.changeTrackingId`. The example resolves `changeTrackingId` from the latest pull request iteration changes before posting a comment.
+Azure DevOps 專屬的步驟是透過 [Pull Request Threads API](https://learn.microsoft.com/en-us/rest/api/azure/devops/git/pull-request-threads/create?view=azure-devops-rest-7.1) 發布 Codex 的 findings。inline comment 靠 `threadContext.filePath`、`threadContext.rightFileStart`、`threadContext.rightFileEnd` 和 `pullRequestThreadContext.changeTrackingId` 來附著。範例在貼留言前，會從最新的 pull request iteration changes 解出 `changeTrackingId`。
 
-Validate inline anchoring behavior in your own Azure DevOps project before depending on it in a required branch policy. In particular, test new files, modified files, renamed files, deleted files, and multi-line findings. If a finding cannot be safely anchored to the right side of the diff, prefer skipping the inline comment and relying on the overall summary instead of posting a misleading line comment.
+在把它當成必要的 branch policy 之前，請先在自己的 Azure DevOps 專案驗證 inline 錨定的行為，尤其要測新增檔案、修改檔案、改名檔案、刪除檔案和多行 finding。如果某個 finding 沒辦法安全地錨定到 diff 的右側，寧可跳過 inline comment、只靠整體摘要，也不要貼出會誤導人的行留言。
 
-## Jenkins Example
+## Jenkins 範例
 
-We can use the same approach to scripting a job with Jenkins. Once again, comments highlight key stages of the workflow:
+同樣的做法也可以用在 Jenkins 的 job script 上。一樣用註解標出 workflow 的關鍵階段：
 
 ```groovy
 pipeline {
@@ -1129,8 +1138,18 @@ pipeline {
 }
 ```
 
-# Wrap Up
+# 總結
 
-With the Codex SDK, you can build your own automated code review workflow in CI/CD environments that are not directly connected to Codex Cloud. However, the pattern of triggering Codex with a prompt, receiving a structured output, and then acting on that output with an API call extends far beyond Code Review. For example, we could use this pattern to trigger a root-cause analysis when an incident is created and post a structured report into a Slack channel. Or we could create a code quality report on each PR and post results into a dashboard.
+有了 Codex SDK，你可以在沒有直接接 Codex Cloud 的 CI/CD 環境裡，做出自己的自動 code review workflow。不過「用 prompt 觸發 Codex、拿到結構化輸出、再用 API 對輸出採取行動」這個模式，用途遠不只 Code Review。例如 incident 建立時觸發 root-cause analysis，把結構化報告貼到 Slack channel；或是每個 PR 產生一份程式碼品質報告，結果貼到 dashboard。
 
-<!-- tutor:summary -->
+## 重點整理
+- Headless 模式的 `codex exec` 讓你把 Codex 當成 CI 裡的一個步驟，不需要接 Codex Cloud。
+- 用 JSON schema 限制輸出格式，下游程式才能穩定解析 finding 的檔案和行數。
+- 各家 SCM 的流程相同：跑 Codex、解析結構化結果、呼叫 SCM API 留言，差別只在 API 和設定。
+- Codex 不該讀得到自己的 API key，隔離 credential 和把 review 與寫入權限分開是安全重點。
+- 「prompt、結構化輸出、API 動作」這個模式可以延伸到 root-cause analysis、品質報告等場景。
+
+## 練習
+1. 在頁面的 `codex-output-schema.json` 範例裡多加一個欄位（例如 `severity`），確認 Codex 輸出會帶上它。
+2. 把某一個 CI 範例中的 review prompt 改成只看安全性問題，比較 findings 的差異。
+3. 照 Wrap Up 的想法，改寫其中一個範例，讓 Codex 對 PR 產出一份摘要報告，而不是 inline comment。

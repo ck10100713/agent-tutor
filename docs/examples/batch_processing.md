@@ -1,37 +1,45 @@
 ---
-translated: false
+translated: true
 source: examples/batch_processing.ipynb
 ---
 
-# Batch processing with the Batch API
+# 用 Batch API 做批次處理
 
 > 原文：[examples/batch_processing.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/batch_processing.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+示範怎麼用 Batch API 建立非同步的批次工作，價格比較低、rate limit 也比較高。內容有兩個實例：用 `gpt-4o-mini` 幫電影分類，再用視覺能力幫家具圖片寫 caption。
 
+## 學完你會
+- 把一堆請求寫成 `jsonl` 批次檔、上傳並建立 batch job
+- 輪詢 batch 狀態，拿回結果並用 `custom_id` 對回原本的輸入
+- 把 Chat Completions 的做法搬到 Batch API，包含 JSON mode 跟圖片輸入
 
-The new Batch API allows to **create async batch jobs for a lower price and with higher rate limits**.
+## 開跑前
+需要 OpenAI API key。範例資料（IMDB 電影、Amazon 家具）會在程式裡下載。
 
-Batches will be completed within 24h, but may be processed sooner depending on global usage. 
+新的 Batch API 讓你**用比較低的價格、比較高的 rate limit 建立非同步批次工作**。
 
-Ideal use cases for the Batch API include:
+批次會在 24 小時內完成，視全球使用量也可能更快。
 
-- Tagging, captioning, or enriching content on a marketplace or blog
-- Categorizing and suggesting answers for support tickets
-- Performing sentiment analysis on large datasets of customer feedback
-- Generating summaries or translations for collections of documents or articles
+適合用 Batch API 的情境：
 
-and much more!
+- 幫市集或部落格的內容打標籤、寫 caption、做內容補強
+- 幫客服工單分類並建議回覆
+- 對大量客戶回饋做情緒分析
+- 幫一批文件或文章產生摘要或翻譯
 
-This cookbook will walk you through how to use the Batch API with a couple of practical examples.
+還有很多其他用途。
 
-We will start with an example to categorize movies using `gpt-4o-mini`, and then cover how we can use the vision capabilities of this model to caption images.
+這份 cookbook 用幾個實例帶你走過 Batch API 的用法。
 
-Please note that multiple models are available through the Batch API, and that you can use the same parameters in your Batch API calls as with the Chat Completions endpoint.
+先用 `gpt-4o-mini` 幫電影分類，再示範怎麼用這個模型的視覺能力幫圖片寫 caption。
 
-## Setup
+Batch API 支援多個模型，而且你可以在 Batch API 呼叫裡使用跟 Chat Completions endpoint 一樣的參數。
+
+## 環境設定
 
 ```python
 # Make sure you have the latest version of the SDK available to use the Batch API
@@ -50,13 +58,13 @@ from IPython.display import Image, display
 client = OpenAI()
 ```
 
-## First example: Categorizing movies
+## 第一個範例：電影分類
 
-In this example, we will use `gpt-4o-mini` to extract movie categories from a description of the movie. We will also extract a 1-sentence summary from this description. 
+這個範例用 `gpt-4o-mini` 從電影簡介抽出電影類別，同時產生一句話摘要。
 
-We will use [JSON mode](https://platform.openai.com/docs/guides/text-generation/json-mode) to extract categories as an array of strings and the 1-sentence summary in a structured format. 
+我們會用 [JSON mode](https://platform.openai.com/docs/guides/text-generation/json-mode) 讓類別以字串陣列輸出，一句話摘要也用結構化格式輸出。
 
-For each movie, we want to get a result that looks like this:
+每部電影我們想拿到的結果長這樣：
 
 ```
 {
@@ -65,9 +73,9 @@ For each movie, we want to get a result that looks like this:
 }
 ```
 
-### Loading data
+### 載入資料
 
-We will use the IMDB top 1000 movies dataset for this example. 
+這個範例用 IMDB top 1000 電影資料集。
 
 ```python
 dataset_path = "data/imdb_top_1000.csv"
@@ -122,11 +130,11 @@ df.head()
     ... (省略 1 行)
     ```
 
-### Processing step 
+### 處理步驟
 
-Here, we will prepare our requests by first trying them out with the Chat Completions endpoint.
+這裡先用 Chat Completions endpoint 試跑請求。
 
-Once we're happy with the results, we can move on to creating the batch file.
+結果滿意之後，再建立批次檔。
 
 ```python
 categorize_system_prompt = '''
@@ -221,10 +229,10 @@ for _, row in df[:5].iterrows():
     ... (省略 18 行)
     ```
 
-### Creating the batch file
+### 建立批次檔
 
-The batch file, in the `jsonl` format, should contain one line (json object) per request.
-Each request is defined as such:
+批次檔是 `jsonl` 格式，每個請求（一個 json 物件）佔一行。
+每個請求的格式如下：
 
 ```
 {
@@ -239,7 +247,7 @@ Each request is defined as such:
 }
 ```
 
-Note: the request ID should be unique per batch. This is what you can use to match results to the initial input files, as requests will not be returned in the same order.
+注意：request ID 在同一個 batch 裡要是唯一的。因為回傳結果的順序跟輸入不同，要靠它把結果對回原本的輸入。
 
 ```python
 # Creating an array of json tasks
@@ -287,7 +295,7 @@ with open(file_name, 'w') as file:
         file.write(json.dumps(obj) + '\n')
 ```
 
-### Uploading the file
+### 上傳檔案
 
 ```python
 batch_file = client.files.create(
@@ -306,7 +314,7 @@ print(batch_file)
     FileObject(id='file-lx16f1KyIxQ2UHVvkG3HLfNR', bytes=1127310, created_at=1721144107, filename='batch_tasks_movies.jsonl', object='file', purpose='batch', status='processed', status_details=None)
     ```
 
-### Creating the batch job
+### 建立 batch job
 
 ```python
 batch_job = client.batches.create(
@@ -316,18 +324,18 @@ batch_job = client.batches.create(
 )
 ```
 
-### Checking batch status
+### 檢查 batch 狀態
 
-Note: this can take up to 24h, but it will usually be completed faster.
+注意：最久可能要 24 小時，通常會更快完成。
 
-You can continue checking until the status is 'completed'.
+可以一直檢查，直到狀態變成 `completed`。
 
 ```python
 batch_job = client.batches.retrieve(batch_job.id)
 print(batch_job)
 ```
 
-### Retrieving results
+### 取回結果
 
 ```python
 result_file_id = batch_job.output_file_id
@@ -351,9 +359,9 @@ with open(result_file_name, 'r') as file:
         results.append(json_object)
 ```
 
-### Reading results
-Reminder: the results are not in the same order as in the input file.
-Make sure to check the custom_id to match the results against the input requests
+### 讀取結果
+提醒：結果的順序跟輸入檔不一樣。
+一定要用 custom_id 把結果對回原本的輸入請求。
 
 ```python
 # Reading only the first results
@@ -415,15 +423,15 @@ for res in results[:5]:
     ... (省略 18 行)
     ```
 
-## Second example: Captioning images
+## 第二個範例：幫圖片寫 caption
 
-In this example, we will use `gpt-4-turbo` to caption images of furniture items. 
+這個範例用 `gpt-4-turbo` 幫家具圖片寫 caption。
 
-We will use the vision capabilities of the model to analyze the images and generate the captions.
+我們用模型的視覺能力分析圖片並產生 caption。
 
-### Loading data
+### 載入資料
 
-We will use the Amazon furniture dataset for this example.
+這個範例用 Amazon 家具資料集。
 
 ```python
 dataset_path = "data/amazon_furniture_dataset.csv"
@@ -477,9 +485,9 @@ df.head()
     ... (省略 45 行)
     ```
 
-### Processing step 
+### 處理步驟
 
-Again, we will first prepare our requests with the Chat Completions endpoint, and create the batch file afterwards.
+同樣先用 Chat Completions endpoint 準備請求，之後再建立批次檔。
 
 ```python
 caption_system_prompt = '''
@@ -575,9 +583,9 @@ for _, row in df[:5].iterrows():
     CAPTION: Set of 4 foldable TV trays in grey, featuring a compact design with a stand for easy storage, perfect for small spaces.
     ```
 
-### Creating the batch job
+### 建立 batch job
 
-As with the first example, we will create an array of json tasks to generate a `jsonl` file and use it to create the batch job.
+跟第一個範例一樣，先建一個 json 任務陣列來產生 `jsonl` 檔，再用它建立 batch job。
 
 ```python
 # Creating an array of json tasks
@@ -659,12 +667,12 @@ batch_job = client.batches.retrieve(batch_job.id)
 print(batch_job)
 ```
 
-### Getting results
+### 取得結果
 
-As with the first example, we can retrieve results once the batch job is done.
+跟第一個範例一樣，job 完成後就能取回結果。
 
-Reminder: the results are not in the same order as in the input file.
-Make sure to check the custom_id to match the results against the input requests
+提醒：結果的順序跟輸入檔不一樣。
+一定要用 custom_id 把結果對回原本的輸入請求。
 
 ```python
 # Retrieving result file
@@ -747,10 +755,20 @@ for res in results[:5]:
     CAPTION: A set of two Glitzhome adjustable bar stools featuring a mid-century modern design with swivel seats, PU leather upholstery, and wooden backrests.
     ```
 
-## Wrapping up
+## 收尾
 
-In this cookbook, we have seen two examples of how to use the new Batch API, but keep in mind that the Batch API works the same way as the Chat Completions endpoint, supporting the same parameters and most of the recent models (gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo...).
+這份 cookbook 看了兩個 Batch API 的範例。要記得 Batch API 的運作方式跟 Chat Completions endpoint 一樣，支援同樣的參數，也支援大部分近期的模型（gpt-4o、gpt-4o-mini、gpt-4-turbo、gpt-3.5-turbo 等）。
 
-By using this API, you can significantly reduce costs, so we recommend switching every workload that can happen async to a batch job with this new API.
+用這個 API 可以大幅降低成本，建議把所有能非同步處理的工作都改成 batch job。
 
-<!-- tutor:summary -->
+## 重點整理
+- Batch API 用非同步處理換來較低價格和較高 rate limit，24 小時內完成。
+- 批次檔是 `jsonl`，每行一個請求，請求格式跟 Chat Completions 一樣。
+- 每個請求要有唯一的 `custom_id`，因為回傳順序不保證跟輸入一致。
+- 先用 Chat Completions 小量試跑確認 prompt 沒問題，再轉成批次檔，可以省掉重跑的成本。
+- 圖片輸入、JSON mode 這些功能在 Batch 裡都能用。
+
+## 練習
+1. 把電影分類的 prompt 改成多抽一個欄位（例如目標觀眾），先用 Chat Completions 試跑確認輸出。
+2. 把批次檔裡的模型換成別的支援 Batch 的模型，比較同一批資料的結果跟成本。
+3. 寫一段程式輪詢 batch 狀態，完成後用 `custom_id` 把結果合併回原本的 DataFrame。

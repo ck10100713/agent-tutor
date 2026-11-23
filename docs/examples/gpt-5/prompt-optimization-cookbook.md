@@ -1,40 +1,51 @@
 ---
-translated: false
+translated: true
 source: examples/gpt-5/prompt-optimization-cookbook.ipynb
 ---
-
-# GPT-5 Prompt Migration and Improvement Using the New Optimizer
+# GPT-5 Prompt 遷移與改進：使用新的 Optimizer
 
 > 原文：[examples/gpt-5/prompt-optimization-cookbook.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/gpt-5/prompt-optimization-cookbook.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+用 Playground 的 GPT-5 Prompt Optimizer 改寫 prompt，再用實際的評測看改寫後有沒有變好。兩個任務：產生「串流 Top-K 高頻詞」的 Python 腳本（量化指標加 LLM-as-a-judge），以及金融問答的 FailSafeQA（比較 baseline 與 optimized prompt）。
+
+## 學完你會
+
+- 找出 prompt 裡的矛盾與模糊指示，並用 Prompt Optimizer 一鍵優化、再用額外要求迭代
+- 把優化後的 prompt 存成 Prompt Object，在 API 呼叫裡重複使用
+- 設計 baseline 對 optimized 的評測：跑 30 次產生腳本、量正確率 / 時間 / 記憶體，加上 LLM-as-a-judge 打分
+
+## 開跑前
+
+- 設好環境變數 `OPENAI_API_KEY`，並有 GPT-5 的使用權限
+- 評測會多次呼叫 API 並跑較重的 benchmark，需要一些時間與費用
 
 
+GPT-5 系列是我們到目前為止發佈過最聰明的模型，各方面能力都有跳躍式的提升。GPT-5 特別擅長 agentic 任務、寫程式和 steerability，從好奇的使用者到進階研究人員都適合。 
 
-The GPT-5 family of models is the smartest models we’ve released to date, representing a step change in the models’ capabilities across the board. GPT-5 is particularly specialized in agentic task performance, coding, and steerability, making it a great fit for everyone from curious users to advanced researchers. 
-
-GPT-5 will benefit from all the traditional [prompting best practices](https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide), but to make optimizations and migrations easier, we are introducing the **[GPT-5 Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true)** in our Playground to help users get started on **improving existing prompts** and **migrating prompts** for GPT-5 and other OpenAI models.
+GPT-5 能受益於所有傳統的 [prompting 最佳實務](https://cookbook.openai.com/examples/gpt-5/gpt-5_prompting_guide)。為了讓優化和遷移更容易，我們在 Playground 推出 **[GPT-5 Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true)**，幫使用者開始**改進現有 prompt**，也能把 prompt **遷移**到 GPT-5 和其他 OpenAI 模型。
 
 ![Prompt Optimizer demo](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/prompt-optimizer-3-22s.gif)
 
-In this cookbook we will show you how to use the Prompt Optimizer to get spun up quickly to solve your tasks with GPT-5, while demonstrating how prompt optimization can yield measurable improvements. 
+這篇會示範怎麼用 Prompt Optimizer 快速上手，用 GPT-5 解決你的任務，同時展示 prompt 優化能帶來可量測的改善。 
 
-### Migrating and Optimizing Prompts
+### 遷移與優化 Prompt
 
-Crafting effective prompts is a critical skill when working with LLMs. The goal of the Prompt Optimizer is to give your prompt the best practices and formatting most effective for our models. The Optimizer also removes common prompting failure modes such as:  
+寫出有效的 prompt 是用 LLM 的關鍵技能。Prompt Optimizer 的目標，是讓你的 prompt 套用對我們的模型最有效的最佳實務和格式。Optimizer 也會移除常見的 prompting 失誤，例如：  
 
-•   Contradictions in the prompt instructions  
-•	Missing or unclear format specifications  
-•	Inconsistencies between the prompt and few-shot examples  
+•   prompt 指示之間互相矛盾  
+•	缺少或不清楚的格式規範  
+•	prompt 和 few-shot 範例不一致  
 
-Along with tuning the prompt for the target model, the Optimizer is cognizant of the specific task you are trying to accomplish and can apply crucial practices to boost performance in Agentic Workflows, Coding and Multi-Modality. Let's walk through some before-and-afters to see where prompt optimization shines. 
+除了針對目標模型調整 prompt，Optimizer 也知道你想完成的任務，能套用關鍵做法來提升 Agentic Workflow、Coding 和 Multi-Modality 的表現。下面看幾組優化前後的對照，看 prompt 優化在哪裡最有用。 
 
-> Remember that prompting is not a one-size-fits-all experience, so we recommend running thorough experiments and iterating to find the best solution for your problem.
+> 記住 prompting 沒有一體適用的做法，所以建議多做實驗、反覆迭代，找出最適合你問題的方案。
 
 
-> Ensure you have set up your OpenAI API Key set as `OPENAI_API_KEY` and have access to GPT-5
+> 確認已把 OpenAI API Key 設成 `OPENAI_API_KEY`，並有 GPT-5 的使用權限
 
 
 ```python
@@ -59,21 +70,21 @@ print('OPENAI_API_KEY is set!' if not missing else 'Missing environment variable
 ----------------
 
 
-### Coding and Analytics: Streaming Top‑K Frequent Words 
+### Coding 與 Analytics：串流 Top‑K 高頻詞 
 
-We start with a task in a field that model has seen significant improvements: Coding and Analytics. We will ask the model to generate a Python script that computes the exact Top‑K most frequent tokens from a large text stream using a specific tokenization spec. Tasks like these are highly sensitive to poor prompting as they can push the model toward the wrong algorithms and approaches (approximate sketches vs multi‑pass/disk‑backed exact solutions), dramatically affecting accuracy and runtime.
+先從模型進步很多的領域開始：Coding 和 Analytics。我們請模型寫一支 Python 腳本，依指定的 tokenization 規格，從大型文字串流算出精確的 Top‑K 高頻 token。這類任務對差的 prompt 很敏感，因為可能把模型推向錯的演算法和做法（近似 sketch 對比多趟 / 落地磁碟的精確解），大幅影響正確率和執行時間。
 
-For this task, we will evaluate:
-1. Compilation/Execution success over 30 runs
-2. Average runtime (successful runs)
-3. Average peak memory (successful runs)
-4. Exactness: output matches ground‑truth Top‑K with tie‑break: by count desc, then token asc
+這個任務我們評估：
+1. 30 次執行的編譯 / 執行成功率
+2. 平均執行時間（成功的執行）
+3. 平均 peak memory（成功的執行）
+4. 精確度：輸出要符合 ground‑truth Top‑K，並依 count 由大到小、再依 token 由小到大排序
 
-Note: Evaluated on an M4 Max MacBook Pro; adjust constraints if needed.
+注意：在 M4 Max MacBook Pro 上評測，需要的話請調整限制條件。
 
 
-### Our Baseline Prompt
-For our example, let's look at a typical starting prompt with some minor **contradictions in the prompt**, and **ambiguous or underspecified instructions**. Contradictions in instructions often reduce performance and increase latency, especially in reasoning models like GPT-5, and ambiguous instructions can cause unwanted behaviors. 
+### 我們的 Baseline Prompt
+這裡看一個典型的起手 prompt，裡面有一些小**矛盾**，也有**模糊或規範不足的指示**。指示矛盾通常會降低表現並增加 latency，在 GPT-5 這類 reasoning 模型上尤其明顯，模糊的指示則可能造成不想要的行為。 
 
 ```python
 baseline_prompt = """
@@ -90,28 +101,28 @@ Output only a single self-contained Python script inside one Python code block, 
 """
 ```
 
-This baseline prompt is something that you could expect from asking ChatGPT to write you a prompt, or talking to a friend who is knowledgeable about coding but not particularly invested in your specific use case. Our baseline prompt is intentionally shorter and friendlier, but it hides mixed signals that can push the model into inconsistent solution families.
+這個 baseline prompt，大概就是你請 ChatGPT 幫你寫 prompt，或請一位懂寫程式、但對你的情境沒那麼投入的朋友寫出來的東西。它刻意寫得比較短、比較親切，但藏著混雜的訊號，可能把模型推向不一致的解法。
 
-First, we say to prefer the standard library, then immediately allow external packages “if they make things simpler.” That soft permission can nudge the model toward non‑portable dependencies or heavier imports that change performance and even execution success across environments.
+首先，我們說優先用標準函式庫，卻馬上又允許「如果比較簡單」就用外部套件。這種軟性許可可能讓模型選到不可攜的依賴或較重的 import，改變效能，甚至讓不同環境下的執行成功率不同。
 
-Next, we encourage single‑pass streaming to keep memory low, but we also say it’s fine to reread or cache “if that makes the solution clearer.” That ambiguity opens the door to multi‑pass designs or in‑memory caches that defeat the original streaming constraint and can alter runtime and memory profiles.
+接著，我們鼓勵單趟串流來壓低記憶體，卻又說「如果比較清楚」可以重讀或快取。這種模糊給了多趟設計或記憶體快取的空間，違背原本的串流限制，並改變執行時間和記憶體表現。
 
-We also ask for exact results while permitting approximate methods “when they don’t change the outcome in practice.” This is a judgment call the model can’t reliably verify. It may introduce sketches or heuristics that subtly shift counts near the Top‑K boundary, producing results that look right but fail strict evaluation.
+我們也要求精確結果，卻允許「在實務上不影響結果時」使用近似方法。這是模型無法可靠驗證的判斷。它可能引入 sketch 或啟發式方法，讓 Top‑K 邊界附近的計數悄悄偏移，產生看起來對、卻通不過嚴格評測的結果。
 
-We advise avoiding global state, yet suggest exposing a convenient global like `top_k`. That mixes interface contracts: is the function supposed to return data, or should callers read globals? Models may implement both, causing side effects that complicate evaluation and reproducibility.
+我們建議避免 global state，卻又建議暴露一個方便的 global，例如 `top_k`。這混淆了介面契約：function 是要回傳資料，還是呼叫端要去讀 global？模型可能兩種都做，造成副作用，讓評測和重現變複雜。
 
-Documentation guidance is similarly split: “keep comments minimal” but “add brief explanations.” Depending on how the model interprets this, you can get under‑explained code or prose interleaved with logic, which sometimes leaks outside the required output format.
+文件規範同樣自相矛盾：「註解盡量少」卻又要「加簡短說明」。看模型怎麼解讀，可能得到說明不足的程式碼，或在邏輯中穿插文字，有時還會漏到規定的輸出格式之外。
 
-Finally, we ask for “natural, human‑friendly” sorting while also mentioning strict tie rules. These aren’t always the same. The model might pick convenience ordering (e.g., `Counter.most_common`) and drift from the evaluator’s canonical `(-count, token)` sort, especially on ties—leading to subtle correctness misses.
+最後，我們要求「自然、對人友善」的排序，同時又提到嚴格的 tie 規則。這兩者不一定一樣。模型可能選方便的排序（例如 `Counter.most_common`），偏離評測者標準的 `(-count, token)` 排序，尤其在 tie 時，造成微妙的正確性失誤。
 
-**Why this matters**: the softened constraints make the prompt feel easy to satisfy, but they create forks in the road. The model may pick different branches across runs—stdlib vs external deps, one‑pass vs reread/cache, exact vs approximate—yielding variability in correctness, latency, and memory.
+**為什麼重要**：放軟的限制讓 prompt 看起來很容易滿足，卻產生岔路。模型每次執行可能走不同分支：stdlib 對外部依賴、單趟對重讀 / 快取、精確對近似，結果是正確率、latency 和記憶體都不穩定。
 
-**Our evaluator remains strict**: fixed tokenization `[a-z0-9]+` on lowercased text and deterministic ordering by `(-count, token)`. Any divergence here will penalize exactness even if the rest of the solution looks reasonable.
+**我們的 evaluator 依然嚴格**：對小寫化的文字固定用 `[a-z0-9]+` 做 tokenization，並以 `(-count, token)` 做確定性排序。這裡只要有偏差，即使其他部分看起來合理，精確度也會被扣分。
 
 
-### Let's see how it performs: Generating 30 code scripts with the baseline prompt 
+### 看看表現：用 baseline prompt 產生 30 支腳本 
 
-Using the OpenAI Responses API we'll invoke the model 30 times with our baseline prompt and save each response as a Python file in the `results_topk_baseline`. This may take some time. 
+用 OpenAI Responses API，以 baseline prompt 呼叫模型 30 次，每次的回應存成 Python 檔，放到 `results_topk_baseline`。這可能要花一些時間。 
 
 
 ```python
@@ -149,9 +160,9 @@ generate_baseline_topk(
 )
 ```
 
-### Evaluate Generated Scripts - Baseline Prompt
+### 評測產生的腳本：Baseline Prompt
 
-We then benchmark every script in ``results_topk_baseline`` On larger datasets this evaluation is intentionally heavy and can take several minutes.
+接著對 ``results_topk_baseline`` 裡的每支腳本做 benchmark。資料集較大時，這個評測刻意設計得很重，可能要幾分鐘。
 
 ```python
 from scripts.topk_eval import evaluate_folder
@@ -164,36 +175,36 @@ evaluate_folder(
 )
 ```
 
-### Optimizing our Prompt 
+### 優化我們的 Prompt 
 
-Now let's use the prompt optimization tool in the console to improve our prompt and then review the results. We can start by going to the [OpenAI Optimize Playground](https://platform.openai.com/chat/edit?optimize=true), and pasting our existing prompt in the Developer Message section.
+現在用 console 裡的 prompt optimization 工具改進 prompt，再看結果。先到 [OpenAI Optimize Playground](https://platform.openai.com/chat/edit?optimize=true)，把現有的 prompt 貼到 Developer Message 區。
 
-From there press the **Optimize** button. This will open the optimization panel. At this stage, you can either provide specific edits you'd like to see reflected in the prompt or simply press **Optimize** to have it refined according to best practices for the target model and task. To start let's do just this.
+然後按 **Optimize** 按鈕，會開啟優化面板。這時你可以提出想反映在 prompt 裡的特定修改，也可以直接按 **Optimize**，讓它依目標模型和任務的最佳實務來精修。我們先直接按。
 
 ![optimize_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/image_optimize_1.png)
 
 
 
-Once it's completed you'll see the result of the prompt optimization. In our example below you'll see many changes were made to the prompt. It will also give you snippets of what it changed and why the change was made. You can interact with these by opening the comments up or using the inline reviewer mode.
+完成後會看到優化的結果。下面的例子中，prompt 被改了很多地方。它也會給你改動的片段，以及為什麼這樣改。你可以展開註解，或用 inline reviewer 模式來操作。
 
-We'll add an additional change we'd like which include:
+我們再加一個想要的修改：
 
-- Enforcing the single-pass streaming
+- 強制單趟串流
 
-This is easy using the iterative process of the Prompt Optimizer.
+用 Prompt Optimizer 的迭代流程就能輕鬆做到。
 
 ![optimize_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/image_optimize_2.png)
 
 
 
-Once we are happy with the optimized version of our prompt, we can save it as a [Prompt Object](#https://platform.openai.com/docs/guides/prompt-engineering#reusable-prompts) using a button on the top right of the optimizer. We can use this object within our API Calls which can help with future iteration, version management, and reusability across different applications.  
+對優化後的 prompt 滿意了，可以用優化器右上角的按鈕存成 [Prompt Object](#https://platform.openai.com/docs/guides/prompt-engineering#reusable-prompts)。我們可以在 API 呼叫裡使用這個物件，方便之後迭代、版本管理，以及在不同應用之間重複使用。  
 
 ![optimize_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/image_optimize_3.png)
 
 
-###  Let's see how it performs: Evaluating our improved prompt 
+###  看看表現：評測改進後的 prompt 
 
-For visibility we will provide our new optimized prompt here, but you can also pass the ``prompt_id`` and ``version``. Let's start by writing out our optimized prompt. 
+為了方便看，這裡直接寫出新的優化 prompt，你也可以改傳這兩個參數：``prompt_id`` and ``version``。先把優化後的 prompt 寫出來。 
 
 ````python
 optimized_prompt = """
@@ -263,7 +274,7 @@ else:
 """
 ````
 
-### Generating 30 code scripts with the Optimized prompt
+### 用優化後的 Prompt 產生 30 支腳本
 
 ```python
 from scripts.gen_optimized import generate_optimized_topk
@@ -300,9 +311,9 @@ generate_optimized_topk(
 )
 ```
 
-### Evaluate Generated Scripts - Optimized Prompt
+### 評測產生的腳本：優化後的 Prompt
 
-We run the same evaluation as above, but now with our optimized prompt to see if there were any improvements
+跑跟上面一樣的評測，這次用優化後的 prompt，看有沒有改善
 
 ```python
 from scripts.topk_eval import evaluate_folder
@@ -315,9 +326,9 @@ evaluate_folder(
 )
 ```
 
-### Adding LLM-as-a-Judge Grading 
+### 加入 LLM-as-a-Judge 評分 
 
-Along with more quantitative evaluations we can measure the models performance on more qualitative metrics like code quality, and task adherence. We have created a sample prompt for this called ``llm_as_judge.txt``. 
+除了量化評測，我們也能用更質性的指標衡量模型表現，例如程式碼品質和任務遵循度。我們為此寫了一份範例 prompt，叫 ``llm_as_judge.txt``。 
 
 ```python
 from scripts.llm_judge import judge_folder
@@ -349,9 +360,9 @@ judge_folder(
 )
 ```
 
-### Summarizing the results 
+### 總結結果 
 
-We can now demonstrate from both a quantitative standpoint, along with a qualitative standpoint from our LLM as Judge results. 
+現在可以從量化的角度，加上 LLM as Judge 的質性結果，一起看成果。 
 
 ```python
 from pathlib import Path
@@ -400,26 +411,26 @@ print(md)
     | Code Quality (1–5)          |     4.73 |      4.90 |         +0.16 |
     ```
 
-Even though GPT-5 already produced correct code, prompt optimization tightened constraints and clarified any ambiguity. Showing overall improvements to the results!
+雖然 GPT-5 本來就能產出正確的程式碼，prompt 優化還是收緊了限制、釐清了模糊之處，整體結果都有改善！
 
 
 
 
 --------------------------------------------------------------------
 
-### Context and Retrieval: Simulating a Financial Question Answering
+### Context 與 Retrieval：模擬金融問答
 
-Most production use cases face imperfect queries and noisy context. **FailSafeQA** is an excellent benchmark that deliberately perturbs both the **query** (misspellings, incompleteness, off-domain phrasing) and the **context** (missing, OCR-corrupted, or irrelevant docs) and reports **Robustness**, **Context Grounding**, and **Compliance**—i.e., can the model answer when the signal exists and abstain when it doesn’t.
+大多數正式環境的用例，都面對不完美的 query 和雜訊 context。**FailSafeQA** 是很棒的 benchmark，它刻意擾動 **query**（拼字錯誤、不完整、領域外的說法）和 **context**（缺漏、OCR 損壞或不相關的文件），並回報 **Robustness**、**Context Grounding** 和 **Compliance**，也就是模型在有訊號時能不能回答，沒訊號時能不能拒答。
 
 ![FailSafeQA diagram](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/image_optimize_4.png)
 
-**Links**
+**連結**
 - Paper (arXiv): *Expect the Unexpected: FailSafe Long Context QA for Finance* — https://arxiv.org/abs/2502.06329  
 - Dataset (Hugging Face): https://huggingface.co/datasets/Writer/FailSafeQA  
 - Authors/Makers: Kiran Kamble, Melisa Russak, Dmytro Mozolevskyi, Muayad Ali, Mateusz Russak, Waseem AlShikh (Writer.ai) — see author list on the arXiv page above
 
 
-We will run FailSafeQA evaluations via the helper script and compare Baseline vs Optimized prompts side by side.
+我們用 helper script 跑 FailSafeQA 評測，並排比較 Baseline 與 Optimized prompt。
 
 ```python
 # Define the Baseline FailSafeQA system prompt here for reuse
@@ -429,7 +440,7 @@ baseline_prompt_fsqa = (
 )
 ```
 
-We can use the prompt optimizer once again to construct a new prompt that is more suitable for this use case. Drawing on best practices for long-context question answering, we know that we should remind our answer model to rely on information in the context section and refuse answers to questions if the context is insufficient. By using the Optimize button once without any arguments we get a reasonable structure for the prompt and end up with this as our optimized prompt.
+再用一次 prompt optimizer，建出更適合這個用例的新 prompt。依據長 context 問答的最佳實務，我們知道要提醒回答用的模型依賴 context 段落的資訊，context 不足時拒絕回答。不帶任何參數按一次 Optimize，就得到合理的 prompt 結構，最後得到這個優化後的 prompt。
 
 
 ![optimize_image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/image_optimize_5.png)
@@ -463,7 +474,7 @@ Output format:
   FINAL: Insufficient information in the provided context to answer this question. Please upload the relevant document or refine your question to include the necessary details."""
 ```
 
-Let's now run our evaluations, for demonstration we will display the results of a single comparison, but you can also run the full evaluation. Note: This will take time.
+現在跑評測。為了示範，這裡只顯示單一比較的結果，你也可以跑完整評測。注意：這會花一些時間。
 
 ```python
 import importlib
@@ -674,14 +685,25 @@ print(md)
 
     _Source files:_ `results_failsafeqa.csv` · `results_failsafeqa.csv`
     ```
+GPT-5-mini 在這個任務上表現很強，所以連 baseline prompt 也幾乎都拿到 4 分以上。但如果比較 judge 給滿分（6/6）的比例，在 FailSafeQA 答案品質的兩個類別（robustness 和 context grounding）上，優化後的 prompt 有明顯更多的滿分答案。
 
-GPT-5-mini crushes this task, so even the baseline prompt gets scores of >= 4 almost all of the time. However if we compare the percent of perfect scores (6/6) for the judge, we see that the optimize prompt has way significantly more perfect answers when evaluated in the two categories of FailSafeQA answer quality: robustness and context grounding.
+### 結論
 
-### Conclusion
-
-We’re excited for everyone to try **Prompt Optimization for GPT-5** in the OpenAI Playground. GPT-5 brings state-of-the-art intelligence, and a strong prompt helps it reason more reliably, follow constraints, and produce cleaner, higher quality results.
+很期待大家在 OpenAI Playground 試用 **GPT-5 的 Prompt Optimization**。GPT-5 帶來最先進的智慧，而好的 prompt 能讓它推理更可靠、更守限制，產出更乾淨、更高品質的結果。
 
 
-Give the [Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true) a try on your task today!
+今天就拿你的任務試試 [Prompt Optimizer](https://platform.openai.com/chat/edit?optimize=true) 吧！
 
-<!-- tutor:summary -->
+## 重點整理
+
+- Prompt 裡的矛盾與模糊指示（stdlib 或外部套件、單趟或重讀、精確或近似）會讓模型走不同分支，造成結果不穩。
+- Prompt Optimizer 會依目標模型和任務套用最佳實務，也能用額外要求（例如強制單趟串流）迭代。
+- 優化後的 prompt 可存成 Prompt Object，方便版本管理和跨應用重用。
+- 評測要同時看量化指標（成功率、時間、記憶體、精確度）和 LLM-as-a-judge 的質性分數。
+- 即使模型本來就答得出來，優化 prompt 仍能提高完美答案的比例。
+
+## 練習
+
+1. 把 baseline prompt 裡的某一組矛盾（例如「優先用標準函式庫」加「可用外部套件」）改成單一明確指示，只重跑少量次數（例如 5 次），看結果有沒有變。
+2. 把產生腳本的次數從 30 改成 10，比較 baseline 與 optimized 的成功率與平均執行時間，想想樣本變少對結論的影響。
+3. 改寫 `llm_as_judge.txt` 加一項評分標準（例如「是否嚴格單趟串流」），重跑 judge，看兩個 prompt 的分數差距有沒有變大。

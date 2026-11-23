@@ -1,42 +1,51 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/pinecone/Semantic_Search.ipynb
 ---
 
-# Semantic search with Pinecone and OpenAI
+# 用 Pinecone 和 OpenAI 做語意搜尋
 
 > 原文：[examples/vector_databases/pinecone/Semantic_Search.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/pinecone/Semantic_Search.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 OpenAI Embedding API 產生文字的 embedding，再把它們放進 Pinecone vector database，做出快速又可擴充的語意搜尋。資料用的是 TREC 資料集的 1K 個問題。
 
+## 學完你會
+- 用 OpenAI 產生 embedding，並用 `upsert` 把 ID、向量和原文存進 Pinecone
+- 把 query 轉成向量，在 Pinecone index 查出最相似的結果
+- 測試拼錯或換字的 query，確認搜尋靠的是語意而不是關鍵字
 
+## 開跑前
+- OpenAI API key
+- Pinecone API key（Pinecone dashboard 可以申請免費的）
+- 需要 HuggingFace Datasets 載入資料
 
-In this guide you will learn how to use the OpenAI Embedding API to generate language embeddings, and then index those embeddings in the Pinecone vector database for fast and scalable vector search.
+這份教學會帶你用 OpenAI Embedding API 產生語言 embedding，然後把這些 embedding 建 index 到 Pinecone vector database，做到快速、可擴充的向量搜尋。
 
-This is a powerful and common combination for building semantic search, question-answering, threat-detection, and other applications that rely on NLP and search over a large corpus of text data.
+這是一個強大又常見的組合，可用來建置語意搜尋、問答、威脅偵測，以及其他需要對大量文字資料做 NLP 和搜尋的應用。
 
-The basic workflow looks like this:
+基本流程如下：
 
-**Embed and index**
+**Embed 與建 index**
 
-* Use the OpenAI Embedding API to generate vector embeddings of your documents (or any text data).
-* Upload those vector embeddings into Pinecone, which can store and index millions/billions of these vector embeddings, and search through them at ultra-low latencies.
+* 用 OpenAI Embedding API 為你的文件（或任何文字資料）產生向量 embedding。
+* 把這些向量 embedding 上傳到 Pinecone，它可以儲存並索引數百萬到數十億筆 embedding，並以極低延遲搜尋。
 
-**Search**
+**搜尋**
 
-* Pass your query text or document through the OpenAI Embedding API again.
-* Take the resulting vector embedding and send it as a query to Pinecone.
-* Get back semantically similar documents, even if they don't share any keywords with the query.
+* 把你的 query 文字或文件再次送進 OpenAI Embedding API。
+* 取得產生的向量 embedding，當成 query 送到 Pinecone。
+* 取回語意相似的文件，即使它們跟 query 沒有任何共同關鍵字。
 
 ![Architecture overview](https://files.readme.io/6a3ea5a-pinecone-openai-overview.png)
 
-Let's get started...
+開始吧...
 
-## Setup
+## 設定
 
-We first need to setup our environment and retrieve API keys for OpenAI and Pinecone. Let's start with our environment, we need HuggingFace *Datasets* for our data, and the OpenAI and Pinecone clients:
+首先要設定環境，並取得 OpenAI 和 Pinecone 的 API key。先從環境開始，我們需要 HuggingFace *Datasets* 來取得資料，還有 OpenAI 和 Pinecone 的 client：
 
 ```python
 !pip install -qU \
@@ -63,9 +72,9 @@ We first need to setup our environment and retrieve API keys for OpenAI and Pine
     tensorflow-probability 0.22.0 requires typing-extensions<4.6.0, but you have typing-extensions 4.9.0 which is incompatible.
     ```
 
-### Creating Embeddings
+### 建立 embedding
 
-Then we initialize our connection to OpenAI Embeddings *and* Pinecone vector DB. Sign up for an API key over at [OpenAI](https://platform.openai.com) and [Pinecone](https://app.pinecone.io).
+接著初始化與 OpenAI Embeddings *以及* Pinecone vector DB 的連線。可以到 [OpenAI](https://platform.openai.com) 和 [Pinecone](https://app.pinecone.io) 註冊取得 API key。
 
 ```python
 from openai import OpenAI
@@ -75,7 +84,7 @@ client = OpenAI(
 )  # get API key from platform.openai.com
 ```
 
-We can now create embeddings with the OpenAI Ada similarity model like so:
+現在可以像這樣用 OpenAI Ada similarity 模型建立 embedding：
 
 ```python
 MODEL = "text-embedding-3-small"
@@ -112,7 +121,7 @@ len(embeds)
     2
     ```
 
-Next, we initialize our index to store vector embeddings with Pinecone.
+接下來，初始化用來儲存向量 embedding 的 Pinecone index。
 
 ```python
 len(embeds[0])
@@ -124,7 +133,7 @@ len(embeds[0])
     1536
     ```
 
-Initialize connection to Pinecone, you can get a free API key in the [Pinecone dashboard](https://app.pinecone.io).
+初始化 Pinecone 連線，你可以在 [Pinecone dashboard](https://app.pinecone.io) 取得免費的 API key。
 
 ```python
 from pinecone import Pinecone
@@ -171,9 +180,9 @@ index.describe_index_stats()
      'total_vector_count': 0}
     ```
 
-## Populating the Index
+## 填入 index
 
-Now we will take 1K questions from the TREC dataset
+現在從 TREC 資料集取 1K 個問題
 
 ```python
 from datasets import load_dataset
@@ -229,7 +238,7 @@ trec[0]
      'fine_label': 26}
     ```
 
-Then we create a vector embedding for each phrase using OpenAI, and `upsert` the ID, vector embedding, and original text for each phrase to Pinecone.
+然後用 OpenAI 為每個句子建立向量 embedding，並把每個句子的 ID、向量 embedding 和原文 `upsert` 到 Pinecone。
 
 ```python
 from tqdm.auto import tqdm
@@ -260,9 +269,9 @@ for i in tqdm(range(0, len(trec['text']), batch_size)):
 
 ---
 
-# Querying
+# 查詢
 
-With our data indexed, we're now ready to move onto performing searches. This follows a similar process to indexing. We start with a text `query`, that we would like to use to find similar sentences. As before we encode this with OpenAI's text similarity Babbage model to create a *query vector* `xq`. We then use `xq` to query the Pinecone index.
+資料建好 index 後，就可以開始搜尋了。流程跟建 index 類似。我們從一個文字 `query` 開始，想用它找出相似的句子。跟之前一樣，用 OpenAI 的 text similarity Babbage 模型把它編碼成 *query 向量* `xq`，再用 `xq` 去查詢 Pinecone index。
 
 ```python
 query = "What caused the 1929 Great Depression?"
@@ -270,7 +279,7 @@ query = "What caused the 1929 Great Depression?"
 xq = client.embeddings.create(input=query, model=MODEL).data[0].embedding
 ```
 
-Now query...
+現在來查詢...
 
 ```python
 res = index.query(vector=[xq], top_k=5, include_metadata=True)
@@ -307,7 +316,7 @@ res
      'usage': {'read_units': 6}}
     ```
 
-The response from Pinecone includes our original text in the `metadata` field, let's print out the `top_k` most similar questions and their respective similarity scores.
+Pinecone 的回應在 `metadata` 欄位裡包含我們的原文，來印出 `top_k` 個最相似的問題和它們各自的相似度分數。
 
 ```python
 for match in res['matches']:
@@ -324,7 +333,7 @@ for match in res['matches']:
     0.32: When did World War I start ?
     ```
 
-Looks good, let's make it harder and replace *"depression"* with the incorrect term *"recession"*.
+看起來不錯，來加點難度，把 *"depression"* 換成錯誤的用詞 *"recession"*。
 
 ```python
 query = "What was the cause of the major recession in the early 20th century?"
@@ -349,7 +358,7 @@ for match in res['matches']:
     0.29: What is considered the costliest disaster the insurance industry has ever faced ?
     ```
 
-And again...
+再來一次...
 
 ```python
 query = "Why was there a long-term economic downturn in the early 20th century?"
@@ -374,9 +383,9 @@ for match in res['matches']:
     0.32: What do economists do ?
     ```
 
-Looks great, our semantic search pipeline is clearly able to identify the meaning between each of our queries and return the most semantically similar questions from the already indexed questions.
+很棒，我們的語意搜尋流程顯然能辨識每個 query 的意思，並從已建好 index 的問題裡回傳語意最相似的問題。
 
-Once we're finished with the index we delete it to save resources.
+用完 index 之後，把它刪掉以節省資源。
 
 ```python
 pc.delete_index(index_name)
@@ -384,4 +393,14 @@ pc.delete_index(index_name)
 
 ---
 
-<!-- tutor:summary -->
+## 重點整理
+- 語意搜尋的架構分兩段：先 embed 並 upsert 文件，查詢時再 embed query 去比對。
+- 建 index 和查詢必須用同一個 embedding 模型，向量才在同一個空間。
+- Pinecone 存向量的同時，可以在 metadata 放原文，查完就能直接顯示。
+- 即使 query 用詞不同或有錯，語意搜尋仍能找到意思相近的內容。
+- 用完的 index 要記得刪掉，避免佔用資源。
+
+## 練習
+1. 換一個你自己的 query，看回傳的 `top_k` 結果是否合理。
+2. 把 `top_k` 改成 10，並觀察相似度分數隨排名下降的情況。
+3. 把 upsert 的資料量從 1K 改成 200，重跑同一個 query，比較結果品質有什麼變化。

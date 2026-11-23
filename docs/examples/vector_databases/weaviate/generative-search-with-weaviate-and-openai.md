@@ -1,43 +1,48 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/weaviate/generative-search-with-weaviate-and-openai.ipynb
 ---
 
-# Using Weaviate with generative OpenAI module for generative search
+# 用 Weaviate 的 generative OpenAI 模組做生成式搜尋
 
 > 原文：[examples/vector_databases/weaviate/generative-search-with-weaviate-and-openai.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/weaviate/generative-search-with-weaviate-and-openai.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+資料已經在 Weaviate 裡，這篇教你用 Weaviate 的 Generative OpenAI 模組，讓搜尋結果直接交給 OpenAI 模型產生回答。寫法跟一般語意搜尋很像，只是多加一個 `with_generate()`。
 
-This notebook is prepared for a scenario where:
-* Your data is already in Weaviate
-* You want to use Weaviate with the Generative OpenAI module ([generative-openai](https://weaviate.io/developers/weaviate/modules/reader-generator-modules/generative-openai)).
+## 學完你會
 
+- 連上 Weaviate 並帶入 OpenAI API key
+- 寫一個語意搜尋查詢，指定類別、欄位、關鍵概念和筆數
+- 用 `single_prompt` 對每筆結果各生成一段回應，或用 `grouped_task` 把所有結果合成一段回應
 
+## 開跑前
 
-## Prerequisites
+- 先完成 [Getting Started cookbook](getting-started-with-weaviate-and-openai.md)，並匯入範例資料
+- 一個 Weaviate 實例
+- OpenAI API key，設成環境變數 `OPENAI_API_KEY`
 
-This cookbook covers only Generative Search examples; it doesn't cover the configuration and data imports.
+## 前置需求
 
-In order to make the most of this cookbook, please complete the [Getting Started cookbook](getting-started-with-weaviate-and-openai.md) first, where you will learn the essentials of working with Weaviate and import the demo data.
+這篇只講生成式搜尋，不含設定跟資料匯入。要看懂這篇，請先完成 [Getting Started cookbook](getting-started-with-weaviate-and-openai.md)，裡面會教 Weaviate 的基本操作並匯入示範資料。
 
-Checklist:
-* completed [Getting Started cookbook](getting-started-with-weaviate-and-openai.md),
-* created a `Weaviate` instance,
-* imported data into your `Weaviate` instance,
-* you have an [OpenAI API key](https://beta.openai.com/account/api-keys)
+確認清單：
+* 完成 [Getting Started cookbook](getting-started-with-weaviate-and-openai.md)，
+* 建好 `Weaviate` 實例，
+* 資料已匯入你的 `Weaviate` 實例，
+* 有一把 [OpenAI API key](https://beta.openai.com/account/api-keys)
 
 ===========================================================
-## Prepare your OpenAI API key
+## 設定 OpenAI API key
 
-The `OpenAI API key` is used for vectorization of your data at import, and for running queries.
+`OpenAI API key` 用來在匯入時把資料向量化，也用來執行查詢。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+沒有 OpenAI API key 的話，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 申請。
 
-Once you get your key, please add it to your environment variables as `OPENAI_API_KEY`.
+拿到之後，請把它加進環境變數 `OPENAI_API_KEY`。
 
 ```python
 # Export OpenAI API Key
@@ -58,17 +63,17 @@ else:
     print ("OPENAI_API_KEY environment variable not found")
 ```
 
-## Connect to your Weaviate instance
+## 連上 Weaviate 實例
 
-In this section, we will:
+這一節要做的事：
 
-1. test env variable `OPENAI_API_KEY` – **make sure** you completed the step in [#Prepare-your-OpenAI-API-key](#Prepare-your-OpenAI-API-key)
-2. connect to your Weaviate with your `OpenAI API Key`
-3. and test the client connection
+1. 檢查環境變數 `OPENAI_API_KEY`，**確定**你已經完成 [#Prepare-your-OpenAI-API-key](#Prepare-your-OpenAI-API-key) 那一步
+2. 帶著 `OpenAI API Key` 連上 Weaviate
+3. 測試 client 連線
 
-### The client 
+### Client
 
-After this step, the `client` object will be used to perform all Weaviate-related operations.
+這一步之後，所有跟 Weaviate 有關的操作都用 `client` 物件來做。
 
 ```python
 import weaviate
@@ -90,16 +95,16 @@ client = weaviate.Client(
 client.is_ready()
 ```
 
-## Generative Search
-Weaviate offers a [Generative Search OpenAI](https://weaviate.io/developers/weaviate/modules/reader-generator-modules/generative-openai) module, which generates responses based on the data stored in your Weaviate instance.
+## 生成式搜尋
+Weaviate 有一個 [Generative Search OpenAI](https://weaviate.io/developers/weaviate/modules/reader-generator-modules/generative-openai) 模組，可以根據存在 Weaviate 裡的資料產生回應。
 
-The way you construct a generative search query is very similar to a standard semantic search query in Weaviate. 
+生成式搜尋的查詢寫法跟一般的 Weaviate 語意搜尋很像。
 
-For example:
-* search in "Articles", 
-* return "title", "content", "url"
-* look for objects related to "football clubs"
-* limit results to 5 objects
+例如：
+* 在 "Articles" 裡搜尋，
+* 回傳 "title"、"content"、"url"
+* 找跟 "football clubs" 相關的物件
+* 結果限制 5 筆
 
 ```
     result = (
@@ -112,9 +117,9 @@ For example:
     )
 ```
 
-Now, you can add `with_generate()` function to apply generative transformation. `with_generate` takes either:
-- `single_prompt` - to generate a response for each returned object,
-- `grouped_task` – to generate a single response from all returned objects.
+接著加上 `with_generate()` 就能套用生成轉換。`with_generate` 可以接：
+- `single_prompt`：對每個回傳的物件各生成一段回應，
+- `grouped_task`：把所有回傳的物件合起來，生成單一一段回應。
 
 
 ```python
@@ -174,6 +179,17 @@ query_result = generative_search_group("football clubs", "Article")
 print (query_result[0]['_additional']['generate']['groupedResult'])
 ```
 
-Thanks for following along, you're now equipped to set up your own vector databases and use embeddings to do all kinds of cool things - enjoy! For more complex use cases please continue to work through other cookbook examples in this repo.
+跟著做到這裡，你已經可以自己建向量資料庫，並用 embedding 做各種有趣的事，好好玩吧！更複雜的情境可以繼續看這個 repo 裡的其他 cookbook。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 生成式搜尋是先檢索、再讓模型根據檢索到的資料回答（RAG 的做法），Weaviate 把這兩步包在同一個查詢裡。
+- `single_prompt` 是一筆結果一次生成，`grouped_task` 是全部結果一次生成，選哪個看你要逐筆處理還是要整體摘要。
+- 搜尋條件（類別、欄位、筆數）會直接影響模型拿到的素材，檢索品質決定回答品質。
+- OpenAI API key 同時用在向量化跟生成，兩邊都要能用。
+
+## 練習
+
+1. 把搜尋的概念從 "football clubs" 換成別的主題，看生成結果怎麼變。
+2. 把 `limit` 從 5 改成 2，比較 `grouped_task` 的回答差異。
+3. 同一個查詢分別用 `single_prompt` 和 `grouped_task` 跑一次，改寫 prompt 讓它輸出一句話摘要，比較兩種輸出的形狀。

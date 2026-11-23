@@ -1,53 +1,64 @@
 ---
-translated: false
+translated: true
 source: examples/mcp/mcp_tool_guide.ipynb
 ---
-
-# Guide to Using the Responses API's MCP Tool
+# Responses API 的 MCP tool 使用指南
 
 > 原文：[examples/mcp/mcp_tool_guide.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/mcp/mcp_tool_guide.ipynb)
 
-Cookbook to connect external services using the Responses API MCP tool.
+用 Responses API 的 MCP tool 連接外部服務的 cookbook。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+介紹 Responses API 內建的 hosted MCP tool：模型直接跟 MCP server 溝通，不用再自己寫 function calling 的中繼層。內容包含運作流程、用 `allowed_tools` 和快取降低 token 與延遲的做法，以及怎麼搭配其他 tool 和寫 prompt 讓呼叫更有效率。
+
+## 學完你會
+
+- 說明 MCP tool 從宣告 server、匯入 tool 清單到呼叫與核准的完整流程。
+- 用 `allowed_tools` 和 `previous_response_id` 減少 token 與延遲。
+- 把 MCP 和 `code_interpreter`、web search 組合成多服務的 agent，並用 prompt 限制 MCP 呼叫次數。
+
+## 開跑前
+
+需要 `OPENAI_API_KEY`。範例會連到第三方的遠端 MCP server（例如 Alo Yoga），有些 server 需要自己的 API key 或 OAuth token。
 
 
 
-Building agentic application often requires connecting to external services. Traditionally, this is done through function calling where every action makes a round-trip from the model to your backend, then to an external service, waits for a response, and finally returns the result to the model. This process introduces multiple network hops and significant latency, making it cumbersome to scale and manage.
+開發 agent 應用常常要連外部服務。傳統做法是 function calling：每個動作都要從模型回到你的後端，再到外部服務，等回應後再把結果送回模型。這樣會多好幾個網路來回，延遲很高，也不好擴充和管理。
 
-The hosted Model Context Protocol (MCP) tool in the Responses API makes this easier. Instead of manually wiring each function call to specific services, you can configure your model once to point to an MCP server (or several!). That server acts as a centralized tool host, exposing standard commands like “search product catalog” or “add item to cart.” This allows for simpler orchestration and centralized management of tools. With MCP, the model interacts directly with the MCP server, reducing latency and eliminating backend coordination.
+Responses API 的 hosted Model Context Protocol (MCP) tool 讓這件事簡單許多。你不用手動把每個 function call 接到特定服務，只要設定模型指向一個（或多個）MCP server。那個 server 就是集中的 tool host，提供像「搜尋商品目錄」「加入購物車」這樣的標準指令。這樣編排更簡單，tool 也能集中管理。有了 MCP，模型直接跟 MCP server 互動，延遲更低，也不需要後端協調。
 
-## Use cases simplified by the MCP tool 
+## MCP tool 簡化了哪些使用情境
 
-MCP significantly reduces the friction of building products that interact with external services, allowing you to tie different services together seamlessly. Here’s a sampler of use cases that once involved friction but are now much simpler since the model can communicate directly with remote MCP servers.
+MCP 大幅降低了做出串接外部服務的產品的門檻，讓不同服務能順暢地串在一起。下面列幾個例子，這些情境以前很麻煩，現在模型能直接跟遠端 MCP server 溝通，就簡單多了。
 
-| **Domain**                 | **Use case unlocked by MCP tool**                                                                                                                                                  | **Previous friction**                                                                                                      |
+| **領域**                 | **MCP tool 帶來的使用情境**                                                                                                                                                  | **以前的麻煩**                                                                                                      |
 |---------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------|
-| **Commerce / payments**   | - Add an item to a Shopify cart and hand back a checkout URL in one turn — `"Add the Allbirds Men’s Tree Dasher 2 in size 10"` → cart link  <br> - Generate a Stripe payment link | Function calling meant you had to write a custom `cart_add` or `create_payment_link` wrapper and host your own relay server. |
-| **Dev-ops & code quality**| - Ask Sentry for the latest error in a particular file, then open a GitHub issue with a suggested fix in the same conversation                                                    | Chaining two different third-party APIs inside one assistive loop involved webhook glue and state juggling.                |
-| **Messaging / notifications** | - Grab the morning’s top soccer headlines via web-search and have Twilio text the summary to a phone number in a single call                                                 | Required stitching two tool calls in your backend and batching the final SMS payload yourself.                             |
+| **電商 / 支付**   | - 一輪對話內把商品加進 Shopify 購物車並回傳結帳連結：`"Add the Allbirds Men’s Tree Dasher 2 in size 10"` → 購物車連結  <br> - 產生 Stripe 付款連結 | 用 function calling 得自己寫 `cart_add` 或 `create_payment_link` 的包裝，還要架自己的 relay server。 |
+| **開發維運 & 程式品質**| - 請 Sentry 查某個檔案最新的錯誤，再在同一段對話裡開一個附修正建議的 GitHub issue                                                    | 在同一個輔助迴圈裡串兩個不同的第三方 API，得用 webhook 黏起來，還要自己管狀態。                |
+| **訊息 / 通知** | - 用 web search 抓早上的足球頭條，再讓 Twilio 把摘要簡訊傳到手機，一次呼叫完成                                                 | 得在後端把兩個 tool call 串起來，並自己組最後的簡訊 payload。                             |
 
 
-## How the tool works
+## 這個 tool 怎麼運作
 
-At a high level, here is how the MCP tool works: 
+大致流程如下：
 
-1. Declare the server: When you add an MCP block to the `tools` array, the Responses API runtime first detects which transport the server speaks, either the newer “streamable HTTP” or the older HTTP-over-SSE variant, and uses that protocol for traffic.
-2. Import the tool list: The runtime calls the server’s `tools/list`, passing any headers you provide (API key, OAuth token, etc.). It then writes the result to an `mcp_list_tools` item in the model’s context. While this item is present, the list won’t be fetched again. You can limit what the model sees using `allowed_tools`. 
+1. 宣告 server：在 `tools` 陣列加入 MCP 區塊後，Responses API runtime 會先偵測 server 使用的 transport，是較新的 "streamable HTTP" 還是舊的 HTTP-over-SSE，然後用該協定溝通。
+2. 匯入 tool 清單：runtime 會呼叫 server 的 `tools/list`，並帶上你提供的 header（API key、OAuth token 等），再把結果寫成模型 context 裡的 `mcp_list_tools` item。只要這個 item 還在，就不會重新抓清單。你可以用 `allowed_tools` 限制模型看得到哪些 tool。
     
-    OpenAI discards header values and all but the schema, domain, and subdomains of the MCP `server_url` after each request. Authorization keys and the server URL must be included with every API call. These values won't appear in response objects. Schemas use “strict” mode when possible, otherwise they're loaded as-is.
+    每次 request 結束後，OpenAI 會丟棄 header 的值，也會丟棄 MCP `server_url` 除了 schema、domain 和 subdomain 以外的部分。所以授權金鑰和 server URL 每次 API 呼叫都要帶，這些值也不會出現在 response 物件裡。Schema 能用 "strict" 模式就用，否則照原樣載入。
     
-3. Call and approve tools: Once the model knows the available actions, it can invoke one. Each invocation produces an `mcp_tool_call` item and by default the stream pauses for your explicit approval, but you can disable this once you trust the server.
+3. 呼叫並核准 tool：模型知道有哪些動作後，就能呼叫其中一個。每次呼叫會產生一個 `mcp_tool_call` item，預設 stream 會暫停等你明確核准，等你信任這個 server 之後可以關掉。
     
-    After approval, the runtime executes the call, streams back the result, and the model decides whether to chain another tool or return a final answer.
+    核准後，runtime 執行呼叫並把結果串流回來，模型再決定要接著呼叫別的 tool，還是回最終答案。
 
-## Best practices when building with MCP
+## 用 MCP 開發的最佳實務
 
-MCP is still in its early stages, so here are best practices that can improve model performance and behavior as you build. 
+MCP 還在早期階段，下面這些最佳實務能在開發時改善模型的表現和行為。
 
-### Filter tools to avoid ballooning payloads
+### 過濾 tool，避免 payload 膨脹
 
-Remote servers often expose numerous tools without considering how models will interpret and use them. By default, this can result in dozens of endpoints being included, each accompanied by verbose definitions like names, descriptions, and JSON schemas that add hundreds of tokens to the model’s context and increase latency. Compounding this, many servers return entire data objects, such as full Stripe invoice records, even when only a few fields are relevant to the model’s task. To optimize for performance in production, use the `allowed_tools` parameter in the Responses API to limit which tools are included from the server’s `mcp_list_tools`. This reduces token overhead, improves response time, and narrows the model’s decision space. You may also want to exclude certain tools altogether, such as those capable of write actions or those that have financial or security implications.
+遠端 server 常常提供一大堆 tool，卻沒考慮模型會怎麼理解和使用。預設情況下，可能一次帶進幾十個 endpoint，每個都有冗長的名稱、描述和 JSON schema，為模型 context 增加數百個 token，也拉高延遲。更糟的是，很多 server 會回傳整個資料物件（例如完整的 Stripe 發票記錄），即使模型的任務只需要幾個欄位。要在正式環境優化效能，可以用 Responses API 的 `allowed_tools` 參數，限制 server 的 `mcp_list_tools` 裡哪些 tool 會被帶進來。這樣能減少 token 開銷、加快回應，也縮小模型的決策空間。你也可能想完全排除某些 tool，例如能做寫入動作或牽涉金流、安全的 tool。
 
 ```python
 curl https://api.openai.com/v1/responses -i \
@@ -68,11 +79,11 @@ curl https://api.openai.com/v1/responses -i \
 }'
 ```
 
-### Reduce latency and tokens via caching and reserve reasoning models for high complexity tasks
+### 用快取降低延遲與 token，reasoning model 留給高複雜度的任務
 
-The first time the model connects to a server, a new item of the type `mcp_list_tools` is created for each MCP server you add. As long as this item is present in the model's context, we will not call `tools/list` on the server again. This is akin to caching at the user-conversation level. If `mcp_list_tools` is not present, we import the list of tools from the MCP server again. Passing`previous_response_id` in subsequent API requests is one way of ensuring that the `mcp_list_tools` item is present in the model's context on follow-up turns. Alternatively you can also pass in the items manually to new response. The other lever that will affect latency and the number of output tokens is whether you use a reasoning model, as reasoning models will produce far more output tokens, as well as reasoning tokens. Take for example the following two sample curls that compare the number of tokens produced with and without reasoning models:
+模型第一次連到 server 時，每個你加入的 MCP server 都會建立一個 `mcp_list_tools` 類型的 item。只要這個 item 還在模型的 context 裡，就不會再呼叫 server 的 `tools/list`，有點像對話層級的快取。如果 `mcp_list_tools` 不在，就會重新從 MCP server 匯入 tool 清單。後續 API request 帶 `previous_response_id`，是確保追問時 `mcp_list_tools` 還在 context 的一種方式，你也可以手動把 item 傳給新的 response。另一個影響延遲和輸出 token 數的因素是有沒有用 reasoning model，因為 reasoning model 會產生多得多的輸出 token 和 reasoning token。下面兩個 curl 範例比較有無 reasoning model 時產生的 token 數：
 
-Scenario 1: non-reasoning model 
+情境 1：非 reasoning model
 
 ```python
 curl https://api.openai.com/v1/responses \   
@@ -106,7 +117,7 @@ curl https://api.openai.com/v1/responses \
   }
 ```
 
-Scenario 2: reasoning model without `previous_response_id`
+情境 2：reasoning model，沒有帶 `previous_response_id`
 
 ```python
 curl https://api.openai.com/v1/responses \
@@ -144,11 +155,11 @@ curl https://api.openai.com/v1/responses \
     }
 ```
 
-### Using MCP with other tools
+### 搭配其他 tool 使用 MCP
 
-The MCP tool is just another entry in the tools array, so the model can use it seamlessly with other hosted tools like `code_interpreter`, `web_search_preview,` or `image_generation`, and with any custom tools you define. You can also use multiple remote MCP servers together. 
+MCP tool 只是 tools 陣列裡的另一個項目，所以模型可以順暢地搭配其他 hosted tool，像 `code_interpreter`、`web_search_preview,` 或 `image_generation`，也能搭配你自訂的 tool。你也可以同時使用多個遠端 MCP server。
 
-In this example, we’ll create an agent that is a pricing analyst for a fictional yoga attire store: it first pulls current competitor prices for women’s shorts, yoga pants, and tank tops from the Alo Yoga MCP server, then grabs the price for the same three categories from Uniqlo via the hosted web-search tool. Using Code Interpreter it analyzes last week’s sales from a CSV that was pre-loaded with the Files endpoint, in order to calculate per-item revenue and average order value. Then it measures each item’s price gap versus the newly fetched Uniqlo and Alo Yoga benchmarks. Any product priced 15 percent or more above or below market is flagged, and the agent delivers a concise text report summarizing the discrepancies and key revenue stats.
+這個例子要建立一個 agent，扮演虛構瑜珈服飾店的定價分析師：先從 Alo Yoga MCP server 抓競爭對手女短褲、瑜珈褲、背心的現價，再用 hosted web search tool 查 Uniqlo 同樣三個類別的價格。接著用 Code Interpreter 分析上週的銷售 CSV（先用 Files endpoint 上傳），算出每項商品的營收和平均訂單金額，再比較每項商品跟剛抓到的 Uniqlo 與 Alo Yoga 基準之間的價差。任何價格比市場高或低 15% 以上的商品都會被標記，最後 agent 交出一份精簡的文字報告，摘要價差和主要營收數字。
 
 ```python
 system_prompt= """You are a pricing analyst for my clothing company. Please use the MCP tool 
@@ -204,7 +215,7 @@ Women's AIRism Bra Sleeveless Top
   with specific details. """
 ```
 
-Here's a sample curl with a placeholder for the above system prompt. 
+下面是個 curl 範例，其中用 placeholder 代表上面的 system prompt。
 
 ```python
 curl https://api.openai.com/v1/responses \
@@ -259,50 +270,50 @@ curl https://api.openai.com/v1/responses \
   }'
 ```
 
-The model is able to carry forward it’s results from the MCP tool and web search into the code interpreter steps to produce a report with the following content that is formatted for legibility: 
+模型能把 MCP tool 和 web search 的結果帶進 code interpreter 的步驟，產出格式清楚、好讀的報告，內容如下：
 
 ---
-#### **Pricing Comparison and Revenue Analysis Report**
+#### **價格比較與營收分析報告**
 
-**Your Store's Sales & Price Analysis**
+**你的店的銷售與價格分析**
 
-- **Revenue by Product:**
-    - Shorts: $6,060
-    - Tank tops: $6,150
-    - Yoga pants: $12,210
-- **Average Order Value:** $872.14
-- **Your Store's Average Selling Price by Category:**
-    - Shorts: $60.00
-    - Tank tops: $75.00
-    - Yoga pants: $110.00
+- **各商品營收：**
+    - 短褲：$6,060
+    - 背心：$6,150
+    - 瑜珈褲：$12,210
+- **平均訂單金額：** $872.14
+- **你的店各類別平均售價：**
+    - 短褲：$60.00
+    - 背心：$75.00
+    - 瑜珈褲：$110.00
 
-#### **Pricing Gaps vs Market**
+#### **與市場的價差**
 
-| Category | Store Avg Price | vs Alo Yoga Gap (%) | Flagged (≥15%) | vs Uniqlo Gap (%) | Flagged (≥15%) |
+| 類別 | 本店平均價 | 對 Alo Yoga 價差 (%) | 標記 (≥15%) | 對 Uniqlo 價差 (%) | 標記 (≥15%) |
 | --- | --- | --- | --- | --- | --- |
-| Shorts | $60.00 | -31.8% | **YES** | +100.7% | **YES** |
-| Tank tops | $75.00 | -14.8% |  | +114.9% | **YES** |
-| Yoga pants | $110.00 | -14.1% |  | +267.9% | **YES** |
+| 短褲 | $60.00 | -31.8% | **是** | +100.7% | **是** |
+| 背心 | $75.00 | -14.8% |  | +114.9% | **是** |
+| 瑜珈褲 | $110.00 | -14.1% |  | +267.9% | **是** |
 
-#### **Recommendations & Flags**
+#### **建議與標記**
 
-**Flagged products (≥15% price gap):**
+**被標記的商品（價差 ≥15%）：**
 
-- **Shorts:** Priced 31.8% below Alo Yoga, but 100.7% above Uniqlo.
-- **Tank tops:** Priced over 114.9% above Uniqlo.
-- **Yoga pants:** Priced 267.9% above Uniqlo.
+- **短褲：** 比 Alo Yoga 低 31.8%，但比 Uniqlo 高 100.7%。
+- **背心：** 比 Uniqlo 高 114.9%。
+- **瑜珈褲：** 比 Uniqlo 高 267.9%。
 
-Shorts are priced significantly below premium competitors (Alo Yoga), but far higher than budget alternatives (Uniqlo). If you want to compete in the premium segment, consider increasing your price. If you want to target budget buyers, a price decrease could be justifiable. Most of your tank tops and yoga pants are similarly positioned—much lower than Alo, but well above Uniqlo.
+短褲的定價明顯低於高階競爭對手（Alo Yoga），卻遠高於平價選擇（Uniqlo）。如果想進攻高階市場，可以考慮調漲；如果想鎖定平價客群，降價就有道理。大部分背心和瑜珈褲的定位也類似，遠低於 Alo，但明顯高於 Uniqlo。
 
 ___
 
-### Prompting guidelines to improve MCP tool calls
+### 改善 MCP tool 呼叫的 prompt 技巧
 
-Depending on your use case you might find that the model invokes many MCP calls, for instance when using catalog-search tools. To avoid endless iterations over large product inventories it’s helpful to instruct the model to limit its search to N items and to offer to continue only when the user explicitly asks for more information. This keeps responses focused and snappy.
+視使用情境而定，你可能會發現模型呼叫了很多次 MCP，例如用商品目錄搜尋 tool 的時候。為了避免在大量商品庫存上無限迭代，可以在 prompt 指示模型只搜尋前 N 個項目，使用者明確要求更多時才提議繼續。這樣回應會集中又俐落。
 
-If the MCP servers you’re using include exhaustive `mcp_list_tools`, it’s also worth including some targeted few-shot examples to show the model how to choose the correct server and to stop once it has what it needs, instead of issuing redundant calls.
+如果你用的 MCP server 帶有很龐大的 `mcp_list_tools`，建議也放幾個有針對性的 few-shot 範例，示範模型怎麼選對 server，並在拿到需要的資訊後就停手，不要重複呼叫。
 
-Finally, adding guidance to remind the model that if essential information (size, color, product line, etc.) is missing from the user query, it should ask a follow-up question rather than launching a broad search. This small prompt nudge reduces unnecessary tool calls and improves answer quality. Here’s a sample prompt that shows how these guidelines come together:
+最後，在 prompt 裡提醒模型：如果使用者的問題缺少關鍵資訊（尺寸、顏色、產品線等），要先追問，不要直接發起大範圍搜尋。這個小小的提示能減少不必要的 tool call，也提升回答品質。下面的範例 prompt 把這些原則整合在一起：
 
 ```python
 system_prompt= """You are an AI assistant that can call the following MCP servers:
@@ -406,8 +417,20 @@ curl https://api.openai.com/v1/responses \
   }'
 ```
 
-## Conclusion
+## 結論
 
-The hosted MCP tool makes external services available through the Responses API. Connecting a remote server and letting the runtime cache its tool list avoids managing that network hop in application code. Using `allowed_tools` can reduce token overhead and gives the model a concise, discoverable action set. You can combine MCP with built-in tools such as `code_interpreter`, `web_search_preview`, or `image_gen` for multi-service workflows.
+hosted MCP tool 讓外部服務能透過 Responses API 使用。連上遠端 server 並讓 runtime 快取它的 tool 清單，就不用在應用程式碼裡處理那段網路來回。用 `allowed_tools` 可以降低 token 開銷，也讓模型有一組精簡、好找的動作可選。你還能把 MCP 跟 `code_interpreter`、`web_search_preview` 或 `image_gen` 這些內建 tool 組合，做出跨多個服務的 workflow。
 
-<!-- tutor:summary -->
+## 重點整理
+
+- MCP tool 讓模型直接跟 MCP server 溝通，省掉 function calling 在你後端繞一圈的延遲和膠水程式。
+- 流程是宣告 server、匯入 `mcp_list_tools`、呼叫並核准；授權金鑰和 server URL 每次 request 都要帶。
+- `allowed_tools` 縮小 tool 清單，`previous_response_id` 保留 `mcp_list_tools`，兩者都是在省 token 和延遲。
+- reasoning model 會多出大量輸出 token，簡單任務不一定值得用。
+- 在 prompt 裡限制搜尋筆數、給 few-shot、缺資訊先追問，可以減少多餘的 MCP 呼叫。
+
+## 練習
+
+1. 在範例的 MCP 設定裡加上 `allowed_tools`，只留一兩個唯讀的 tool，比較前後 response 的 token 用量。
+2. 分別用帶和不帶 `previous_response_id` 的方式送追問，觀察 response 的 output 裡有沒有再次出現 `mcp_list_tools`。
+3. 改範例的 system prompt，把標記門檻從 15% 改成 5%，並加上「最多搜尋 3 個商品」的限制，看報告和 tool 呼叫次數怎麼變。

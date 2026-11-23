@@ -1,27 +1,33 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/Visualizing_embeddings_in_wandb.ipynb
 ---
 
-# Visualizing embeddings in Weights and Biases
+# 用 Weights and Biases 視覺化 embedding
 
 > 原文：[examples/third_party/Visualizing_embeddings_in_wandb.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/Visualizing_embeddings_in_wandb.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇把資料上傳到 [Weights & Biases](http://wandb.ai)，用 [Embedding Projector](https://docs.wandb.ai/ref/app/features/panels/weave/embedding-projector) 搭配 PCA、UMAP、t-SNE 這些常見降維演算法視覺化 embedding。資料集來自 [Get_embeddings_from_dataset](../Get_embeddings_from_dataset.md) 那篇。
 
-## Visualizing embeddings in W&B
+## 學完你會
+- 把原始資料和 1536 維 embedding 記錄成一張 W&B Table。
+- 在 W&B 介面把 Table 切換成 2D 投影檢視。
+- 理解 PCA、UMAP、t-SNE 這類降維方法拿來檢視 embedding 的用途。
 
-We will upload the data to [Weights & Biases](http://wandb.ai) and use an [Embedding Projector](https://docs.wandb.ai/ref/app/features/panels/weave/embedding-projector) to visualize the embeddings using common dimension reduction algorithms like PCA, UMAP, and t-SNE. The dataset is created in the [Get_embeddings_from_dataset Notebook](../Get_embeddings_from_dataset.md).
+## 開跑前
+- 需要一個 Weights & Biases 帳號，並登入。
+- 需要先跑完 Get_embeddings_from_dataset，產生帶 embedding 的資料集。
 
-## What is Weights & Biases?
+## 什麼是 Weights & Biases？
 
-[Weights & Biases](http://wandb.ai) is a machine learning platform used by OpenAI and other ML teams to build better models faster. They use it to quickly track experiments, evaluate model performance, reproduce models, visualize results, and share findings with colleagues.
+[Weights & Biases](http://wandb.ai) 是機器學習平台，OpenAI 和其他 ML 團隊用它更快做出更好的模型。他們用它快速追蹤實驗、評估模型表現、重現模型、視覺化結果，以及跟同事分享發現。
 
-### 1. Log the data to W&B
+### 1. 把資料記錄到 W&B
 
-We create a [W&B Table](https://docs.wandb.ai/guides/data-vis/log-tables) with the original data and the embeddings. Each review is a new row and the 1536 embedding floats are given their own column named `emb_{i}`.
+我們用原始資料和 embedding 建立一張 [W&B Table](https://docs.wandb.ai/guides/data-vis/log-tables)。每則評論是一列，1536 個 embedding 浮點數各自有一欄，名稱是 `emb_{i}`。
 
 ```python
 import pandas as pd
@@ -53,10 +59,18 @@ with wandb.init(project='openai_embeddings'):
     wandb.log({'openai_embedding_table': table})
 ```
 
-### 2. Render as 2D Projection
+### 2. 以 2D 投影呈現
 
-After navigating to the W&B run link, we click the ⚙️ icon in the top right of the Table and change "Render As:" to "Combined 2D Projection". 
+進入 W&B run 的連結後，點 Table 右上角的 ⚙️ 圖示，把「Render As:」改成「Combined 2D Projection」。
 
-Example: http://wandb.me/openai_embeddings
+範例：http://wandb.me/openai_embeddings
 
-<!-- tutor:summary -->
+## 重點整理
+- 1536 維的 embedding 無法直接看，降維到 2D 才能目視檢查群聚。
+- 把 embedding 攤成多個欄位（每維一欄）記錄到 W&B Table，是這個工具辨識向量的方式。
+- PCA、UMAP、t-SNE 各有不同的取捨，同一份資料可以多種方式都看看。
+
+## 練習
+1. 只記錄資料集的前 200 筆到 Table，看 2D 投影載入速度和樣貌。
+2. 在 Table 裡多放一個欄位（例如 Score），並用它來上色或分組。
+3. 在 W&B 介面切換不同的降維演算法，比較同一份資料的群聚樣貌。

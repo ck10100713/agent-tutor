@@ -1,29 +1,40 @@
 ---
-translated: false
+translated: true
 source: examples/dalle/Image_generations_edits_and_variations_with_DALL-E.ipynb
 ---
 
-# How to use the DALL·E API
+# 如何使用 DALL·E API
 
 > 原文：[examples/dalle/Image_generations_edits_and_variations_with_DALL-E.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/dalle/Image_generations_edits_and_variations_with_DALL-E.ipynb)
 
+## 這篇在做什麼
+
+示範 DALL·E 影像 API 的三個 endpoint：用文字生成圖片、局部編輯圖片、產生圖片的變體。每個 endpoint 的參數都列出來，再搭配程式實際跑一遍。
+
+## 學完你會
+
+- 用 generations endpoint 依 prompt 生成圖片，並知道 dall-e-2 與 dall-e-3 的參數差異
+- 用 variations endpoint 對既有圖片產生相似的變體
+- 自己做出 mask，用 edits endpoint 重新生成圖片的指定區域
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，在終端機執行 \``export OPENAI_API_KEY="your API key"`\``
+- 影像生成會產生 API 費用
 
 
-<!-- tutor:goals -->
+這個 notebook 示範怎麼使用 OpenAI 的 DALL·E 影像 API endpoint。
 
+API 有三個 endpoint：
+- **Generations：**依輸入的文字描述產生一張或多張圖片
+- **Edits：**編輯或延伸既有圖片
+- **Variations：**產生輸入圖片的變體
 
-This notebook shows how to use OpenAI's DALL·E image API endpoints.
+## 設定
 
-There are three API endpoints:
-- **Generations:** generates an image or images based on an input caption
-- **Edits:** edits or extends an existing image
-- **Variations:** generates variations of an input image
-
-## Setup
-
-- Import the packages you'll need
-- Import your OpenAI API key: You can do this by running \``export OPENAI_API_KEY="your API key"`\` in your terminal.
-- Set a directory to save images to
+- 匯入需要的套件
+- 匯入你的 OpenAI API key：在終端機執行 \``export OPENAI_API_KEY="your API key"`\`` 即可
+- 設定存放圖片的資料夾
 
 ```python
 # imports
@@ -57,19 +68,19 @@ print(f"{image_dir=}")
 
 ## Generations
 
-The generation API endpoint creates an image based on a text prompt. [API Reference](https://platform.openai.com/docs/api-reference/images/create)
+generation endpoint 會根據文字 prompt 建立圖片。[API Reference](https://platform.openai.com/docs/api-reference/images/create)
 
-**Required inputs:**
-- `prompt` (str): A text description of the desired image(s). The maximum length is 1000 characters for dall-e-2 and 4000 characters for dall-e-3.
+**必填參數：**
+- `prompt` (str)：想要的圖片的文字描述。dall-e-2 最長 1000 字元，dall-e-3 最長 4000 字元。
 
-**Optional inputs:**
-- `model` (str): The model to use for image generation. Defaults to dall-e-2
-- `n` (int): The number of images to generate. Must be between 1 and 10. Defaults to 1.
-- `quality` (str): The quality of the image that will be generated. hd creates images with finer details and greater consistency across the image. This param is only supported for dall-e-3.
-- `response_format` (str): The format in which the generated images are returned. Must be one of "url" or "b64_json". Defaults to "url".
-- `size` (str): The size of the generated images. Must be one of 256x256, 512x512, or 1024x1024 for dall-e-2. Must be one of 1024x1024, 1792x1024, or 1024x1792 for dall-e-3 models. Defaults to "1024x1024".
-- `style`(str | null): The style of the generated images. Must be one of vivid or natural. Vivid causes the model to lean towards generating hyper-real and dramatic images. Natural causes the model to produce more natural, less hyper-real looking images. This param is only supported for dall-e-3.
-- `user` (str): A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse. [Learn more.](https://beta.openai.com/docs/usage-policies/end-user-ids)
+**選填參數：**
+- `model` (str)：用哪個模型生圖，預設 dall-e-2
+- `n` (int)：要生成幾張，介於 1 到 10，預設 1
+- `quality` (str)：圖片品質。hd 會有更細緻的細節，整張圖也更一致。只有 dall-e-3 支援。
+- `response_format` (str)：回傳格式，只能是 "url" 或 "b64_json"，預設 "url"
+- `size` (str)：圖片尺寸。dall-e-2 只能是 256x256、512x512 或 1024x1024；dall-e-3 只能是 1024x1024、1792x1024 或 1024x1792。預設 "1024x1024"。
+- `style`(str | null)：圖片風格，只能是 vivid 或 natural。vivid 會偏向超寫實、戲劇化的圖，natural 比較自然、沒那麼誇張。只有 dall-e-3 支援。
+- `user` (str)：代表你的終端使用者的唯一識別碼，讓 OpenAI 監控並偵測濫用。[了解更多](https://beta.openai.com/docs/usage-policies/end-user-ids)
 
 ```python
 # create an image
@@ -115,19 +126,19 @@ display(Image.open(generated_image_filepath))
 
 ## Variations
 
-The variations endpoint generates new images (variations) similar to an input image. [API Reference](https://platform.openai.com/docs/api-reference/images/createVariation)
+variations endpoint 會產生跟輸入圖片相似的新圖片（變體）。[API Reference](https://platform.openai.com/docs/api-reference/images/createVariation)
 
-Here we'll generate variations of the image generated above.
+這裡我們對上面生成的圖片產生變體。
 
-**Required inputs:**
-- `image` (str): The image to use as the basis for the variation(s). Must be a valid PNG file, less than 4MB, and square.
+**必填參數：**
+- `image` (str)：作為變體基礎的圖片。必須是有效的 PNG、小於 4MB 且為正方形。
 
-**Optional inputs:**
-- `model` (str): The model to use for image variations. Only dall-e-2 is supported at this time.
-- `n` (int): The number of images to generate. Must be between 1 and 10. Defaults to 1.
-- `size` (str): The size of the generated images. Must be one of "256x256", "512x512", or "1024x1024". Smaller images are faster. Defaults to "1024x1024".
-- `response_format` (str): The format in which the generated images are returned. Must be one of "url" or "b64_json". Defaults to "url".
-- `user` (str): A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse. [Learn more.](https://beta.openai.com/docs/usage-policies/end-user-ids)
+**選填參數：**
+- `model` (str)：用哪個模型產生變體，目前只支援 dall-e-2
+- `n` (int)：要生成幾張，介於 1 到 10，預設 1
+- `size` (str)：圖片尺寸，只能是 "256x256"、"512x512" 或 "1024x1024"。越小越快。預設 "1024x1024"。
+- `response_format` (str)：回傳格式，只能是 "url" 或 "b64_json"，預設 "url"
+- `user` (str)：代表你的終端使用者的唯一識別碼，讓 OpenAI 監控並偵測濫用。[了解更多](https://beta.openai.com/docs/usage-policies/end-user-ids)
 
 
 ```python
@@ -175,24 +186,24 @@ for variation_image_filepaths in variation_image_filepaths:
 
 ## Edits
 
-The edit endpoint uses DALL·E to generate a specified portion of an existing image. Three inputs are needed: the image to edit, a mask specifying the portion to be regenerated, and a prompt describing the desired image. [API Reference](https://platform.openai.com/docs/api-reference/images/createEdit)
+edit endpoint 用 DALL·E 重新生成既有圖片的指定部分。需要三個輸入：要編輯的圖片、指定要重生區域的 mask，以及描述想要結果的 prompt。[API Reference](https://platform.openai.com/docs/api-reference/images/createEdit)
 
-**Required inputs:** 
-- `image` (str): The image to edit. Must be a valid PNG file, less than 4MB, and square. If mask is not provided, image must have transparency, which will be used as the mask.
-- `prompt` (str): A text description of the desired image(s). The maximum length is 1000 characters.
+**必填參數：**
+- `image` (str)：要編輯的圖片。必須是有效的 PNG、小於 4MB 且為正方形。沒有提供 mask 的話，圖片必須有透明區域，透明區域會被當成 mask。
+- `prompt` (str)：想要的圖片的文字描述，最長 1000 字元。
 
-**Optional inputs:**
-- `mask` (file): An additional image whose fully transparent areas (e.g. where alpha is zero) indicate where image should be edited. Must be a valid PNG file, less than 4MB, and have the same dimensions as image.
-- `model` (str): The model to use for edit image. Only dall-e-2 is supported at this time.
-- `n` (int): The number of images to generate. Must be between 1 and 10. Defaults to 1.
-- `size` (str): The size of the generated images. Must be one of "256x256", "512x512", or "1024x1024". Smaller images are faster. Defaults to "1024x1024".
-- `response_format` (str): The format in which the generated images are returned. Must be one of "url" or "b64_json". Defaults to "url".
-- `user` (str): A unique identifier representing your end-user, which will help OpenAI to monitor and detect abuse. [Learn more.](https://beta.openai.com/docs/usage-policies/end-user-ids)
+**選填參數：**
+- `mask` (file)：額外的圖片，完全透明的區域（例如 alpha 為 0）代表 image 要被編輯的地方。必須是有效的 PNG、小於 4MB，且尺寸跟 image 相同。
+- `model` (str)：用哪個模型編輯圖片，目前只支援 dall-e-2
+- `n` (int)：要生成幾張，介於 1 到 10，預設 1
+- `size` (str)：圖片尺寸，只能是 "256x256"、"512x512" 或 "1024x1024"。越小越快。預設 "1024x1024"。
+- `response_format` (str)：回傳格式，只能是 "url" 或 "b64_json"，預設 "url"
+- `user` (str)：代表你的終端使用者的唯一識別碼，讓 OpenAI 監控並偵測濫用。[了解更多](https://beta.openai.com/docs/usage-policies/end-user-ids)
 
 
-### Set Edit Area
+### 設定編輯區域
 
-An edit requires a "mask" to specify which portion of the image to regenerate. Any pixel with an alpha of 0 (transparent) will be regenerated. The code below creates a 1024x1024 mask where the bottom half is transparent.
+編輯需要一個 mask 來指定要重生的部分。alpha 為 0（透明）的像素都會被重新生成。下面的程式建立一個 1024x1024 的 mask，下半部是透明的。
 
 ```python
 # create a mask
@@ -213,9 +224,9 @@ mask_filepath = os.path.join(image_dir, mask_name)
 mask.save(mask_filepath)
 ```
 
-### Perform Edit
+### 執行編輯
 
-Now we supply our image, caption and mask to the API to get 5 examples of edits to our image
+現在把圖片、描述和 mask 送給 API，拿到 5 個編輯結果的範例
 
 ```python
 # edit an image
@@ -261,4 +272,16 @@ print(edited_image_filepath)
 display(Image.open(edited_image_filepath))
 ```
 
-<!-- tutor:summary -->
+## 重點整理
+
+- DALL·E API 有 generations、variations、edits 三種 endpoint，分別對應生成、變體、局部重繪。
+- `quality`、`style` 只有 dall-e-3 支援；variations 和 edits 目前只支援 dall-e-2。
+- 兩個模型的 `size` 可選值和 `prompt` 長度上限都不同，換模型時要一起改。
+- edits 靠 mask 的透明區域（alpha 為 0）決定要重生哪裡。
+- 輸入圖片要是正方形 PNG 且小於 4MB。
+
+## 練習
+
+1. 把 `n` 改成 2、`size` 改成 "512x512"，看看生成速度和結果有什麼差別。
+2. 在 mask 的程式碼裡，把透明區域從下半部改成上半部，再跑一次 edit，比較結果。
+3. 把 generations 的 `model` 換成 dall-e-3，加上 `quality="hd"` 和 `style="natural"`，並把 `n` 改回 1，觀察跟 dall-e-2 的差別。

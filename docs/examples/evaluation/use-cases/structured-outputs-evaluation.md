@@ -1,56 +1,65 @@
 ---
-translated: false
+translated: true
 source: examples/evaluation/use-cases/structured-outputs-evaluation.ipynb
 ---
 
-# Evals API Use-case - Structured Outputs Evaluation
+# Evals API 使用案例：Structured Outputs 評估
 
 > 原文：[examples/evaluation/use-cases/structured-outputs-evaluation.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/evaluation/use-cases/structured-outputs-evaluation.ipynb)
 
+## 這篇在做什麼
+
+用 OpenAI Evals API 評估模型產生 structured output（JSON）的能力。主要範例是讓模型從 OpenAI SDK 的 Python 檔案抽出函式、類別和常數，再由 rubric 模型打分，最後也示範多語言情緒抽取。
+
+## 學完你會
+
+- 用 `client.evals.create(...)` 建立 eval，搭配自訂的 in-memory 資料集和評分 rubric。
+- 對同一個 eval 分別用 Completions 和 Responses endpoint 發起 run，輪詢等它們跑完並存下結果。
+- 把 run 的輸出項目撈出來並排比較，找出失敗案例。
+
+## 開跑前
+
+- 需要 `OPENAI_API_KEY`，並安裝 `openai` 等套件。
+- 大量跑 eval 的話，可以另外準備有適當額度限制的 organization 層級 key。
+
+這份 notebook 帶你跑幾個聚焦、可直接執行的範例，說明怎麼用 OpenAI **Evals** framework 來**測試、評分並迭代那些要求大型語言模型產生 structured output 的任務**。
+
+> **這為什麼重要？**
+> 正式環境的系統常常依賴 JSON、SQL 或特定領域的格式。靠抽查或臨時調整 prompt，很快就撐不住。更好的做法是把期望寫成自動化 eval，讓團隊用安全磚塊而不是沙子來出貨。
 
 
-<!-- tutor:goals -->
 
+## 快速導覽
 
- 
-This notebook walks you through a set of focused, runnable examples how to use the OpenAI **Evals** framework to **test, grade, and iterate on tasks that require large‑language models to produce structured outputs**.
-
-> **Why does this matter?**  
-> Production systems often depend on JSON, SQL, or domain‑specific formats.  Relying on spot checks or ad‑hoc prompt tweaks quickly breaks down.  Instead, you can *codify* expectations as automated evals and let your team ship with safety bricks instead of sand.
-
-
-
-## Quick Tour
-
-* **Section 1 – Prerequisites**: environment variables and package setup  
-* **Section 2 – Walk‑through: Code‑symbol extraction**: end‑to‑end demo that grades the model’s ability to extract function and class names from source code.  We keep the original logic intact and simply layer documentation around it.  
-* **Section 3 – Additional Recipes**: sketches of common production patterns such as sentiment extraction as additional code sample for evaluation.
-* **Section 4 – Result Exploration**: lightweight helpers for pulling run output and digging into failures.  
+* **Section 1：前置條件**：環境變數和套件安裝
+* **Section 2：實作演練，程式碼符號抽取**：端到端範例，評分模型從原始碼抽出函式和類別名稱的能力。我們保留原本的邏輯，只在外面加上說明。
+* **Section 3：其他範例**：常見正式環境模式的草圖，例如情緒抽取，當作額外的評估程式碼範例。
+* **Section 4：結果探索**：輕量的 helper，用來撈出 run 輸出並深入檢視失敗案例。
 
 
 
-## Prerequisites
+## 前置條件
 
-1. **Install dependencies** (minimum versions shown):
+1. **安裝套件**（以下為最低版本）：
 
 ```bash
 pip install --upgrade openai
 ```
 
-2. **Authenticate** by exporting your key:
+2. **認證**，匯出你的 key：
 
 ```bash
 export OPENAI_API_KEY="sk‑..."
 ```
 
-3. **Optional**: if you plan to run evals in bulk, set up an [organization‑level key](https://platform.openai.com/account/org-settings) with appropriate limits.
+3. **選用**：如果打算大量跑 eval，請設定一把有適當額度限制的 [organization 層級 key](https://platform.openai.com/account/org-settings)。
 
 
-### Use Case 1: Code symbol extraction
+### 使用案例 1：程式碼符號抽取
 
 
-The goal is to **extract all function, class, and constant symbols from python files inside the OpenAI SDK**.  
-For each file we ask the model to emit structured JSON like:
+目標是**從 OpenAI SDK 內的 python 檔案抽出所有函式、類別和常數符號**。
+對每個檔案，我們要求模型輸出像這樣的 structured JSON：
 
 ```json
 {
@@ -62,15 +71,15 @@ For each file we ask the model to emit structured JSON like:
 }
 ```
 
-A rubric model then grades **completeness** (did we capture every symbol?) and **quality** (are the kinds correct?) on a 1‑7 scale.
+之後由一個 rubric 模型以 1 到 7 分評分，看**完整性**（有沒有抓到每個符號？）和**品質**（種類 kind 是否正確？）。
 
 
-### Evaluating Code Quality Extraction with a Custom Dataset
+### 用自訂資料集評估程式碼抽取品質
 
-Let us walk though an example to evaluate a model's ability to extract symbols from code using the OpenAI **Evals** framework with a custom in-memory dataset.
+我們來走一個例子，用 OpenAI **Evals** framework 搭配自訂的 in-memory 資料集，評估模型從程式碼抽取符號的能力。
 
-### Initialize SDK client
-Creates an `openai.OpenAI` client using the `OPENAI_API_KEY` we exported above.  Nothing will run without this.
+### 初始化 SDK client
+用我們前面匯出的 `OPENAI_API_KEY` 建立 `openai.OpenAI` client。沒有它什麼都跑不起來。
 
 ```python
 %pip install --upgrade openai pandas rich --quiet
@@ -97,10 +106,10 @@ client = openai.OpenAI(
     Note: you may need to restart the kernel to use updated packages.
     ```
 
-### Dataset factory & grading rubric
-* `get_dataset` builds a small in-memory dataset by reading several SDK files.
-* `structured_output_grader` defines a detailed evaluation rubric.
-* `client.evals.create(...)` registers the eval with the platform.
+### 資料集工廠與評分 rubric
+* `get_dataset` 讀取幾個 SDK 檔案，建出一個小型的 in-memory 資料集。
+* `structured_output_grader` 定義詳細的評估 rubric。
+* `client.evals.create(...)` 把 eval 註冊到平台上。
 
 ```python
 def get_dataset(limit=None):
@@ -174,8 +183,8 @@ logs_eval = client.evals.create(
 )
 ```
 
-### Kick off model runs
-Here we launch two runs against the same eval: one that calls the **Completions** endpoint, and one that calls the **Responses** endpoint.
+### 啟動模型 run
+這裡對同一個 eval 啟動兩個 run：一個呼叫 **Completions** endpoint，一個呼叫 **Responses** endpoint。
 
 ```python
 ### Kick off model runs
@@ -313,8 +322,8 @@ gpt_4one_responses_run = client.evals.runs.create(
 )
 ```
 
-### Utility poller
-Next, we will use a simple loop that waits for all runs to finish, then saves each run’s JSON to disk so you can inspect it later or attach it to CI artifacts.
+### 輪詢工具
+接著用一個簡單的迴圈等所有 run 跑完，再把每個 run 的 JSON 存到磁碟，之後可以檢視，或附加到 CI artifact。
 
 ```python
 ### Utility poller
@@ -350,8 +359,8 @@ poll_runs(logs_eval.id, [gpt_4one_completions_run.id, gpt_4one_responses_run.id]
     ResultCounts(errored=0, failed=1, passed=0, total=1)
     ```
 
-### Load outputs for quick inspection
-We will fetch the output items for both runs so we can print or post‑process them.
+### 載入輸出以便快速檢視
+我們會撈出兩個 run 的輸出項目，方便印出或後處理。
 
 ```python
 completions_output = client.evals.runs.output_items.list(
@@ -363,8 +372,8 @@ responses_output = client.evals.runs.output_items.list(
 )
 ```
 
-### Human-readable dump
-Let us print a side-by-side view of completions vs responses.
+### 人類可讀的輸出
+來印出 completions 和 responses 的並排對照。
 
 ```python
 from IPython.display import display, HTML
@@ -414,13 +423,13 @@ display(styled)
     <pandas.io.formats.style.Styler at 0x11dc60790>
     ```
 
-### Visualize the Results
+### 結果視覺化
 
-Below are visualizations that represent the evaluation data and code outputs for structured QA evaluation. These images provide insights into the data distribution and the evaluation workflow.
+下面的圖呈現 structured QA 評估的資料和程式碼輸出，讓你了解資料分布和評估流程。
 
 ---
 
-**Evaluation Data Overview**
+**評估資料概覽**
 
 ![Evaluation Data Part 1](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/eval_qa_data_1.png)
 
@@ -428,17 +437,17 @@ Below are visualizations that represent the evaluation data and code outputs for
 
 ---
 
-**Evaluation Code Workflow**
+**評估程式碼流程**
 
 ![Evaluation Code Structure](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/eval_qa_code.png)
 
 ---
 
-By reviewing these visualizations, you can better understand the structure of the evaluation dataset and the steps involved in evaluating structured outputs for QA tasks.
+看過這些圖，你就能更了解評估資料集的結構，以及評估 QA 任務 structured output 的步驟。
 
 
-### Use Case 2: Multi-lingual Sentiment Extraction
-In a similar way, let us evaluate a multi-lingual sentiment extraction model with structured outputs.
+### 使用案例 2：多語言情緒抽取
+用類似的方式，我們來評估一個產生 structured output 的多語言情緒抽取模型。
 
 ```python
 # Sample in-memory dataset for sentiment extraction
@@ -585,18 +594,30 @@ sentiment_run = client.evals.runs.create(
 )
 ```
 
-### Visualize evals data 
+### 視覺化 evals 資料
 ![image](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/evals_sentiment.png)
 
-### Summary and Next Steps
+### 總結與下一步
 
-In this notebook, we have demonstrated how to use the OpenAI Evaluation API to evaluate a model's performance on a structured output task. 
+這份 notebook 示範了怎麼用 OpenAI Evaluation API 評估模型在 structured output 任務上的表現。
 
-**Next steps:**
-- We encourage you to try out the API with your own models and datasets.
-- You can also explore the API documentation for more details on how to use the API.    
+**下一步：**
+- 建議你拿自己的模型和資料集試試這個 API。
+- 也可以看 API 文件，了解更多用法。
 
-For more information, see the [OpenAI Evals documentation](https://platform.openai.com/docs/guides/evals).
+更多資訊請看 [OpenAI Evals 文件](https://platform.openai.com/docs/guides/evals)。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- structured output 要靠自動化 eval 把期望寫成程式，不要靠抽查和臨時改 prompt。
+- 一個 eval 由資料集、grader rubric 和註冊動作組成，之後可以對同一個 eval 發起多個 run 比較。
+- 用 rubric 模型評分時，把完整性和品質拆成不同維度，結果比較好分析。
+- 輪詢 run 並把結果存成 JSON，方便事後檢視或接進 CI。
+- 同一套流程換資料集和 rubric 就能套到其他任務，例如多語言情緒抽取。
+
+## 練習
+
+1. 在 `get_dataset` 多加一個你自己的 Python 檔案進資料集，重跑 eval 看分數變化。
+2. 修改 `structured_output_grader` 的 rubric，把 1-7 分改成 1-5 分，或加一個新的評分維度，比較兩次 run 的結果。
+3. 在輪詢後的輸出裡，只篩出分數低於某個門檻的項目並印出，找出模型最常漏掉哪一種符號。

@@ -1,27 +1,34 @@
 ---
-translated: false
+translated: true
 source: examples/third_party/Visualizing_embeddings_in_Kangas.ipynb
 ---
 
-# Visualizing the embeddings in Kangas
+# 用 Kangas 視覺化 embedding
 
 > 原文：[examples/third_party/Visualizing_embeddings_in_Kangas.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/third_party/Visualizing_embeddings_in_Kangas.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+這篇用 Jupyter Notebook 建立一個 Kangas DataGrid，裡面放資料以及把 embedding 投影到 2 維的結果。
+資料是評論，embedding 每筆有 1536 個浮點數，最後可以在 notebook 裡直接互動檢視。
 
-## Visualizing the embeddings in Kangas
+## 學完你會
+- 安裝並匯入 Kangas，把含 embedding 的 CSV 讀成 DataGrid。
+- 把一欄數字轉成正確型別的 Embedding 欄位，並存成 datagrid。
+- 在 notebook 裡顯示每筆資料的 2D 投影，並依 Score 分組檢視。
 
-In this Jupyter Notebook, we construct a Kangas DataGrid containing the data and projections of the embeddings into 2 dimensions.
+## 開跑前
+- 需要用 pip 安裝 `kangas`。
+- 資料直接從 GitHub 讀取，需要網路連線。
 
-## What is Kangas?
+## 什麼是 Kangas？
 
-[Kangas](https://github.com/comet-ml/kangas/) as an open source, mixed-media, dataframe-like tool for data scientists. It was developed by [Comet](https://comet.com/), a company designed to help reduce the friction of moving models into production. 
+[Kangas](https://github.com/comet-ml/kangas/) 是一個開源、支援混合媒體、像 dataframe 的資料科學家工具，由 [Comet](https://comet.com/) 開發，這家公司致力於降低模型上線的阻力。
 
-### 1. Setup
+### 1. 安裝
 
-To get started, we pip install kangas, and import it.
+先 pip 安裝 kangas，再匯入。
 
 ```python
 %pip install kangas --quiet
@@ -31,11 +38,11 @@ To get started, we pip install kangas, and import it.
 import kangas as kg
 ```
 
-### 2. Constructing a Kangas DataGrid
+### 2. 建立 Kangas DataGrid
 
-We create a Kangas Datagrid with the original data and the embeddings. The data is composed of a rows of reviews, and the embeddings are composed of 1536 floating-point values. In this example, we get the data directly from github, in case you aren't running this notebook inside OpenAI's repo.
+我們用原始資料和 embedding 建立一個 Kangas DataGrid。資料是一列一列的評論，embedding 是 1536 個浮點數。這個範例直接從 GitHub 取資料，這樣就算你不是在 OpenAI 的 repo 裡跑 notebook 也行。
 
-We use Kangas to read the CSV file into a DataGrid for further processing.
+用 Kangas 把 CSV 檔讀成 DataGrid，方便後續處理。
 
 ```python
 data = kg.read_csv("https://raw.githubusercontent.com/openai/openai-cookbook/main/examples/data/fine_food_reviews_with_embeddings_1k.csv")
@@ -52,7 +59,7 @@ data = kg.read_csv("https://raw.githubusercontent.com/openai/openai-cookbook/mai
     100%|████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████████| 1000/1000 [00:00<00:00, 2899.16it/s]
     ```
 
-We can review the fields of the CSV file:
+可以看一下 CSV 檔的欄位：
 
 ```python
 data.info()
@@ -78,7 +85,7 @@ data.info()
     9   embedding                      1,000 TEXT
     ```
 
-And get a glimpse of the first and last rows:
+再看看第一筆和最後一筆資料：
 
 ```python
 data
@@ -106,7 +113,7 @@ data
     ** Use DataGrid.show() to start user interface
     ```
 
-Now, we create a new DataGrid, converting the numbers into an Embedding:
+現在建立一個新的 DataGrid，把數字轉成 Embedding：
 
 ```python
 import ast # to convert string of a list of numbers into a list of numbers
@@ -127,7 +134,7 @@ for row in data:
     dg.append(row)
 ```
 
-The new DataGrid now has an Embedding column with proper datatype.
+新的 DataGrid 現在有了型別正確的 Embedding 欄位。
 
 ```python
 dg.info()
@@ -153,19 +160,19 @@ dg.info()
     9   embedding                      1,000 EMBEDDING-ASSET
     ```
 
-We simply save the datagrid, and we're done.
+把 datagrid 存起來就完成了。
 
 ```python
 dg.save()
 ```
 
-### 3. Render 2D Projections
+### 3. 顯示 2D 投影
 
-To render the data directly in the notebook, simply show it. Note that each row contains an embedding projection. 
+要在 notebook 裡直接顯示資料，只要 show 它就好。注意每一列都有一個 embedding 投影。
 
-Scroll to far right to see embeddings projection per row.
+往最右邊捲動可以看到每列的 embedding 投影。
 
-The color of the point in projection space represents the Score.
+投影空間中點的顏色代表 Score。
 
 ```python
 dg.show()
@@ -177,7 +184,7 @@ dg.show()
     <IPython.lib.display.IFrame at 0x7fcdd16bfbe0>
     ```
 
-Group by "Score" to see rows of each group.
+依「Score」分組，可以看每一組有哪些資料列。
 
 ```python
 dg.show(group="Score", sort="Score", rows=5, select="Score,embedding")
@@ -189,6 +196,15 @@ dg.show(group="Score", sort="Score", rows=5, select="Score,embedding")
     <IPython.lib.display.IFrame at 0x7fcd06209180>
     ```
 
-An example of this datagrid is hosted here: https://kangas.comet.com/?datagrid=/data/openai_embeddings.datagrid
+這個 datagrid 的範例託管在這裡：https://kangas.comet.com/?datagrid=/data/openai_embeddings.datagrid
 
-<!-- tutor:summary -->
+## 重點整理
+- 高維 embedding 很難直接看，投影到 2D 後才能目視檢查資料的群聚。
+- DataGrid 讓資料和 embedding 放在同一個表，一邊看原文一邊看分佈。
+- 欄位要轉成 Embedding 型別，Kangas 才知道要做投影。
+- 依標籤（這裡是 Score）上色或分組，能快速判斷 embedding 有沒有把類別分開。
+
+## 練習
+1. 把 DataGrid 存成不同的檔名，重新載入確認資料還在。
+2. 改成依其他欄位分組顯示，看看群聚的樣子有沒有不同。
+3. 只取 CSV 前 1000 列建 DataGrid，比較投影圖的樣貌和載入速度。

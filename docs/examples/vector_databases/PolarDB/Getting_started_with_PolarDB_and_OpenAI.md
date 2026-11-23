@@ -1,66 +1,73 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/PolarDB/Getting_started_with_PolarDB_and_OpenAI.ipynb
 ---
 
-# Using PolarDB-PG as a vector database for OpenAI embeddings
+# 用 PolarDB-PG 當 OpenAI embedding 的向量資料庫
 
 > 原文：[examples/vector_databases/PolarDB/Getting_started_with_PolarDB_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/PolarDB/Getting_started_with_PolarDB_and_OpenAI.ipynb)
 
+## 這篇在做什麼
+一步步示範把 PolarDB-PG（阿里雲、相容 PostgreSQL 的雲原生資料庫）當向量資料庫，存 OpenAI embedding 並做最近鄰搜尋。資料用事先算好的 Wikipedia embedding。
+
+## 學完你會
+- 用 `psycopg2` 連上 PolarDB-PG
+- 建一個有 title 和 content 向量欄位與向量 index 的 relation
+- 把 query 轉成 embedding，在 PolarDB-PG 裡做最近鄰搜尋
+
+## 開跑前
+- 一個 PolarDB-PG 雲端 instance（阿里雲）
+- OpenAI API key，設成環境變數 `OPENAI_API_KEY`
+
+這個 notebook 帶你一步步用 PolarDB-PG 當 OpenAI embedding 的向量資料庫。
+
+完整流程是：
+1. 使用 OpenAI API 事先算好的 embedding。
+2. 把 embedding 存到雲端的 PolarDB-PG instance。
+3. 用 OpenAI API 把文字 query 轉成 embedding。
+4. 用 PolarDB-PG 在建好的 collection 裡做最近鄰搜尋。
+
+### 什麼是 PolarDB-PG
+
+[PolarDB-PG](https://www.alibabacloud.com/help/en/polardb/latest/what-is-polardb-2) 是採用讀寫分離架構的高效能向量資料庫。它是阿里雲管理的雲原生資料庫，100% 相容 PostgreSQL，也高度相容 Oracle 語法。它支援處理海量向量資料的儲存與查詢，並透過優化底層執行演算法大幅提升向量運算效率，為使用者提供快速、有彈性、高效能、海量儲存且安全可靠的向量資料庫服務。此外，PolarDB-PG 也支援多維度、多模態的時空資訊引擎和地理資訊引擎。同時 PolarDB-PG 具備完整的 OLAP 功能和服務等級協議，已獲得許多使用者的認可與使用。
 
 
-<!-- tutor:goals -->
-
-
-This notebook guides you step by step on using PolarDB-PG as a vector database for OpenAI embeddings.
-
-This notebook presents an end-to-end process of:
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in a cloud instance of PolarDB-PG.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using PolarDB-PG to perform the nearest neighbour search in the created collection.
-
-### What is PolarDB-PG
-
-[PolarDB-PG](https://www.alibabacloud.com/help/en/polardb/latest/what-is-polardb-2) is a high-performance vector database that adopts a read-write separation architecture. It is a cloud-native database managed by Alibaba Cloud, 100% compatible with PostgreSQL, and highly compatible with Oracle syntax. It supports processing massive vector data storage and queries, and greatly improves the efficiency of vector calculations through optimization of underlying execution algorithms, providing users with fast, elastic, high-performance, massive storage, and secure and reliable vector database services. Additionally, PolarDB-PG also supports multi-dimensional and multi-modal spatiotemporal information engines and geographic information engines.At the same time, PolarDB-PG is equipped with complete OLAP functionality and service level agreements, which has been recognized and used by many users;
 
 
 
 
 
+### 部署方式
 
+- 使用 [PolarDB-PG Cloud Vector Database](https://www.alibabacloud.com/product/polardb-for-postgresql)。[點這裡](https://www.alibabacloud.com/product/polardb-for-postgresql?spm=a3c0i.147400.6791778070.243.9f204881g5cjpP)可以快速部署。
 
-### Deployment options
+## 前置條件
 
-- Using [PolarDB-PG Cloud Vector Database](https://www.alibabacloud.com/product/polardb-for-postgresql). [Click here](https://www.alibabacloud.com/product/polardb-for-postgresql?spm=a3c0i.147400.6791778070.243.9f204881g5cjpP) to fast deploy it.
+這個練習需要準備幾樣東西：
 
-## Prerequisites
+1. PolarDB-PG 雲端 server instance。
+2. 用來操作向量資料庫的 'psycopg2' 函式庫。其他 postgresql client 函式庫也可以。
+3. 一組 [OpenAI API key](https://beta.openai.com/account/api-keys)。
 
-For the purposes of this exercise we need to prepare a couple of things:
+我們可以用簡單的 curl 指令確認 server 是否啟動成功：
 
-1. PolarDB-PG cloud server instance.
-2. The 'psycopg2' library to interact with the vector database. Any other postgresql client library is ok.
-3. An [OpenAI API key](https://beta.openai.com/account/api-keys).
+### 安裝套件
 
-We might validate if the server was launched successfully by running a simple curl command:
-
-### Install requirements
-
-This notebook obviously requires the `openai` and `psycopg2` packages, but there are also some other additional libraries we will use. The following command installs them all:
+這個 notebook 當然需要 `openai` 和 `psycopg2`，還會用到一些其他函式庫。下面的指令一次裝好：
 
 
 ```python
 ! pip install openai psycopg2 pandas wget
 ```
 
-Prepare your OpenAI API key
-The OpenAI API key is used for vectorization of the documents and queries.
+準備 OpenAI API key
+OpenAI API key 用來把文件和 query 向量化。
 
-If you don't have an OpenAI API key, you can get one from https://beta.openai.com/account/api-keys.
+沒有 OpenAI API key 的話，可以到 https://beta.openai.com/account/api-keys 取得。
 
-Once you get your key, please add it to your environment variables as OPENAI_API_KEY.
+拿到 key 之後，請把它加到環境變數 OPENAI_API_KEY。
 
-If you have any doubts about setting the API key through environment variables, please refer to [Best Practices for API Key Safety](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety).
+如果對用環境變數設 API key 有疑問，請參考 [Best Practices for API Key Safety](https://help.openai.com/en/articles/5112595-best-practices-for-api-key-safety)。
 
 ```python
 # Test that your OpenAI API key is correctly set as an environment variable
@@ -78,10 +85,10 @@ else:
     OPENAI_API_KEY is ready
     ```
 
-## Connect to PolarDB
-First add it to your environment variables. or you can just change the "psycopg2.connect" parameters below
+## 連線到 PolarDB
+先把連線資訊加進環境變數，或直接修改下面 "psycopg2.connect" 的參數。
 
-Connecting to a running instance of PolarDB server is easy with the official Python library:
+用官方 Python 函式庫連到運行中的 PolarDB server 很簡單：
 
 ```python
 import os
@@ -106,7 +113,7 @@ connection = psycopg2.connect(
 cursor = connection.cursor()
 ```
 
-We can test the connection by running any available method:
+可以執行任何可用的方法來測試連線：
 
 ```python
 # Execute a simple query to test the connection
@@ -141,7 +148,7 @@ wget.download(embeddings_url)
     'vector_database_wikipedia_articles_embedded.zip'
     ```
 
-The downloaded file has to be then extracted:
+下載下來的檔案要再解壓縮：
 
 ```python
 import zipfile
@@ -175,11 +182,11 @@ else:
     The file vector_database_wikipedia_articles_embedded.csv exists in the data directory.
     ```
 
-## Index data
+## 資料建索引
 
-PolarDB stores data in __relation__ where each object is described by at least one vector. Our relation will be called **articles** and each object will be described by both **title** and **content** vectors. 
+PolarDB 把資料存在 __relation__ 裡，每個物件至少由一個向量描述。我們的 relation 叫 **articles**，每個物件同時有 **title** 和 **content** 向量。
 
-We will start with creating a relation and create a vector index on both **title** and **content**, and then we will fill it with our precomputed embeddings.
+我們先建一個 relation，並在 **title** 和 **content** 上都建向量 index，再把預先算好的 embedding 填進去。
 
 ```python
 create_table_sql = '''
@@ -211,9 +218,9 @@ cursor.execute(create_indexes_sql)
 connection.commit()
 ```
 
-## Load data
+## 載入資料
 
-In this section we are going to load the data prepared previous to this session, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一節載入這次練習之前就準備好的資料，所以你不必花自己的額度重算 Wikipedia 文章的 embedding。
 
 ```python
 import io
@@ -257,9 +264,9 @@ print(f"Count:{result[0]}")
     Count:25000
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into Qdrant we will start querying the collection for the closest vectors. We may provide an additional parameter `vector_name` to switch from title to content based search. Since the precomputed embeddings were created with `text-embedding-3-small` OpenAI model we also have to use it during search.
+資料放進 PolarDB 之後，就能查詢 collection 裡最接近的向量。可以多帶一個 `vector_name` 參數，在 title 和 content 搜尋之間切換。因為預先算好的 embedding 是用 OpenAI 的 `text-embedding-3-small` 模型產生的，搜尋時也必須用同一個模型。
 
 ```python
 def query_polardb(query, collection_name, vector_name="title_vector", top_k=20):
@@ -352,4 +359,13 @@ for i, result in enumerate(query_results):
     20. July 27 (Score: 0.405)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- PolarDB-PG 100% 相容 PostgreSQL，所以用 `psycopg2` 這類標準 client 就能操作。
+- 向量放在 relation 的欄位裡，並建向量 index 加速搜尋。
+- 存和搜的 embedding 模型要一致，這裡是 `text-embedding-3-small`。
+- 搜尋流程是 query 轉 embedding，再丟進資料庫找最近鄰。
+
+## 練習
+1. 換一句自己的 query，分別用 title 和 content 搜尋。
+2. 改搜尋函式回傳的筆數，觀察結果變化。
+3. 在搜尋 SQL 加上 WHERE 條件過濾，再做一次向量搜尋。

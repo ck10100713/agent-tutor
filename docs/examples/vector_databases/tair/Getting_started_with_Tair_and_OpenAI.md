@@ -1,52 +1,60 @@
 ---
-translated: false
+translated: true
 source: examples/vector_databases/tair/Getting_started_with_Tair_and_OpenAI.ipynb
 ---
 
-# Using Tair as a vector database for OpenAI embeddings
+# 用 Tair 當 OpenAI embedding 的向量資料庫
 
 > 原文：[examples/vector_databases/tair/Getting_started_with_Tair_and_OpenAI.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/vector_databases/tair/Getting_started_with_Tair_and_OpenAI.ipynb)
 
+## 這篇在做什麼
+一步步示範把 Tair（阿里雲的雲端記憶體資料庫）當成向量資料庫，存 OpenAI 的 embedding 並做最近鄰搜尋。資料用事先算好的 Wikipedia embedding，不用自己花錢重算。
+
+## 學完你會
+- 連上 Tair 並建立 title 和 content 兩個向量 index
+- 把預先算好的 embedding 載入 Tair
+- 把文字 query 轉成 embedding，再用 Tair 做最近鄰搜尋，並切換 title 或 content 搜尋
+
+## 開跑前
+- 一個 Tair 雲端 instance（阿里雲）
+- OpenAI API key
+- 安裝 `openai`、`tair` 等套件
+
+這個 notebook 帶你一步步用 Tair 當 OpenAI embedding 的向量資料庫。
+
+完整流程是：
+1. 使用 OpenAI API 事先算好的 embedding。
+2. 把 embedding 存到雲端的 Tair instance。
+3. 用 OpenAI API 把文字 query 轉成 embedding。
+4. 用 Tair 在建好的 collection 裡做最近鄰搜尋。
+
+### 什麼是 Tair
+
+[Tair](https://www.alibabacloud.com/help/en/tair/latest/what-is-tair) 是阿里雲開發的雲原生記憶體資料庫服務，相容開源 Redis，提供多種資料模型和企業級能力，支援即時線上場景。Tair 也推出了基於新型非揮發性記憶體（NVM）儲存媒介的持久化記憶體優化 instance，可以降低 30% 成本、確保資料持久化，效能幾乎和記憶體資料庫一樣。Tair 已廣泛用在政務、金融、製造、醫療和泛網際網路等領域，滿足高速查詢和運算需求。
+
+[Tairvector](https://www.alibabacloud.com/help/en/tair/latest/tairvector) 是自家的資料結構，提供高效能的即時向量儲存與檢索。TairVector 提供兩種索引演算法：Hierarchical Navigable Small World (HNSW) 和 Flat Search。它也支援多種距離函式，像歐氏距離、內積、Jaccard 距離。和傳統向量檢索服務相比，TairVector 有這些優點：
+- 所有資料放在記憶體，支援即時更新索引，降低讀寫延遲。
+- 在記憶體使用優化過的資料結構，更有效利用儲存容量。
+- 是開箱即用的資料結構，架構簡單有效，沒有複雜的模組或依賴。
+
+### 部署方式
+
+- 使用 [Tair Cloud Vector Database](https://www.alibabacloud.com/help/en/tair/latest/getting-started-overview)。[點這裡](https://www.alibabacloud.com/product/tair)可以快速部署。
 
 
-<!-- tutor:goals -->
+## 前置條件
 
+這個練習需要準備幾樣東西：
 
-This notebook guides you step by step on using Tair as a vector database for OpenAI embeddings.
-
-This notebook presents an end-to-end process of:
-1. Using precomputed embeddings created by OpenAI API.
-2. Storing the embeddings in a cloud instance of Tair.
-3. Converting raw text query to an embedding with OpenAI API.
-4. Using Tair to perform the nearest neighbour search in the created collection.
-
-### What is Tair
-
-[Tair](https://www.alibabacloud.com/help/en/tair/latest/what-is-tair) is a cloud native in-memory database service that is developed by Alibaba Cloud. Tair is compatible with open source Redis and provides a variety of data models and enterprise-class capabilities to support your real-time online scenarios. Tair also introduces persistent memory-optimized instances that are based on the new non-volatile memory (NVM) storage medium. These instances can reduce costs by 30%, ensure data persistence, and provide almost the same performance as in-memory databases. Tair has been widely used in areas such as government affairs, finance, manufacturing, healthcare, and pan-Internet to meet their high-speed query and computing requirements.
-
-[Tairvector](https://www.alibabacloud.com/help/en/tair/latest/tairvector) is an in-house data structure that provides high-performance real-time storage and retrieval of vectors. TairVector provides two indexing algorithms: Hierarchical Navigable Small World (HNSW) and Flat Search. Additionally, TairVector supports multiple distance functions, such as Euclidean distance, inner product, and Jaccard distance. Compared with traditional vector retrieval services, TairVector has the following advantages:
-- Stores all data in memory and supports real-time index updates to reduce latency of read and write operations.
-- Uses an optimized data structure in memory to better utilize storage capacity.
-- Functions as an out-of-the-box data structure in a simple and efficient architecture without complex modules or dependencies.
-
-### Deployment options
-
-- Using [Tair Cloud Vector Database](https://www.alibabacloud.com/help/en/tair/latest/getting-started-overview). [Click here](https://www.alibabacloud.com/product/tair) to fast deploy it.
-
-
-## Prerequisites
-
-For the purposes of this exercise we need to prepare a couple of things:
-
-1. Tair cloud server instance.
-2. The 'tair' library to interact with the tair database.
-3. An [OpenAI API key](https://beta.openai.com/account/api-keys).
+1. Tair 雲端 server instance。
+2. 用來操作 tair 資料庫的 'tair' 函式庫。
+3. 一組 [OpenAI API key](https://beta.openai.com/account/api-keys)。
 
 
 
-### Install requirements
+### 安裝套件
 
-This notebook obviously requires the `openai` and `tair` packages, but there are also some other additional libraries we will use. The following command installs them all:
+這個 notebook 當然需要 `openai` 和 `tair`，還會用到一些其他函式庫。下面的指令一次裝好：
 
 
 ```python
@@ -83,13 +91,13 @@ This notebook obviously requires the `openai` and `tair` packages, but there are
     WARNING: Running pip as the 'root' user can result in broken permissions and conflicting behaviour with the system package manager. It is recommended to use a virtual environment instead: https://pip.pypa.io/warnings/venv
     ```
 
-### Prepare your OpenAI API key
+### 準備 OpenAI API key
 
-The OpenAI API key is used for vectorization of the documents and queries.
+OpenAI API key 用來把文件和 query 向量化。
 
-If you don't have an OpenAI API key, you can get one from [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys).
+沒有 OpenAI API key 的話，可以到 [https://beta.openai.com/account/api-keys](https://beta.openai.com/account/api-keys) 取得。
 
-Once you get your key, please add it by getpass.
+拿到 key 之後，用 getpass 把它加進來。
 
 ```python
 import getpass
@@ -104,10 +112,10 @@ openai.api_key = getpass.getpass("Input your OpenAI API key:")
     Input your OpenAI API key:········
     ```
 
-## Connect to Tair
-First add it to your environment variables.
+## 連線到 Tair
+先把連線資訊加進環境變數。
 
-Connecting to a running instance of Tair server is easy with the official Python library.
+用官方 Python 函式庫連到運行中的 Tair server 很簡單。
 
 ```python
 # The format of url: redis://[[username]:[password]]@localhost:6379/0
@@ -129,7 +137,7 @@ url = TAIR_URL
 client = TairClient.from_url(url)
 ```
 
-We can test the connection by ping:
+可以用 ping 測試連線：
 
 ```python
 client.ping()
@@ -160,7 +168,7 @@ wget.download(embeddings_url)
     'vector_database_wikipedia_articles_embedded (1).zip'
     ```
 
-The downloaded file has to then be extracted:
+下載下來的檔案要再解壓縮：
 
 ```python
 import zipfile
@@ -194,11 +202,11 @@ else:
     The file vector_database_wikipedia_articles_embedded.csv exists in the data directory.
     ```
 
-## Create Index
+## 建立 Index
 
-Tair stores data in indexes where each object is described by one key. Each key contains a vector and multiple attribute_keys.
+Tair 把資料存在 index 裡，每個物件由一個 key 描述。每個 key 包含一個向量和多個 attribute_keys。
 
-We will start with creating two indexes, one for **title_vector** and one for **content_vector**, and then we will fill it with our precomputed embeddings.
+我們先建兩個 index，一個放 **title_vector**，一個放 **content_vector**，再把預先算好的 embedding 填進去。
 
 ```python
 # set index parameters
@@ -226,9 +234,9 @@ for index_name in index_names:
     Index already exists
     ```
 
-## Load data
+## 載入資料
 
-In this section we are going to load the data prepared previous to this session, so you don't have to recompute the embeddings of Wikipedia articles with your own credits.
+這一節載入這次練習之前就準備好的資料，所以你不必花自己的額度重算 Wikipedia 文章的 embedding。
 
 ```python
 import pandas as pd
@@ -266,9 +274,9 @@ for index_name in index_names:
     Count in openai_test_content_vector:25000
     ```
 
-## Search data
+## 搜尋資料
 
-Once the data is put into Tair we will start querying the collection for the closest vectors. We may provide an additional parameter `vector_name` to switch from title to content based search. Since the precomputed embeddings were created with `text-embedding-3-small` OpenAI model, we also have to use it during search.
+資料放進 Tair 之後，就能查詢 collection 裡最接近的向量。可以多帶一個 `vector_name` 參數，在 title 和 content 搜尋之間切換。因為預先算好的 embedding 是用 OpenAI 的 `text-embedding-3-small` 模型產生的，搜尋時也必須用同一個模型。
 
 
 ```python
@@ -325,4 +333,13 @@ for i in range(len(query_result)):
     5. Robert I of Scotland (Distance: 0.154)
     ```
 
-<!-- tutor:summary -->
+## 重點整理
+- Tair 的 TairVector 資料結構把向量放在記憶體，提供 HNSW 和 Flat 兩種索引。
+- 存和搜用的 embedding 模型要一致，這裡都是 `text-embedding-3-small`。
+- 一個 index 對應一種向量欄位，所以 title 和 content 各建一個。
+- 用預先算好的 embedding 可以省下重算成本，專心測資料庫流程。
+
+## 練習
+1. 換一句自己的 query，分別用 title 和 content 搜尋，比較排名。
+2. 改搜尋時回傳的筆數，看結果變化。
+3. 在建 index 時換成另一種索引演算法（HNSW 與 Flat），比較搜尋結果和速度。

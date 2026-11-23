@@ -1,51 +1,50 @@
 ---
-translated: false
+translated: true
 source: examples/agent_optimization/optimizing_agents_for_cost_and_quality.ipynb
 ---
-
-# Optimizing Customer Support Agents for Cost and Quality
+# 為成本與品質優化客服 Agent
 
 > 原文：[examples/agent_optimization/optimizing_agents_for_cost_and_quality.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/agent_optimization/optimizing_agents_for_cost_and_quality.ipynb)
 
-Optimize agents on cost, latency and performance.
+從成本、延遲和表現三個面向優化 agent。
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+
+這篇示範一套可以重複跑的 agent 優化流程：先量出 baseline，一次只改 workflow 的一個環節，確認品質沒掉才接受省下來的錢。範例用合成的電商客服工單，加上確定性的模擬，所以不用花 API 費用。同一套量測迴圈也能套到其他 agent workflow。
+
+## 學完你會
+
+- 在同一組 eval set 上量測品質、延遲、tool 使用量和總成本。
+- 用 prompt 與 tool 控制、model routing、prompt caching 減少不必要的工作。
+- 把面向客戶的工作和離線的後續處理拆開，並檢查拆完之後的取捨。
+
+## 開跑前
+
+程式預設是 dry-run 模式，不會呼叫 API。想跑選用的 live 範例，需要設定 `OPENAI_API_KEY` 和 `RUN_LIVE_API_CALLS=true`（會產生費用）。
+
+## 大綱
+
+1. 定義成功標準，準備一組小而有代表性的 eval set。
+2. 建立刻意寫得沒效率的 baseline 客服 agent。
+3. 量測 baseline 的成本、token、品質、延遲和 tool call 次數。
+4. 套用 prompt、輸出、tool 和 context 的控制。
+5. 把簡單的步驟交給較小的模型。
+6. 調整 request 結構以利用 prompt caching。
+7. 拆開即時工作和後續工作。
+8. 加上監控、eval 和 guardrail。
+
+## 情境與 agent 設定
+
+這個虛構的電商助理處理訂單狀態、貨物損壞、退款資格、重複扣款和帳號存取問題。例行查詢值得拿小模型來評估；牽涉政策的案件則用來測試優化後的 workflow 還能不能正確升級給真人。
+
+五個 mock tool 分別代表訂單系統（`lookup_order`）、客戶資料（`lookup_customer`）、政策來源（`lookup_policy`）、退款或換貨案件（`create_refund_case`）和真人客服（`escalate_to_human`）。它們都是本機的 Python function，所以即使跑 live 模型範例，也不會動到真實的客戶帳號。
+
+Baseline 會把所有 tool 都開放出來、回傳過大的 payload、每個步驟都用完整模型，還會在回覆之前先做內部 QA、分析標記和 routing 稽核。後面幾輪維持同樣的業務任務，只減少不必要的工作，並把後續處理移出面向客戶的路徑。
 
 
-This cookbook demonstrates a repeatable optimization sprint for a tool-using agent: measure a baseline, change one part of the workflow, and check quality before accepting savings. It uses synthetic e-commerce support tickets and a deterministic simulation that runs without API spend. The same measurement loop applies to other agent workflows.
+## 參考資料
 
-By the end, you will have a repeatable pattern for:
-
-- Measuring quality, latency, tool use, and total cost on the same evaluation set.
-- Reducing unnecessary work through prompt and tool controls, model routing, and prompt caching.
-- Separating customer-facing work from offline follow-up and checking the resulting tradeoffs.
-
-The code defaults to dry-run mode. The optional live helpers require `OPENAI_API_KEY` and `RUN_LIVE_API_CALLS=true`.
-
-
-## Outline
-
-1. Define success criteria and a small representative eval set.
-2. Build the intentionally inefficient baseline support agent.
-3. Measure baseline cost, tokens, quality, latency, and tool calls.
-4. Apply prompt, output, tool, and context controls.
-5. Route simple steps to smaller models.
-6. Restructure requests for prompt caching.
-7. Split real-time and follow-up work.
-8. Add monitoring, evals, and guardrails.
-
-## Use case and agent setup
-
-Our fictional e-commerce assistant handles order status, damaged deliveries, refund eligibility, duplicate charges, and account access. Routine lookups make smaller models worth evaluating; policy-sensitive cases test whether the optimized workflow still escalates correctly.
-
-The five mock tools represent an order system (`lookup_order`), customer records (`lookup_customer`), a policy source (`lookup_policy`), refund or replacement cases (`create_refund_case`), and human support (`escalate_to_human`). These are local Python functions, so even the live model examples cannot change a real customer account.
-
-The baseline exposes every tool, returns oversized payloads, and uses a full model for every step. It also performs internal QA, analytics tagging, and routing audits before replying. Later rounds keep the business task constant while reducing unnecessary work and moving follow-up processing out of the customer-facing path.
-
-
-## References
-
-**Last verified: September 14, 2026.** The examples use GPT-5.4 models; the model-selection and caching sections also describe considerations for GPT-5.6.
+**最後驗證日期：2026 年 9 月 14 日。** 範例使用 GPT-5.4 系列模型；模型選擇和 caching 的章節也會談到 GPT-5.6 的考量。
 
 | Reference | Details used here |
 |---|---|
@@ -58,28 +57,28 @@ The baseline exposes every tool, returns oversized payloads, and uses a full mod
 | [GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4), [mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), and [nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano) | Standard text-token prices and supported reasoning settings |
 
 
-## Setup
+## 環境設定
 
-Use Python 3.10 or later. Clone the Cookbook repository or download this entire [example folder](https://github.com/openai/openai-cookbook/tree/main/examples/agent_optimization), then start the notebook with `examples/agent_optimization` as the working directory so its local imports resolve.
+需要 Python 3.10 以上。Clone Cookbook repo，或下載整個[範例資料夾](https://github.com/openai/openai-cookbook/tree/main/examples/agent_optimization)，然後以 `examples/agent_optimization` 當工作目錄啟動 notebook，這樣本地 import 才找得到。
 
-Install the dependencies in your notebook's environment:
+在你的 notebook 環境裡安裝相依套件：
 
 ```bash
 pip install --upgrade openai pandas matplotlib jinja2 ipykernel
 ```
 
-The same dependencies are listed in [requirements.txt](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/requirements.txt). `jinja2` is required for the styled pandas tables. The supporting files contain [mock data, tools, and prompts](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/support.py), [simulation and checks](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/simulation.py), [live API helpers](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py), [offline answer evaluation](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/evaluation.py), and [scenario scoring](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/scenarios.py).
+相同的相依套件也列在 [requirements.txt](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/requirements.txt)。帶樣式的 pandas 表格需要 `jinja2`。輔助檔案包含 [mock 資料、tool 和 prompt](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/support.py)、[模擬與檢查](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/simulation.py)、[live API helper](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py)、[離線答案評估](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/evaluation.py)，以及[情境評分](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/scenarios.py)。
 
-The notebook does not call the API by default. To opt in to the live agent example, set these variables before starting the kernel:
+Notebook 預設不會呼叫 API。想啟用 live agent 範例，請在啟動 kernel 之前設定這些變數：
 
 ```bash
 export OPENAI_API_KEY=...
 export RUN_LIVE_API_CALLS=true
 ```
 
-The optional answer judge has its own switch, `RUN_LLM_JUDGE=true`, and also requires `OPENAI_API_KEY`. It grades the 50 existing simulated traces (10 tickets × 5 variants) with 50 paid judge requests; it does not run the live agent. Leave both switches unset for a fully offline run.
+選用的答案 judge 有自己的開關 `RUN_LLM_JUDGE=true`，同樣需要 `OPENAI_API_KEY`。它會用 50 次付費的 judge request，替現有的 50 條模擬 trace（10 張工單 × 5 個版本）評分，不會跑 live agent。兩個開關都不設，就是完全離線執行。
 
-Run the cells from top to bottom. The Batch example writes a local file under `outputs/`; its submission code is displayed for inspection and is not executed.
+由上到下依序執行 cell。Batch 範例會在 `outputs/` 底下寫一個本機檔案；它的提交程式碼只顯示給你看，不會執行。
 
 
 ```python
@@ -114,23 +113,23 @@ print("RUN_LLM_JUDGE =", RUN_LLM_JUDGE)
     RUN_LLM_JUDGE = True
     ```
 
-## Success criteria and constraints
+## 成功標準與限制
 
-Accept savings only when the agent still uses the right facts, follows policy, takes the required action, and escalates correctly. A concise response must give the customer the next step without exposing internal data. Compare p50/p95 latency and total cost after those quality checks pass.
+只有在 agent 仍然用對事實、遵守政策、做了該做的動作、而且正確升級時，才接受省下來的成本。簡潔的回覆必須告訴客戶下一步，又不能洩漏內部資料。這些品質檢查通過之後，再比較 p50/p95 延遲和總成本。
 
-The eval set is deliberately small. In production, use a stratified sample covering your main intents, risk levels, languages, regions, customer tiers, and edge cases. Keep a holdout set and gate each optimization on quality before comparing savings.
-
-
-## Simulation contract
-
-The default path uses mock data and modeled metrics. It demonstrates the measurement loop; its numbers are not a production benchmark.
-
-The harness measures serialized text lengths and compares tool, action, escalation, and response-phrase checks against the fixtures. Token counts are estimated from those lengths. Reasoning tokens, latency, cache hits, and the aggregate quality score follow illustrative formulas; cost applies the verified price table to estimated usage.
-
-Routing and optimized actions come from the fixture labels, so this simulation does not measure a model's ability to choose them. Response checks use case-insensitive literal phrases, which can reject valid paraphrases and cannot establish factual correctness. For deployment decisions, replace these traces with real usage, timings, tool results, routing decisions, and calibrated judge or human evaluations.
+這組 eval set 刻意做得很小。正式環境要用分層抽樣，涵蓋主要的 intent、風險等級、語言、地區、客戶等級和邊界案例。另外留一組 holdout，每個優化都要先過品質關，才比較省了多少。
 
 
-## Optimization knobs
+## 模擬約定
+
+預設流程使用 mock 資料和模型化的指標。它示範的是量測迴圈，數字不是正式環境的 benchmark。
+
+這套 harness 量的是序列化後的文字長度，並把 tool、action、escalation 和回覆用語的檢查結果跟 fixture 對照。Token 數是從長度估出來的。Reasoning token、延遲、cache 命中和整體品質分數都用示意性的公式算；成本則是把驗證過的價格表套在估計的用量上。
+
+Routing 和優化後的 action 來自 fixture 標籤，所以這個模擬並沒有衡量模型自己選擇的能力。回覆檢查用的是不分大小寫的字面片語比對，可能會誤殺合理的換句話說，也無法證明事實正確。要做上線決策，請把這些 trace 換成真實的使用量、時間、tool 結果、routing 決策，以及校準過的 judge 或人工評估。
+
+
+## 優化旋鈕
 
 | Knob | Inefficient baseline | Optimized pattern | Primary metric |
 |---|---|---|---|
@@ -145,9 +144,9 @@ Routing and optimized actions come from the fixture labels, so this simulation d
 | Guardrails and evals | Informal spot checks | Deterministic checks plus judge schema for live traces | Regression rate, safety pass rate |
 
 
-## Sample evaluation set
+## 範例 eval set
 
-This small sample eval set gives the notebook concrete tickets, expected tools, expected actions, escalation labels, and forbidden claims to score each optimization round.
+這組小型的範例 eval set 提供具體的工單、預期的 tool、預期的 action、escalation 標籤和禁止出現的說法，用來替每一輪優化評分。
 
 
 ```python
@@ -194,11 +193,11 @@ pd.DataFrame(EVAL_SET)[
     9             escalate_account_security           True
     ```
 
-## Support data and tools
+## 客服資料與 tool
 
-The five local tool functions in [support.py](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/support.py) stand in for internal systems. The baseline returns oversized payloads to show how tool outputs can dominate input tokens; later rounds return only fields needed for the decision and response.
+[support.py](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/support.py) 裡的五個本機 tool function 用來代替內部系統。Baseline 會回傳過大的 payload，示範 tool 輸出如何主宰 input token；後面幾輪只回傳決策和回覆需要的欄位。
 
-The following cell shows one slim order record. The mock action tools return synthetic results without creating real cases or escalations.
+下面的 cell 顯示一筆精簡過的訂單紀錄。這些 mock action tool 只會回傳合成結果，不會真的建立案件或升級。
 
 
 ```python
@@ -240,9 +239,9 @@ print("Slim tool schema tokens:", math.ceil(len(json.dumps(SLIM_TOOLS)) / 4))
     Slim tool schema tokens: 397
     ```
 
-## Baseline architecture
+## Baseline 架構
 
-The bad baseline does too much in one synchronous path.
+這個糟糕的 baseline 在一條同步路徑裡做了太多事。
 
 ```mermaid
 flowchart LR
@@ -257,7 +256,7 @@ flowchart LR
     B --> J["Routing audit"]
 ```
 
-Broad instructions, high reasoning effort, and unrestricted tools make each request expensive. Large schemas and verbose payloads inflate inputs, while long answers and synchronous QA add work before the customer receives a reply.
+寬鬆的指示、高 reasoning effort 和不設限的 tool，讓每個 request 都很貴。龐大的 schema 和冗長的 payload 撐大了 input，而過長的回答和同步 QA 則讓客戶收到回覆之前多了一堆工作。
 
 
 ```python
@@ -286,11 +285,11 @@ print(CONTROLLED_PROMPT)
     - Keep the customer-facing answer under 120 words unless escalation legally requires more detail.
     ```
 
-## Metrics helpers
+## 指標 helper
 
-The live helper reads `input_tokens`, `output_tokens`, `total_tokens`, `input_tokens_details.cached_tokens`, and `output_tokens_details.reasoning_tokens`. Output-token usage already includes reasoning tokens; do not add them again when calculating cost.
+Live helper 會讀取 `input_tokens`、`output_tokens`、`total_tokens`、`input_tokens_details.cached_tokens` 和 `output_tokens_details.reasoning_tokens`。Output token 的用量已經包含 reasoning token，算成本時不要再加一次。
 
-The table below shows USD per million text tokens at standard rates, verified September 14, 2026 against the [GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4), [mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini), and [nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano) pages. It covers the short GPT-5.4 requests used here. The estimator does not cover long-context premiums, priority pricing, or GPT-5.6 cache-write charges; update it before changing those settings. See the [pricing page](https://developers.openai.com/api/docs/pricing) for current rates.
+下表是標準費率下每百萬個文字 token 的美元價格，在 2026 年 9 月 14 日對照 [GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4)、[mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini) 和 [nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano) 的頁面驗證過。它涵蓋這裡用到的短 GPT-5.4 request。這個估算器不包含長 context 加價、priority 定價，也不含 GPT-5.6 的 cache 寫入費用；要改那些設定之前，請先更新它。最新費率請看[價格頁](https://developers.openai.com/api/docs/pricing)。
 
 
 ```python
@@ -309,13 +308,13 @@ pd.DataFrame(MODEL_PRICES_USD_PER_1M).T.rename_axis("model")
     gpt-5.4-nano   0.20         0.020    1.25
     ```
 
-## Dry-run simulation
+## Dry-run 模擬
 
-The [simulation helper](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/simulation.py) applies each variant to the same tickets, estimates usage from prompts and payloads, and records the customer response with its quality checks. Missing required phrases and forbidden claims lower quality and fail the demo policy check, even when action and escalation labels match.
+[模擬 helper](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/simulation.py) 把每個版本套在同一批工單上，從 prompt 和 payload 估算用量，並記錄客戶回覆和它的品質檢查。缺少必要用語或出現禁止的說法，會拉低品質並讓 demo 的政策檢查失敗，即使 action 和 escalation 標籤都吻合也一樣。
 
-The optimized variants assume a correct application router and known expected actions. Caching uses a simplified warm-cache assumption and a 1,024-token eligibility threshold, not a measurement of actual cache behavior. The repeated playbook makes the demonstration large enough to exercise that branch; production prompts should contain useful shared context, and cache eligibility depends on request settings.
+優化後的版本假設 application router 是正確的，而且預期 action 已知。Caching 用的是簡化的暖 cache 假設和 1,024 token 的資格門檻，並不是對真實 cache 行為的量測。重複的 playbook 讓 demo 夠大，足以走到那個分支；正式環境的 prompt 應該放真正有用的共用 context，而 cache 資格還取決於 request 的設定。
 
-The final variant removes background work from synchronous latency while still counting its tokens and Batch cost. Inspect individual traces before relying on their averages.
+最後一個版本把背景工作從同步延遲中移除，但仍然計入它們的 token 和 Batch 成本。依賴平均值之前，先檢查個別的 trace。
 
 
 ```python
@@ -457,9 +456,9 @@ display(
     <pandas.io.formats.style.Styler at 0x116b33740>
     ```
 
-## Round-by-round impact
+## 逐輪的影響
 
-Each row compares one round to the previous round. This makes the optimization knobs easier to reason about than a single before/after number.
+每一列都是拿該輪跟上一輪比較。這樣比單一的前後對照更容易看出每個旋鈕的作用。
 
 
 ```python
@@ -537,13 +536,13 @@ plt.tight_layout()
 plt.show()
 ```
 
-## Optional: live Responses API tool loop
+## 選用：live Responses API tool 迴圈
 
-The implementation in [live_api.py](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py) forwards `response.output` before appending function results, preserving reasoning and tool-call items. Follow-up requests retain the configured tool choice, allowing an order and policy lookup followed by a refund call. After `max_tool_rounds` batches, the final request uses `tool_choice="none"` to obtain an answer without executing more tools.
+[live_api.py](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py) 的實作會在附加 function 結果之前先轉送 `response.output`，以保留 reasoning 和 tool-call item。後續的 request 沿用設定好的 tool choice，讓流程能先查訂單和政策，再呼叫退款。經過 `max_tool_rounds` 批 tool 之後，最後一個 request 用 `tool_choice="none"` 取得答案，不再執行更多 tool。
 
-The example uses a refund ticket and derives its allowed tools from that same ticket. This router still uses fixture labels; replace it with evaluated application logic for live traffic. An incomplete response or an unexpected final tool call raises an error instead of being reported as a completed answer.
+這個範例用一張退款工單，並從同一張工單推出允許的 tool。這個 router 仍然用 fixture 標籤；正式流量請換成評估過的應用邏輯。如果 response 不完整，或最後出現非預期的 tool call，會直接丟出錯誤，而不是當成完成的答案回報。
 
-For separate conversational turns, `previous_response_id` can carry state. Supply instructions again when they should apply to the next request.
+對於分開的對話回合，可以用 `previous_response_id` 帶狀態。想讓指示套用到下一個 request，就要再提供一次 instructions。
 
 
 ```python
@@ -583,13 +582,13 @@ else:
     0            241                84          2029
     ```
 
-## Optimization round 1: prompt, tool, and context controls
+## 優化第 1 輪：prompt、tool 與 context 控制
 
-Start with concrete response and tool rules. The request below combines low verbosity and reasoning effort with an output cap and an allowed tool subset. The output cap includes both visible and reasoning tokens, so check for incomplete responses when tuning it.
+先從具體的回覆規則和 tool 規則開始。下面的 request 結合了低 verbosity、低 reasoning effort、輸出上限和一組允許的 tool 子集。輸出上限同時涵蓋可見輸出和 reasoning token，所以調這個值時要檢查有沒有不完整的 response。
 
-The helper also limits tool rounds and returns slim payloads. For long conversations, evaluate compaction or truncation carefully: removing earlier context can discard facts needed for the next decision.
+Helper 也限制 tool 的輪數，並回傳精簡的 payload。對於很長的對話，壓縮或截斷要小心評估：拿掉較早的 context 可能會丟掉下一個決策需要的事實。
 
-This demo restricts tools using known ticket metadata. A production router needs separate evaluation and a fallback for low-confidence routing. If you use prompt optimization, target a specific observed failure and rerun the same evals.
+這個 demo 用已知的工單 metadata 來限制 tool。正式環境的 router 需要另外評估，並且為低信心的 routing 準備 fallback。如果要用 prompt 優化，請針對一個具體觀察到的失敗，然後重跑同一批 eval。
 
 
 ```python
@@ -690,19 +689,19 @@ display(
     <pandas.io.formats.style.Styler at 0x117d1d040>
     ```
 
-## Optimization round 2: model selection
+## 優化第 2 輪：模型選擇
 
-Right-size the model to each step instead of choosing one global model. Establish a GPT-5.4 baseline for each workload, and evaluate it against the same labeled tickets, prompts, tools, structured-output schema, and quality criteria.
+依每個步驟選合適大小的模型，而不是挑一個全域模型。先為每個 workload 建立 GPT-5.4 baseline，再用同一批標註過的工單、prompt、tool、structured output schema 和品質標準來評估。
 
-- **Intent classification, extraction, and low-risk routing:** Use `gpt-5.4-nano` for ticket classification, entity extraction, and simple tags. Compare intent accuracy, high-risk false negatives, structured-output reliability, latency, and cost per correctly classified ticket. ([GPT-5.4 nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano))
+- **Intent 分類、資訊擷取、低風險 routing：** 用 `gpt-5.4-nano` 做工單分類、實體擷取和簡單標籤。比較 intent 準確率、高風險案件的漏判、structured output 的可靠度、延遲，以及每張分類正確工單的成本。（[GPT-5.4 nano](https://developers.openai.com/api/docs/models/gpt-5.4-nano)）
 
-- **Routine support and order workflows:** Use `gpt-5.4-mini` for order status, damaged delivery, straightforward refund-eligibility checks, and other repeatable support tasks that require policy interpretation or tool use. Evaluate resolution correctness, tool-call accuracy, policy compliance, p50/p95 latency, and cost per successfully resolved ticket. ([GPT-5.4 mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini))
+- **例行客服與訂單流程：** 用 `gpt-5.4-mini` 處理訂單狀態、貨物損壞、單純的退款資格檢查，以及其他需要政策判讀或 tool 使用的可重複客服任務。評估解決的正確性、tool call 準確度、政策遵循、p50/p95 延遲，以及每張成功解決工單的成本。（[GPT-5.4 mini](https://developers.openai.com/api/docs/models/gpt-5.4-mini)）
 
-- **Complex or high-risk cases:** Use `gpt-5.4` for account-access problems, duplicate-charge escalations, refund disputes, and other high-consequence interactions. Preserve deterministic authorization and refund checks, explicit escalation rules, and human review where required. Measure resolution quality, policy adherence, latency, and end-to-end cost. ([GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4))
+- **複雜或高風險案件：** 用 `gpt-5.4` 處理帳號存取問題、重複扣款的升級、退款爭議和其他後果嚴重的互動。要保留確定性的授權與退款檢查、明確的升級規則，以及必要時的人工審查。衡量解決品質、政策遵循、延遲和端到端成本。（[GPT-5.4](https://developers.openai.com/api/docs/models/gpt-5.4)）
 
-The GPT-5.6 family offers newer models that correspond to these same tiers. [GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna) (`gpt-5.6-luna`) maps to the nano tier for classification and high-volume tasks. [GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra) (`gpt-5.6-terra`) maps to the mini tier for routine support workflows. [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol) (`gpt-5.6-sol`) maps to the full-model tier for complex or high-risk cases. Each can be evaluated against its corresponding GPT-5.4 baseline using the same tickets and quality criteria.
+GPT-5.6 系列有對應這幾個層級的較新模型。[GPT-5.6 Luna](https://developers.openai.com/api/docs/models/gpt-5.6-luna)（`gpt-5.6-luna`）對應 nano 層級，用於分類和大量任務。[GPT-5.6 Terra](https://developers.openai.com/api/docs/models/gpt-5.6-terra)（`gpt-5.6-terra`）對應 mini 層級，用於例行客服流程。[GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol)（`gpt-5.6-sol`）對應完整模型層級，用於複雜或高風險案件。每一個都可以用同一批工單和品質標準，跟對應的 GPT-5.4 baseline 比較。
 
-For each comparison, begin with the existing reasoning-effort setting and also evaluate one level lower. A newer model can be more economical at the task level if it resolves tickets with fewer retries, unnecessary tool calls, or escalations. Consider fine-tuning only if a selected model explicitly supports it. ([GPT-5.6 migration guidance](https://developers.openai.com/api/docs/guides/latest-model))
+每次比較時，先用現有的 reasoning effort 設定，同時也評估低一級的設定。新模型在任務層級可能更省，只要它解決工單時需要的重試、不必要的 tool call 或升級比較少。只有在選定的模型明確支援時，才考慮 fine-tuning。（[GPT-5.6 遷移指南](https://developers.openai.com/api/docs/guides/latest-model)）
 
 
 ```python
@@ -785,17 +784,17 @@ display(
     <pandas.io.formats.style.Styler at 0x117d1cb60>
     ```
 
-## Optimization round 3: prompt caching
+## 優化第 3 輪：prompt caching
 
-Every support request includes the same core instructions, policy rules, tool definitions, and response schema. Prompt caching lets the API reuse that shared context across tickets, reducing repeated processing and lowering input-token costs. Customer-specific details, such as order IDs, account information, and retrieved records, should appear after the shared prefix.
+每個客服 request 都帶有相同的核心指示、政策規則、tool 定義和回覆 schema。Prompt caching 讓 API 在不同工單之間重用這份共用 context，減少重複處理並降低 input token 成本。客戶專屬的細節，例如訂單編號、帳號資訊和查回來的紀錄，應該放在共用前綴之後。
 
-Prompt caching has evolved between model generations. With `gpt-5.4-mini`, the API automatically identifies repeated prefixes and can reuse the shared support context even when the customer-specific details change. Writing a new prefix does not add a separate cache-write charge. Keep the tool definitions consistent and use `tool_choice.allowed_tools` to control which tools are available without changing the shared tool list.
+Prompt caching 在不同世代的模型之間有變化。用 `gpt-5.4-mini` 時，API 會自動辨識重複的前綴，即使客戶專屬細節變了，也能重用共用的客服 context。寫入新前綴不會另外收 cache 寫入費。保持 tool 定義一致，並用 `tool_choice.allowed_tools` 控制哪些 tool 可用，而不要更動共用的 tool 清單。
 
-GPT-5.6 introduces two changes: cache writes are billed, and developers can explicitly choose which part of the prompt should be cached. With `gpt-5.6-luna`, `gpt-5.6-terra`, or `gpt-5.6-sol`, the default cache breakpoint is placed after the latest message. If that message changes between tickets, the longest cached prefix may not match. Implicit mode can still reuse earlier eligible message endings, including the initial developer-message block. Because writing content to cache costs 1.25 times the normal input-token price, repeatedly caching those unique messages can increase cost without creating useful reuse.
+GPT-5.6 有兩個變化：cache 寫入要收費，而且開發者可以明確選擇 prompt 的哪一段要被 cache。用 `gpt-5.6-luna`、`gpt-5.6-terra` 或 `gpt-5.6-sol` 時，預設的 cache breakpoint 會放在最新一則訊息之後。如果那則訊息在工單之間會變，最長的 cache 前綴可能就對不上。Implicit 模式仍然可以重用較早且符合資格的訊息結尾，包括最初的 developer message 區塊。因為把內容寫進 cache 的價格是一般 input token 的 1.25 倍，反覆 cache 這些獨一無二的訊息，可能增加成本卻沒有產生有用的重用。
 
-For example, two order-status tickets can share the same support instructions, policy rules, and tools, even though one asks about order `O-1001` and the other asks about order `O-2002`. For GPT-5.6, put the shared playbook in a developer-message `input_text` block and mark its end with `prompt_cache_breakpoint={"mode": "explicit"}` before the order-specific details. Top-level `instructions` cannot contain a breakpoint. Set `prompt_cache_options` to explicit mode with `ttl="30m"`, and use the same `prompt_cache_key`, such as `support_order_status_v1`, for both requests. With an eligible matching prefix, the first ticket writes the playbook and later tickets can reuse it at the cached-input rate while processing their own order details normally.
+舉例來說，兩張訂單狀態工單可以共用同樣的客服指示、政策規則和 tool，即使一張問訂單 `O-1001`，另一張問 `O-2002`。在 GPT-5.6 上，把共用的 playbook 放在 developer message 的 `input_text` 區塊裡，並在訂單專屬細節之前，用 `prompt_cache_breakpoint={"mode": "explicit"}` 標記它的結尾。最上層的 `instructions` 不能放 breakpoint。把 `prompt_cache_options` 設成 explicit 模式並加上 `ttl="30m"`，兩個 request 使用同一個 `prompt_cache_key`，例如 `support_order_status_v1`。前綴符合資格且吻合時，第一張工單會寫入 playbook，之後的工單可以用 cached-input 費率重用它，同時正常處理自己的訂單細節。
 
-Compare `cached_tokens` and `cache_write_tokens` alongside latency and cost per resolved ticket. For additional implementation details, see the [prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching).
+比較 `cached_tokens` 和 `cache_write_tokens`，同時看延遲和每張已解決工單的成本。更多實作細節請看 [prompt caching 指南](https://developers.openai.com/api/docs/guides/prompt-caching)。
 
 
 ```python
@@ -909,11 +908,11 @@ display(
     <pandas.io.formats.style.Styler at 0x117d1f320>
     ```
 
-## Optimization round 4: split the workflow
+## 優化第 4 輪：拆開 workflow
 
-Keep classification, necessary lookups, the resolution or escalation decision, and the customer response in the synchronous path. Move QA, tags, internal summaries, audits, and reporting to follow-up work when they do not change the immediate outcome.
+分類、必要的查詢、解決或升級的決定，以及給客戶的回覆，留在同步路徑。QA、標籤、內部摘要、稽核和報表，如果不影響當下的結果，就移到後續工作。
 
-Default or priority processing can serve latency-sensitive requests. Flex trades lower cost for slower responses and occasional resource unavailability; confirm model support and handle timeouts or unavailable capacity. Batch suits offline jobs with a `24h` completion window. Background mode makes a request asynchronous, but does not itself provide a pricing discount.
+預設或 priority 處理可以服務對延遲敏感的 request。Flex 用較慢的回應和偶爾的資源不可用，換取較低成本；請確認模型是否支援，並處理 timeout 或容量不足。Batch 適合有 `24h` 完成時間窗的離線工作。Background 模式讓 request 變成非同步，但本身沒有價格折扣。
 
 
 ```python
@@ -1087,11 +1086,11 @@ display(
     <pandas.io.formats.style.Styler at 0x117d1e720>
     ```
 
-## Tradeoffs and scenario mapping
+## 取捨與情境對照
 
-There is no universal best configuration. The sweet spot depends on traffic shape, customer promise, policy risk, cache hit rate, tool latency, observability maturity, and how much work can move out of the synchronous path.
+沒有放諸四海皆準的最佳配置。最適合的點取決於流量型態、對客戶的承諾、政策風險、cache 命中率、tool 延遲、可觀測性的成熟度，以及有多少工作可以移出同步路徑。
 
-The important tradeoffs for support agents are:
+客服 agent 的主要取捨如下：
 
 | Constraint | Pushes you toward | Watch out for |
 |---|---|---|
@@ -1103,12 +1102,12 @@ The important tradeoffs for support agents are:
 | Premium or regulated support | Higher quality floor, lower escalation threshold, more audit metadata offline | More synchronous review increases latency and cost |
 | Seasonal bursts | Cache-friendly requests, queue-aware service tiers, async analytics | Peak traffic can reduce cache effectiveness if routing keys are too fragmented |
 
-The table below maps common operating scenarios to candidate configurations. Treat this as a design aid: choose the cheapest configuration that clears the quality, latency, and operational constraints for that scenario.
+下表把常見的營運情境對應到候選配置。把它當設計輔助：選出能達到該情境的品質、延遲和營運限制、而且最便宜的配置。
 
 
-### Candidate architecture combinations
+### 候選架構組合
 
-This table compares candidate agent architectures for the same customer-support use case. It uses the notebook's mock eval set and deterministic dry-run simulation metrics, not live API traces. Use the relative differences to understand tradeoffs; replace these metrics with production trace data before making deployment decisions.
+這張表比較同一個客服情境下的候選 agent 架構。它使用 notebook 的 mock eval set 和確定性的 dry-run 模擬指標，不是 live API trace。用相對差異來理解取捨；做上線決策之前，請把這些指標換成正式環境的 trace 資料。
 
 
 ```python
@@ -1160,9 +1159,9 @@ display(
     <pandas.io.formats.style.Styler at 0x117d23bc0>
     ```
 
-### Scenario sweet spots
+### 各情境的甜蜜點
 
-This table maps common real-world operating scenarios to the best-scoring architecture combination. The scenario constraints are mocked for demonstration, and the architecture metrics come from the dry-run simulation above. In production, replace the constraints with your support SLAs, budget, policy-risk thresholds, and observed cache hit rates.
+這張表把常見的真實營運情境對應到得分最高的架構組合。情境的限制是為了 demo 而 mock 出來的，架構指標則來自上面的 dry-run 模擬。正式環境請把限制換成你的客服 SLA、預算、政策風險門檻和實際觀察到的 cache 命中率。
 
 
 ```python
@@ -1239,9 +1238,9 @@ display(
     <pandas.io.formats.style.Styler at 0x117cff9e0>
     ```
 
-### Full combination map for one scenario
+### 單一情境的完整組合圖
 
-This table shows all architecture options for one mocked scenario: `Low-repeat long tail`. It is included to make the tradeoff visible rather than hiding everything behind the single best pick. The numbers are still simulated; the point is to show why cache-heavy designs are less attractive when cache locality is low.
+這張表列出一個 mock 情境 `Low-repeat long tail` 底下所有的架構選項。放出來是為了讓取捨看得見，而不是把一切藏在單一的最佳選擇後面。數字仍然是模擬的；重點是說明為什麼 cache 局部性低的時候，重度依賴 cache 的設計比較沒吸引力。
 
 
 ```python
@@ -1282,48 +1281,48 @@ display(
     <pandas.io.formats.style.Styler at 0x117d34b30>
     ```
 
-In the mock scenarios, repeated workflows favor a shared cache prefix and asynchronous follow-up. Low-repeat queues may favor the routed split without caching, while an early pilot may justify a full model until routing is reliable.
+在這些 mock 情境中，重複性高的 workflow 偏好共用 cache 前綴加非同步後續處理。重複性低的佇列可能偏好不用 caching 的 routed 拆分，而早期試行階段在 routing 還不可靠之前，可能有理由先用完整模型。
 
-Treat these rankings as a design exercise. They include hand-set constraints and scoring bonuses, so a high score is not proof that an architecture meets every requirement. Check `failed_constraints` and enforce quality and policy gates before selecting a production configuration.
+把這些排名當成設計練習。它們包含手動設定的限制和評分加成，所以高分不代表該架構滿足所有需求。選定正式環境配置之前，先檢查 `failed_constraints`，並落實品質與政策的門檻。
 
 
-## Monitoring, evals, and guardrails
+## 監控、eval 與 guardrail
 
-Once the optimized workflow is in production, keep a recurring eval loop. The objective is not to minimize tokens in isolation. It is to resolve customer issues correctly, safely, and quickly at the lowest total cost per successful outcome.
+優化後的 workflow 上線之後，要持續跑 eval 迴圈。目標不是單純把 token 壓到最低，而是用最低的「每個成功結果的總成本」，正確、安全、快速地解決客戶的問題。
 
-### Measure task efficiency, not just token efficiency
+### 衡量任務效率，不只是 token 效率
 
-Token counts are useful diagnostics, but they do not tell you whether the customer's problem was solved. A cheaper model that requires repeated attempts, unnecessary tool calls, or human correction can cost more per resolved issue than a stronger model that completes the task correctly on its first attempt.
+Token 數是有用的診斷數據，但它們不會告訴你客戶的問題有沒有解決。一個便宜的模型如果需要重複嘗試、不必要的 tool call 或人工修正，每個已解決問題的成本可能比一個第一次就做對的強模型更高。
 
-OpenAI's guidance recommends measuring the complete cost of reaching an acceptable outcome, including "model and tool usage, attempts, completion rate, latency, and human review." For customer support, that accepted outcome may be a resolved case. See [How to manage AI investments in the agentic era](https://openai.com/index/managing-ai-investments-in-agentic-era/) and [A scorecard for the AI age](https://openai.com/index/a-scorecard-for-the-ai-age/).
+OpenAI 的指引建議衡量達到可接受結果的完整成本，包括「model and tool usage, attempts, completion rate, latency, and human review」。對客服來說，可接受的結果可能是一個已解決的案件。參見 [How to manage AI investments in the agentic era](https://openai.com/index/managing-ai-investments-in-agentic-era/) 和 [A scorecard for the AI age](https://openai.com/index/a-scorecard-for-the-ai-age/)。
 
-A useful operational formula is:
+一個實用的營運公式：
 
 `blended cost per verified resolution = total model, tool, infrastructure, retry, human-review, escalation, and rework costs / verified customer issues resolved`
 
-The numerator must include spending on unsuccessful attempts, not only the traces that eventually passed. Track autonomous resolutions separately from human-assisted resolutions so an apparent reduction in agent cost does not hide a transfer of work to the support team.
+分子必須包含失敗嘗試的花費，不只是最後通過的 trace。把自主解決和人工協助解決分開追蹤，才不會讓 agent 成本看似下降，實際上是把工作轉給了客服團隊。
 
-For example, a workflow that costs 0.02 USD per ticket and resolves 50% of tickets costs 0.04 USD per successful resolution. A workflow that costs 0.03 USD per ticket and resolves 90% costs approximately 0.033 USD per successful resolution. The second workflow costs more per attempt but less per successful outcome. These figures are illustrative and exclude human-support costs.
+舉例來說，一個每張工單花 0.02 美元、解決 50% 工單的 workflow，每次成功解決的成本是 0.04 美元。另一個每張工單花 0.03 美元、解決 90% 的 workflow，每次成功解決約 0.033 美元。第二個每次嘗試比較貴，但每個成功結果比較便宜。這些數字僅供示意，且不含人工客服成本。
 
-### Define success before optimizing
+### 先定義成功，再優化
 
-A successful response uses the right account, order, and policy facts and gives an accurate next step. Required tools must succeed with valid arguments, and promised actions must be completed or clearly pending. Policy and authorization checks determine which cases can be resolved automatically and which require escalation.
+成功的回覆用對帳號、訂單和政策的事實，並給出正確的下一步。必要的 tool 必須用有效的參數成功執行，承諾的 action 必須完成或明確標示為處理中。政策和授權檢查決定哪些案件可以自動解決、哪些必須升級。
 
-A policy-required escalation can be a successful handling outcome, but it is not an autonomous resolution. Similarly, opening a case or requesting a photo is not proof that the customer's underlying issue was resolved. Keep these outcomes separate when calculating first-contact resolution and automation rates.
+依政策必須升級的案件，可以算成功的處理結果，但不算自主解決。同樣地，開了案件或請客戶補照片，也不能證明客戶的根本問題已經解決。計算首次聯繫解決率和自動化率時，要把這些結果分開。
 
-### Track the complete support workflow
+### 追蹤完整的客服 workflow
 
-Monitor verified resolutions separately for autonomous and human-assisted cases, including repeat contacts and reopened cases. Pair those outcomes with policy and escalation accuracy, total cost per verified resolution, and customer-facing p50/p95 latency.
+把自主案件和人工協助案件的已驗證解決分開監控，包括重複聯繫和重新開啟的案件。再搭配政策與升級的準確度、每個已驗證解決的總成本，以及面向客戶的 p50/p95 延遲。
 
-Use model calls, tool failures, retries, token usage, and routing decisions to explain changes in those outcomes. Segment results by intent, risk, language, region, customer tier, and model route so an average does not conceal a regression.
+用模型呼叫、tool 失敗、重試、token 用量和 routing 決策，來解釋這些結果的變化。依 intent、風險、語言、地區、客戶等級和模型路徑切分結果，避免平均值掩蓋退步。
 
-Inspect the full execution trajectory, not only the final answer. OpenAI's [agent evaluation guidance](https://developers.openai.com/api/docs/guides/agent-evals) describes traces that capture model calls, tool calls, guardrails, and handoffs, making it possible to identify unnecessary loops, incorrect actions, and routing failures that a polished response can conceal.
+要檢視完整的執行軌跡，不只看最終答案。OpenAI 的 [agent evaluation 指南](https://developers.openai.com/api/docs/guides/agent-evals)描述了會記錄模型呼叫、tool call、guardrail 和 handoff 的 trace，這樣就能找出不必要的迴圈、錯誤的 action 和 routing 失敗，這些問題可能被一個漂亮的回覆掩蓋。
 
-Compare workflow variants on the same representative ticket distribution, including difficult and policy-sensitive cases. Treat policy compliance, action correctness, security, and escalation accuracy as hard gates before comparing cost or latency. Refresh the dataset with production failures and rerun evaluations when prompts, models, tools, routing, or policies change. See [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
+用同一組有代表性的工單分布來比較各個 workflow 版本，要包含困難和涉及政策的案件。先把政策遵循、action 正確性、安全性和升級準確度當成硬門檻，才比較成本或延遲。用正式環境的失敗案例更新資料集，並在 prompt、模型、tool、routing 或政策改變時重跑 eval。參見 [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)。
 
-Guardrail failure modes that can look efficient while creating downstream risk: tool timeouts, empty or oversized tool payloads, duplicate tool loops, unsafe account-access actions, skipped required verification, and refund promises made before eligibility or completion is confirmed.
+看起來有效率、卻會在下游製造風險的 guardrail 失效模式包括：tool timeout、空的或過大的 tool payload、重複的 tool 迴圈、不安全的帳號存取 action、略過必要的驗證，以及在資格或完成狀態確認之前就承諾退款。
 
-**Demo limitation:** This notebook directly models tokens, estimated cost, tool usage, latency, action accuracy, policy compliance, and escalation behavior. True first-contact resolution, reopened cases, retry history, completed downstream outcomes, and human-handling costs require production support-system and trace data. Do not infer those metrics from the dry-run simulation alone.
+**Demo 的限制：** 這個 notebook 直接建模的是 token、估計成本、tool 使用、延遲、action 準確度、政策遵循和升級行為。真正的首次聯繫解決率、重新開啟的案件、重試紀錄、下游完成的結果和人工處理成本，需要正式環境的客服系統和 trace 資料。不要只憑 dry-run 模擬去推論這些指標。
 
 
 ```python
@@ -1369,17 +1368,17 @@ display(guardrails[~guardrails["passed"]].head(20))
     9  Bad baseline     T-010  missing_required_response_content, policy_or_a...   False
     ```
 
-### Optional: judge customer-answer completeness and grounding
+### 選用：評判客戶答案的完整性與依據
 
-Did the cheaper workflow preserve an accurate, useful answer? This judge checks one question: given the customer ticket, relevant policy, and recorded tool results, does the answer correctly explain the outcome and next step without unsupported claims?
+比較便宜的 workflow 有沒有保住準確又有用的答案？這個 judge 只檢查一個問題：給定客戶工單、相關政策和記錄下來的 tool 結果，答案有沒有正確說明結果和下一步，而且沒有無依據的說法？
 
-The [judge helper](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py) returns `passed` and a brief `reason`. It accepts equivalent wording: “Your return qualifies under our 30-day policy” need not contain the fixture's exact phrase “within 30 days.” But “Your refund is on its way” should fail when the recorded tool result only confirms that a review case was opened. Tool results are captured when the tools run, rather than reconstructed from expected actions.
+[judge helper](https://github.com/openai/openai-cookbook/blob/bb95430abb908c1edddc38af5911109ab2ce3987/examples/agent_optimization/live_api.py) 回傳 `passed` 和簡短的 `reason`。它接受等價的說法：「Your return qualifies under our 30-day policy」不需要包含 fixture 裡的確切片語「within 30 days」。但如果記錄下來的 tool 結果只確認開了審查案件，「Your refund is on its way」就應該不通過。Tool 結果是在 tool 執行時擷取的，而不是從預期的 action 重建出來。
 
-Set `RUN_LLM_JUDGE=true` and `OPENAI_API_KEY` before running the setup cell. The code below grades the same recorded answers for every optimization round using a fixed `gpt-5.4-mini` judge and rubric. The judge does not see variant names, agent models, costs, or expected action labels. These are real judge calls over **synthetic agent traces**, so the results assess the canned answers, not model performance. For live answers, call `live_judge_response(live_ticket, live_result["response_text"], live_result["tool_results"], client=judge_client)` after opting in.
+執行 setup cell 之前，先設定 `RUN_LLM_JUDGE=true` 和 `OPENAI_API_KEY`。下面的程式碼用固定的 `gpt-5.4-mini` judge 和評分標準，替每一輪優化記錄下來的同一批答案評分。Judge 看不到版本名稱、agent 模型、成本或預期的 action 標籤。這些是對**合成 agent trace** 做的真實 judge 呼叫，所以結果評估的是那些預先寫好的答案，不是模型表現。要評 live 答案，啟用之後呼叫 `live_judge_response(live_ticket, live_result["response_text"], live_result["tool_results"], client=judge_client)`。
 
-The table places judge pass rate next to the deterministic pass rate. `both_pass_rate` requires both checks to pass; a judge pass never overrides a deterministic failure. Judge and combined pass rates cover successfully graded traces only, so inspect coverage and errors before comparing variants. Skipped, refused, malformed, or incomplete grades remain unavailable. Evaluation cost is reported separately from agent cost and customer latency; `known_judge_cost_usd` uses returned usage, and `judge_cost_unavailable` flags attempts without cost data.
+這張表把 judge 通過率放在確定性通過率旁邊。`both_pass_rate` 要求兩個檢查都通過；judge 通過不會推翻確定性檢查的失敗。Judge 通過率和合併通過率只涵蓋成功評分的 trace，所以比較版本之前，要先看 coverage 和錯誤。被略過、被拒絕、格式錯誤或不完整的評分仍然是不可用的。評估成本和 agent 成本、客戶延遲分開報告；`known_judge_cost_usd` 用回傳的 usage 計算，`judge_cost_unavailable` 則標示沒有成本資料的嘗試。
 
-Before using these grades as a release gate, label a small sample yourself, including a valid paraphrase, a missing next step, and an unsupported refund promise. Check agreement and revise the rubric when it disagrees. See [evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices).
+在把這些評分當作上線門檻之前，先自己標註一小批樣本，包括一個有效的換句話說、一個缺少下一步的答案和一個沒有依據的退款承諾。檢查一致程度，不一致時修改評分標準。參見 [evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices)。
 
 
 ```python
@@ -1438,9 +1437,9 @@ else:
     49  Round 4: split workflow     T-010                  True   False  The answer gives the right general guidance, b...
     ```
 
-## Before and after ticket walkthroughs
+## 優化前後的工單走查
 
-These examples compare the inefficient baseline with the final optimized path.
+這些範例拿沒效率的 baseline 和最終優化後的路徑做比較。
 
 
 ```python
@@ -1510,15 +1509,15 @@ display(
     <pandas.io.formats.style.Styler at 0x117d7c200>
     ```
 
-## Before and after summary
+## 前後對照總結
 
-The final row includes both synchronous customer-path cost and the modeled async follow-up cost. `mean_sync_tokens` is the customer-facing path; `mean_total_tokens` also includes background QA/tagging work after the workflow split.
+最後一列同時包含同步的客戶路徑成本和模型化的非同步後續處理成本。`mean_sync_tokens` 是面向客戶的路徑；`mean_total_tokens` 還包含 workflow 拆分之後在背景做的 QA 和標記工作。
 
-The strongest result is not from a single trick. It comes from applying levers in a safe order:
+最強的成果不是來自單一招式，而是用安全的順序套用各個槓桿：
 
-establish a baseline -> prompt/output controls -> tool control -> basic context hygiene -> model routing -> caching -> cache-aware context tuning -> split workflow -> processing tier
+建立 baseline -> prompt/輸出控制 -> tool 控制 -> 基本的 context 整理 -> model routing -> caching -> 配合 cache 的 context 調整 -> 拆開 workflow -> processing tier
 
-The key engineering habit is to optimize per step, not globally. A routine classifier, a high-risk refund dispute, a customer-facing response, and an offline QA tagger should not have the same model, context, tools, latency target, or service tier.
+關鍵的工程習慣是逐步驟優化，而不是全域優化。例行的分類器、高風險的退款爭議、面向客戶的回覆和離線的 QA 標記器，不該用同樣的模型、context、tool、延遲目標或服務層級。
 
 
 ```python
@@ -1569,26 +1568,38 @@ display(
     <pandas.io.formats.style.Styler at 0x117d7f5f0>
     ```
 
-### Recommended tuning order
+### 建議的調整順序
 
 1. Baseline
-2. Prompt/output controls
-3. Tool control
-4. Context hygiene
+2. Prompt/輸出控制
+3. Tool 控制
+4. Context 整理
 5. Model routing
 6. Prompt caching
-7. Cache-aware context
-8. Split workflow
+7. 配合 cache 的 context
+8. 拆開 workflow
 9. Processing tier
 
 
-## Conclusion
+## 結論
 
-Cost optimization for support agents works best as a measured sequence of small changes, not as a single model swap or prompt rewrite. Start by building a baseline that exposes where tokens, tool calls, latency, quality failures, and spend are going. Then tighten prompt and output controls, restrict tool use, reduce tool payloads, trim context, route simple work to smaller models, make stable prefixes cache-friendly, and move non-customer-facing work out of the synchronous path.
+客服 agent 的成本優化，最好當作一連串經過量測的小改動，而不是一次換模型或重寫 prompt。先建立一個 baseline，看出 token、tool call、延遲、品質失敗和花費都去了哪裡。接著收緊 prompt 和輸出控制、限制 tool 使用、縮小 tool payload、修剪 context、把簡單工作交給較小的模型、讓穩定的前綴對 cache 友善，並把不面向客戶的工作移出同步路徑。
 
-The main principle is to spend capability where it protects quality. A routine order-status question, a structured triage step, a policy-heavy refund dispute, and an offline QA tagger should not use the same model, context, tools, or latency tier. The optimized system should be cheaper because it is more disciplined, not because it blindly removes safeguards.
+主要原則是把能力花在能保護品質的地方。例行的訂單狀態問題、結構化的分流步驟、重政策的退款爭議和離線的 QA 標記器，不該用同樣的模型、context、tool 或延遲層級。優化後的系統會比較便宜，是因為更有紀律，而不是因為盲目拿掉安全措施。
 
-Before shipping changes, validate them with representative evals and trace metrics. Track quality score, policy compliance, action accuracy, escalation accuracy, tool-call count, token usage, cached-token volume, p50 and p95 latency, synchronous cost, async follow-up cost, and total cost per ticket. A configuration is only better if it lowers cost while preserving the support quality bar.
+上線改動之前，用有代表性的 eval 和 trace 指標驗證。追蹤品質分數、政策遵循、action 準確度、escalation 準確度、tool call 數量、token 用量、cached token 量、p50 和 p95 延遲、同步成本、非同步後續成本和每張工單的總成本。只有在降低成本又守住客服品質底線時，這個配置才算比較好。
 
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 一次只改一個環節，每一步都用同一組 eval 驗證，品質過關才接受省下的錢。
+- 比較的單位是「每個已驗證解決的成本」，不是單次呼叫的 token 成本，便宜但常失敗的配置可能反而更貴。
+- 依步驟分配能力：分類給 nano、例行處理給 mini、高風險案件給完整模型。
+- Prompt caching 要求穩定的前綴放前面、工單專屬資料放後面，GPT-5.6 還要考慮 cache 寫入費用和 explicit breakpoint。
+- 不影響當下結果的 QA、標籤、稽核搬到非同步，用 flex 或 Batch 處理，客戶路徑會更快更省。
+
+## 練習
+
+1. 在 eval set 加一張你自己設計的工單（含預期 tool、action 和禁止說法），重跑 dry-run，看它在每一輪的品質和成本怎麼變。
+2. 把 model routing 的對照改成讓 `gpt-5.4-mini` 也處理帳號存取案件，觀察 escalation 準確度和政策檢查有沒有掉。
+3. 試著把 live 範例的 `max_tool_rounds` 調小，並故意把輸出上限壓很低，確認 incomplete response 的錯誤會不會被正確丟出。

@@ -1,81 +1,94 @@
 ---
-translated: false
+translated: true
 source: examples/chatgpt/gpt_actions_library/gpt_action_canvas.md
 ---
-
-# GPT Actions library - Canvas Learning Management System
+# GPT Actions 範例庫：Canvas 學習管理系統
 
 > 原文：[examples/chatgpt/gpt_actions_library/gpt_action_canvas.md](https://github.com/openai/openai-cookbook/blob/main/examples/chatgpt/gpt_actions_library/gpt_action_canvas.md)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
 
+示範怎麼用 ChatGPT 的 Custom Actions 接上 Canvas LMS（學習管理系統），做出一個能幫學生查課程、出模擬考題、給回饋的 Custom GPT。內容包含 Canvas 的認證方式、GPT instructions 和 OpenAPI schema。
 
-### Table of Contents
+## 學完你會
 
-1. [**General App Information**](#general-app-information) - Overview of Canvas LMS, its functionality, and the role of ChatGPT's Custom Actions to enhance educational experiences through AI integration.
+- 判斷 Canvas 該用 OAuth 還是使用者自己產生的 access token 來認證
+- 為 Custom GPT 寫 instructions 和 OpenAPI schema，呼叫 Canvas 的課程、模組 API
+- 想出其他可以接 Canvas API 的用途，像課堂分析和作業檢討
 
-2. [**Authentication from ChatGPT to Canvas**](#authentication-from-chatgpt-to-canvas) - Explanation of authentication methods (OAuth and User Generated Access Tokens) for connecting ChatGPT to Canvas, with detailed instructions for setting up each option.
+## 開跑前
 
-3. [**Sample Use Case: Student Course Assistant**](#sample-use-case-student-course-assistant) - Detailed example of using ChatGPT to assist students with course navigation, exam preparation, and personalized feedback, including specific API calls and workflows.
+- 一個 Canvas LMS 帳號（OAuth 需要 Admin 設定權限）
+- ChatGPT 帳號，能建立 Custom GPT
 
-4. [**Other Use Cases for Consideration**](#other-use-cases-for-consideration) - Additional potential integrations using the Canvas API, such as classroom analytics and report generation.
+---
 
-5. [**Congratulations**](#congratulations)
+### 目錄
 
-## General App Information
+1. [**App 基本資訊**](#general-app-information)：Canvas LMS 的概述、功能，以及 ChatGPT Custom Actions 如何透過 AI 整合提升教學體驗。
 
-Canvas is a widely-used Learning Management System (LMS) designed to support online learning and teaching. It offers a robust set of tools for course management, content delivery, assessments, and student collaboration. Through the [Canvas REST API](https://canvas.instructure.com/doc/api/all_resources.html), Canvas allows for extensive customization and integration with third-party applications, including AI-powered tools like ChatGPT. 
+2. [**從 ChatGPT 到 Canvas 的認證**](#authentication-from-chatgpt-to-canvas)：說明連接 ChatGPT 與 Canvas 的認證方式（OAuth 和使用者產生的 access token），以及各自的設定步驟。
 
-ChatGPT’s Custom Actions with Canvas enable educators to leverage AI to enhance course content, automate tasks, and provide personalized learning journeys for students. Examples include virtual teaching assistants based on active courses, as the capabilities are well-suited for pulling information in from Canvas to create an educational dialogue. ChatGPT with Custom Actions is not meant for automating the entire Canvas experience nor act as a replacement to many of its capabilities better suited for completion in the Canvas app.
+3. [**範例情境：學生課程助理**](#sample-use-case-student-course-assistant)：詳細示範用 ChatGPT 幫學生瀏覽課程、準備考試、取得個人化回饋，包含具體的 API 呼叫和流程。
 
-## Authentication from ChatGPT to Canvas
+4. [**其他可考慮的用途**](#other-use-cases-for-consideration)：用 Canvas API 能做的其他整合，像課堂分析和報告產生。
 
-For a general overview on Authentication in Custom Actions, see the [Action authentication documentation](https://platform.openai.com/docs/actions/authentication).
+5. [**恭喜**](#congratulations)
 
-There are two options for authentication in Canvas: 1) OAuth and 2) User Generated Access Tokens.
-- For large-scale deployments, it is required to use OAuth for Action Authentication.
-- If the user is considering a single-user deployment or does not have access to Admin Settings, they may consider User Generated Access Tokens. Be aware that any request made by the action will be made using the token the user generated, so Canvas will register all requests as the user's activity and use the user's permissions to complete them.
+## App 基本資訊
 
-### Implementing OAuth for Canvas
+Canvas 是廣泛使用的學習管理系統（LMS），用來支援線上學習和教學。它提供一整套工具，涵蓋課程管理、內容發布、評量和學生協作。透過 [Canvas REST API](https://canvas.instructure.com/doc/api/all_resources.html)，Canvas 可以高度客製，也能整合第三方應用，包含 ChatGPT 這類 AI 工具。
 
-While this Canvas Cookbook does not use OAuth, any deployment with more than one user must use it. See [OAuth for Canvas Documentation](https://canvas.instructure.com/doc/api/file.oauth.html#oauth2-flow) for a detailed walkthrough. 
+ChatGPT 的 Custom Actions 搭配 Canvas，讓教育者能用 AI 強化課程內容、自動化任務，並為學生打造個人化的學習歷程。例如根據進行中的課程做虛擬助教，因為這類功能很適合從 Canvas 拉資訊進來，形成教學對話。ChatGPT 加 Custom Actions 不是要自動化整個 Canvas 體驗，也不是取代許多更適合在 Canvas app 裡完成的功能。
 
-Here are some things to keep in mind while implementing OAuth in a Canvas Custom Action:
+## 從 ChatGPT 到 Canvas 的認證
 
--  Access to Canvas’ Admin settings is required for OAuth in order to retrieve a Client ID and Client Secret.
--  The Authorization URL will look like (make sure to update the Canvas Install URL): https://<canvas-install-url>/login/oauth2/auth
--  The Token URL will look like (make sure to update the Canvas Install URL): ttps://<canvas-install-url>/login/oauth2/token
--  Scopes may not need to be defined in the Custom Action. If the developer key does not require scopes and no scope parameter is specified, the access token will have access to all scopes. If the developer key does require scopes and no scope parameter is specified, Canvas will respond with "invalid_scope." More information on developer keys [here](https://canvas.instructure.com/doc/api/file.developer_keys.html) and endpoints [here](https://canvas.instructure.com/doc/api/file.oauth_endpoints.html#get-login-oauth2-auth).
--  Token Exchange Method is Default (POST Request)
--  Canvas uses the term `redirect_uri` where ChatGPT uses the term `Callback URL` for URL to complete the redirect process after successful authentication.
+Custom Actions 認證的整體說明，見 [Action authentication 文件](https://platform.openai.com/docs/actions/authentication)。
 
-### Implementing authentication with User Generated Access Tokens
+Canvas 有兩種認證方式：1) OAuth 和 2) 使用者產生的 access token。
+- 大規模部署一定要用 OAuth 來做 Action 認證。
+- 如果只是單人使用，或沒有 Admin 設定的權限，可以考慮使用者產生的 access token。要注意 action 發出的任何請求都是用使用者產生的 token，所以 Canvas 會把所有請求記成該使用者的活動，並用該使用者的權限來完成。
 
-In some cases, it may be appropriate to use [User Generated Access Tokens](https://canvas.instructure.com/doc/api/file.oauth.html#manual-token-generation) for Custom Action authentication with Canvas. Here are the steps to follow to do so:
+### 在 Canvas 實作 OAuth
 
-  1. Proceed to Canvas Account Settings shown here:
+這份 Canvas cookbook 沒有用 OAuth，但任何超過一個使用者的部署都必須用。詳細流程見 [OAuth for Canvas 文件](https://canvas.instructure.com/doc/api/file.oauth.html#oauth2-flow)。
+
+在 Canvas Custom Action 實作 OAuth 時，要記住這幾點：
+
+-  OAuth 需要 Canvas 的 Admin 設定權限，才能取得 Client ID 和 Client Secret。
+-  Authorization URL 長這樣（記得換成你的 Canvas 安裝網址）：https://<canvas-install-url>/login/oauth2/auth
+-  Token URL 長這樣（記得換成你的 Canvas 安裝網址）：ttps://<canvas-install-url>/login/oauth2/token
+-  Custom Action 裡不一定要定義 scope。如果 developer key 不要求 scope、也沒指定 scope 參數，access token 就能存取所有 scope。如果 developer key 要求 scope、卻沒指定 scope 參數，Canvas 會回應 "invalid_scope"。更多 developer key 的資訊看[這裡](https://canvas.instructure.com/doc/api/file.developer_keys.html)，endpoint 看[這裡](https://canvas.instructure.com/doc/api/file.oauth_endpoints.html#get-login-oauth2-auth)。
+-  Token Exchange Method 用預設（POST Request）
+-  Canvas 用 `redirect_uri` 這個詞，ChatGPT 則叫 `Callback URL`，都是認證成功後用來完成 redirect 的網址。
+
+### 用使用者產生的 access token 認證
+
+有些情況適合用[使用者產生的 access token](https://canvas.instructure.com/doc/api/file.oauth.html#manual-token-generation) 做 Custom Action 的 Canvas 認證。步驟如下：
+
+  1. 進到 Canvas 的帳號設定，如下圖：
   ![canvas_lms_settings_link.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/canvas_lms_settings_link.png)
-  2. Scroll down to the List of Tokens shown here:          
+  2. 往下捲到 token 清單，如下圖：          
   ![canvas_lms_list_of_tokens.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/canvas_lms_list_of_tokens.png)
-  3. Generate a New Token, and **store this token**. It will not be accessible later.
+  3. 產生新的 token，並且**把 token 存好**，之後就看不到了。
   ![canvas_lms_new_token.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/canvas_lms_new_token.png)
 
-## Sample Use Case: Student Course Assistant
+## 範例情境：學生課程助理
 
-### Overview
+### 概述
 
-Assists students in navigating and understanding their courses by providing detailed information, generating personalized practice exams, and offering constructive feedback to enhance learning.
+幫學生瀏覽和理解自己的課程：提供詳細資訊、產生個人化的模擬考，並給出建設性的回饋來加強學習。
 
-### Considerations
+### 注意事項
 
-- Some information like the Syllabus is returned as an HTML page when requested by the API. This renders it impossible to show in ChatGPT. Instead, reference course description, modules, and the assignments to guide the user.
-- Requests can be modified to retrieve specific pieces of information using the `include[]` query parameter. If you need to request specific information about a course, provide an example in the GPT instructions.
+- 有些資訊（像 Syllabus）透過 API 請求時會回傳 HTML 頁面，在 ChatGPT 裡無法顯示。改成參考課程描述、模組和作業來引導使用者。
+- 可以用 `include[]` 這個 query parameter 修改請求，取得特定的資訊。如果你需要查課程的某項特定資訊，在 GPT instructions 裡給個範例。
 
 ### GPT Instructions
 
-There can be multiple ways to write these instructions. [See here](https://platform.openai.com/docs/guides/prompt-engineering) for guidance on Prompt Engineering strategies and best practices.
+這些 instructions 有很多種寫法。prompt engineering 的策略和最佳實踐看[這裡](https://platform.openai.com/docs/guides/prompt-engineering)。
 
 ```
 # **Context:** You support college students by providing detailed information about their courses hosted on the Canvas Learning Management System. You help them understand course content, generate practice exams based on provided materials, and offer insightful feedback to aid their learning journey. Assume the students are familiar with basic academic terminologies.
@@ -105,14 +118,14 @@ There can be multiple ways to write these instructions. [See here](https://platf
 
 ### OpenAPI Schema
 
-- API Calls Featured
+- 用到的 API 呼叫
   - [GET] [listYourCourses](https://canvas.instructure.com/doc/api/courses.html#method.courses.index)
   - [GET] [getSingleCourse](https://canvas.instructure.com/doc/api/courses.html#method.courses.show)
   - [GET] [listModules](https://canvas.instructure.com/doc/api/modules.html#method.context_modules_api.index)
   - [GET] [listModuleItems](https://canvas.instructure.com/doc/api/modules.html#method.context_module_items_api.index)
   - [GET] [searchCourses](https://canvas.instructure.com/doc/api/search.html#method.search.all_courses)
 
-Below was generated with a combination of [Canvas API Reference](https://canvas.instructure.com/doc/api/index.html) and the [ActionsGPT](https://chatgpt.com/g/g-TYEliDU6A-actionsgpt).
+下面這份是結合 [Canvas API Reference](https://canvas.instructure.com/doc/api/index.html) 和 [ActionsGPT](https://chatgpt.com/g/g-TYEliDU6A-actionsgpt) 產生的。
 
 ```yaml
 openapi: 3.1.0
@@ -561,47 +574,58 @@ paths:
           description: No courses found matching the criteria.
 ```
 
-### Sample Conversation Starters
+### 對話開場建議
 
 - Help me take a practice exam.
 - Give an overview of one of my courses.
 - List all of my courses.
 
-### GPT Capabilities
+### GPT 功能設定
 
-- [On] Web Browsing
-- [On] DALL·E Image Generation
-- [On] Code Interpreter & Data Analysis
+- [開] Web Browsing
+- [開] DALL·E Image Generation
+- [開] Code Interpreter & Data Analysis
 
-## Other Use Cases for Consideration
+## 其他可考慮的用途
 
-Below is a non-exhaustive list of additional use cases that could be explored using the Canvas API. The basic outline for each is provided, but the GPT Instructions and specific API calls referenced are intentionally left to you as the user to decide what works best for your needs. 
+下面是用 Canvas API 可以探索的其他用途，不是完整清單。每個只給基本輪廓，GPT instructions 和要用的 API 呼叫刻意留給你，依需求決定。
 
-### Classroom Analytics and Reports
+### 課堂分析與報告
 
-**Use Case:** Empowers teachers with comprehensive analytics and performance reports on student engagement, grades, and participation. By leveraging this data, teachers can make informed decisions to tailor their course delivery, identify at-risk students, and enhance overall classroom effectiveness.
+**用途：** 讓老師拿到學生參與度、成績和課堂表現的完整分析報告。有了這些資料，老師能做出有根據的決策，調整教學方式、找出有風險的學生，提升整體課堂成效。
 
-**API Resources:**
+**API 資源：**
 
-- [**Analytics**](https://canvas.instructure.com/doc/api/analytics.html) and [**Quiz Statistics**](https://canvas.instructure.com/doc/api/quiz_statistics.html): Retrieve detailed data on student participation, grades, and course-level statistics.
-- [**Quiz Reports**](https://canvas.instructure.com/doc/api/quiz_reports.html): Generate and view various reports to analyze overall class performance and track progress over time.
+- [**Analytics**](https://canvas.instructure.com/doc/api/analytics.html) 和 [**Quiz Statistics**](https://canvas.instructure.com/doc/api/quiz_statistics.html)：取得學生參與、成績和課程層級統計的詳細資料。
+- [**Quiz Reports**](https://canvas.instructure.com/doc/api/quiz_reports.html)：產生並檢視各種報告，分析全班表現並追蹤長期進度。
 
-### Review and Improvement Guidance for Graded Assignments
+### 已評分作業的檢討與改進指引
 
-**Use Case:** Provide students with a tool to review their graded assignments, analyze their performance, and receive targeted guidance on how to improve in areas where they have knowledge gaps. The tool can highlight specific questions or sections where the student struggled and suggest additional resources or practice materials to help them improve.
+**用途：** 提供學生一個工具，檢討已評分的作業、分析表現，並針對知識缺口拿到有針對性的改進建議。工具可以標出學生卡住的題目或章節，並推薦額外的資源或練習教材。
 
-**API Resources:**
+**API 資源：**
 
-- [**Submissions**](https://canvas.instructure.com/doc/api/submissions.html) and [**Quiz Submissions**](https://canvas.instructure.com/doc/api/quiz_submissions.html): Retrieve the student’s submissions and associated grades.
-- [**Assignments**](https://canvas.instructure.com/doc/api/assignments.html): Retrieve detailed information about the assignment, including rubrics and grading criteria.
-- [**Rubric Assessments**](https://canvas.instructure.com/doc/api/rubrics.html): Access detailed feedback and rubric assessments
-- [**Modules**](https://canvas.instructure.com/doc/api/modules.html): Suggest additional learning modules that target the student’s weak areas using the List modules API.
-- [**Quizzes**](https://canvas.instructure.com/doc/api/quizzes.html): Recommend practice quizzes to help the student improve on specific knowledge gaps
+- [**Submissions**](https://canvas.instructure.com/doc/api/submissions.html) 和 [**Quiz Submissions**](https://canvas.instructure.com/doc/api/quiz_submissions.html)：取得學生的繳交內容和對應的成績。
+- [**Assignments**](https://canvas.instructure.com/doc/api/assignments.html)：取得作業的詳細資訊，包含 rubric 和評分標準。
+- [**Rubric Assessments**](https://canvas.instructure.com/doc/api/rubrics.html)：取得詳細的回饋和 rubric 評量
+- [**Modules**](https://canvas.instructure.com/doc/api/modules.html)：用 List modules API 推薦針對學生弱項的額外學習模組。
+- [**Quizzes**](https://canvas.instructure.com/doc/api/quizzes.html)：推薦練習測驗，幫助學生補強特定的知識缺口
 
-# Congratulations!
+# 恭喜！
 
-You’ve successfully created a Custom GPT with a working Custom Action using Canvas LMS. You should be able to have a conversation that looks similar to the screenshot below. Great job and keep going!
+你已經成功建立一個 Custom GPT，並接上能用的 Canvas LMS Custom Action。你應該能進行類似下面截圖的對話。做得好，繼續加油！
 
 ![canvas_lms_sample_conversation.png](https://raw.githubusercontent.com/openai/openai-cookbook/main/images/canvas_lms_sample_conversation.png)
 
-<!-- tutor:summary -->
+## 重點整理
+
+- 多人使用的部署一定要用 OAuth；單人測試才適合用自己產生的 access token，但所有請求都會以那個人的身分和權限執行。
+- Canvas 的 `redirect_uri` 就是 ChatGPT 的 `Callback URL`，設定 OAuth 時要對起來。
+- API 回傳 HTML（像 Syllabus）的資料在 ChatGPT 裡顯示不了，要改用課程描述、模組、作業等替代。
+- 用 `include[]` 這類 query parameter 取特定資料時，要在 GPT instructions 裡給範例，模型才會用對。
+
+## 練習
+
+1. 照步驟用使用者產生的 token 設定認證，跑一次「List all of my courses」，確認有拿到課程。
+2. 在 GPT instructions 加一個 `include[]` 的範例，讓它在介紹課程時一併取得你想要的欄位。
+3. 挑「作業檢討」的用途，在 OpenAPI schema 加上 Submissions 的 GET 呼叫，並改 instructions 讓 GPT 能分析成績。

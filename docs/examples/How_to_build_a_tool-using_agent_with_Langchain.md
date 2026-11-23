@@ -1,35 +1,45 @@
 ---
-translated: false
+translated: true
 source: examples/How_to_build_a_tool-using_agent_with_Langchain.ipynb
 ---
 
-# How to build a tool-using agent with LangChain
+# 用 LangChain 打造會使用 tool 的 agent
 
 > 原文：[examples/How_to_build_a_tool-using_agent_with_Langchain.ipynb](https://github.com/openai/openai-cookbook/blob/main/examples/How_to_build_a_tool-using_agent_with_Langchain.ipynb)
 
 
 
-<!-- tutor:goals -->
+## 這篇在做什麼
+用 LangChain 讓 OpenAI 模型可以使用外部 tool。範例先做一個用搜尋 tool 的 agent，再加上對話記憶，最後用 Pinecone 建一個 podcast 逐字稿的知識庫，讓 agent 也能查它。
+
+## 學完你會
+- 用 prompt template、output parser、LLM chain 組出一個 ReAct 風格的 LangChain agent
+- 用 `ConversationBufferWindowMemory` 讓 agent 記得最近幾輪對話
+- 把 Pinecone 向量資料庫包成 RetrievalQA tool，讓 agent 一起使用多個 tool
+
+## 開跑前
+- OpenAI API key
+- Pinecone 帳號和 API key（可以註冊免費帳號，放在 `PINECONE_API_KEY` 環境變數）
+- SerpAPI 的 API key，放在 `SERPAPI_API_KEY` 環境變數
+
+這個 notebook 帶你用 LangChain，讓 OpenAI 模型可以使用外部 tool。具體來說，你會做出用自訂 tool 回答使用者問題的 LLM agent。
 
 
-This notebook takes you through how to use LangChain to augment an OpenAI model with access to external tools. In particular, you'll be able to create LLM agents that use custom tools to answer user queries.
+## 什麼是 LangChain？
+[LangChain](https://python.langchain.com/en/latest/index.html) 是開發語言模型應用程式的框架。它讓你可以組出分層的 LLM 應用，能理解 context，並以 agent 的身份跟環境動態互動，既簡化你的程式碼，也讓客戶有更動態的使用體驗。
 
+## 為什麼 LLM 需要用 tool？
+LLM 最常見的挑戰之一，是訓練資料不夠新、不夠具體：答案可能過時，而且知識庫太龐雜，很容易 hallucination。Tool 讓 LLM 在受控的 context 裡回答，這個 context 來自你現有的知識庫和內部 API。與其費盡心思用 prompt engineering 把 LLM 推到你要的答案，不如讓它能存取 tool，動態取得資訊、解析之後再交給客戶。 
 
-## What is Langchain?
-[LangChain](https://python.langchain.com/en/latest/index.html) is a framework for developing applications powered by language models. Their framework enables you to build layered LLM-powered applications that are context-aware and able to interact dynamically with their environment as agents, leading to simplified code for you and a more dynamic user experience for your customers.
+讓 LLM 能用 tool，就能讓它帶著來自搜尋引擎、API 或你自己資料庫的 context 來回答問題。有 tool 的 LLM 不會直接回答，而是先做中間步驟去蒐集相關資訊。Tool 也可以組合使用。[例如](https://python.langchain.com/en/latest/modules/agents/agents/examples/mrkl_chat.html)，可以讓語言模型用搜尋 tool 查數據，再用計算機 tool 做計算。
 
-## Why do LLMs need to use Tools?
-One of the most common challenges with LLMs is overcoming the lack of recency and specificity in their training data - answers can be out of date, and they are prone to hallucinations given the huge variety in their knowledge base. Tools are a great method of allowing an LLM to answer within a controlled context that draws on your existing knowledge bases and internal APIs - instead of trying to prompt engineer the LLM all the way to your intended answer, you allow it access to tools that it calls on dynamically for info, parses, and serves to customer. 
+## Notebook 章節
 
-Providing LLMs access to tools can enable them to answer questions with context directly from search engines, APIs or your own databases. Instead of answering directly, an LLM with access to tools can perform intermediate steps to gather relevant information. Tools can also be used in combination. [For example](https://python.langchain.com/en/latest/modules/agents/agents/examples/mrkl_chat.html), a language model can be made to use a search tool to lookup quantitative information and a calculator to execute calculations.
-
-## Notebook Sections
-
-- **Setup:** Import packages and connect to a Pinecone vector database.
-- **LLM Agent:** Build an agent that leverages a modified version of the [ReAct](https://react-lm.github.io/) framework to do chain-of-thought reasoning.
-- **LLM Agent with History:** Provide the LLM with access to previous steps in the conversation.
-- **Knowledge Base:** Create a knowledge base of "Stuff You Should Know" podcast episodes, to be accessed through a tool.
-- **LLM Agent with Tools:** Extend the agent with access to multiple tools and test that it uses them to answer questions.
+- **Setup：** 匯入套件，連接 Pinecone 向量資料庫。
+- **LLM Agent：** 用修改過的 [ReAct](https://react-lm.github.io/) 框架做 chain-of-thought 推理，建立 agent。
+- **LLM Agent with History：** 讓 LLM 能存取對話中先前的步驟。
+- **Knowledge Base：** 建立「Stuff You Should Know」podcast 單集的知識庫，用 tool 的方式存取。
+- **LLM Agent with Tools：** 讓 agent 能用多個 tool，並測試它會不會用 tool 回答問題。
 
 ```python
 %load_ext autoreload
@@ -45,9 +55,9 @@ Providing LLMs access to tools can enable them to answer questions with context 
 
 # Setup
 
-Import libraries and set up a connection to a [Pinecone](https://www.pinecone.io) vector database.
+匯入套件，並建立到 [Pinecone](https://www.pinecone.io) 向量資料庫的連線。
 
-You can substitute Pinecone for any other vectorstore or database - there are a [selection](https://python.langchain.com/en/latest/modules/indexes/vectorstores.html) that are supported by Langchain natively, while other connectors will need to be developed yourself.
+Pinecone 可以換成任何其他向量資料庫。LangChain 原生支援[不少種類](https://python.langchain.com/en/latest/modules/indexes/vectorstores.html)，其他的連接器就要自己開發。
 
 ```python
 !pip install openai
@@ -89,7 +99,7 @@ from langchain.vectorstores import Pinecone
 index_name = 'podcasts'
 ```
 
-For acquiring an API key to connect with Pinecone, you can set up a [free account](https://app.pinecone.io/) and store it in the `api_key` variable below or in your environment variables under `PINECONE_API_KEY`
+要取得連接 Pinecone 的 API key，可以註冊[免費帳號](https://app.pinecone.io/)，把 key 放在下面的 `api_key` 變數，或是放在環境變數 `PINECONE_API_KEY`
 
 ```python
 api_key = os.getenv("PINECONE_API_KEY") or "PINECONE_API_KEY"
@@ -111,7 +121,7 @@ pinecone.list_indexes()
     ['podcasts']
     ```
 
-Run this code block if you want to clear the index, or if the index doesn't exist yet
+如果你想清空 index，或是 index 還不存在，就執行這個程式區塊
 
 ```
 # Check whether the index with the same name already exists - if so, delete it
@@ -128,16 +138,16 @@ pinecone.list_indexes()
 
 ## LLM Agent
 
-An [LLM agent](https://python.langchain.com/docs/modules/agents/) in Langchain has many configurable components, which are detailed in the Langchain documentation.
+LangChain 的 [LLM agent](https://python.langchain.com/docs/modules/agents/) 有很多可設定的元件，細節在 LangChain 文件裡。
 
-We'll employ a few of the core concepts to make an agent that talks in the way we want, can use tools to answer questions, and uses the appropriate language model to power the conversation.
-- **Prompt Template:** The input template to control the LLM's behaviour and how it accepts inputs and produces outputs - this is the brain that drives your application ([docs](https://python.langchain.com/en/latest/modules/prompts/prompt_templates.html)).
-- **Output Parser:** A method of parsing the output from the prompt. If the LLM produces output using certain headers, you can enable complex interactions where variables are generated by the LLM in their response and passed into the next step of the chain ([docs](https://python.langchain.com/en/latest/modules/prompts/output_parsers.html)).
-- **LLM Chain:** A Chain brings together a prompt template with an LLM that will execute it - in this case we'll be using ```gpt-3.5-turbo``` but this framework can be used with OpenAI completions models, or other LLMs entirely ([docs](https://python.langchain.com/en/latest/modules/chains.html)).
-- **Tool:** An external service that the LLM can use to retrieve information or execute commands should the user require it ([docs](https://python.langchain.com/en/latest/modules/agents/tools.html)).
-- **Agent:** The glue that brings all of this together, an agent can call multiple LLM Chains, each with their own tools. Agents can be extended with your own logic to allow retries, error handling and any other methods you choose to add reliability to your application ([docs](https://python.langchain.com/en/latest/modules/agents.html)).
+我們會用幾個核心概念，做出一個說話方式符合我們要求、能用 tool 回答問題，並用適當語言模型驅動對話的 agent。
+- **Prompt Template：** 輸入的模板，控制 LLM 的行為，以及它怎麼接收輸入、產生輸出，是驅動你應用程式的大腦（[docs](https://python.langchain.com/en/latest/modules/prompts/prompt_templates.html)）。
+- **Output Parser：** 解析 prompt 輸出的方法。如果 LLM 用特定標頭產生輸出，就能做出複雜的互動：變數由 LLM 在回應中產生，再傳進 chain 的下一步（[docs](https://python.langchain.com/en/latest/modules/prompts/output_parsers.html)）。
+- **LLM Chain：** Chain 把 prompt template 和執行它的 LLM 結合在一起。這裡我們用 ```gpt-3.5-turbo```，但這個框架也能搭配 OpenAI completions 模型，或完全不同的 LLM（[docs](https://python.langchain.com/en/latest/modules/chains.html)）。
+- **Tool：** 外部服務，LLM 在使用者需要時可以用它取得資訊或執行指令（[docs](https://python.langchain.com/en/latest/modules/agents/tools.html)）。
+- **Agent：** 把這一切黏在一起的角色。Agent 可以呼叫多個 LLM Chain，每個都有自己的 tool。你也可以用自己的邏輯擴充 agent，加入重試、錯誤處理，以及其他讓應用更可靠的方法（[docs](https://python.langchain.com/en/latest/modules/agents.html)）。
 
-**NB:** Before using this cookbook with the Search tool you'll need to sign up on https://serpapi.com/ and generate an API key. Once you have it, store it in an environment variable named ```SERPAPI_API_KEY```
+**注意：** 要用 Search tool 跑這份 cookbook 之前，需要先到 https://serpapi.com/ 註冊並產生 API key。拿到之後，存在名為 ```SERPAPI_API_KEY``` 的環境變數裡
 
 ```python
 # Initiate a Search tool - note you'll need to have set SERPAPI_API_KEY as an environment variable as per the above instructions
@@ -333,9 +343,9 @@ agent_executor.run("How many in 2022?")
 
 ## LLM Agent with History
 
-Extend the LLM Agent with the ability to retain a [memory](https://python.langchain.com/en/latest/modules/agents/agents/custom_llm_agent.html#adding-memory) and use it as context as it continues the conversation.
+讓 LLM Agent 具備保留[記憶](https://python.langchain.com/en/latest/modules/agents/agents/custom_llm_agent.html#adding-memory)的能力，並在繼續對話時把記憶當作 context。
 
-We use a simple ```ConversationBufferWindowMemory``` for this example that keeps a rolling window of the last two conversation turns. LangChain has other [memory options](https://python.langchain.com/en/latest/modules/memory.html), with different tradeoffs suitable for different use cases.
+這個範例用簡單的 ```ConversationBufferWindowMemory```，它保留最近兩輪對話的滾動視窗。LangChain 還有其他[記憶選項](https://python.langchain.com/en/latest/modules/memory.html)，各有取捨，適合不同的使用情境。
 
 ```python
 # Set up a prompt template which can interpolate the history
@@ -446,11 +456,11 @@ agent_executor.run("how about in mexico?")
 
 ## Knowledge base
 
-Create a custom vectorstore for the Agent to use as a tool to answer questions with. We'll store the results in [Pinecone](https://docs.pinecone.io/docs/quickstart), which is supported by LangChain ([Docs](https://python.langchain.com/en/latest/modules/indexes/vectorstores/examples/pinecone.html), [API reference](https://python.langchain.com/en/latest/reference/modules/vectorstore.html)). For help getting started with Pinecone or other vector databases, we have a [cookbook](https://github.com/openai/openai-cookbook/blob/colin/examples/vector_databases/Using_vector_databases_for_embeddings_search.ipynb) to help you get started.
+建立一個自訂的 vectorstore，讓 Agent 把它當 tool 來回答問題。我們把結果存在 [Pinecone](https://docs.pinecone.io/docs/quickstart)，LangChain 有支援（[Docs](https://python.langchain.com/en/latest/modules/indexes/vectorstores/examples/pinecone.html)、[API reference](https://python.langchain.com/en/latest/reference/modules/vectorstore.html)）。想了解怎麼開始用 Pinecone 或其他向量資料庫，我們有一份 [cookbook](https://github.com/openai/openai-cookbook/blob/colin/examples/vector_databases/Using_vector_databases_for_embeddings_search.ipynb) 可以參考。
 
-You can check the LangChain documentation to see what other [vectorstores](https://python.langchain.com/en/latest/modules/indexes/vectorstores.html) and [databases](https://python.langchain.com/en/latest/modules/chains/examples/sqlite.html) are available.
+可以到 LangChain 文件看還有哪些 [vectorstores](https://python.langchain.com/en/latest/modules/indexes/vectorstores.html) 和[資料庫](https://python.langchain.com/en/latest/modules/chains/examples/sqlite.html)可用。
 
-For this example we'll use the transcripts of the Stuff You Should Know podcast, which was provided thanks to OSF DOI [10.17605/OSF.IO/VM9NT](https://doi.org/10.17605/OSF.IO/VM9NT)
+這個範例用 Stuff You Should Know podcast 的逐字稿，資料由 OSF DOI [10.17605/OSF.IO/VM9NT](https://doi.org/10.17605/OSF.IO/VM9NT) 提供
 
 ```python
 import wget
@@ -606,7 +616,7 @@ print("\n".join(['Title: ' + x.metadata['title'].strip() + '\n\n' + x.page_conte
 
 ## LLM Agent with Tools
 
-Extend our list of tools by creating a [RetrievalQA](https://python.langchain.com/en/latest/modules/chains/index_examples/vector_db_qa.html) chain leveraging our Pinecone knowledge base.
+建立一個用我們 Pinecone 知識庫的 [RetrievalQA](https://python.langchain.com/en/latest/modules/chains/index_examples/vector_db_qa.html) chain，來擴充 tool 清單。
 
 ```python
 from langchain.chains import RetrievalQA
@@ -717,8 +727,18 @@ multi_tool_executor.run('Can you tell me some interesting facts about whether zo
     "Zoos can have both positive and negative effects on animals, but they can play a role in conservation efforts for endangered species. It's important to consider both sides of the argument and do research before forming an opinion."
     ```
 
-You now have a template to deploy conversational agents with tools. If you want to extend this with a Custom Agent to add your own retry behaviour or treatment of input/output variables, then follow [this article](https://python.langchain.com/en/latest/modules/agents/agents/custom_agent.html).
+現在你有一個部署對話式 tool agent 的範本了。如果想用 Custom Agent 擴充，加入自己的重試行為，或是處理輸入/輸出變數的方式，可以照[這篇文章](https://python.langchain.com/en/latest/modules/agents/agents/custom_agent.html)做。
 
-We look forward to seeing what you build!
+期待看到你做出什麼！
 
-<!-- tutor:summary -->
+## 重點整理
+- LLM 的訓練資料會過時、容易 hallucination，tool 讓它能在你控制的 context 裡動態取得資訊
+- LangChain agent 由 prompt template、output parser、LLM chain、tool 組成，agent 負責把它們串起來
+- ReAct 風格的 agent 會先推理、再決定用哪個 tool，一步步蒐集資訊
+- 記憶有不同取捨，這裡用只保留最近兩輪的視窗式記憶
+- 向量資料庫可以包成 RetrievalQA tool，和搜尋等其他 tool 並列給 agent 選用
+
+## 練習
+1. 把 `ConversationBufferWindowMemory` 的視窗大小從 2 改成 5，問幾個需要回溯的追問，看 agent 的表現有什麼差別。
+2. 在 agent 的 tool 清單裡，把 RetrievalQA tool 的 description 改得更模糊，觀察 agent 選錯 tool 的機率。
+3. 新增第三個 tool（例如簡單的計算機），設計一個需要先查知識庫、再做計算的問題，看 agent 是否能串起來用。
