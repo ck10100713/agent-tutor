@@ -1,0 +1,15 @@
+.md-nav__link.tutor-read::after {
+  content: "✓";
+  margin-left: 0.4em;
+  color: var(--md-accent-fg-color);
+}
+
+#tutor-continue:empty {
+  display: none;
+}
+
+#tutor-continue {
+  padding: 0.6em 0.9em;
+  border-left: 3px solid var(--md-accent-fg-color);
+  background: var(--md-code-bg-color);
+}
