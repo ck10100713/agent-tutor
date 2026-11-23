@@ -24,7 +24,12 @@ MAX_OUTPUT = 50_000  # ponytail: 單一 cell output 超過 50KB 就丟掉，Cola
 # import 名稱 -> pip 套件名，只列名字對不上的；其他直接用 import 名
 PIP_NAME = {'sklearn': 'scikit-learn', 'PIL': 'pillow', 'cv2': 'opencv-python', 'yaml': 'pyyaml',
             'dotenv': 'python-dotenv', 'bs4': 'beautifulsoup4', 'docx': 'python-docx',
-            'fitz': 'pymupdf', 'agents': 'openai-agents', 'google': None, 'IPython': None}
+            'fitz': 'pymupdf', 'agents': 'openai-agents', 'google': None, 'IPython': None,
+            'faiss': 'faiss-cpu',
+            # PyPI 上同名的是不相干的套件，要裝官方 git 版本
+            'clip': 'git+https://github.com/openai/CLIP.git',
+            'segment_anything': 'git+https://github.com/facebookresearch/segment-anything.git'}
+# ponytail: 套件名是從 import 推出來的，新增 GPU 篇時要人工看一下 setup cell 的 pip install 行
 
 
 def md_cell(text):
@@ -191,6 +196,8 @@ def write_md(entry, cells, out, translated=False):
                 text = re.sub(r'(?m)^# .*\n?', '', text, count=1)  # 原文 H1 跟開頭標題重複
                 seen_h1 = True
             for name, mime in (c.get('attachments') or {}).items():
+                if name != os.path.basename(name) or name.startswith('.'):
+                    continue  # 附件檔名不可以帶路徑
                 os.makedirs(files_dir, exist_ok=True)
                 open(os.path.join(files_dir, name), 'wb').write(base64.b64decode(''.join(next(iter(mime.values())))))
                 text = text.replace(f'attachment:{name}', f'{os.path.basename(files_dir)}/{name}')
