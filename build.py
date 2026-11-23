@@ -234,11 +234,34 @@ def build(entry):
     return out, gpu
 
 
+# 側邊欄分類：registry 第一個 tag -> 中文名稱，同一件事的 tag 併成一類
+TAG_ZH = {
+    'embeddings': 'Embedding 與向量搜尋', 'completions': '文字生成（Completions）',
+    'gpt-actions-library': 'GPT Actions 串接範例', 'agents-sdk': 'Agents SDK',
+    'agents': 'Agent 開發', 'agents-api': 'Agent 開發', 'agentkit': 'Agent 開發',
+    'evals': '評估（Evals）', 'evals-api': '評估（Evals）', 'responses': 'Responses API', 'codex': 'Codex',
+    'audio': '語音與音訊', 'whisper': '語音與音訊',
+    'realtime': '即時語音（Realtime）', 'realtime-api': '即時語音（Realtime）', 'gpt-realtime-mini': '即時語音（Realtime）',
+    'partners': '合作夥伴範例', 'chatgpt': 'ChatGPT 應用',
+    'images': '圖片生成', 'image-generation': '圖片生成', 'dall-e': '圖片生成', 'vision': '影像理解（Vision）',
+    'gpt-5': 'GPT-5 系列', 'gpt-5.1': 'GPT-5 系列', 'gpt-5.2': 'GPT-5 系列',
+    'gpt-oss': '開源模型（gpt-oss）', 'open-models': '開源模型（gpt-oss）', 'mcp': 'MCP',
+    'tiktoken': 'Token 計算', 'guardrails': '安全防護與內容審查', 'moderation': '安全防護與內容審查',
+    'prompt': 'Prompt 技巧', 'prompt-caching': 'Prompt 技巧',
+    'fine-tuning': '微調（Fine-tuning）', 'reinforcement-learning': '微調（Fine-tuning）',
+    'assistants': 'Assistants API', 'chat': '對話格式', 'deep-research-api': 'Deep Research API',
+    'sora': 'Sora 影片生成', 'knowledge-graphs': '知識圖譜', 'functions': 'Function calling',
+    'batch': '批次處理', 'latency': '延遲優化', 'SDLC': '軟體開發流程', 'usage-api': '用量 API',
+    'reasoning': '推理模型', 'other': '其他',
+}
+
+
 def write_site(registry, gpu_paths):
     by_tag = {}
     for e in registry:
         if e['path'] not in gpu_paths:
-            by_tag.setdefault((e.get('tags') or ['other'])[0], []).append(e)
+            tag = (e.get('tags') or ['other'])[0]
+            by_tag.setdefault(TAG_ZH.get(tag, tag), []).append(e)  # 沒對照到的就用原 tag
     nav: list = [{'首頁': 'index.md'}]
     for tag in sorted(by_tag, key=lambda t: -len(by_tag[t])):
         items = sorted(by_tag[tag], key=lambda e: str(e.get('date')), reverse=True)
@@ -269,7 +292,11 @@ def write_site(registry, gpu_paths):
              f'左邊依主題分類，共 {sum(len(v) for v in by_tag.values())} 篇。', '',
              '## 要 GPU 的篇（用 Colab 跑）', '']
     colab = f'https://colab.research.google.com/github/{SITE_REPO}/blob/main/notebooks/'
-    lines += [f"- [{e['title']}]({colab}{os.path.splitext(e['path'])[0]}.ipynb)" for e in gpu]
+    for e in gpu:  # 標題用翻好的 notebook 第一行
+        stem = os.path.splitext(e['path'])[0]
+        first = json.load(open(os.path.join(NB_OUT, stem + '.ipynb')))['cells'][0]['source']
+        title = ''.join(first).splitlines()[0].lstrip('# ') or e['title']
+        lines.append(f'- [{title}]({colab}{stem}.ipynb)')
     open(os.path.join(MD_OUT, 'index.md'), 'w').write('\n'.join(lines) + '\n')
 
 

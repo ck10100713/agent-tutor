@@ -39,7 +39,7 @@ plugins:
     - en
 nav:
 - 首頁: index.md
-- embeddings:
+- Embedding 與向量搜尋:
   - examples/vector_databases/chroma/hyde-with-chroma-and-openai.md
   - examples/Embedding_Wikipedia_articles_for_search.md
   - examples/chatgpt/rag-quickstart/gcp/Getting_started_with_bigquery_vector_search_and_openai.md
@@ -123,7 +123,7 @@ nav:
   - examples/Visualizing_embeddings_in_3D.md
   - examples/Zero-shot_classification_with_embeddings.md
   - examples/fine-tuned_qa/olympics-2-create-qa.md
-- completions:
+- 文字生成（Completions）:
   - examples/object_oriented_agentic_approach/Secure_code_interpreter_tool_for_LLM_agents.md
   - examples/How_to_handle_rate_limits.md
   - examples/vector_databases/pinecone/Using_vision_modality_for_RAG_with_Pinecone.md
@@ -173,7 +173,7 @@ nav:
   - examples/Fine-tuned_classification.md
   - examples/book_translation/translate_latex_book.md
   - examples/fine-tuned_qa/olympics-3-train-qa.md
-- gpt-actions-library:
+- GPT Actions 串接範例:
   - examples/chatgpt/gpt_actions_library/gpt_action_trayai_apim.md
   - examples/chatgpt/gpt_actions_library/gpt_action_google_calendar.md
   - examples/chatgpt/gpt_actions_library/gpt_action_workday.md
@@ -200,7 +200,26 @@ nav:
   - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_doc.md
   - examples/chatgpt/gpt_actions_library/gpt_action_sharepoint_text.md
   - examples/chatgpt/gpt_actions_library/gpt_middleware_azure_function.md
-- agents-sdk:
+- 評估（Evals）:
+  - examples/agent_optimization/optimizing_agents_for_cost_and_quality.md
+  - examples/evaluation/moving-from-openai-evals-to-promptfoo.md
+  - examples/multimodal/image_evals.md
+  - examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md
+  - examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.md
+  - examples/evaluation/use-cases/EvalsAPI_Image_Inputs.md
+  - examples/evaluation/use-cases/mcp_eval_notebook.md
+  - examples/evaluation/use-cases/structured-outputs-evaluation.md
+  - examples/evaluation/use-cases/tools-evaluation.md
+  - examples/evaluation/use-cases/web-search-evaluation.md
+  - examples/partners/eval_driven_system_design/receipt_inspection.md
+  - examples/stripe_model_eval/selecting_a_model_based_on_stripe_conversion.md
+  - examples/evaluation/use-cases/responses-evaluation.md
+  - examples/evaluation/use-cases/regression.md
+  - examples/evaluation/use-cases/bulk-experimentation.md
+  - examples/evaluation/use-cases/completion-monitoring.md
+  - examples/agents_sdk/evaluate_agents.md
+  - examples/Custom-LLM-as-a-Judge.md
+- Agents SDK:
   - examples/agents_sdk/security_scanners_with_agents_sdk.md
   - examples/vector_databases/oracle_db/deep_research_openai_agents.md
   - examples/agents_sdk/agent_improvement_loop.md
@@ -215,22 +234,20 @@ nav:
   - examples/agents_sdk/session_memory.md
   - examples/mcp/databricks_mcp_cookbook.md
   - examples/agents_sdk/multi-agent-portfolio-collaboration/multi_agent_portfolio_collaboration.md
-- evals:
-  - examples/agent_optimization/optimizing_agents_for_cost_and_quality.md
-  - examples/evaluation/moving-from-openai-evals-to-promptfoo.md
-  - examples/multimodal/image_evals.md
-  - examples/evaluation/Building_resilient_prompts_using_an_evaluation_flywheel.md
-  - examples/evaluation/use-cases/EvalsAPI_Audio_Inputs.md
-  - examples/evaluation/use-cases/EvalsAPI_Image_Inputs.md
-  - examples/partners/eval_driven_system_design/receipt_inspection.md
-  - examples/stripe_model_eval/selecting_a_model_based_on_stripe_conversion.md
-  - examples/evaluation/use-cases/responses-evaluation.md
-  - examples/evaluation/use-cases/regression.md
-  - examples/evaluation/use-cases/bulk-experimentation.md
-  - examples/evaluation/use-cases/completion-monitoring.md
-  - examples/agents_sdk/evaluate_agents.md
-  - examples/Custom-LLM-as-a-Judge.md
-- responses:
+- 語音與音訊:
+  - articles/sop_to_voice_agent_builder.md
+  - examples/audio/voice_agent_evaluation.md
+  - examples/migrating_from_whisper_to_gpt_transcribe.md
+  - examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.md
+  - examples/Data-intensive-Realtime-apps.md
+  - examples/Context_summarization_with_realtime_api.md
+  - examples/Speech_transcription_methods.md
+  - examples/agents_sdk/app_assistant_voice_agents.md
+  - examples/voice_solutions/one_way_translation_using_realtime_api.md
+  - examples/Whisper_correct_misspelling.md
+  - examples/Whisper_processing_guide.md
+  - examples/Whisper_prompting_guide.md
+- Responses API:
   - articles/per_run_spending_controller_responses_api.md
   - examples/skills_in_api.md
   - examples/multimodal/image_understanding_with_rag.md
@@ -242,7 +259,7 @@ nav:
   - examples/agents_sdk/dispute_agent.md
   - examples/responses_api/responses_example.md
   - examples/File_Search_Responses.md
-- codex:
+- Codex:
   - examples/codex/iterating-development-workflows-with-codex.md
   - examples/codex/Build_iterative_repair_loops_with_Codex.md
   - examples/codex/using_goals_in_codex.md
@@ -253,17 +270,7 @@ nav:
   - examples/codex/Autofix-github-actions.md
   - examples/codex/secure_quality_gitlab.md
   - examples/codex/jira-github.md
-- audio:
-  - articles/sop_to_voice_agent_builder.md
-  - examples/audio/voice_agent_evaluation.md
-  - examples/migrating_from_whisper_to_gpt_transcribe.md
-  - examples/audio/speaker_aware_meeting_intelligence/speaker_aware_meeting_intelligence.md
-  - examples/Data-intensive-Realtime-apps.md
-  - examples/Context_summarization_with_realtime_api.md
-  - examples/Speech_transcription_methods.md
-  - examples/agents_sdk/app_assistant_voice_agents.md
-  - examples/voice_solutions/one_way_translation_using_realtime_api.md
-- partners:
+- 合作夥伴範例:
   - examples/partners/harness_aware_plugin_evals/harness_aware_plugin_evals.md
   - examples/partners/AWS/chatgpt_agents_sdk_aws_agentcore_cookbook/notebooks/chatgpt_agents_sdk_aws_agentcore_cookbook.md
   - examples/partners/AWS/controlled_agentic_commerce_with_agentcore_payments/controlled_agentic_commerce.md
@@ -273,7 +280,7 @@ nav:
   - examples/partners/AWS/openai_models_with_amazon_bedrock.md
   - examples/partners/macro_evals_for_agentic_systems/macro_evals_for_agentic_systems.md
   - examples/partners/self_evolving_agents/autonomous_agent_retraining.md
-- chatgpt:
+- ChatGPT 應用:
   - examples/chatgpt/daily_usage_limits/README.md
   - examples/chatgpt/sharepoint_site_access/sharepoint_site_access.md
   - examples/chatgpt/workspace_agents/workspace-agents-api-trigger.md
@@ -283,121 +290,100 @@ nav:
   - examples/chatgpt/gpt_actions_library/gpt_action_salesforce_gong.md
   - examples/chatgpt/gpt_actions_library/gpt_middleware_google_cloud_function.md
   - examples/chatgpt/gpt_actions_library/gpt_action_sql_database.md
-- images:
+- 圖片生成:
+  - examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.md
   - examples/multimodal/grounded_spatial_reasoning_layouts.md
   - examples/multimodal/image-gen-models-prompting-guide.md
   - examples/multimodal/document_and_multimodal_understanding_tips.md
   - examples/multimodal/image-gen-1.5-prompting_guide.md
   - examples/Generate_Images_With_High_Input_Fidelity.md
   - examples/Generate_Images_With_GPT_Image.md
-- gpt-5:
-  - examples/gpt-5/prompt_personalities.md
-  - examples/gpt-5/gpt-5_troubleshooting_guide.md
-  - examples/gpt-5/prompt-optimization-cookbook.md
-  - examples/gpt-5/gpt-5_prompting_guide.md
-  - examples/gpt-5/gpt-5_frontend.md
-  - examples/gpt-5/gpt-5_new_params_and_tools.md
-- agents-api:
+  - articles/what_is_new_with_dalle_3.md
+  - examples/dalle/Image_generations_edits_and_variations_with_DALL-E.md
+- Agent 開發:
   - examples/agents_api/sandboxes/databricks/README.md
   - examples/agents_api/sandboxes/aws/README.md
   - examples/agents_api/apps/sev_bot/README.md
   - examples/agents_api/apps/slack_bot/README.md
   - examples/agents_api/apps/data_analyst/README.md
-- gpt-oss:
+  - examples/partners/agentic_governance_guide/agentic_governance_cookbook.md
+  - examples/agentkit/agentkit_walkthrough.md
+  - examples/agents_sdk/parallel_agents.md
+- 開源模型（gpt-oss）:
   - articles/gpt-oss/build-your-own-fact-checker-cerebras.md
   - articles/gpt-oss-safeguard-guide.md
   - articles/gpt-oss/verifying-implementations.md
   - articles/gpt-oss/run-locally-lmstudio.md
   - articles/gpt-oss/run-nvidia.md
-- realtime:
+  - articles/gpt-oss/handle-raw-cot.md
+  - articles/gpt-oss/run-locally-ollama.md
+  - articles/openai-harmony.md
+- GPT-5 系列:
+  - examples/gpt-5/prompt_personalities.md
+  - examples/gpt-5/gpt-5-2_prompting_guide.md
+  - examples/gpt-5/gpt-5-1_prompting_guide.md
+  - examples/gpt-5/gpt-5_troubleshooting_guide.md
+  - examples/gpt-5/prompt-optimization-cookbook.md
+  - examples/gpt-5/gpt-5_prompting_guide.md
+  - examples/gpt-5/gpt-5_frontend.md
+  - examples/gpt-5/gpt-5_new_params_and_tools.md
+- 即時語音（Realtime）:
   - examples/voice_solutions/realtime_translation_guide.md
   - examples/Realtime_prompting_guide.md
   - examples/Realtime_eval_guide.md
   - examples/Realtime_out_of_band_transcription.md
-- vision:
+  - examples/building_w_rt_mini/building_w_rt_mini.md
+  - examples/voice_solutions/running_realtime_api_speech_on_esp32_arduino_edge_runtime_elatoai.md
+- 安全防護與內容審查:
+  - examples/Developing_hallucination_guardrails.md
+  - examples/How_to_use_moderation.md
+  - examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.md
+  - examples/How_to_use_guardrails.md
+- 影像理解（Vision）:
   - examples/multimodal/Vision_Fine_tuning_on_GPT4o_for_Visual_Question_Answering.md
   - examples/Parse_PDF_docs_for_RAG.md
   - examples/How_to_combine_GPT4o_with_RAG_Outfit_Assistant.md
   - examples/Tag_caption_images_with_GPT4V.md
-- evals-api:
-  - examples/evaluation/use-cases/mcp_eval_notebook.md
-  - examples/evaluation/use-cases/structured-outputs-evaluation.md
-  - examples/evaluation/use-cases/tools-evaluation.md
-  - examples/evaluation/use-cases/web-search-evaluation.md
-- open-models:
-  - articles/gpt-oss/handle-raw-cot.md
-  - articles/gpt-oss/run-locally-ollama.md
-  - articles/openai-harmony.md
-- mcp:
+- Prompt 技巧:
+  - examples/Prompt_Caching_201.md
+  - examples/Optimize_Prompts.md
+  - examples/Prompt_migration_guide.md
+- 微調（Fine-tuning）:
+  - examples/Fine_tuning_direct_preference_optimization_guide.md
+  - examples/Reinforcement_Fine_Tuning.md
+  - examples/fine-tuned_qa/reinforcement_finetuning_healthbench.md
+- MCP:
   - examples/deep_research_api/how_to_build_a_deep_research_mcp_server/README.md
   - examples/partners/mcp_powered_voice_agents/mcp_powered_agents_cookbook.md
   - examples/mcp/mcp_tool_guide.md
-- tiktoken:
+- Token 計算:
   - examples/third_party/GPT_finetuning_with_wandb.md
   - examples/third_party/Openai_monitoring_with_wandb_weave.md
   - examples/How_to_count_tokens_with_tiktoken.md
-- whisper:
-  - examples/Whisper_correct_misspelling.md
-  - examples/Whisper_processing_guide.md
-  - examples/Whisper_prompting_guide.md
-- guardrails:
-  - examples/Developing_hallucination_guardrails.md
-  - examples/evaluation/How_to_evaluate_LLMs_for_SQL_generation.md
-  - examples/How_to_use_guardrails.md
-- agents:
-  - examples/partners/agentic_governance_guide/agentic_governance_cookbook.md
-  - examples/agents_sdk/parallel_agents.md
-- prompt:
-  - examples/Optimize_Prompts.md
-  - examples/Prompt_migration_guide.md
-- fine-tuning:
-  - examples/Fine_tuning_direct_preference_optimization_guide.md
-  - examples/fine-tuned_qa/reinforcement_finetuning_healthbench.md
-- assistants:
+- Assistants API:
   - examples/Creating_slides_with_Assistants_API_and_DALL-E3.md
   - examples/Assistants_API_overview_python.md
-- dall-e:
-  - articles/what_is_new_with_dalle_3.md
-  - examples/dalle/Image_generations_edits_and_variations_with_DALL-E.md
-- chat:
+- 對話格式:
   - examples/multimodal/Using_GPT4_Vision_With_Function_Calling.md
   - examples/Summarizing_long_documents.md
-- deep-research-api:
+- Deep Research API:
   - examples/deep_research_api/introduction_to_deep_research_api.md
   - examples/deep_research_api/introduction_to_deep_research_api_agents.md
-- image-generation:
-  - examples/multimodal/transparent-image-assets-for-campaigns-and-presentations.md
-- agentkit:
-  - examples/agentkit/agentkit_walkthrough.md
-- gpt-realtime-mini:
-  - examples/building_w_rt_mini/building_w_rt_mini.md
-- sora:
+- Sora 影片生成:
   - examples/sora/sora2_prompting_guide.md
-- knowledge-graphs:
+- 知識圖譜:
   - examples/partners/temporal_agents_with_knowledge_graphs/temporal_agents.md
-- functions:
+- Function calling:
   - examples/o-series/o3o4-mini_prompting_guide.md
-- reinforcement-learning:
-  - examples/Reinforcement_Fine_Tuning.md
-- realtime-api:
-  - examples/voice_solutions/running_realtime_api_speech_on_esp32_arduino_edge_runtime_elatoai.md
-- other:
+- 其他:
   - articles/what_makes_documentation_good.md
-- moderation:
-  - examples/How_to_use_moderation.md
-- batch:
+- 批次處理:
   - examples/batch_processing.md
-- latency:
+- 延遲優化:
   - examples/Prompt_Caching101.md
-- SDLC:
+- 軟體開發流程:
   - examples/third_party/Code_quality_and_security_scan_with_GitHub_Actions.md
-- usage-api:
+- 用量 API:
   - examples/completions_usage_api.md
-- reasoning:
+- 推理模型:
   - examples/reasoning_function_calls.md
-- gpt-5.1:
-  - examples/gpt-5/gpt-5-1_prompting_guide.md
-- gpt-5.2:
-  - examples/gpt-5/gpt-5-2_prompting_guide.md
-- prompt-caching:
-  - examples/Prompt_Caching_201.md
